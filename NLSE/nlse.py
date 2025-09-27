@@ -185,15 +185,21 @@ class NLSE:
                 self._kernels = kernels_cpu
                 self._convolution = signal.oaconvolve
 
-    def _build_propagator(self) -> np.ndarray:
+    def _build_propagator(self, precision: str) -> np.ndarray:
         """Build the linear propagation matrix.
 
         Returns:
             propagator (np.ndarray): the propagator matrix
+            precision (str): Type of propagator to generate. For split step schemes
+            the step is inside the propagator, for RK4 it is not.
         """
-        propagator = np.exp(
-            -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k * self.delta_z
-        ).astype(np.complex64)
+        match precision:
+            case "single" | "double":
+                propagator = np.exp(
+                    -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k * self.delta_z
+                )
+            case "RK4":
+                propagator = -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k
         return propagator
 
     def _build_fft_plan(self, A: np.ndarray) -> list:
@@ -301,7 +307,6 @@ class NLSE:
             A[:] = (E_00.T * E_in.T).T
         else:
             A[:] = E_in
-        print(E_00)
         return A, A_sq
 
     def _send_arrays_to_gpu(self) -> None:
@@ -478,6 +483,101 @@ class NLSE:
                     2 * self.I_sat / (epsilon_0 * c),
                 )
 
+    def _RK4_rhs_non_mutating(
+        self,
+        A: np.ndarray,
+        V: Union[np.ndarray, None],
+        propagator: np.ndarray,
+        plans: list,
+    ) -> np.ndarray:
+        """Compute the RHS of NLSE in a non-mutating manner for RK4.
+
+        Split step function for one propagation step using a 4th order Runge-Kutta method (RK4).
+
+        Args:
+            A (np.ndarray): Field to propagate
+            A_sq (np.ndarray): Field modulus squared.
+            V (np.ndarray): Potential field (can be None).
+            propagator (np.ndarray): Propagator matrix.
+            plans (list): List of FFT plan objects.
+                Either a single FFT plan for both directions (GPU case)
+                or distinct FFT and IFFT plans for FFTW.
+            precision (str, optional): Single or double application of
+                the nonlinear propagation step. Defaults to "single".
+        """
+        # prepare output array, this kills performance but we need it
+        A_prop = A.copy()
+        A_sq = A.real * A.real + A.imag * A.imag
+        if (self.backend == "GPU" and self.__CUPY_AVAILABLE__) or (
+            self.backend == "CL" and self.__PYOPENCL_AVAILABLE__
+        ):
+            # on GPU, only one plan for both FFT directions
+            plan_fft = plans[0]
+        else:
+            plan_fft, plan_ifft = plans
+        if (self.backend == "GPU" and self.__CUPY_AVAILABLE__) or (
+            self.backend == "CL" and self.__PYOPENCL_AVAILABLE__
+        ):
+            plan_fft.fft(A_prop, A_prop)
+            # linear step in Fourier domain (shifted)
+            A_prop *= propagator
+            plan_fft.ifft(A_prop, A_prop)
+        else:
+            plan_fft(input_array=A_prop, output_array=A_prop)
+            np.multiply(A_prop, propagator, out=A_prop)
+            plan_ifft(input_array=A_prop, output_array=A_prop, normalise_idft=True)
+        if self.nl_length > 0:
+            A_sq[:] = self._convolution(
+                A_sq, self.nl_profile, mode="same", axes=self._last_axes
+            )
+        # Linear prop
+        arg = A_prop
+        # saturation
+        sat = 1 / (1 + A_sq / (2 * self.I_sat / (epsilon_0 * c)))
+        # Interactions
+        arg += 1j * self.k / 2 * self.n2 * c * epsilon_0 * A_sq * sat * A
+        # Losses
+        arg -= self.alpha / 2 * sat * A
+        if V is not None:
+            V_ = 1j * self.k / 2 * V * A
+            arg += V_
+        return arg
+
+    def split_step_RK4(
+        self,
+        A: np.ndarray,
+        V: Union[np.ndarray, None],
+        propagator: np.ndarray,
+        plans: list,
+    ) -> None:
+        """Split step function for one propagation step using RK4 scheme.
+
+        y_n+1 = y_n + dz/6 * (k_1 + 2*k_2 + 2*k_3 + k_4)
+        k_1 = rhs(A)
+        k_2 = rhs(A+k_1/2)
+        k_3 = rhs(A+k_2/2)
+        k_4 = rhs(A+k_3)
+
+        Args:
+            A (np.ndarray): Field to propagate
+            V (np.ndarray): Potential field (can be None).
+            propagator (np.ndarray): Propagator matrix.
+            plans (list): List of FFT plan objects.
+                Either a single FFT plan for both directions (GPU case)
+                or distinct FFT and IFFT plans for FFTW.
+        """
+        k_1 = self._RK4_rhs_non_mutating(A, V, propagator, plans)
+        k_2 = self._RK4_rhs_non_mutating(
+            A + k_1 * self.delta_z / 3, V, propagator, plans
+        )
+        k_3 = self._RK4_rhs_non_mutating(
+            A + (-k_1 / 3 + k_2) * self.delta_z, V, propagator, plans
+        )
+        k_4 = self._RK4_rhs_non_mutating(
+            A + (k_1 - k_2 + k_3) * self.delta_z, V, propagator, plans
+        )
+        A += self.delta_z / 8 * (k_1 + 3 * k_2 + 3 * k_3 + k_4)
+
     def out_field(
         self,
         E_in: np.ndarray,
@@ -526,7 +626,7 @@ class NLSE:
         ], "Type mismatch, E_in should be complex64 or complex128"
         # define propagator if not already done
         if self.propagator is None:
-            self.propagator = self._build_propagator()
+            self.propagator = self._build_propagator(precision=precision)
         if (
             self.backend == "GPU"
             and self.__CUPY_AVAILABLE__
@@ -562,7 +662,11 @@ class NLSE:
         while abs(z_prop) < z:
             if z > self.L:
                 self.n2 = 0
-            self.split_step(A, A_sq, V, self.propagator, self.plans, precision)
+            if precision == "RK4":
+                self.split_step_RK4(A, V, self.propagator, self.plans)
+            else:
+                self.split_step(A, A_sq, V, self.propagator, self.plans, precision)
+
             if callback is not None:
                 if isinstance(callback, Callable):
                     callback(self, A, z, i, *callback_args)

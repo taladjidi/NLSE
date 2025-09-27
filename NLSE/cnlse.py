@@ -178,17 +178,21 @@ class CNLSE(NLSE):
                 if isinstance(self.n12, cla.Array):
                     self.n12 = self.n12.get()
 
-    def _build_propagator(self) -> np.ndarray:
+    def _build_propagator(self, precision: str) -> np.ndarray:
         """Build the propagators.
 
         Returns:
             propagator1 (np.ndarray): The propagator for the first component.
             propagator2 (np.ndarray): The propagator for the second component.
         """
-        propagator1 = super()._build_propagator()
-        propagator2 = np.exp(
-            -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k2 * self.delta_z
-        ).astype(np.complex64)
+        propagator1 = super()._build_propagator(precision=precision)
+        match precision:
+            case "single" | "double":
+                propagator2 = np.exp(
+                    -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k * self.delta_z
+                ).astype(np.complex64)
+            case "RK4":
+                propagator2 = -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k
         return np.array([propagator1, propagator2])
 
     def _take_components(self, A: np.ndarray) -> tuple:
@@ -202,6 +206,78 @@ class CNLSE(NLSE):
         A1 = A[..., 0, :, :]
         A2 = A[..., 1, :, :]
         return A1, A2
+
+    def _RK4_rhs_non_mutating(
+        self,
+        A: np.ndarray,
+        V: Union[np.ndarray, None],
+        propagator: np.ndarray,
+        plans: list,
+    ) -> np.ndarray:
+        """Compute the RHS of NLSE in a non-mutating manner for RK4.
+
+        Split step function for one propagation step using a 4th order Runge-Kutta method (RK4).
+
+        Args:
+            A (np.ndarray): Field to propagate
+            A_sq (np.ndarray): Field modulus squared.
+            V (np.ndarray): Potential field (can be None).
+            propagator (np.ndarray): Propagator matrix.
+            plans (list): List of FFT plan objects.
+                Either a single FFT plan for both directions (GPU case)
+                or distinct FFT and IFFT plans for FFTW.
+            precision (str, optional): Single or double application of
+                the nonlinear propagation step. Defaults to "single".
+        """
+        # prepare output array, this kills performance but we need it
+        A_prop = A.copy()
+        A_sq = A.real * A.real + A.imag * A.imag
+        if (self.backend == "GPU" and self.__CUPY_AVAILABLE__) or (
+            self.backend == "CL" and self.__PYOPENCL_AVAILABLE__
+        ):
+            # on GPU, only one plan for both FFT directions
+            plan_fft = plans[0]
+        else:
+            plan_fft, plan_ifft = plans
+        if (self.backend == "GPU" and self.__CUPY_AVAILABLE__) or (
+            self.backend == "CL" and self.__PYOPENCL_AVAILABLE__
+        ):
+            plan_fft.fft(A_prop, A_prop)
+            # linear step in Fourier domain (shifted)
+            A_prop *= propagator
+            plan_fft.ifft(A_prop, A_prop)
+        else:
+            plan_fft(input_array=A_prop, output_array=A_prop)
+            np.multiply(A_prop, propagator, out=A_prop)
+            plan_ifft(input_array=A_prop, output_array=A_prop, normalise_idft=True)
+        if self.nl_length > 0:
+            A_sq[:] = self._convolution(
+                A_sq, self.nl_profile, mode="same", axes=self._last_axes
+            )
+        # Linear prop
+        arg = A_prop
+        # saturation
+        sat = 1 / (
+            1
+            + A_sq[0] * 1 / (2 * self.I_sat / (epsilon_0 * c))
+            + A_sq[1] * 1 / (2 * self.I_sat2 / (epsilon_0 * c))
+        )
+        # Interactions
+        arg[0] += 1j * (
+            self.k / 2 * self.n2 * c * epsilon_0 * A_sq[0] * sat
+            + self.k / 2 * self.n12 * c * epsilon_0 * A_sq[1] * sat
+        )
+        arg[1] += 1j * (
+            self.k / 2 * self.n22 * c * epsilon_0 * A_sq[1] * sat
+            + self.k / 2 * self.n12 * c * epsilon_0 * A_sq[0] * sat
+        )
+        # Losses
+        arg[0] -= self.alpha / 2 * sat * A[0]
+        arg[1] -= self.alpha2 / 2 * sat * A[1]
+        if V is not None:
+            V_ = 1j * self.k / 2 * V * A
+            arg += V_
+        return arg
 
     def split_step(
         self,
