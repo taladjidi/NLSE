@@ -46,17 +46,17 @@ class NLSE:
 
     def __init__(
         self,
-        alpha: float,
-        power: float,
-        window: Union[float, tuple, list],
-        n2: float,
-        V: Union[np.ndarray, None],
-        L: float,
+        alpha: float | np.floating,
+        power: float | np.floating,
+        window: float | tuple[float, float] | list[float],
+        n2: float | np.floating,
+        V: np.typing.NDArray[np.complexfloating | np.floating] | None,
+        L: float | np.floating,
         NX: int = 1024,
         NY: int = 1024,
-        Isat: float = np.inf,
-        nl_length: float = 0,
-        wvl: float = 780e-9,
+        Isat: float | np.floating = np.inf,
+        nl_length: float | np.floating = 0,
+        wvl: float | np.floating = 780e-9,
         backend: str = __BACKEND__,
     ) -> None:
         """Instantiate the simulation.
@@ -283,9 +283,10 @@ class NLSE:
             A_sq = np.zeros_like(A, dtype=A.real.dtype)
         if normalize:
             # normalization of the field
+            arr = E_in.real * E_in.real + E_in.imag * E_in.imag
+            # forbid numpy systematically upcasting to double precision
+            arr = (arr * self.delta_X * self.delta_Y).astype(E_in.real.dtype)
             if self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
-                arr = E_in.real * E_in.real + E_in.imag * E_in.imag
-                arr = arr * self.delta_X * self.delta_Y
                 integral = cla.sum(
                     arr,
                     dtype=arr.dtype,
@@ -294,16 +295,13 @@ class NLSE:
                 integral = integral * c * epsilon_0 / 2
                 E_00 = clmath.sqrt(self.power / integral)
             else:
-                integral = (
-                    (E_in.real * E_in.real + E_in.imag * E_in.imag)
-                    * self.delta_X
-                    * self.delta_Y
-                ).sum(axis=self._last_axes)
+                integral = np.sum(arr, axis=self._last_axes)
                 integral = integral * c * epsilon_0 / 2
                 E_00 = (self.power / integral) ** 0.5
             A[:] = (E_00.T * E_in.T).T
         else:
             A[:] = E_in
+        print(E_00)
         return A, A_sq
 
     def _send_arrays_to_gpu(self) -> None:
@@ -391,11 +389,8 @@ class NLSE:
             precision (str, optional): Single or double application of
                 the nonlinear propagation step. Defaults to "single".
         """
-        if (
-            self.backend == "GPU"
-            and self.__CUPY_AVAILABLE__
-            or self.backend == "CL"
-            and self.__PYOPENCL_AVAILABLE__
+        if (self.backend == "GPU" and self.__CUPY_AVAILABLE__) or (
+            self.backend == "CL" and self.__PYOPENCL_AVAILABLE__
         ):
             # on GPU, only one plan for both FFT directions
             plan_fft = plans[0]
@@ -426,11 +421,8 @@ class NLSE:
                     self.k / 2 * self.n2 * c * epsilon_0,
                     2 * self.I_sat / (epsilon_0 * c),
                 )
-        if (
-            self.backend == "GPU"
-            and self.__CUPY_AVAILABLE__
-            or self.backend == "CL"
-            and self.__PYOPENCL_AVAILABLE__
+        if (self.backend == "GPU" and self.__CUPY_AVAILABLE__) or (
+            self.backend == "CL" and self.__PYOPENCL_AVAILABLE__
         ):
             plan_fft.fft(A, A)
             # linear step in Fourier domain (shifted)
