@@ -13,7 +13,6 @@ if __CUPY_AVAILABLE__:
 
 if __PYOPENCL_AVAILABLE__:
     from pyopencl import array as cla
-    from pyopencl import clmath
 
 
 class CNLSE(NLSE):
@@ -35,7 +34,7 @@ class CNLSE(NLSE):
         wvl: float = 780e-9,
         omega: float = None,
         backend: str = __BACKEND__,
-    ) -> object:
+    ) -> None:
         """Instantiates the class with all the relevant physical parameters
 
         Args:
@@ -96,7 +95,9 @@ class CNLSE(NLSE):
         self.propagator1 = None
         self.propagator2 = None
 
-    def _prepare_output_array(self, E: np.ndarray, normalize: bool) -> np.ndarray:
+    def _prepare_output_array(
+        self, E: np.ndarray, normalize: bool
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Prepare the output arrays depending on __BACKEND__.
 
         Prepares the A and A_sq arrays to store the field and its modulus.
@@ -116,8 +117,8 @@ class CNLSE(NLSE):
         elif self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
             A = cla.zeros(self._cl_queue, E.shape, E.dtype)
             A_sq = cla.zeros(self._cl_queue, E.shape, E.real.dtype)
-            E = cla.to_device(self._cl_queue, E)
-            puiss_arr = cla.to_device(self._cl_queue, puiss_arr)
+            # E = cla.to_device(self._cl_queue, E)
+            # puiss_arr = cla.to_device(self._cl_queue, puiss_arr)
         else:
             A = pyfftw.zeros_aligned(E.shape, dtype=E.dtype, n=pyfftw.simd_alignment)
             A_sq = np.zeros_like(A, dtype=A.real.dtype)
@@ -133,14 +134,15 @@ class CNLSE(NLSE):
                     integral = integral * c * epsilon_0 / 2
                     E_00 = (puiss_arr / integral) ** 0.5
                 case "CL":
-                    integral = cla.sum(
+                    integral = (
                         (E.real * E.real + E.imag * E.imag)
                         * self.delta_X
-                        * self.delta_Y,
-                        queue=self._cl_queue,
-                    )
+                        * self.delta_Y
+                    ).sum(axis=self._last_axes)
                     integral = integral * c * epsilon_0 / 2
-                    E_00 = clmath.sqrt(puiss_arr / integral)
+                    E_00 = (puiss_arr / integral) ** 0.5
+                    E_00 = cla.to_device(self._cl_queue, E_00.astype(E.dtype))
+                    E = cla.to_device(self._cl_queue, E.astype(E.dtype))
             A[0] = E_00[0] * E[0]
             A[1] = E_00[1] * E[1]
         else:
