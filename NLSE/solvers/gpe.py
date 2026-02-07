@@ -93,9 +93,7 @@ class GPE(NLSE):
                     * self.delta_t
                 ).astype(np.complex64)
             case "RK4":
-                propagator = (
-                    -1j * 0.5 * hbar * (self.Kxx**2 + self.Kyy**2) / self.m
-                )
+                propagator = -1j * 0.5 * hbar * (self.Kxx**2 + self.Kyy**2) / self.m
         return propagator
 
     def _compute_norm_factor(self, E_in):

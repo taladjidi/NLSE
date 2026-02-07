@@ -235,22 +235,33 @@ def square_mod(A, A_sq):
 def nl_prop(A, A_sq, dz, alpha, V, g, Isat):
     """Nonlinear propagation with potential."""
     ctx = _get_ctx()
-    ctx.nl_prop(A._buf, A_sq._buf, V._buf, float(dz), float(alpha), float(g), float(Isat))
+    ctx.nl_prop(
+        A._buf, A_sq._buf, V._buf, float(dz), float(alpha), float(g), float(Isat)
+    )
 
 
 def nl_prop_without_V(A, A_sq, dz, alpha, g, Isat):
     """Nonlinear propagation without potential."""
     ctx = _get_ctx()
-    ctx.nl_prop_without_V(A._buf, A_sq._buf, float(dz), float(alpha), float(g), float(Isat))
+    ctx.nl_prop_without_V(
+        A._buf, A_sq._buf, float(dz), float(alpha), float(g), float(Isat)
+    )
 
 
 def nl_prop_c(A1, A_sq_1, A_sq_2, dz, alpha, V, g11, g12, Isat1, Isat2):
     """Coupled nonlinear propagation with potential."""
     ctx = _get_ctx()
     ctx.nl_prop_c(
-        A1._buf, A_sq_1._buf, A_sq_2._buf, V._buf,
-        float(dz), float(alpha), float(g11), float(g12),
-        float(Isat1), float(Isat2),
+        A1._buf,
+        A_sq_1._buf,
+        A_sq_2._buf,
+        V._buf,
+        float(dz),
+        float(alpha),
+        float(g11),
+        float(g12),
+        float(Isat1),
+        float(Isat2),
     )
 
 
@@ -258,9 +269,15 @@ def nl_prop_without_V_c(A1, A_sq_1, A_sq_2, dz, alpha, g11, g12, Isat1, Isat2):
     """Coupled nonlinear propagation without potential."""
     ctx = _get_ctx()
     ctx.nl_prop_without_V_c(
-        A1._buf, A_sq_1._buf, A_sq_2._buf,
-        float(dz), float(alpha), float(g11), float(g12),
-        float(Isat1), float(Isat2),
+        A1._buf,
+        A_sq_1._buf,
+        A_sq_2._buf,
+        float(dz),
+        float(alpha),
+        float(g11),
+        float(g12),
+        float(Isat1),
+        float(Isat2),
     )
 
 

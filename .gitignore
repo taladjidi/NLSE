@@ -1,7 +1,6 @@
-NLSE/__pycache__/*
-__pycache__/*
+__pycache__/
+*.pyc
 .vscode/settings.json
-tests/__pycache__/*
 NLSE/fft.wisdom
 tex/benchmarks.pdf
 tex/output.png
@@ -20,12 +19,9 @@ tex/paperNotes.bib
 fft.wisdom
 build/*
 NLSE.egg-info/*
-tests/__pycache__/*
 img/inheritance_graph.svg
 mkdocs-documentation/site/
-examples/__pycache__/*
 examples/*.npy
 examples/*.svg
-
 
 Archive.zip

@@ -159,8 +159,16 @@ class DDGPE(CNLSE):
         Send arrays to GPU.
         """
         super()._send_arrays_to_gpu()
-        for attr in ("gamma", "g", "omega", "k_z", "omega_exc",
-                      "omega_cav", "detuning", "omega_pump"):
+        for attr in (
+            "gamma",
+            "g",
+            "omega",
+            "k_z",
+            "omega_exc",
+            "omega_cav",
+            "detuning",
+            "omega_pump",
+        ):
             val = getattr(self, attr)
             if isinstance(val, np.ndarray):
                 setattr(self, attr, self._backend.to_device(val))
@@ -170,8 +178,16 @@ class DDGPE(CNLSE):
         Retrieve arrays from GPU.
         """
         super()._retrieve_arrays_from_gpu()
-        for attr in ("gamma", "g", "omega", "k_z", "omega_exc",
-                      "omega_cav", "detuning", "omega_pump"):
+        for attr in (
+            "gamma",
+            "g",
+            "omega",
+            "k_z",
+            "omega_exc",
+            "omega_cav",
+            "detuning",
+            "omega_pump",
+        ):
             val = getattr(self, attr)
             if self._backend.is_device_array(val):
                 setattr(self, attr, self._backend.to_host(val))

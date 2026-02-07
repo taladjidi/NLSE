@@ -34,6 +34,7 @@ if NLSE.__PYOPENCL_AVAILABLE__:
 # Try loading Metal backend
 try:
     from NLSE.metal.metal_api import MetalContext, MetalBuffer
+
     _metal_ctx = MetalContext()
     __METAL_AVAILABLE__ = True
 except Exception:
@@ -45,6 +46,7 @@ N = 64  # small for fast tests
 
 
 # ---- Pure numpy reference implementations ----
+
 
 def ref_square_mod(A):
     """Reference: |A|^2"""
@@ -98,28 +100,34 @@ def ref_vortex(im, i_pos, j_pos, ii, jj, ll):
 
 # ---- Helpers ----
 
+
 def _get_cl_queue():
     if not NLSE.__PYOPENCL_AVAILABLE__:
         pytest.skip("PyOpenCL not available")
     ctx = cl.create_some_context(interactive=False)
     return cl.CommandQueue(ctx)
 
+
 def _skip_no_metal():
     if not __METAL_AVAILABLE__:
         pytest.skip("Metal not available")
 
+
 def _metal_from_np(arr):
     return MetalBuffer.from_numpy(_metal_ctx._handle, np.ascontiguousarray(arr))
+
 
 def _metal_alloc(shape, dtype):
     buf = MetalBuffer(_metal_ctx._handle, shape, dtype)
     arr = np.zeros(shape, dtype=dtype)
     from NLSE.metal.metal_api import _lib
+
     _lib.metal_buf_copy_from(buf._handle, arr.ctypes.data, buf._nbytes)
     return buf
 
 
 # ---- Fixtures for random test data ----
+
 
 def _random_field_2d(shape=(N, N)):
     """Generate a random complex field."""
@@ -176,9 +184,7 @@ class TestNlProp:
         A = _random_field_2d()
         A_sq = ref_square_mod(A)
         V = _random_real_2d()
-        expected = ref_nl_prop(
-            A, A_sq, self.dz, self.alpha, V, self.g, self.Isat
-        )
+        expected = ref_nl_prop(A, A_sq, self.dz, self.alpha, V, self.g, self.Isat)
         # CPU kernel mutates in-place
         A_cpu = A.copy()
         A_sq_cpu = A_sq.copy()
@@ -192,15 +198,11 @@ class TestNlProp:
         A = _random_field_2d()
         A_sq = ref_square_mod(A).astype(PRECISION_REAL)
         V = _random_real_2d()
-        expected = ref_nl_prop(
-            A, A_sq, self.dz, self.alpha, V, self.g, self.Isat
-        )
+        expected = ref_nl_prop(A, A_sq, self.dz, self.alpha, V, self.g, self.Isat)
         A_cl = cla.to_device(queue, A.copy())
         A_sq_cl = cla.to_device(queue, A_sq.copy())
         V_cl = cla.to_device(queue, V.astype(PRECISION_REAL))
-        cl_nl_prop(
-            A_cl, A_sq_cl, self.dz, self.alpha, V_cl, self.g, self.Isat
-        )
+        cl_nl_prop(A_cl, A_sq_cl, self.dz, self.alpha, V_cl, self.g, self.Isat)
         result = A_cl.get()
         assert np.allclose(result, expected, rtol=1e-4), "CL nl_prop != reference"
 
@@ -218,9 +220,7 @@ class TestNlProp:
         A_cl = cla.to_device(queue, A.copy())
         A_sq_cl = cla.to_device(queue, A_sq.copy())
         V_cl = cla.to_device(queue, V.astype(PRECISION_REAL))
-        cl_nl_prop(
-            A_cl, A_sq_cl, self.dz, self.alpha, V_cl, self.g, self.Isat
-        )
+        cl_nl_prop(A_cl, A_sq_cl, self.dz, self.alpha, V_cl, self.g, self.Isat)
         result_cl = A_cl.get()
         assert np.allclose(A_cpu, result_cl, rtol=1e-4), "CPU nl_prop != CL nl_prop"
 
@@ -261,9 +261,7 @@ class TestNlPropWithoutV:
         )
         A_cl = cla.to_device(queue, A.copy())
         A_sq_cl = cla.to_device(queue, A_sq.copy())
-        cl_nl_prop_without_V(
-            A_cl, A_sq_cl, self.dz, self.alpha, self.g, self.Isat
-        )
+        cl_nl_prop_without_V(A_cl, A_sq_cl, self.dz, self.alpha, self.g, self.Isat)
         result = A_cl.get()
         assert np.allclose(result, expected, rtol=1e-4), (
             "CL nl_prop_without_V != reference"
@@ -281,13 +279,9 @@ class TestNlPropWithoutV:
         )
         A_cl = cla.to_device(queue, A.copy())
         A_sq_cl = cla.to_device(queue, A_sq.copy())
-        cl_nl_prop_without_V(
-            A_cl, A_sq_cl, self.dz, self.alpha, self.g, self.Isat
-        )
+        cl_nl_prop_without_V(A_cl, A_sq_cl, self.dz, self.alpha, self.g, self.Isat)
         result_cl = A_cl.get()
-        assert np.allclose(A_cpu, result_cl, rtol=1e-4), (
-            "CPU nl_prop_without_V != CL"
-        )
+        assert np.allclose(A_cpu, result_cl, rtol=1e-4), "CPU nl_prop_without_V != CL"
 
 
 # ============================================================
@@ -309,17 +303,31 @@ class TestNlPropCoupled:
         A_sq_2 = _random_real_2d()
         V = _random_real_2d()
         expected = ref_nl_prop_c(
-            A1, A_sq_1, A_sq_2, self.dz, self.alpha, V,
-            self.g11, self.g12, self.Isat1, self.Isat2,
+            A1,
+            A_sq_1,
+            A_sq_2,
+            self.dz,
+            self.alpha,
+            V,
+            self.g11,
+            self.g12,
+            self.Isat1,
+            self.Isat2,
         )
         A1_cpu = A1.copy()
         cpu_nl_prop_c(
-            A1_cpu, A_sq_1.copy(), A_sq_2.copy(), self.dz, self.alpha,
-            V, self.g11, self.g12, self.Isat1, self.Isat2,
+            A1_cpu,
+            A_sq_1.copy(),
+            A_sq_2.copy(),
+            self.dz,
+            self.alpha,
+            V,
+            self.g11,
+            self.g12,
+            self.Isat1,
+            self.Isat2,
         )
-        assert np.allclose(A1_cpu, expected, rtol=1e-4), (
-            "CPU nl_prop_c != reference"
-        )
+        assert np.allclose(A1_cpu, expected, rtol=1e-4), "CPU nl_prop_c != reference"
 
     def test_cl_vs_ref(self):
         if not NLSE.__PYOPENCL_AVAILABLE__:
@@ -330,16 +338,32 @@ class TestNlPropCoupled:
         A_sq_2 = _random_real_2d()
         V = _random_real_2d()
         expected = ref_nl_prop_c(
-            A1, A_sq_1, A_sq_2, self.dz, self.alpha, V,
-            self.g11, self.g12, self.Isat1, self.Isat2,
+            A1,
+            A_sq_1,
+            A_sq_2,
+            self.dz,
+            self.alpha,
+            V,
+            self.g11,
+            self.g12,
+            self.Isat1,
+            self.Isat2,
         )
         A1_cl = cla.to_device(queue, A1.copy())
         A_sq_1_cl = cla.to_device(queue, A_sq_1.copy())
         A_sq_2_cl = cla.to_device(queue, A_sq_2.copy())
         V_cl = cla.to_device(queue, V.astype(PRECISION_REAL))
         cl_nl_prop_c(
-            A1_cl, A_sq_1_cl, A_sq_2_cl, self.dz, self.alpha,
-            V_cl, self.g11, self.g12, self.Isat1, self.Isat2,
+            A1_cl,
+            A_sq_1_cl,
+            A_sq_2_cl,
+            self.dz,
+            self.alpha,
+            V_cl,
+            self.g11,
+            self.g12,
+            self.Isat1,
+            self.Isat2,
         )
         result = A1_cl.get()
         assert np.allclose(result, expected, rtol=1e-4), "CL nl_prop_c != reference"
@@ -354,16 +378,32 @@ class TestNlPropCoupled:
         V = _random_real_2d()
         A1_cpu = A1.copy()
         cpu_nl_prop_c(
-            A1_cpu, A_sq_1.copy(), A_sq_2.copy(), self.dz, self.alpha,
-            V, self.g11, self.g12, self.Isat1, self.Isat2,
+            A1_cpu,
+            A_sq_1.copy(),
+            A_sq_2.copy(),
+            self.dz,
+            self.alpha,
+            V,
+            self.g11,
+            self.g12,
+            self.Isat1,
+            self.Isat2,
         )
         A1_cl = cla.to_device(queue, A1.copy())
         A_sq_1_cl = cla.to_device(queue, A_sq_1.copy())
         A_sq_2_cl = cla.to_device(queue, A_sq_2.copy())
         V_cl = cla.to_device(queue, V.astype(PRECISION_REAL))
         cl_nl_prop_c(
-            A1_cl, A_sq_1_cl, A_sq_2_cl, self.dz, self.alpha,
-            V_cl, self.g11, self.g12, self.Isat1, self.Isat2,
+            A1_cl,
+            A_sq_1_cl,
+            A_sq_2_cl,
+            self.dz,
+            self.alpha,
+            V_cl,
+            self.g11,
+            self.g12,
+            self.Isat1,
+            self.Isat2,
         )
         result_cl = A1_cl.get()
         assert np.allclose(A1_cpu, result_cl, rtol=1e-4), "CPU nl_prop_c != CL"
@@ -387,13 +427,27 @@ class TestNlPropWithoutVCoupled:
         A_sq_1 = ref_square_mod(A1)
         A_sq_2 = _random_real_2d()
         expected = ref_nl_prop_without_V_c(
-            A1, A_sq_1, A_sq_2, self.dz, self.alpha,
-            self.g11, self.g12, self.Isat1, self.Isat2,
+            A1,
+            A_sq_1,
+            A_sq_2,
+            self.dz,
+            self.alpha,
+            self.g11,
+            self.g12,
+            self.Isat1,
+            self.Isat2,
         )
         A1_cpu = A1.copy()
         cpu_nl_prop_without_V_c(
-            A1_cpu, A_sq_1.copy(), A_sq_2.copy(), self.dz, self.alpha,
-            self.g11, self.g12, self.Isat1, self.Isat2,
+            A1_cpu,
+            A_sq_1.copy(),
+            A_sq_2.copy(),
+            self.dz,
+            self.alpha,
+            self.g11,
+            self.g12,
+            self.Isat1,
+            self.Isat2,
         )
         assert np.allclose(A1_cpu, expected, rtol=1e-4), (
             "CPU nl_prop_without_V_c != reference"
@@ -407,15 +461,29 @@ class TestNlPropWithoutVCoupled:
         A_sq_1 = ref_square_mod(A1).astype(PRECISION_REAL)
         A_sq_2 = _random_real_2d()
         expected = ref_nl_prop_without_V_c(
-            A1, A_sq_1, A_sq_2, self.dz, self.alpha,
-            self.g11, self.g12, self.Isat1, self.Isat2,
+            A1,
+            A_sq_1,
+            A_sq_2,
+            self.dz,
+            self.alpha,
+            self.g11,
+            self.g12,
+            self.Isat1,
+            self.Isat2,
         )
         A1_cl = cla.to_device(queue, A1.copy())
         A_sq_1_cl = cla.to_device(queue, A_sq_1.copy())
         A_sq_2_cl = cla.to_device(queue, A_sq_2.copy())
         cl_nl_prop_without_V_c(
-            A1_cl, A_sq_1_cl, A_sq_2_cl, self.dz, self.alpha,
-            self.g11, self.g12, self.Isat1, self.Isat2,
+            A1_cl,
+            A_sq_1_cl,
+            A_sq_2_cl,
+            self.dz,
+            self.alpha,
+            self.g11,
+            self.g12,
+            self.Isat1,
+            self.Isat2,
         )
         result = A1_cl.get()
         assert np.allclose(result, expected, rtol=1e-4), (
@@ -440,9 +508,7 @@ class TestRabiCoupling:
         A2 = (rng.standard_normal((N, N)) + 1j * rng.standard_normal((N, N))).astype(
             PRECISION_COMPLEX
         )
-        expected_A1, expected_A2 = ref_rabi_coupling(
-            A1, A2, self.dz, self.omega
-        )
+        expected_A1, expected_A2 = ref_rabi_coupling(A1, A2, self.dz, self.omega)
         A1_cpu = A1.copy()
         A2_cpu = A2.copy()
         cpu_rabi_coupling(A1_cpu, A2_cpu, self.dz, self.omega)
@@ -577,9 +643,7 @@ class TestEdgeCases:
         expected = ref_nl_prop(A, A_sq, dz, alpha, V, g, Isat)
         A_cpu = A.copy()
         cpu_nl_prop(A_cpu, A_sq.copy(), dz, alpha, V, g, Isat)
-        assert np.allclose(A_cpu, expected, rtol=1e-4), (
-            "nl_prop with g=0 != reference"
-        )
+        assert np.allclose(A_cpu, expected, rtol=1e-4), "nl_prop with g=0 != reference"
 
     def test_nl_prop_high_saturation(self):
         """When Isat is very large, sat -> 1."""
@@ -616,9 +680,7 @@ class TestEdgeCases:
         expected = A.real * A.real + A.imag * A.imag
         A_sq = np.zeros(N, dtype=PRECISION_REAL)
         cpu_square_mod(A, A_sq)
-        assert np.allclose(A_sq, expected, rtol=1e-5), (
-            "CPU square_mod 1D != reference"
-        )
+        assert np.allclose(A_sq, expected, rtol=1e-5), "CPU square_mod 1D != reference"
 
 
 # ============================================================
@@ -657,8 +719,13 @@ class TestMetalKernels:
         expected = ref_nl_prop(A, A_sq, self.dz, self.alpha, V, self.g, self.Isat)
         A_buf = _metal_from_np(A.copy())
         _metal_ctx.nl_prop(
-            A_buf, _metal_from_np(A_sq), _metal_from_np(V),
-            self.dz, self.alpha, self.g, self.Isat,
+            A_buf,
+            _metal_from_np(A_sq),
+            _metal_from_np(V),
+            self.dz,
+            self.alpha,
+            self.g,
+            self.Isat,
         )
         assert np.allclose(A_buf.to_numpy(), expected, rtol=1e-4), (
             "Metal nl_prop != reference"
@@ -673,8 +740,12 @@ class TestMetalKernels:
         )
         A_buf = _metal_from_np(A.copy())
         _metal_ctx.nl_prop_without_V(
-            A_buf, _metal_from_np(A_sq),
-            self.dz, self.alpha, self.g, self.Isat,
+            A_buf,
+            _metal_from_np(A_sq),
+            self.dz,
+            self.alpha,
+            self.g,
+            self.Isat,
         )
         assert np.allclose(A_buf.to_numpy(), expected, rtol=1e-4), (
             "Metal nl_prop_without_V != reference"
@@ -687,14 +758,29 @@ class TestMetalKernels:
         A_sq_2 = _random_real_2d()
         V = _random_real_2d()
         expected = ref_nl_prop_c(
-            A1, A_sq_1, A_sq_2, self.dz, self.alpha, V,
-            self.g11, self.g12, self.Isat1, self.Isat2,
+            A1,
+            A_sq_1,
+            A_sq_2,
+            self.dz,
+            self.alpha,
+            V,
+            self.g11,
+            self.g12,
+            self.Isat1,
+            self.Isat2,
         )
         A1_buf = _metal_from_np(A1.copy())
         _metal_ctx.nl_prop_c(
-            A1_buf, _metal_from_np(A_sq_1), _metal_from_np(A_sq_2),
+            A1_buf,
+            _metal_from_np(A_sq_1),
+            _metal_from_np(A_sq_2),
             _metal_from_np(V),
-            self.dz, self.alpha, self.g11, self.g12, self.Isat1, self.Isat2,
+            self.dz,
+            self.alpha,
+            self.g11,
+            self.g12,
+            self.Isat1,
+            self.Isat2,
         )
         assert np.allclose(A1_buf.to_numpy(), expected, rtol=1e-4), (
             "Metal nl_prop_c != reference"
@@ -706,13 +792,27 @@ class TestMetalKernels:
         A_sq_1 = ref_square_mod(A1).astype(PRECISION_REAL)
         A_sq_2 = _random_real_2d()
         expected = ref_nl_prop_without_V_c(
-            A1, A_sq_1, A_sq_2, self.dz, self.alpha,
-            self.g11, self.g12, self.Isat1, self.Isat2,
+            A1,
+            A_sq_1,
+            A_sq_2,
+            self.dz,
+            self.alpha,
+            self.g11,
+            self.g12,
+            self.Isat1,
+            self.Isat2,
         )
         A1_buf = _metal_from_np(A1.copy())
         _metal_ctx.nl_prop_without_V_c(
-            A1_buf, _metal_from_np(A_sq_1), _metal_from_np(A_sq_2),
-            self.dz, self.alpha, self.g11, self.g12, self.Isat1, self.Isat2,
+            A1_buf,
+            _metal_from_np(A_sq_1),
+            _metal_from_np(A_sq_2),
+            self.dz,
+            self.alpha,
+            self.g11,
+            self.g12,
+            self.Isat1,
+            self.Isat2,
         )
         assert np.allclose(A1_buf.to_numpy(), expected, rtol=1e-4), (
             "Metal nl_prop_without_V_c != reference"

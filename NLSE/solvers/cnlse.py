@@ -114,6 +114,7 @@ class CNLSE(NLSE):
             E_00 = (puiss_arr / integral) ** 0.5
             if self.backend == "CL":
                 from pyopencl import array as cla
+
                 E_00 = cla.to_device(self._cl_queue, E_00.astype(E.dtype))
                 E_dev = cla.to_device(self._cl_queue, E.astype(E.dtype))
             A[0] = E_00[0] * E_dev[0]

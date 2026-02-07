@@ -20,7 +20,6 @@ class MetalFFTPlanWrapper(FFTPlan):
 
 
 class MetalBackend(Backend):
-
     @property
     def name(self) -> str:
         return "Metal"
@@ -45,9 +44,7 @@ class MetalBackend(Backend):
 
         if isinstance(arr, np.ndarray):
             # Cast to complex64 for Metal compute shaders
-            return MetalArray.from_numpy(
-                np.ascontiguousarray(arr).astype(np.complex64)
-            )
+            return MetalArray.from_numpy(np.ascontiguousarray(arr).astype(np.complex64))
         return arr
 
     def to_host(self, arr):

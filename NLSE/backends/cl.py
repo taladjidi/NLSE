@@ -23,11 +23,8 @@ class CLFFTPlan(FFTPlan):
 
 
 class CLBackend(Backend):
-
     def __init__(self):
-        self._cl_queue = cl.CommandQueue(
-            cl.create_some_context(interactive=False)
-        )
+        self._cl_queue = cl.CommandQueue(cl.create_some_context(interactive=False))
 
     @property
     def cl_queue(self):

@@ -38,12 +38,8 @@ def main():
     simu_c.n22 = 1e-10
     simu_c.I_sat2 = Isat2
     simu_c.k2 = 2 * np.pi / 795e-9
-    E_0 = np.exp(-(simu_c.XX**2 + simu_c.YY**2) / waist**2).astype(
-        PRECISION_COMPLEX
-    )
-    V = np.exp(-(simu_c.XX**2 + simu_c.YY**2) / waist2**2).astype(
-        PRECISION_COMPLEX
-    )
+    E_0 = np.exp(-(simu_c.XX**2 + simu_c.YY**2) / waist**2).astype(PRECISION_COMPLEX)
+    V = np.exp(-(simu_c.XX**2 + simu_c.YY**2) / waist2**2).astype(PRECISION_COMPLEX)
     simu_c.out_field(
         np.array([E_0, V]),
         L,

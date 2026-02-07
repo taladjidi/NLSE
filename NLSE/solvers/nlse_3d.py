@@ -109,22 +109,16 @@ class NLSE_3d(NLSE):
         prop_2d = super()._build_propagator(precision=precision)
         match precision:
             case "single" | "double":
-                prop_t = np.exp(
-                    -1j * self.D0 / 2 * self.Omega**2
-                ).astype(np.complex64)
+                prop_t = np.exp(-1j * self.D0 / 2 * self.Omega**2).astype(np.complex64)
             case "RK4":
-                prop_t = (
-                    -1j * self.D0 / 2 * self.Omega**2
-                ).astype(np.complex64)
+                prop_t = (-1j * self.D0 / 2 * self.Omega**2).astype(np.complex64)
         # prop_t *= np.exp(1 / self.vg * self.Omega)
         return (prop_2d * prop_t).astype(np.complex64)
 
     def _compute_norm_factor(self, E_in):
         """3D normalization includes delta_T and uses energy instead of power."""
         arr = E_in.real * E_in.real + E_in.imag * E_in.imag
-        arr = (arr * self.delta_X * self.delta_Y * self.delta_T).astype(
-            E_in.real.dtype
-        )
+        arr = (arr * self.delta_X * self.delta_Y * self.delta_T).astype(E_in.real.dtype)
         integral = self._backend.sum(arr, axis=self._last_axes)
         integral = integral * c * epsilon_0 / 2
         E_00 = self._backend.sqrt(self.energy / integral)

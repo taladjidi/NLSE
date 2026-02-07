@@ -2,7 +2,6 @@
 
 import numpy as np
 from functools import partial
-from scipy.constants import c, epsilon_0
 
 from NLSE import NLSE
 from NLSE.callbacks import adapt_delta_z, evaluate_delta_n, norm, sample
@@ -45,15 +44,11 @@ def test_sample_callback() -> None:
     n_samples = n_steps // save_every + 1
     E_samples = np.zeros((n_samples, N, N), dtype=PRECISION_COMPLEX)
     cb = partial(sample, save_every=save_every, E_samples=E_samples)
-    simu.out_field(
-        E, L, verbose=False, plot=False, precision="single", callback=cb
-    )
+    simu.out_field(E, L, verbose=False, plot=False, precision="single", callback=cb)
     # first sample should be set (step 0)
     assert not np.allclose(E_samples[0], 0), "First sample was not saved"
     # check at least one more sample is set
-    any_nonzero = any(
-        not np.allclose(E_samples[k], 0) for k in range(1, n_samples)
-    )
+    any_nonzero = any(not np.allclose(E_samples[k], 0) for k in range(1, n_samples))
     assert any_nonzero, "No samples beyond the first were saved"
 
 
@@ -66,9 +61,7 @@ def test_norm_callback() -> None:
     n_samples = n_steps // save_every + 1
     norms = np.zeros(n_samples, dtype=PRECISION_REAL)
     cb = partial(norm, save_every=save_every, norms=norms)
-    simu.out_field(
-        E, L, verbose=False, plot=False, precision="single", callback=cb
-    )
+    simu.out_field(E, L, verbose=False, plot=False, precision="single", callback=cb)
     # norms should be positive (field has energy)
     assert norms[0] > 0, "First norm is zero"
     # without losses (alpha=0), norms should be roughly conserved
@@ -88,9 +81,7 @@ def test_evaluate_delta_n_callback() -> None:
     n_samples = n_steps // save_every + 1
     delta_n = np.zeros((n_samples, N, N), dtype=PRECISION_REAL)
     cb = partial(evaluate_delta_n, save_every=save_every, delta_n=delta_n)
-    simu.out_field(
-        E, L, verbose=False, plot=False, precision="single", callback=cb
-    )
+    simu.out_field(E, L, verbose=False, plot=False, precision="single", callback=cb)
     # delta_n should be nonzero for a field with nonzero n2
     assert not np.allclose(delta_n[0], 0), "delta_n is zero at step 0"
 
@@ -106,9 +97,7 @@ def test_adapt_delta_z_callback() -> None:
         update_every=update_every,
         delta_z=delta_z_history,
     )
-    simu.out_field(
-        E, L, verbose=False, plot=False, precision="single", callback=cb
-    )
+    simu.out_field(E, L, verbose=False, plot=False, precision="single", callback=cb)
     # adapt_delta_z should have recorded step sizes
     assert len(delta_z_history) > 0, "No step sizes recorded"
     # step size should be positive

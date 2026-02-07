@@ -1,15 +1,12 @@
 import numpy as np
-import pyfftw
 from scipy.constants import c, epsilon_0
 
 from NLSE import NLSE
 
 if NLSE.__CUPY_AVAILABLE__:
     import cupy as cp
-    from pyvkfft.cuda import VkFFTApp as VkFFTApp_cuda
 if NLSE.__PYOPENCL_AVAILABLE__:
     import pyopencl.array as cla
-    from pyvkfft.opencl import VkFFTApp as VkFFTApp_cl
 PRECISION_COMPLEX = np.complex64
 PRECISION_REAL = np.float32
 AVAILABLE_BACKENDS = ["CPU"]

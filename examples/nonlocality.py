@@ -30,9 +30,7 @@ def main():
         backend="CUPY",
     )
     simu_2d.delta_z = 1e-4
-    E_0 = np.exp(-(simu_2d.XX**2 + simu_2d.YY**2) / waist**2).astype(
-        PRECISION_COMPLEX
-    )
+    E_0 = np.exp(-(simu_2d.XX**2 + simu_2d.YY**2) / waist**2).astype(PRECISION_COMPLEX)
     simu_2d.out_field(
         E_0,
         L,

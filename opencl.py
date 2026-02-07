@@ -23,12 +23,12 @@ for i in range(nb):
     a *= clmath.exp(1j * b)
 queue.finish()
 t = time.perf_counter() - t0
-print(f"OpenCL: {t/nb*1e3:.3f} ms")
+print(f"OpenCL: {t / nb * 1e3:.3f} ms")
 t0 = time.perf_counter()
 for i in range(nb):
     a_np *= np.exp(1j * b_np)
 t = time.perf_counter() - t0
-print(f"Numpy: {t/nb*1e3:.3f} ms")
+print(f"Numpy: {t / nb * 1e3:.3f} ms")
 t0 = cp.cuda.Event()
 t1 = cp.cuda.Event()
 t0.record()
@@ -36,7 +36,7 @@ for i in range(nb):
     a_cp *= cp.exp(1j * b_cp)
 t1.record()
 t1.synchronize()
-print(f"Cupy: {cp.cuda.get_elapsed_time(t0, t1)/nb:.3f} ms")
+print(f"Cupy: {cp.cuda.get_elapsed_time(t0, t1) / nb:.3f} ms")
 app = opencl.VkFFTApp(a.shape, a.dtype, queue=queue, ndim=a.ndim, inplace=True)
 t0 = time.perf_counter()
 for i in range(nb):
@@ -44,13 +44,13 @@ for i in range(nb):
     app.ifft(a, a)
 queue.finish()
 t = time.perf_counter() - t0
-print(f"OpenCL VkFFT: {t/nb*1e3:.3f} ms")
+print(f"OpenCL VkFFT: {t / nb * 1e3:.3f} ms")
 t0 = time.perf_counter()
 for i in range(nb):
     np.fft.fft2(a_np)
     np.fft.ifft2(a_np)
 t = time.perf_counter() - t0
-print(f"Numpy FFT: {t/nb*1e3:.3f} ms")
+print(f"Numpy FFT: {t / nb * 1e3:.3f} ms")
 plan = fftpack.get_fft_plan(a_cp)
 t0 = cp.cuda.Event()
 t1 = cp.cuda.Event()
@@ -60,7 +60,7 @@ for i in range(nb):
     plan.fft(a_cp, a_cp, direction=cp.cuda.cufft.CUFFT_INVERSE)
 t1.record()
 t1.synchronize()
-print(f"Cupy FFT: {cp.cuda.get_elapsed_time(t0, t1)/nb:.3f} ms")
+print(f"Cupy FFT: {cp.cuda.get_elapsed_time(t0, t1) / nb:.3f} ms")
 app = cuda.VkFFTApp(
     a_cp.shape,
     a_cp.dtype,
@@ -76,4 +76,4 @@ for i in range(nb):
     app.ifft(a_cp, a_cp)
 t1.record()
 t1.synchronize()
-print(f"CUDA VkFFT: {cp.cuda.get_elapsed_time(t0, t1)/nb:.3f} ms")
+print(f"CUDA VkFFT: {cp.cuda.get_elapsed_time(t0, t1) / nb:.3f} ms")

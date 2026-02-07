@@ -25,7 +25,6 @@ class CPUFFTPlan(FFTPlan):
 
 
 class CPUBackend(Backend):
-
     @property
     def name(self) -> str:
         return "CPU"
@@ -37,9 +36,7 @@ class CPUBackend(Backend):
         return k
 
     def allocate_pair(self, shape, complex_dtype):
-        A = pyfftw.zeros_aligned(
-            shape, dtype=complex_dtype, n=pyfftw.simd_alignment
-        )
+        A = pyfftw.zeros_aligned(shape, dtype=complex_dtype, n=pyfftw.simd_alignment)
         real_dtype = np.zeros(1, dtype=complex_dtype).real.dtype
         A_sq = np.zeros(shape, dtype=real_dtype)
         return A, A_sq

@@ -125,12 +125,8 @@ class CNLSE_1d(CNLSE):
                     -1j * 0.5 * (self.Kx**2) / self.k2 * self.delta_z
                 ).astype(np.complex64)
             case "RK4":
-                propagator1 = (
-                    -1j * 0.5 * (self.Kx**2) / self.k
-                ).astype(np.complex64)
-                propagator2 = (
-                    -1j * 0.5 * (self.Kx**2) / self.k2
-                ).astype(np.complex64)
+                propagator1 = (-1j * 0.5 * (self.Kx**2) / self.k).astype(np.complex64)
+                propagator2 = (-1j * 0.5 * (self.Kx**2) / self.k2).astype(np.complex64)
         return np.array([propagator1, propagator2])
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:

@@ -6,7 +6,7 @@ from scipy.constants import c, epsilon_0
 from NLSE import CNLSE, CNLSE_1d
 
 if CNLSE.__CUPY_AVAILABLE__:
-    import cupy as cp
+    pass
 
 PRECISION_COMPLEX = np.complex64
 PRECISION_REAL = np.float32
@@ -29,8 +29,18 @@ def test_rabi_total_norm_conservation() -> None:
     omega = 1e3  # Rabi coupling strength
     for backend in AVAILABLE_BACKENDS:
         simu = CNLSE(
-            0, power, window, n2, n12, None, L,
-            NX=N, NY=N, Isat=Isat, omega=omega, backend=backend,
+            0,
+            power,
+            window,
+            n2,
+            n12,
+            None,
+            L,
+            NX=N,
+            NY=N,
+            Isat=Isat,
+            omega=omega,
+            backend=backend,
         )
         # both components start with equal power
         E = np.ones((2, N, N), dtype=PRECISION_COMPLEX)
@@ -54,8 +64,18 @@ def test_rabi_population_transfer() -> None:
     omega = 1e3
     for backend in AVAILABLE_BACKENDS:
         simu = CNLSE(
-            0, power, window, n2, n12, None, L,
-            NX=N, NY=N, Isat=Isat, omega=omega, backend=backend,
+            0,
+            power,
+            window,
+            n2,
+            n12,
+            None,
+            L,
+            NX=N,
+            NY=N,
+            Isat=Isat,
+            omega=omega,
+            backend=backend,
         )
         # unequal initial amplitudes (both nonzero for normalization)
         E = np.ones((2, N, N), dtype=PRECISION_COMPLEX)
@@ -65,12 +85,8 @@ def test_rabi_population_transfer() -> None:
         norm_1 = np.sum(np.abs(A[0]) ** 2 * simu.delta_X * simu.delta_Y)
         norm_2 = np.sum(np.abs(A[1]) ** 2 * simu.delta_X * simu.delta_Y)
         # Both components should have significant population
-        assert norm_1 > 0, (
-            f"Component 1 has zero norm. (Backend {backend})"
-        )
-        assert norm_2 > 0, (
-            f"Component 2 has zero norm. (Backend {backend})"
-        )
+        assert norm_1 > 0, f"Component 1 has zero norm. (Backend {backend})"
+        assert norm_2 > 0, f"Component 2 has zero norm. (Backend {backend})"
 
 
 def test_rabi_1d_total_norm_conservation() -> None:
@@ -78,8 +94,17 @@ def test_rabi_1d_total_norm_conservation() -> None:
     omega = 1e3
     for backend in AVAILABLE_BACKENDS:
         simu = CNLSE_1d(
-            0, power, window, n2, n12, None, L,
-            NX=N, Isat=Isat, omega=omega, backend=backend,
+            0,
+            power,
+            window,
+            n2,
+            n12,
+            None,
+            L,
+            NX=N,
+            Isat=Isat,
+            omega=omega,
+            backend=backend,
         )
         # both components nonzero to avoid normalization division by zero
         E = np.ones((2, N), dtype=PRECISION_COMPLEX)
@@ -99,12 +124,32 @@ def test_rabi_no_coupling_unchanged() -> None:
     """Test that omega=None means no coupling (original behavior)."""
     for backend in AVAILABLE_BACKENDS:
         simu_no_rabi = CNLSE(
-            0, power, window, n2, n12, None, L,
-            NX=N, NY=N, Isat=Isat, omega=None, backend=backend,
+            0,
+            power,
+            window,
+            n2,
+            n12,
+            None,
+            L,
+            NX=N,
+            NY=N,
+            Isat=Isat,
+            omega=None,
+            backend=backend,
         )
         simu_rabi = CNLSE(
-            0, power, window, n2, n12, None, L,
-            NX=N, NY=N, Isat=Isat, omega=1e3, backend=backend,
+            0,
+            power,
+            window,
+            n2,
+            n12,
+            None,
+            L,
+            NX=N,
+            NY=N,
+            Isat=Isat,
+            omega=1e3,
+            backend=backend,
         )
         E = np.ones((2, N, N), dtype=PRECISION_COMPLEX)
         A_no = simu_no_rabi.out_field(

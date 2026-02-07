@@ -84,9 +84,7 @@ class NLSE_1d(NLSE):
                     -1j * 0.5 * (self.Kx**2) / self.k * self.delta_z
                 ).astype(np.complex64)
             case "RK4":
-                propagator = (
-                    -1j * 0.5 * (self.Kx**2) / self.k
-                ).astype(np.complex64)
+                propagator = (-1j * 0.5 * (self.Kx**2) / self.k).astype(np.complex64)
         return propagator
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:

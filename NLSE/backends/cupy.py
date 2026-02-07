@@ -22,7 +22,6 @@ class CupyFFTPlan(FFTPlan):
 
 
 class CupyBackend(Backend):
-
     @property
     def name(self) -> str:
         return "CUPY"

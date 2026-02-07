@@ -14,14 +14,19 @@ import tqdm
 from scipy import special
 from scipy.constants import c, epsilon_0
 
-from ..backends import Backend, get_backend
-from ..utils import __BACKEND__, __CUPY_AVAILABLE__, __PYOPENCL_AVAILABLE__, __METAL_AVAILABLE__
+from ..backends import get_backend
+from ..utils import (
+    __BACKEND__,
+    __CUPY_AVAILABLE__,
+    __PYOPENCL_AVAILABLE__,
+    __METAL_AVAILABLE__,
+)
 
 if __CUPY_AVAILABLE__:
     import cupy as cp
 
 if __PYOPENCL_AVAILABLE__:
-    from pyopencl import array as cla
+    pass
 
 pyfftw.config.NUM_THREADS = multiprocessing.cpu_count()
 pyfftw.config.PLANNER_EFFORT = "FFTW_MEASURE"
@@ -159,7 +164,7 @@ class NLSE:
     # Backward compat: expose _cl_queue for CL backend
     @property
     def _cl_queue(self):
-        if hasattr(self._backend, 'cl_queue'):
+        if hasattr(self._backend, "cl_queue"):
             return self._backend.cl_queue
         raise AttributeError("_cl_queue is only available on CL backend")
 
@@ -177,9 +182,9 @@ class NLSE:
                     -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k * self.delta_z
                 ).astype(np.complex64)
             case "RK4":
-                propagator = (
-                    -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k
-                ).astype(np.complex64)
+                propagator = (-1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k).astype(
+                    np.complex64
+                )
         return propagator
 
     def _build_fft_plan(self, A):
