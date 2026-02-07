@@ -5,7 +5,6 @@ Provides a unified interface across CPU, GPU (CuPy), OpenCL, and Metal backends.
 
 from abc import ABC, abstractmethod
 
-import numpy as np
 from scipy import signal
 
 

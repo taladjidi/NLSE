@@ -1,33 +1,25 @@
+import importlib.util
+
 __BACKEND__ = "CUPY"
 
 
-try:
-    import cupy
-
+if importlib.util.find_spec("cupy") is not None:
     __CUPY_AVAILABLE__ = True
-
-except ImportError:
+else:
     print("CuPy not available, falling back to CPU BACKEND ...")
     __CUPY_AVAILABLE__ = False
     __BACKEND__ = "CPU"
 
 
-try:
-    # for OpenCL backend you need to install OpenCL first
-    # sudo apt install intel-opencl-icd opencl-headers ocl-icd-opencl-dev
-    # or for AMD
-    # sudo apt install opencl-headers ocl-icd-opencl-dev
-    import pyopencl
-
+if importlib.util.find_spec("pyopencl") is not None:
     __PYOPENCL_AVAILABLE__ = True
-
-except ImportError:
+else:
     print("PyOpenCL not available, falling back to CPU BACKEND ...")
     __PYOPENCL_AVAILABLE__ = False
     __BACKEND__ = "CPU"
 
 try:
-    from .kernels.metal_native.metal_api import MetalContext
+    from .kernels.metal_native.metal_api import MetalContext as MetalContext  # noqa: F401
 
     __METAL_AVAILABLE__ = True
 except (ImportError, FileNotFoundError, OSError):

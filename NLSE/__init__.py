@@ -12,9 +12,18 @@ __credits__ = "Laboratoire Kastler Brossel, Paris, France"
 __email__ = "tangui.aladjidi@lkb.upmc.fr"
 
 
-from . import utils
-from .callbacks import *
-from .solvers import CNLSE, CNLSE_1d, DDGPE, GPE, NLSE, NLSE_1d, NLSE_3d
+from . import utils as utils
+from .callbacks import adapt_delta_z as adapt_delta_z
+from .callbacks import evaluate_delta_n as evaluate_delta_n
+from .callbacks import norm as norm
+from .callbacks import sample as sample
+from .solvers import CNLSE as CNLSE
+from .solvers import CNLSE_1d as CNLSE_1d
+from .solvers import DDGPE as DDGPE
+from .solvers import GPE as GPE
+from .solvers import NLSE as NLSE
+from .solvers import NLSE_1d as NLSE_1d
+from .solvers import NLSE_3d as NLSE_3d
 
 # Backward-compatible submodule aliases so that
 # `from NLSE.kernels_cpu import ...` and `from NLSE.kernels_cl import ...` still work.
