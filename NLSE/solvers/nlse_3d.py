@@ -60,7 +60,7 @@ class NLSE_3d(NLSE):
                 to model a diffusive non-locality stored in the nl_profile
                 attribute.
             wvl (float): Wavelength in m
-            backend (str, optional): "GPU" or "CPU".
+            backend (str, optional): "CUPY" or "CPU".
                 Defaults to __BACKEND__.
         """
         if len(window) == 2:

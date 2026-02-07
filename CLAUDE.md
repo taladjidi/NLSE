@@ -8,7 +8,7 @@ Published in JOSS (DOI: 10.21105/joss.06607). GPLv3 licensed. Version 2.3.0.
 - **Language:** Python 3.8+
 - **Package:** `NLSE/` (source), `tests/` (pytest), `examples/`
 - **Build:** `setup.py` (setuptools), no pyproject.toml yet
-- **Backends:** CPU (pyfftw + numba), GPU (cupy + pyvkfft), OpenCL (pyopencl + pyvkfft), Metal (Apple Silicon)
+- **Backends:** CPU (pyfftw + numba), CUPY (cupy + pyvkfft), OpenCL (pyopencl + pyvkfft), Metal (Apple Silicon)
 
 ### Class Hierarchy
 ```
@@ -24,10 +24,10 @@ NLSE (2D spatial, base class)
 ### Key Files
 - `NLSE/solvers/nlse.py` - Base class with `out_field()`, `split_step()`, `split_step_RK4()`
 - `NLSE/kernels/cpu.py` - Numba JIT kernels (`nl_prop`, `rabi_coupling`, etc.)
-- `NLSE/kernels/gpu.py` - CuPy fused kernels (same API)
+- `NLSE/kernels/cupy.py` - CuPy fused kernels (same API)
 - `NLSE/kernels/cl.py` - PyOpenCL kernels (same API, incomplete)
 - `NLSE/kernels/metal.py` - Metal compute kernels for Apple Silicon
-- `NLSE/backends/` - Backend ABC and implementations (CPU, GPU, CL, Metal)
+- `NLSE/backends/` - Backend ABC and implementations (CPU, CUPY, CL, Metal)
 - `NLSE/callbacks.py` - `sample()`, `norm()`, `adapt_delta_z()`, `evaluate_delta_n()`
 - `NLSE/utils.py` - Backend detection, constants
 

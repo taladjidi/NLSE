@@ -44,7 +44,7 @@ class CNLSE_1d(CNLSE):
                 attribute.
             wvl (float, optional): Wavelength in m. Defaults to 780 nm.
             omega (float, optional): Rabi coupling. Defaults to None.
-            backend (str, optional): "GPU" or "CPU". Defaults to __BACKEND__.
+            backend (str, optional): "CUPY" or "CPU". Defaults to __BACKEND__.
 
         Returns:
             object: CNLSE class instance

@@ -47,7 +47,7 @@ class GPE(NLSE):
                 The non-local kernel is the instantiated as a Bessel function
                 to model a diffusive non-locality stored in the nl_profile
                 attribute.
-            backend (str, optional): "GPU" or "CPU". Defaults to __BACKEND__.
+            backend (str, optional): "CUPY" or "CPU". Defaults to __BACKEND__.
         """
         super().__init__(
             alpha=gamma,

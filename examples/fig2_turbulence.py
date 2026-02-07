@@ -11,7 +11,7 @@ L = 20e-2
 alpha = 20
 waist = 2e-3
 waist_d = 1e-3
-backend = "GPU"
+backend = "CUPY"
 simu = NLSE(
     alpha, power, window, n2, None, L, NX=N, NY=N, Isat=Isat, backend=backend
 )

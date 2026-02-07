@@ -38,7 +38,7 @@ def main():
         NY=N,
         NZ=NZ,
         Isat=Isat,
-        backend="GPU",
+        backend="CUPY",
     )
     simu.delta_z = 0.25e-4
     E_0 = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(

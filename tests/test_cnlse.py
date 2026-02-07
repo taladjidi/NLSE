@@ -10,7 +10,7 @@ PRECISION_COMPLEX = np.complex64
 PRECISION_REAL = np.float32
 AVAILABLE_BACKENDS = ["CPU"]
 if CNLSE.__CUPY_AVAILABLE__:
-    AVAILABLE_BACKENDS.append("GPU")
+    AVAILABLE_BACKENDS.append("CUPY")
 # TODO: Write OpenCL tests
 # if CNLSE.__PYOPENCL_AVAILABLE__:
 #     AVAILABLE_BACKENDS.append("CL")
@@ -45,7 +45,7 @@ def test_prepare_output_array() -> None:
         )
         if backend == "CPU":
             A = np.ones((2, N, N), dtype=PRECISION_COMPLEX)
-        elif backend == "GPU" and CNLSE.__CUPY_AVAILABLE__:
+        elif backend == "CUPY" and CNLSE.__CUPY_AVAILABLE__:
             A = cp.ones((2, N, N), dtype=PRECISION_COMPLEX)
         out, out_sq = simu._prepare_output_array(A, normalize=True)
         assert out.flags.c_contiguous, (
@@ -77,7 +77,7 @@ def test_prepare_output_array() -> None:
             assert np.allclose(out, A), (
                 f"Output array does not match input array. (Backend {backend})"
             )
-        elif backend == "GPU" and CNLSE.__CUPY_AVAILABLE__:
+        elif backend == "CUPY" and CNLSE.__CUPY_AVAILABLE__:
             assert isinstance(out, cp.ndarray), (
                 f"Ouptut array type does not match backend. (Backend {backend})"
             )
@@ -114,23 +114,23 @@ def test_send_arrays_to_gpu() -> None:
             NX=N,
             NY=N,
             Isat=Isat,
-            backend="GPU",
+            backend="CUPY",
         )
         simu.propagator = simu._build_propagator()
         simu._send_arrays_to_gpu()
         assert isinstance(simu.propagator, cp.ndarray), (
-            "propagator is not a cp.ndarray. (Backend GPU)"
+            "propagator is not a cp.ndarray. (Backend CUPY)"
         )
-        assert isinstance(simu.V, cp.ndarray), "V is not a cp.ndarray. (Backend GPU)"
+        assert isinstance(simu.V, cp.ndarray), "V is not a cp.ndarray. (Backend CUPY)"
         assert isinstance(simu.alpha, cp.ndarray), (
-            "alpha is not a cp.ndarray. (Backend GPU)"
+            "alpha is not a cp.ndarray. (Backend CUPY)"
         )
-        assert isinstance(simu.n2, cp.ndarray), "n2 is not a cp.ndarray. (Backend GPU)"
+        assert isinstance(simu.n2, cp.ndarray), "n2 is not a cp.ndarray. (Backend CUPY)"
         assert isinstance(simu.n12, cp.ndarray), (
-            "n12 is not a cp.ndarray. (Backend GPU)"
+            "n12 is not a cp.ndarray. (Backend CUPY)"
         )
         assert isinstance(simu.I_sat, cp.ndarray), (
-            "I_sat is not a cp.ndarray. (Backend GPU)"
+            "I_sat is not a cp.ndarray. (Backend CUPY)"
         )
     else:
         pass
@@ -162,24 +162,24 @@ def test_retrieve_arrays_from_gpu() -> None:
             NX=N,
             NY=N,
             Isat=Isat,
-            backend="GPU",
+            backend="CUPY",
         )
         simu.propagator = simu._build_propagator()
         simu._send_arrays_to_gpu()
         simu._retrieve_arrays_from_gpu()
         assert isinstance(simu.propagator, np.ndarray), (
-            "propagator is not a np.ndarray. (Backend GPU)"
+            "propagator is not a np.ndarray. (Backend CUPY)"
         )
-        assert isinstance(simu.V, np.ndarray), "V is not a np.ndarray. (Backend GPU)"
+        assert isinstance(simu.V, np.ndarray), "V is not a np.ndarray. (Backend CUPY)"
         assert isinstance(simu.alpha, np.ndarray), (
-            "alpha is not a np.ndarray. (Backend GPU)"
+            "alpha is not a np.ndarray. (Backend CUPY)"
         )
-        assert isinstance(simu.n2, np.ndarray), "n2 is not a np.ndarray. (Backend GPU)"
+        assert isinstance(simu.n2, np.ndarray), "n2 is not a np.ndarray. (Backend CUPY)"
         assert isinstance(simu.n12, np.ndarray), (
-            "n12 is not a np.ndarray. (Backend GPU)"
+            "n12 is not a np.ndarray. (Backend CUPY)"
         )
         assert isinstance(simu.I_sat, np.ndarray), (
-            "I_sat is not a np.ndarray. (Backend GPU)"
+            "I_sat is not a np.ndarray. (Backend CUPY)"
         )
     else:
         pass
@@ -238,7 +238,7 @@ def test_split_step() -> None:
         E = np.ones((2, N, N), dtype=PRECISION_COMPLEX)
         A, A_sq = simu._prepare_output_array(E, normalize=False)
         simu.plans = simu._build_fft_plan(A)
-        if backend == "GPU" and CNLSE.__CUPY_AVAILABLE__:
+        if backend == "CUPY" and CNLSE.__CUPY_AVAILABLE__:
             E = cp.asarray(E)
             simu._send_arrays_to_gpu()
         simu.split_step(
@@ -253,7 +253,7 @@ def test_split_step() -> None:
             assert np.allclose(E, np.ones((2, N, N), dtype=PRECISION_COMPLEX)), (
                 f"Split-step is not unitary. (Backend {backend})"
             )
-        elif backend == "GPU" and CNLSE.__CUPY_AVAILABLE__:
+        elif backend == "CUPY" and CNLSE.__CUPY_AVAILABLE__:
             assert cp.allclose(E, cp.ones((2, N, N), dtype=PRECISION_COMPLEX)), (
                 f"Split-step is not unitary. (Backend {backend})"
             )

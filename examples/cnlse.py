@@ -31,7 +31,7 @@ def main():
         NY=N,
         Isat=Isat,
         omega=None,
-        backend="GPU",
+        backend="CUPY",
     )
     simu_c.delta_z = 0.5e-4
     simu_c.puiss2 = 10e-3

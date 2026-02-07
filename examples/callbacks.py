@@ -30,7 +30,7 @@ def main():
         NX=N,
         NY=N,
         Isat=Isat,
-        backend="GPU",
+        backend="CUPY",
     )
     simu.delta_z = 0.5e-4
     N_steps = int(simu.L / simu.delta_z) + 1

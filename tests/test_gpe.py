@@ -9,7 +9,7 @@ PRECISION_COMPLEX = np.complex64
 PRECISION_REAL = np.float32
 AVAILABLE_BACKENDS = ["CPU"]
 if GPE.__CUPY_AVAILABLE__:
-    AVAILABLE_BACKENDS.append("GPU")
+    AVAILABLE_BACKENDS.append("CUPY")
 # TODO: Write OpenCL tests
 # if CNLSE.__PYOPENCL_AVAILABLE__:
 #     AVAILABLE_BACKENDS.append("CL")
@@ -64,7 +64,7 @@ def test_prepare_output_array() -> None:
         )
         if backend == "CPU":
             E_in = np.random.random((N, N)) + 1j * np.random.random((N, N))
-        elif backend == "GPU" and GPE.__CUPY_AVAILABLE__:
+        elif backend == "CUPY" and GPE.__CUPY_AVAILABLE__:
             E_in = cp.random.random((N, N)) + 1j * cp.random.random((N, N))
         A, A_sq = simu._prepare_output_array(E_in, normalize=True)
         assert A.flags.c_contiguous, (
@@ -93,7 +93,7 @@ def test_prepare_output_array() -> None:
             assert np.allclose(E_in, A), (
                 f"Output array does not match input array. (Backend {backend})"
             )
-        elif backend == "GPU" and GPE.__CUPY_AVAILABLE__:
+        elif backend == "CUPY" and GPE.__CUPY_AVAILABLE__:
             assert isinstance(A, cp.ndarray), (
                 f"Output array type does not match backend. (Backend {backend})"
             )

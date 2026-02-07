@@ -1,4 +1,4 @@
-"""GPU backend using CuPy + pyvkfft."""
+"""CuPy backend using CuPy + pyvkfft."""
 
 import cupy as cp
 import cupyx.scipy.signal as signal_cp
@@ -8,7 +8,7 @@ from pyvkfft.cuda import VkFFTApp as VkFFTApp_cuda
 from . import Backend, FFTPlan
 
 
-class GPUFFTPlan(FFTPlan):
+class CupyFFTPlan(FFTPlan):
     """FFT plan wrapping VkFFT CUDA plan."""
 
     def __init__(self, vkfft_app):
@@ -21,15 +21,15 @@ class GPUFFTPlan(FFTPlan):
         self._plan.ifft(A, A)
 
 
-class GPUBackend(Backend):
+class CupyBackend(Backend):
 
     @property
     def name(self) -> str:
-        return "GPU"
+        return "CUPY"
 
     @property
     def kernels(self):
-        from ..kernels import gpu as k
+        from ..kernels import cupy as k
 
         return k
 
@@ -63,7 +63,7 @@ class GPUBackend(Backend):
             norm=1,
             tune=True,
         )
-        return GPUFFTPlan(plan)
+        return CupyFFTPlan(plan)
 
     def fft(self, plan, A):
         plan.fft(A)

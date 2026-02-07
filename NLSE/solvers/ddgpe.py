@@ -53,7 +53,7 @@ class DDGPE(CNLSE):
                 attribute.
             wvl (float, optional): Wavelength in m. Defaults to 780 nm.
             omega (float, optional): Rabi coupling. Defaults to None.
-            backend (str, optional): "GPU" or "CPU". Defaults to __BACKEND__.
+            backend (str, optional): "CUPY" or "CPU". Defaults to __BACKEND__.
         Returns:
             object: CNLSE class instance
         """
@@ -87,7 +87,7 @@ class DDGPE(CNLSE):
             (omega_exc - omega_cav) ** 2 + (omega) ** 2
         )
         self.omega_pump = omega_lp + detuning
-        if self.backend == "GPU" and self.__CUPY_AVAILABLE__:
+        if self.backend == "CUPY" and self.__CUPY_AVAILABLE__:
             self._random = cp.random.normal
         else:
             self._random = np.random.normal

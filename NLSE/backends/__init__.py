@@ -29,7 +29,7 @@ class Backend(ABC):
     @property
     @abstractmethod
     def name(self) -> str:
-        """Return the backend name ('CPU', 'GPU', 'CL', 'Metal')."""
+        """Return the backend name ('CPU', 'CUPY', 'CL', 'Metal')."""
 
     @property
     @abstractmethod
@@ -81,16 +81,16 @@ class Backend(ABC):
 
 
 def get_backend(name: str) -> Backend:
-    """Factory: 'CPU' | 'GPU' | 'CL' | 'Metal' -> Backend instance."""
+    """Factory: 'CPU' | 'CUPY' | 'CL' | 'Metal' -> Backend instance."""
     match name:
         case "CPU":
             from .cpu import CPUBackend
 
             return CPUBackend()
-        case "GPU":
-            from .gpu import GPUBackend
+        case "CUPY":
+            from .cupy import CupyBackend
 
-            return GPUBackend()
+            return CupyBackend()
         case "CL":
             from .cl import CLBackend
 

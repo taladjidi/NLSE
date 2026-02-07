@@ -35,7 +35,7 @@ sizes = np.logspace(6, 14, 9, base=2, dtype=int)
 # Dynamically detect available backends
 backends = ["CPU"]
 if __CUPY_AVAILABLE__:
-    backends.append("GPU")
+    backends.append("CUPY")
 if __PYOPENCL_AVAILABLE__:
     backends.append("CL")
 if __METAL_AVAILABLE__:

@@ -12,7 +12,7 @@ puiss = 1.05 # input optical power in W
 Isat = 10e4  # saturation intensity in W/m^2
 L = 10e-3 # Length of the medium in m
 alpha = 20 # linear losses coefficient in m^-1
-backend = "GPU" # "CPU", "GPU", "CL", or "Metal"
+backend = "CUPY" # "CPU", "CUPY", "CL", or "Metal"
 ```
 
 You can then instantiate the actual simulation object `simu` by giving the physical parameters as input of the initialization function:

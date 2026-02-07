@@ -12,7 +12,7 @@ PRECISION_COMPLEX = np.complex64
 PRECISION_REAL = np.float32
 AVAILABLE_BACKENDS = ["CPU"]
 if NLSE.__CUPY_AVAILABLE__:
-    AVAILABLE_BACKENDS.append("GPU")
+    AVAILABLE_BACKENDS.append("CUPY")
 
 N_1d = 512
 N_2d = 256
@@ -102,13 +102,13 @@ def test_rk4_split_step_single() -> None:
         A, A_sq = simu._prepare_output_array(E, normalize=True)
         simu.plans = simu._build_fft_plan(A)
         if (
-            backend == "GPU" and NLSE.__CUPY_AVAILABLE__
+            backend == "CUPY" and NLSE.__CUPY_AVAILABLE__
             or backend == "CL" and NLSE.__PYOPENCL_AVAILABLE__
         ):
             simu._send_arrays_to_gpu()
         simu.split_step_RK4(A, simu.V, simu.propagator, simu.plans)
         # output should contain finite values
-        if backend == "GPU" and NLSE.__CUPY_AVAILABLE__:
+        if backend == "CUPY" and NLSE.__CUPY_AVAILABLE__:
             A_np = A.get()
         else:
             A_np = np.asarray(A)

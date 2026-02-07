@@ -1,4 +1,4 @@
-__BACKEND__ = "GPU"
+__BACKEND__ = "CUPY"
 
 
 try:

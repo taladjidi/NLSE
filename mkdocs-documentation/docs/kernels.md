@@ -34,7 +34,7 @@ def kernel(A: cp.ndarray, *args):
     A *= args[1]
 ```
 
-::: NLSE.kernels.gpu
+::: NLSE.kernels.cupy
 
 ## OpenCL (GPU or CPU)
 

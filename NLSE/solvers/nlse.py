@@ -74,7 +74,7 @@ class NLSE:
                 to model a diffusive non-locality stored in the nl_profile
                 attribute.
             wvl (float): Wavelength in m
-            backend (str, optional): Will run using the "GPU" or "CPU".
+            backend (str, optional): Will run using the "CUPY" or "CPU".
                 Defaults to __BACKEND__.
         """
         # list of physical parameters
@@ -501,7 +501,7 @@ class NLSE:
                 unit_scale=True,
             )
         n2_old = self.n2
-        if self.backend == "GPU" and self.__CUPY_AVAILABLE__:
+        if self.backend == "CUPY" and self.__CUPY_AVAILABLE__:
             start_gpu = cp.cuda.Event()
             end_gpu = cp.cuda.Event()
             start_gpu.record()
@@ -537,12 +537,12 @@ class NLSE:
         if verbose:
             pbar.close()
 
-        if self.backend == "GPU" and self.__CUPY_AVAILABLE__:
+        if self.backend == "CUPY" and self.__CUPY_AVAILABLE__:
             end_gpu.record()
             end_gpu.synchronize()
             t_gpu = cp.cuda.get_elapsed_time(start_gpu, end_gpu)
         if verbose:
-            if self.backend == "GPU" and self.__CUPY_AVAILABLE__:
+            if self.backend == "CUPY" and self.__CUPY_AVAILABLE__:
                 print(
                     f"\nTime spent to solve : {t_gpu * 1e-3} s (GPU) /"
                     f" {time.perf_counter() - t0} s (CPU)\n"
