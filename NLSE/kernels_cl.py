@@ -1,3 +1,4 @@
+import numpy as np
 from pyopencl import array as cla
 from pyopencl import clmath
 
@@ -136,21 +137,22 @@ def nl_prop_without_V_c(
     A1 *= arg
 
 
-def rabi_coupling(A, dz: float, omega: float) -> None:
+def rabi_coupling(A1: cla.Array, A2: cla.Array, dz: float, omega: float) -> None:
     """Apply a Rabi coupling term.
     This function implements the Rabi hopping term.
     It exchanges density between the two components.
 
     Args:
-        A (cla.Array): First field / component
+        A1 (cla.Array): First field / component
+        A2 (cla.Array): Second field / component
         dz (float): Solver step
         omega (float): Rabi coupling strength
     """
-    A1 = A[..., 0, :, :]
-    A2 = A[..., 1, :, :]
     A1_old = A1.copy()
-    A1[:] = clmath.cos(omega * dz) * A1 - 1j * clmath.sin(omega * dz) * A2
-    A2[:] = clmath.cos(omega * dz) * A2 - 1j * clmath.sin(omega * dz) * A1_old
+    cos_val = np.float32(np.cos(omega * dz))
+    sin_val = np.float32(np.sin(omega * dz))
+    A1[:] = cos_val * A1 - 1j * sin_val * A2
+    A2[:] = cos_val * A2 - 1j * sin_val * A1_old
 
 
 def vortex_cp(
@@ -169,7 +171,8 @@ def vortex_cp(
     Returns:
         None
     """
-    im += clmath.atan(((ii - i) + 1j * (jj - j)) ** ll)
+    z = ((ii - i) + 1j * (jj - j)) ** ll
+    im += clmath.atan2(z.imag, z.real)
 
 
 def square_mod(A: cla.Array, A_sq: cla.Array) -> None:

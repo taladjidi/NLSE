@@ -84,13 +84,13 @@ class CNLSE_1d(CNLSE):
             A_sq (np.ndarray): Output field modulus squared array
         """
         if self.backend == "GPU" and self.__CUPY_AVAILABLE__:
-            A = cp.empty_like(E)
-            A_sq = cp.empty_like(E, dtype=E.real.dtype)
+            A = cp.zeros_like(E)
+            A_sq = cp.zeros_like(E, dtype=E.real.dtype)
             E = cp.asarray(E)
             puiss_arr = cp.array([self.power, self.power2], dtype=E.dtype)
         else:
-            A = pyfftw.empty_aligned(E.shape, dtype=E.dtype)
-            A_sq = np.empty_like(E, dtype=E.real.dtype)
+            A = pyfftw.zeros_aligned(E.shape, dtype=E.dtype, n=pyfftw.simd_alignment)
+            A_sq = np.zeros_like(E, dtype=E.real.dtype)
             puiss_arr = np.array([self.power, self.power2], dtype=E.dtype)
         if normalize:
             # normalization of the field
@@ -116,18 +116,29 @@ class CNLSE_1d(CNLSE):
         A2 = A[..., 1, :]
         return A1, A2
 
-    def _build_propagator(self) -> np.ndarray:
+    def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Builds the linear propagation matrix
 
         Args:
-            precision (str, optional): "single" or "double" application of the
-            propagator.
-            Defaults to "single".
+            precision (str): "single", "double" or "RK4". Defaults to "single".
         Returns:
             propagator (np.ndarray): the propagator matrix
         """
-        propagator1 = np.exp(-1j * 0.5 * (self.Kx**2) / self.k * self.delta_z)
-        propagator2 = np.exp(-1j * 0.5 * (self.Kx**2) / self.k2 * self.delta_z)
+        match precision:
+            case "single" | "double":
+                propagator1 = np.exp(
+                    -1j * 0.5 * (self.Kx**2) / self.k * self.delta_z
+                ).astype(np.complex64)
+                propagator2 = np.exp(
+                    -1j * 0.5 * (self.Kx**2) / self.k2 * self.delta_z
+                ).astype(np.complex64)
+            case "RK4":
+                propagator1 = (
+                    -1j * 0.5 * (self.Kx**2) / self.k
+                ).astype(np.complex64)
+                propagator2 = (
+                    -1j * 0.5 * (self.Kx**2) / self.k2
+                ).astype(np.complex64)
         return np.array([propagator1, propagator2])
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:

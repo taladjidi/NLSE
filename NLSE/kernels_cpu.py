@@ -30,7 +30,7 @@ def nl_prop(
         # saturation
         sat = 1 / (1 + A_sq[i] / Isat)
         # Losses and interactions
-        arg = -alpha + 1j * g * A_sq[i] * sat + 1j * V[i]
+        arg = -alpha * sat + 1j * g * A_sq[i] * sat + 1j * V[i]
         A[i] *= np.exp(dz * arg)
 
 
@@ -59,7 +59,7 @@ def nl_prop_without_V(
         # saturation
         sat = 1 / (1 + A_sq[i] / Isat)
         # Losses and interactions
-        arg = -alpha + 1j * g * A_sq[i] * sat
+        arg = -alpha * sat + 1j * g * A_sq[i] * sat
         A[i] *= np.exp(dz * arg)
 
 
@@ -92,6 +92,7 @@ def nl_prop_c(
     A1 = A1.ravel()
     A_sq_1 = A_sq_1.ravel()
     A_sq_2 = A_sq_2.ravel()
+    V = V.ravel()
     for i in numba.prange(A1.size):
         # Saturation parameter
         sat = 1 / (1 + A_sq_1[i] * 1 / Isat1 + A_sq_2[i] * 1 / Isat2)
@@ -178,9 +179,9 @@ def vortex(
     Returns:
         None
     """
-    for i in numba.prange(im.shape[0]):
-        for j in numba.prange(im.shape[1]):
-            im[i, j] += np.angle(((ii[i, j] - i) + 1j * (jj[i, j] - j)) ** ll)
+    for m in numba.prange(im.shape[0]):
+        for n in numba.prange(im.shape[1]):
+            im[m, n] += np.angle(((ii[m, n] - i) + 1j * (jj[m, n] - j)) ** ll)
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)

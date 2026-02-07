@@ -201,7 +201,7 @@ class DDGPE(CNLSE):
         if isinstance(self.omega_pump, cp.ndarray):
             self.omega_pump = self.omega_pump.get()
 
-    def _build_propagator(self) -> np.ndarray:
+    def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Build the propagators.
 
         Returns:
@@ -221,7 +221,6 @@ class DDGPE(CNLSE):
             * self.delta_z
         ).astype(np.complex64)
         return np.array([propagator1, propagator2])
-        pass
 
     def _prepare_output_array(self, E_in: np.ndarray, normalize: bool) -> np.ndarray:
         """Prepare the output array depending on __BACKEND__.
