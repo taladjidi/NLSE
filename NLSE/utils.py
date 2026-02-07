@@ -19,7 +19,9 @@ else:
     __BACKEND__ = "CPU"
 
 try:
-    from .kernels.metal_native.metal_api import MetalContext as MetalContext  # noqa: F401
+    from .kernels.metal_native.metal_api import (
+        MetalContext as MetalContext,  # noqa: F401
+    )
 
     __METAL_AVAILABLE__ = True
 except (ImportError, FileNotFoundError, OSError):

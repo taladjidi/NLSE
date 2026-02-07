@@ -1,8 +1,9 @@
 """Low-level CFFI bindings to the Metal compute library."""
 
 import ctypes
-import numpy as np
 from pathlib import Path
+
+import numpy as np
 
 # ---- Load the shared library ----
 _LIB_PATH = Path(__file__).parent / "libmetal_nlse.dylib"

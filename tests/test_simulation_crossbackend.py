@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from scipy.constants import c, epsilon_0
 
-from NLSE import NLSE, NLSE_1d, CNLSE, CNLSE_1d
+from NLSE import CNLSE, NLSE, CNLSE_1d, NLSE_1d
 
 PRECISION_COMPLEX = np.complex64
 PRECISION_REAL = np.float32

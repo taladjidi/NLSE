@@ -3,8 +3,8 @@ from typing import Union
 import matplotlib.pyplot as plt
 import numpy as np
 
-from .cnlse import CNLSE
 from ..utils import __BACKEND__, __CUPY_AVAILABLE__
+from .cnlse import CNLSE
 
 if __CUPY_AVAILABLE__:
     import cupy as cp

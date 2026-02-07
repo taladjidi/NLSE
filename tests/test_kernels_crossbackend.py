@@ -10,30 +10,55 @@ import pytest
 from NLSE import NLSE
 from NLSE.kernels_cpu import (
     nl_prop as cpu_nl_prop,
-    nl_prop_without_V as cpu_nl_prop_without_V,
+)
+from NLSE.kernels_cpu import (
     nl_prop_c as cpu_nl_prop_c,
+)
+from NLSE.kernels_cpu import (
+    nl_prop_without_V as cpu_nl_prop_without_V,
+)
+from NLSE.kernels_cpu import (
     nl_prop_without_V_c as cpu_nl_prop_without_V_c,
+)
+from NLSE.kernels_cpu import (
     rabi_coupling as cpu_rabi_coupling,
+)
+from NLSE.kernels_cpu import (
     square_mod as cpu_square_mod,
+)
+from NLSE.kernels_cpu import (
     vortex as cpu_vortex,
 )
 
 if NLSE.__PYOPENCL_AVAILABLE__:
     import pyopencl as cl
     from pyopencl import array as cla
+
     from NLSE.kernels_cl import (
         nl_prop as cl_nl_prop,
-        nl_prop_without_V as cl_nl_prop_without_V,
+    )
+    from NLSE.kernels_cl import (
         nl_prop_c as cl_nl_prop_c,
+    )
+    from NLSE.kernels_cl import (
+        nl_prop_without_V as cl_nl_prop_without_V,
+    )
+    from NLSE.kernels_cl import (
         nl_prop_without_V_c as cl_nl_prop_without_V_c,
+    )
+    from NLSE.kernels_cl import (
         rabi_coupling as cl_rabi_coupling,
+    )
+    from NLSE.kernels_cl import (
         square_mod as cl_square_mod,
+    )
+    from NLSE.kernels_cl import (
         vortex_cp as cl_vortex_cp,
     )
 
 # Try loading Metal backend
 try:
-    from NLSE.metal.metal_api import MetalContext, MetalBuffer
+    from NLSE.metal.metal_api import MetalBuffer, MetalContext
 
     _metal_ctx = MetalContext()
     __METAL_AVAILABLE__ = True

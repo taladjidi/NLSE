@@ -6,7 +6,7 @@ import tqdm
 from cycler import cycler
 
 from NLSE import NLSE
-from NLSE.utils import __CUPY_AVAILABLE__, __PYOPENCL_AVAILABLE__, __METAL_AVAILABLE__
+from NLSE.utils import __CUPY_AVAILABLE__, __METAL_AVAILABLE__, __PYOPENCL_AVAILABLE__
 
 # for plots
 tab_colors = [

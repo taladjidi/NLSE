@@ -18,8 +18,8 @@ from ..backends import get_backend
 from ..utils import (
     __BACKEND__,
     __CUPY_AVAILABLE__,
-    __PYOPENCL_AVAILABLE__,
     __METAL_AVAILABLE__,
+    __PYOPENCL_AVAILABLE__,
 )
 
 if __CUPY_AVAILABLE__:

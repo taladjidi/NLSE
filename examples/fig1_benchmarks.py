@@ -5,7 +5,7 @@ import numpy as np
 import tqdm
 
 from NLSE import NLSE
-from NLSE.utils import __CUPY_AVAILABLE__, __PYOPENCL_AVAILABLE__, __METAL_AVAILABLE__
+from NLSE.utils import __CUPY_AVAILABLE__, __METAL_AVAILABLE__, __PYOPENCL_AVAILABLE__
 
 PRECISION = "single"
 if PRECISION == "double":

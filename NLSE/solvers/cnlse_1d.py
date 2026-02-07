@@ -2,8 +2,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.constants import c, epsilon_0
 
-from .cnlse import CNLSE
 from ..utils import __BACKEND__
+from .cnlse import CNLSE
 
 
 class CNLSE_1d(CNLSE):

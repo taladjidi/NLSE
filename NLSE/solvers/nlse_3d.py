@@ -4,8 +4,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.constants import c, epsilon_0
 
-from .nlse import NLSE
 from ..utils import __BACKEND__
+from .nlse import NLSE
 
 
 class NLSE_3d(NLSE):

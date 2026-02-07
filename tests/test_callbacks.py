@@ -1,7 +1,8 @@
 """Tests for the callbacks module."""
 
-import numpy as np
 from functools import partial
+
+import numpy as np
 
 from NLSE import NLSE
 from NLSE.callbacks import adapt_delta_z, evaluate_delta_n, norm, sample

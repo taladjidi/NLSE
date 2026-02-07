@@ -1,11 +1,12 @@
+import time
+
+import cupy as cp
+import numpy as np
 import pyopencl as cl
+from cupyx.scipy import fftpack
 from pyopencl import array as cla
 from pyopencl import clmath
-from pyvkfft import opencl, cuda
-import numpy as np
-import cupy as cp
-from cupyx.scipy import fftpack
-import time
+from pyvkfft import cuda, opencl
 
 queue = cl.CommandQueue(cl.create_some_context(interactive=False))
 print(queue.device.name)
