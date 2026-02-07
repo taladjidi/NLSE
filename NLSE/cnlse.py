@@ -59,10 +59,11 @@ class CNLSE(NLSE):
         Returns:
             object: CNLSE class instance
         """
-        # if backend == "CL":
-        #     raise NotImplementedError(
-        #         "OpenCL backend is not yet supported for CNLSE."
-        #     )
+        if backend == "Metal":
+            raise NotImplementedError(
+                "Metal backend is not yet supported for CNLSE. "
+                "Use CPU, GPU or CL backend."
+            )
         super().__init__(
             alpha=alpha,
             power=power,
@@ -178,7 +179,7 @@ class CNLSE(NLSE):
                 if isinstance(self.n12, cla.Array):
                     self.n12 = self.n12.get()
 
-    def _build_propagator(self, precision: str) -> np.ndarray:
+    def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Build the propagators.
 
         Returns:

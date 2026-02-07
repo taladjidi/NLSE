@@ -6,10 +6,13 @@ import pyfftw
 from scipy.constants import c, epsilon_0
 
 from .nlse import NLSE
-from .utils import __BACKEND__, __CUPY_AVAILABLE__
+from .utils import __BACKEND__, __CUPY_AVAILABLE__, __METAL_AVAILABLE__
 
 if __CUPY_AVAILABLE__:
     import cupy as cp
+
+if __METAL_AVAILABLE__:
+    from .kernels_metal import MetalArray
 
 
 class NLSE_1d(NLSE):
@@ -78,6 +81,21 @@ class NLSE_1d(NLSE):
             A = cp.zeros_like(E_in)
             A_sq = cp.zeros_like(A, dtype=A.real.dtype)
             E_in = cp.asarray(E_in)
+        elif self.backend == "Metal":
+            A_np = np.zeros(E_in.shape, dtype=E_in.dtype)
+            A_sq_np = np.zeros(E_in.shape, dtype=np.float32)
+            if normalize:
+                integral = (
+                    (E_in.real * E_in.real + E_in.imag * E_in.imag) * self.delta_X**2
+                ).sum(axis=self._last_axes)
+                integral *= c * epsilon_0 / 2
+                E_00 = (self.power / integral) ** 0.5
+                A_np[:] = (E_00.T * E_in.T).T
+            else:
+                A_np[:] = E_in
+            A = MetalArray.from_numpy(A_np.astype(np.complex64))
+            A_sq = MetalArray.from_numpy(A_sq_np.astype(np.float32))
+            return A, A_sq
         else:
             A = pyfftw.zeros_aligned(
                 E_in.shape, dtype=E_in.dtype, n=pyfftw.simd_alignment
@@ -95,13 +113,23 @@ class NLSE_1d(NLSE):
             A[:] = E_in
         return A, A_sq
 
-    def _build_propagator(self) -> np.ndarray:
+    def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Build the linear propagation matrix.
 
+        Args:
+            precision (str): "single", "double" or "RK4". Defaults to "single".
         Returns:
             propagator (np.ndarray): the propagator matrix
         """
-        propagator = np.exp(-1j * 0.5 * (self.Kx**2) / self.k * self.delta_z)
+        match precision:
+            case "single" | "double":
+                propagator = np.exp(
+                    -1j * 0.5 * (self.Kx**2) / self.k * self.delta_z
+                ).astype(np.complex64)
+            case "RK4":
+                propagator = (
+                    -1j * 0.5 * (self.Kx**2) / self.k
+                ).astype(np.complex64)
         return propagator
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:

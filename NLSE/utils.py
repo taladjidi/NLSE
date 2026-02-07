@@ -25,3 +25,10 @@ except ImportError:
     print("PyOpenCL not available, falling back to CPU BACKEND ...")
     __PYOPENCL_AVAILABLE__ = False
     __BACKEND__ = "CPU"
+
+try:
+    from .metal.metal_api import MetalContext
+
+    __METAL_AVAILABLE__ = True
+except (ImportError, FileNotFoundError, OSError):
+    __METAL_AVAILABLE__ = False

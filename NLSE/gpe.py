@@ -6,10 +6,13 @@ import pyfftw
 from scipy.constants import atomic_mass, c, epsilon_0, hbar
 
 from .nlse import NLSE
-from .utils import __BACKEND__, __CUPY_AVAILABLE__
+from .utils import __BACKEND__, __CUPY_AVAILABLE__, __METAL_AVAILABLE__
 
 if __CUPY_AVAILABLE__:
     import cupy as cp
+
+if __METAL_AVAILABLE__:
+    from .kernels_metal import MetalArray
 
 
 class GPE(NLSE):
@@ -78,15 +81,28 @@ class GPE(NLSE):
         # do some conversion for the units
         self.I_sat *= epsilon_0 * c / 2
 
-    def _build_propagator(self) -> np.ndarray:
+    def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Build the linear propagation matrix.
 
+        Args:
+            precision (str): "single", "double" or "RK4". Defaults to "single".
         Returns:
             propagator (np.ndarray): the propagator matrix
         """
-        propagator = np.exp(
-            -1j * 0.5 * hbar * (self.Kxx**2 + self.Kyy**2) / self.m * self.delta_t
-        ).astype(np.complex64)
+        match precision:
+            case "single" | "double":
+                propagator = np.exp(
+                    -1j
+                    * 0.5
+                    * hbar
+                    * (self.Kxx**2 + self.Kyy**2)
+                    / self.m
+                    * self.delta_t
+                ).astype(np.complex64)
+            case "RK4":
+                propagator = (
+                    -1j * 0.5 * hbar * (self.Kxx**2 + self.Kyy**2) / self.m
+                )
         return propagator
 
     def _prepare_output_array(self, E_in: np.ndarray, normalize: bool) -> np.ndarray:
@@ -99,14 +115,30 @@ class GPE(NLSE):
             np.ndarray: Output array
         """
         if self.backend == "GPU" and self.__CUPY_AVAILABLE__:
-            A = cp.empty_like(E_in)
-            A_sq = cp.empty_like(A, dtype=A.real.dtype)
+            A = cp.zeros_like(E_in)
+            A_sq = cp.zeros_like(A, dtype=A.real.dtype)
             E_in = cp.asarray(E_in)
+        elif self.backend == "Metal":
+            A_np = np.zeros(E_in.shape, dtype=E_in.dtype)
+            A_sq_np = np.zeros(E_in.shape, dtype=np.float32)
+            if normalize:
+                integral = (
+                    (E_in.real * E_in.real + E_in.imag * E_in.imag)
+                    * self.delta_X
+                    * self.delta_Y
+                ).sum(axis=self._last_axes)
+                E_00 = (self.N / integral) ** 0.5
+                A_np[:] = (E_00.T * E_in.T).T
+            else:
+                A_np[:] = E_in
+            A = MetalArray.from_numpy(A_np.astype(np.complex64))
+            A_sq = MetalArray.from_numpy(A_sq_np.astype(np.float32))
+            return A, A_sq
         else:
-            A = pyfftw.empty_aligned(
+            A = pyfftw.zeros_aligned(
                 E_in.shape, dtype=E_in.dtype, n=pyfftw.simd_alignment
             )
-            A_sq = np.empty_like(A, dtype=A.real.dtype)
+            A_sq = np.zeros_like(A, dtype=A.real.dtype)
         if normalize:
             # normalization of the field
             integral = (
@@ -116,6 +148,8 @@ class GPE(NLSE):
             ).sum(axis=self._last_axes)
             E_00 = (self.N / integral) ** 0.5
             A[:] = (E_00.T * E_in.T).T
+        else:
+            A[:] = E_in
         return A, A_sq
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:

@@ -16,7 +16,7 @@ from scipy import signal, special
 from scipy.constants import c, epsilon_0
 
 from . import kernels_cpu
-from .utils import __BACKEND__, __CUPY_AVAILABLE__, __PYOPENCL_AVAILABLE__
+from .utils import __BACKEND__, __CUPY_AVAILABLE__, __PYOPENCL_AVAILABLE__, __METAL_AVAILABLE__
 
 if __CUPY_AVAILABLE__:
     import cupy as cp
@@ -33,6 +33,10 @@ if __PYOPENCL_AVAILABLE__:
 
     from . import kernels_cl
 
+if __METAL_AVAILABLE__:
+    from . import kernels_metal
+    from .kernels_metal import MetalArray, MetalFFTPlan
+
 pyfftw.config.NUM_THREADS = multiprocessing.cpu_count()
 pyfftw.config.PLANNER_EFFORT = "FFTW_MEASURE"
 pyfftw.interfaces.cache.enable()
@@ -43,6 +47,7 @@ class NLSE:
 
     __CUPY_AVAILABLE__ = __CUPY_AVAILABLE__
     __PYOPENCL_AVAILABLE__ = __PYOPENCL_AVAILABLE__
+    __METAL_AVAILABLE__ = __METAL_AVAILABLE__
 
     def __init__(
         self,
@@ -162,8 +167,8 @@ class NLSE:
     @backend.setter
     def backend(self, value: str) -> None:
         """Set the backend for the simulation."""
-        if value not in ["CPU", "GPU", "CL"]:
-            raise ValueError("Backend must be 'CPU', 'GPU' or 'CL'")
+        if value not in ["CPU", "GPU", "CL", "Metal"]:
+            raise ValueError("Backend must be 'CPU', 'GPU', 'CL' or 'Metal'")
         match value:
             case "GPU":
                 if not self.__CUPY_AVAILABLE__:
@@ -180,12 +185,21 @@ class NLSE:
                     cl.create_some_context(interactive=False)
                 )
                 # FIXME: no convolution kernel for CL backend yet ??
+            case "Metal":
+                if not self.__METAL_AVAILABLE__:
+                    raise ImportError(
+                        "Metal backend is not available. "
+                        "Compile libmetal_nlse.dylib first."
+                    )
+                self.__backend = "Metal"
+                self._kernels = kernels_metal
+                self._convolution = signal.oaconvolve
             case "CPU":
                 self.__backend = "CPU"
                 self._kernels = kernels_cpu
                 self._convolution = signal.oaconvolve
 
-    def _build_propagator(self, precision: str) -> np.ndarray:
+    def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Build the linear propagation matrix.
 
         Returns:
@@ -197,9 +211,11 @@ class NLSE:
             case "single" | "double":
                 propagator = np.exp(
                     -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k * self.delta_z
-                )
+                ).astype(np.complex64)
             case "RK4":
-                propagator = -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k
+                propagator = (
+                    -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k
+                ).astype(np.complex64)
         return propagator
 
     def _build_fft_plan(self, A: np.ndarray) -> list:
@@ -232,6 +248,9 @@ class NLSE:
                 norm=1,
                 tune=True,
             )
+            return [plan_fft]
+        elif self.backend == "Metal":
+            plan_fft = MetalFFTPlan(A.shape, ndim=len(self._last_axes))
             return [plan_fft]
         else:
             # try to load previous fftw wisdom
@@ -282,6 +301,22 @@ class NLSE:
             A = cla.zeros(self._cl_queue, E_in.shape, E_in.dtype)
             A_sq = cla.zeros(self._cl_queue, E_in.shape, E_in.real.dtype)
             E_in = cla.to_device(self._cl_queue, E_in)
+        elif self.backend == "Metal":
+            # Normalize on CPU first, then transfer to Metal
+            A_np = np.zeros(E_in.shape, dtype=E_in.dtype)
+            A_sq_np = np.zeros(E_in.shape, dtype=np.float32)
+            if normalize:
+                arr = E_in.real * E_in.real + E_in.imag * E_in.imag
+                arr = (arr * self.delta_X * self.delta_Y).astype(E_in.real.dtype)
+                integral = np.sum(arr, axis=self._last_axes)
+                integral = integral * c * epsilon_0 / 2
+                E_00 = (self.power / integral) ** 0.5
+                A_np[:] = (E_00.T * E_in.T).T
+            else:
+                A_np[:] = E_in
+            A = MetalArray.from_numpy(A_np.astype(np.complex64))
+            A_sq = MetalArray.from_numpy(A_sq_np.astype(np.float32))
+            return A, A_sq
         else:
             A = pyfftw.zeros_aligned(
                 E_in.shape, dtype=E_in.dtype, n=pyfftw.simd_alignment
@@ -343,17 +378,25 @@ class NLSE:
                 self.alpha = cla.to_device(self._cl_queue, self.alpha)
             if isinstance(self.I_sat, np.ndarray):
                 self.I_sat = cla.to_device(self._cl_queue, self.I_sat)
+        elif self.backend == "Metal":
+            if self.V is not None:
+                self.V = MetalArray.from_numpy(
+                    np.ascontiguousarray(self.V).astype(np.complex64)
+                )
+            self.propagator = MetalArray.from_numpy(
+                np.ascontiguousarray(self.propagator).astype(np.complex64)
+            )
 
     def _retrieve_arrays_from_gpu(self) -> None:
         """
         Retrieve arrays from GPU.
         """
-        if self.V is not None:
-            self.V = self.V.get()
-        self.nl_profile = self.nl_profile.get()
-        self.propagator = self.propagator.get()
         match self.backend:
             case "GPU":
+                if self.V is not None:
+                    self.V = self.V.get()
+                self.nl_profile = self.nl_profile.get()
+                self.propagator = self.propagator.get()
                 if isinstance(self.power, cp.ndarray):
                     self.power = self.power.get()
                 if isinstance(self.n2, cp.ndarray):
@@ -363,6 +406,10 @@ class NLSE:
                 if isinstance(self.I_sat, cp.ndarray):
                     self.I_sat = self.I_sat.get()
             case "CL":
+                if self.V is not None:
+                    self.V = self.V.get()
+                self.nl_profile = self.nl_profile.get()
+                self.propagator = self.propagator.get()
                 if isinstance(self.power, cla.Array):
                     self.power = self.power.get()
                 if isinstance(self.n2, cla.Array):
@@ -371,6 +418,10 @@ class NLSE:
                     self.alpha = self.alpha.get()
                 if isinstance(self.I_sat, cla.Array):
                     self.I_sat = self.I_sat.get()
+            case "Metal":
+                if self.V is not None:
+                    self.V = self.V.get()
+                self.propagator = self.propagator.get()
 
     def split_step(
         self,
@@ -394,10 +445,13 @@ class NLSE:
             precision (str, optional): Single or double application of
                 the nonlinear propagation step. Defaults to "single".
         """
-        if (self.backend == "GPU" and self.__CUPY_AVAILABLE__) or (
-            self.backend == "CL" and self.__PYOPENCL_AVAILABLE__
-        ):
-            # on GPU, only one plan for both FFT directions
+        _accel = (
+            (self.backend == "GPU" and self.__CUPY_AVAILABLE__)
+            or (self.backend == "CL" and self.__PYOPENCL_AVAILABLE__)
+            or self.backend == "Metal"
+        )
+        if _accel:
+            # on GPU/CL/Metal, only one plan for both FFT directions
             plan_fft = plans[0]
         else:
             plan_fft, plan_ifft = plans
@@ -426,9 +480,7 @@ class NLSE:
                     self.k / 2 * self.n2 * c * epsilon_0,
                     2 * self.I_sat / (epsilon_0 * c),
                 )
-        if (self.backend == "GPU" and self.__CUPY_AVAILABLE__) or (
-            self.backend == "CL" and self.__PYOPENCL_AVAILABLE__
-        ):
+        if _accel:
             plan_fft.fft(A, A)
             # linear step in Fourier domain (shifted)
             A *= propagator
@@ -508,16 +560,17 @@ class NLSE:
         # prepare output array, this kills performance but we need it
         A_prop = A.copy()
         A_sq = A.real * A.real + A.imag * A.imag
-        if (self.backend == "GPU" and self.__CUPY_AVAILABLE__) or (
-            self.backend == "CL" and self.__PYOPENCL_AVAILABLE__
-        ):
-            # on GPU, only one plan for both FFT directions
+        _accel = (
+            (self.backend == "GPU" and self.__CUPY_AVAILABLE__)
+            or (self.backend == "CL" and self.__PYOPENCL_AVAILABLE__)
+            or self.backend == "Metal"
+        )
+        if _accel:
+            # on GPU/CL/Metal, only one plan for both FFT directions
             plan_fft = plans[0]
         else:
             plan_fft, plan_ifft = plans
-        if (self.backend == "GPU" and self.__CUPY_AVAILABLE__) or (
-            self.backend == "CL" and self.__PYOPENCL_AVAILABLE__
-        ):
+        if _accel:
             plan_fft.fft(A_prop, A_prop)
             # linear step in Fourier domain (shifted)
             A_prop *= propagator
@@ -632,6 +685,7 @@ class NLSE:
             and self.__CUPY_AVAILABLE__
             or self.backend == "CL"
             and self.__PYOPENCL_AVAILABLE__
+            or self.backend == "Metal"
         ):
             self._send_arrays_to_gpu()
         if self.V is None:
@@ -705,6 +759,7 @@ class NLSE:
             and self.__CUPY_AVAILABLE__
             or self.backend == "CL"
             and self.__PYOPENCL_AVAILABLE__
+            or self.backend == "Metal"
         ):
             if return_np_array:
                 A = A.get()
