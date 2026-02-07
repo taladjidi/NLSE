@@ -1,4 +1,4 @@
-from typing import Union
+from __future__ import annotations
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -9,7 +9,7 @@ from .nlse import NLSE
 
 
 class GPE(NLSE):
-    """A class to solve GPE."""
+    """A class to solve the Gross-Pitaevskii Equation (GPE)."""
 
     def __init__(
         self,
@@ -17,37 +17,44 @@ class GPE(NLSE):
         N: float,
         window: float,
         g: float,
-        V: Union[np.ndarray, None],
+        V: np.ndarray | None,
         m: float = 87 * atomic_mass,
         NX: int = 1024,
         NY: int = 1024,
         sat: float = np.inf,
         nl_length: float = 0,
         backend: str = __BACKEND__,
-    ) -> object:
+    ) -> None:
         """Instantiate the simulation.
 
-        Solves an equation : d/dt psi = -1/2m(d2/dx2 + d2/dy2) psi + V psi +
-          g psi**2 psi
+        Solves an equation : d/dt psi = -1/2m(d2/dx2 + d2/dy2) psi +
+        V psi + g psi**2 psi
 
-        Args:
-            gamma (float): Losses in Hz
-            N (float): Total number of atoms
-            window (float): Window size in m
-            g (float): Interaction energy in Hz*m^2
-            V (np.ndarray): Potential in Hz
-            m (float, optionnal): mass of one atom in kg.
-                Defaults to 87*atomic_mass for Rubidium 87.
-            NX (int, optional): Number of points in x.
-                Defaults to 1024.
-            NY (int, optional): Number of points in y.
-                Defaults to 1024.
-            sat (float): Saturation parameter in Hz/m^2.
-            nl_length (float): Non local length in m.
-                The non-local kernel is the instantiated as a Bessel function
-                to model a diffusive non-locality stored in the nl_profile
-                attribute.
-            backend (str, optional): "CUPY" or "CPU". Defaults to __BACKEND__.
+        Parameters
+        ----------
+        gamma : float
+            Losses in Hz.
+        N : float
+            Total number of atoms.
+        window : float
+            Window size in m.
+        g : float
+            Interaction energy in Hz*m^2.
+        V : np.ndarray or None
+            Potential in Hz.
+        m : float, optional
+            Mass of one atom in kg.
+            Defaults to 87 * atomic_mass (Rubidium 87).
+        NX : int, optional
+            Number of points in x. Defaults to 1024.
+        NY : int, optional
+            Number of points in y. Defaults to 1024.
+        sat : float, optional
+            Saturation parameter in Hz/m^2. Defaults to np.inf.
+        nl_length : float, optional
+            Non local length in m. Defaults to 0.
+        backend : str, optional
+            Compute backend. Defaults to ``__BACKEND__``.
         """
         super().__init__(
             alpha=gamma,
@@ -77,10 +84,15 @@ class GPE(NLSE):
     def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Build the linear propagation matrix.
 
-        Args:
-            precision (str): "single", "double" or "RK4". Defaults to "single".
-        Returns:
-            propagator (np.ndarray): the propagator matrix
+        Parameters
+        ----------
+        precision : str, optional
+            ``"single"``, ``"double"`` or ``"RK4"``. Defaults to ``"single"``.
+
+        Returns
+        -------
+        np.ndarray
+            The propagator matrix.
         """
         match precision:
             case "single" | "double":
@@ -94,7 +106,7 @@ class GPE(NLSE):
                 ).astype(np.complex64)
             case "RK4":
                 propagator = -1j * 0.5 * hbar * (self.Kxx**2 + self.Kyy**2) / self.m
-        return propagator
+        return propagator  # type: ignore[no-any-return]
 
     def _compute_norm_factor(self, E_in):
         """GPE normalization: no c*epsilon_0/2 factor, uses N instead of power."""
@@ -107,9 +119,12 @@ class GPE(NLSE):
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot a field for monitoring.
 
-        Args:
-            A_plot (np.ndarray): Field to plot
-            z (float): Propagation distance in m.
+        Parameters
+        ----------
+        A_plot : np.ndarray
+            Field to plot.
+        z : float
+            Propagation distance in m.
         """
         # if array is multi-dimensional, drop dims until the shape is 2D
         if A_plot.ndim > 2:

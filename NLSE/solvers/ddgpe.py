@@ -1,4 +1,6 @@
-from typing import Union
+from __future__ import annotations
+
+from typing import Any, Callable
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -11,7 +13,7 @@ if __CUPY_AVAILABLE__:
 
 
 class DDGPE(CNLSE):
-    """A class to solve the 2D driven dissipative Gross-Pitaevskii equation"""
+    """A class to solve the 2D driven-dissipative Gross-Pitaevskii equation."""
 
     def __init__(
         self,
@@ -25,37 +27,52 @@ class DDGPE(CNLSE):
         omega_cav: float,
         detuning: float,
         k_z: float,
-        V: np.ndarray = None,
+        V: np.ndarray | None = None,
         g12: float = 0,
         NX: int = 1024,
         NY: int = 1024,
         Isat: float = np.inf,
         nl_length: float = 0,
         backend: str = __BACKEND__,
-    ) -> object:
-        """Instantiates the class with all the relevant physical parameters
+    ) -> None:
+        """Instantiate the simulation.
 
-        Args:
-            gamma (float): Losses coefficient in s^-1
-            power (float): Optical power in W
-            window (float): Computational window in m
-            g (float): Interaction parameter
-            n12 (float): Inter component interaction parameter
-            V (np.ndarray): Potential landscape in a.u
-            L (float): Length of the cell in m
-            NX (int, optional): Number of points along x. Defaults to 1024.
-            NY (int, optional): Number of points along y. Defaults to 1024.
-            Isat (float, optional): Saturation intensity, assumed to be the same
-                for both components. Defaults to infinity.
-            nl_length (float): Non local length in m.
-                The non-local kernel is the instantiated as a Bessel function
-                to model a diffusive non-locality stored in the nl_profile
-                attribute.
-            wvl (float, optional): Wavelength in m. Defaults to 780 nm.
-            omega (float, optional): Rabi coupling. Defaults to None.
-            backend (str, optional): "CUPY" or "CPU". Defaults to __BACKEND__.
-        Returns:
-            object: CNLSE class instance
+        Parameters
+        ----------
+        gamma : float
+            Losses coefficient in s^-1.
+        power : float
+            Optical power in W.
+        window : float
+            Computational window in m.
+        g : float
+            Interaction parameter.
+        omega : float
+            Rabi coupling.
+        T : float
+            Propagation time in s.
+        omega_exc : float
+            Exciton frequency.
+        omega_cav : float
+            Cavity frequency.
+        detuning : float
+            Detuning from the lower polariton.
+        k_z : float
+            Longitudinal wave-vector.
+        V : np.ndarray or None, optional
+            Potential landscape. Defaults to ``None``.
+        g12 : float, optional
+            Inter-component interaction parameter. Defaults to 0.
+        NX : int, optional
+            Number of points along x. Defaults to 1024.
+        NY : int, optional
+            Number of points along y. Defaults to 1024.
+        Isat : float, optional
+            Saturation intensity. Defaults to np.inf.
+        nl_length : float, optional
+            Non local length in m. Defaults to 0.
+        backend : str, optional
+            Compute backend. Defaults to ``__BACKEND__``.
         """
 
         super().__init__(
@@ -94,7 +111,7 @@ class DDGPE(CNLSE):
 
     @staticmethod
     def add_noise(
-        simu: object,
+        simu: DDGPE,
         A: np.ndarray,
         t: float,
         i: int,
@@ -104,11 +121,18 @@ class DDGPE(CNLSE):
 
         Follows the callback convention of NLSE.
 
-        Args:
-            simu (object): DDGPE object.
-            A (np.ndarray): Field array.
-            t (float): Propagation time in s.
-            i (int): Propagation step.
+        Parameters
+        ----------
+        simu : DDGPE
+            Simulation object.
+        A : np.ndarray
+            Field array.
+        t : float
+            Propagation time in s.
+        i : int
+            Propagation step.
+        noise : float, optional
+            Noise amplitude. Defaults to 0.
         """
         rand1 = simu._random(
             loc=0, scale=simu.delta_z, size=(simu.NY, simu.NX)
@@ -125,7 +149,7 @@ class DDGPE(CNLSE):
 
     @staticmethod
     def laser_excitation(
-        simu: object,
+        simu: DDGPE,
         A: np.ndarray,
         t: float,
         i: int,
@@ -136,20 +160,28 @@ class DDGPE(CNLSE):
     ) -> None:
         """Add the pump and probe laser.
 
-        This function adds a pump field with a spatial profile F_pump_r and a temporal
-        profile F_pump_t and a probe field with a spatial profile F_probe_r and a
-        temporal profile F_probe_t. The pump and probe fields are added to the
-        cavity field at each propagation step.
+        This function adds a pump field with a spatial profile ``F_pump_r``
+        and a temporal profile ``F_pump_t`` and a probe field with a spatial
+        profile ``F_probe_r`` and a temporal profile ``F_probe_t``.
 
-        Args:
-            simu (object): The simulation object.
-            A (np.ndarray): The field array.
-            t (float): The current solver time.
-            i (int): The current solver step.
-            F_pump_r (np.ndarray): The spatial profile of the pump field.
-            F_pump_t (np.ndarray): The temporal profile of the pump field.
-            F_probe_r (np.ndarray): The spatial profile of the probe field.
-            F_probe_t (np.ndarray): The temporal profile of the probe field.
+        Parameters
+        ----------
+        simu : DDGPE
+            The simulation object.
+        A : np.ndarray
+            The field array.
+        t : float
+            The current solver time.
+        i : int
+            The current solver step.
+        F_pump_r : np.ndarray
+            The spatial profile of the pump field.
+        F_pump_t : np.ndarray
+            The temporal profile of the pump field.
+        F_probe_r : np.ndarray
+            The spatial profile of the probe field.
+        F_probe_t : np.ndarray
+            The temporal profile of the probe field.
         """
         A[..., 1, :, :] -= F_pump_r * F_pump_t[i] * simu.delta_z * 1j
         A[..., 1, :, :] -= F_probe_r * F_probe_t[i] * simu.delta_z * 1j
@@ -195,8 +227,15 @@ class DDGPE(CNLSE):
     def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Build the propagators.
 
-        Returns:
-            np.ndarray: A tuple of linear propagators for each component.
+        Parameters
+        ----------
+        precision : str, optional
+            ``"single"``, ``"double"`` or ``"RK4"``. Defaults to ``"single"``.
+
+        Returns
+        -------
+        np.ndarray
+            Array of linear propagators for each component.
         """
         propagator1 = np.exp(
             -1j
@@ -217,14 +256,24 @@ class DDGPE(CNLSE):
         """DDGPE: no normalization (returns 1)."""
         return 1
 
-    def _prepare_output_array(self, E_in: np.ndarray, normalize: bool) -> np.ndarray:
+    def _prepare_output_array(
+        self, E_in: np.ndarray, normalize: bool
+    ) -> tuple[Any, Any]:
         """Prepare the output array depending on backend.
 
-        Args:
-            E_in (np.ndarray): Input array
-            normalize (bool): Normalize the field to the total power.
-        Returns:
-            np.ndarray: Output array
+        Parameters
+        ----------
+        E_in : np.ndarray
+            Input array.
+        normalize : bool
+            Normalize the field to the total power.
+
+        Returns
+        -------
+        A : array-like
+            Output field array.
+        A_sq : array-like
+            Output field modulus squared array.
         """
         A, A_sq = self._backend.allocate_pair(E_in.shape, E_in.dtype)
         A[:] = self._backend.to_device(E_in)
@@ -234,24 +283,28 @@ class DDGPE(CNLSE):
         self,
         A: np.ndarray,
         A_sq: np.ndarray,
-        V: np.ndarray,
+        V: np.ndarray | None,
         propagator: np.ndarray,
-        plans,
+        plans: Any,
         precision: str = "single",
     ) -> None:
-        """Split step function for one propagation step
+        """Perform one split-step propagation step.
 
-        Args:
-            A (np.ndarray): Fields to propagate of shape (2, NY, NX)
-            A_sq (np.ndarray): Squared modulus of the fields
-            V (np.ndarray): Potential field (can be None).
-            propagator (np.ndarray): Propagator matrix for both fields.
-            plans: FFT plan object.
-            precision (str, optional): Single or double application of the nonlinear
-            propagation step.
-            Defaults to "single".
-        Returns:
-            None
+        Parameters
+        ----------
+        A : np.ndarray
+            Fields to propagate of shape ``(2, NY, NX)``.
+        A_sq : np.ndarray
+            Squared modulus of the fields.
+        V : np.ndarray or None
+            Potential field (can be ``None``).
+        propagator : np.ndarray
+            Propagator matrix for both fields.
+        plans : FFTPlan
+            FFT plan object.
+        precision : str, optional
+            Single or double application of the nonlinear propagation
+            step. Defaults to ``"single"``.
         """
         A1, A2 = self._take_components(A)
         if precision == "double":
@@ -428,9 +481,12 @@ class DDGPE(CNLSE):
     def plot_field(self, A_plot: np.ndarray, t: float) -> None:
         """Plot the field for monitoring.
 
-        Args:
-            A_plot (np.ndarray): The field
-            t (float): The time at which the field was sampled.
+        Parameters
+        ----------
+        A_plot : np.ndarray
+            The field to plot.
+        t : float
+            The time at which the field was sampled.
         """
         # if array is multi-dimensional, drop dims until the shape is 2D
         if A_plot.ndim > 3:
@@ -486,44 +542,58 @@ class DDGPE(CNLSE):
         fig.colorbar(im3, ax=ax[1, 1], shrink=0.6, label="Phase (rad)")
         plt.show()
 
-    def out_field(
+    def out_field(  # type: ignore[override]
         self,
         E_in: np.ndarray,
         t: float,
-        laser_excitation: Union[callable, None],
+        laser_excitation: Callable[..., Any] | None,
         plot: bool = False,
         precision: str = "single",
         verbose: bool = True,
-        callback: Union[list[callable], callable] = None,
-        callback_args: Union[list[tuple], tuple] = None,
-    ) -> np.ndarray:
-        """Propagate a field to time T.
+        callback: list[Callable[..., Any]] | Callable[..., Any] | None = None,
+        callback_args: list[tuple[Any, ...]] | tuple[Any, ...] | None = None,
+    ) -> Any:
+        """Propagate a field to time *t*.
 
-        Args:
-            E_in (np.ndarray): Input field where E_in[0] is the exciton field and
-            E_in[1] is the cavity field.
-            t (float): Time to propagate to in s.
-            laser_excitation (Union[callable, None]): The excitation function.
-            This represents the laser pump and probe. Defaults to None which uses
-            the static method defined in the class. In this case you still need
-            to pass the correct arguments to the callback_args.
-            plot (bool, optional): Whether to plot the results. Defaults to False.
-            precision (str, optional): Whether to apply the nonlinear terms in a
-            single or double step. Defaults to "single".
-            verbose (bool, optional): Whether to print progress. Defaults to True.
-            callback (Union[list[callable], callable], optional): A list of functions
-            to execute at every solver step. Defaults to None.
-            callback_args (Union[list[tuple], tuple], optional): A list of callback
-            arguments passed to the callbacks. Defaults to None.
+        Parameters
+        ----------
+        E_in : np.ndarray
+            Input field where ``E_in[0]`` is the exciton field and
+            ``E_in[1]`` is the cavity field.
+        t : float
+            Time to propagate to in s.
+        laser_excitation : callable or None
+            The excitation function representing the laser pump and
+            probe. ``None`` uses the static method defined in the class.
+        plot : bool, optional
+            Whether to plot the results. Defaults to ``False``.
+        precision : str, optional
+            ``"single"`` or ``"double"`` application of the nonlinear
+            terms. Defaults to ``"single"``.
+        verbose : bool, optional
+            Whether to print progress. Defaults to ``True``.
+        callback : callable or list of callable, optional
+            Function(s) to execute at every solver step.
+            Defaults to ``None``.
+        callback_args : tuple or list of tuple, optional
+            Arguments passed to the callbacks. Defaults to ``None``.
 
-        Returns:
-            np.ndarray: _description_
+        Returns
+        -------
+        np.ndarray
+            Propagated field.
         """
+        if callback is None:
+            callback = []
+        elif callable(callback):
+            callback = [callback]
+        if callback_args is None:
+            callback_args = [()]
         if laser_excitation is None:
             callback.insert(0, self.laser_excitation)
         else:
             callback.insert(0, laser_excitation)
-        super().out_field(
+        return super().out_field(
             E_in=E_in,
             z=t,
             plot=plot,

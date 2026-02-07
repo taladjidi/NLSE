@@ -83,16 +83,16 @@ def test_build_fft_plan() -> None:
             normalize=False,
         )
         plan = simu._build_fft_plan(A)
-        assert isinstance(plan, FFTPlan), (
-            f"Plan should be a FFTPlan instance. (Backend {backend})"
-        )
+        assert isinstance(
+            plan, FFTPlan
+        ), f"Plan should be a FFTPlan instance. (Backend {backend})"
         if backend == "CPU":
             A_copy = A.copy()
             plan.fft(A_copy)
             plan.ifft(A_copy)
-            assert np.allclose(A_copy, A, atol=1e-5), (
-                f"FFT roundtrip failed. (Backend {backend})"
-            )
+            assert np.allclose(
+                A_copy, A, atol=1e-5
+            ), f"FFT roundtrip failed. (Backend {backend})"
 
 
 def test_prepare_output_array() -> None:
@@ -117,19 +117,19 @@ def test_prepare_output_array() -> None:
         elif backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
             A = cp.random.random((N, N, NZ)) + 1j * cp.random.random((N, N, NZ))
         out, out_sq = simu._prepare_output_array(A, normalize=True)
-        assert out.flags.c_contiguous, (
-            f"Output array is not C-contiguous. (Backend {backend})"
-        )
-        assert out_sq.flags.c_contiguous, (
-            f"Output array is not C-contiguous. (Backend {backend})"
-        )
+        assert (
+            out.flags.c_contiguous
+        ), f"Output array is not C-contiguous. (Backend {backend})"
+        assert (
+            out_sq.flags.c_contiguous
+        ), f"Output array is not C-contiguous. (Backend {backend})"
         if backend == "CPU":
-            assert out.flags.aligned, (
-                f"Output array is not aligned. (Backend {backend})"
-            )
-            assert out_sq.flags.aligned, (
-                f"Output array is not aligned. (Backend {backend})"
-            )
+            assert (
+                out.flags.aligned
+            ), f"Output array is not aligned. (Backend {backend})"
+            assert (
+                out_sq.flags.aligned
+            ), f"Output array is not aligned. (Backend {backend})"
         integral = (
             (out.real * out.real + out.imag * out.imag)
             * simu.delta_X
@@ -137,32 +137,32 @@ def test_prepare_output_array() -> None:
             * simu.delta_T
         ).sum(axis=simu._last_axes)
         integral *= c * epsilon_0 / 2
-        assert np.allclose(integral, simu.energy), (
-            f"Normalization failed. (Backend {backend})"
-        )
+        assert np.allclose(
+            integral, simu.energy
+        ), f"Normalization failed. (Backend {backend})"
         assert out.shape == (
             N,
             N,
             NZ,
         ), f"Output array has wrong shape. (Backend {backend})"
         if backend == "CPU":
-            assert isinstance(out, np.ndarray), (
-                f"Output array type does not match backend. (Backend {backend})"
-            )
+            assert isinstance(
+                out, np.ndarray
+            ), f"Output array type does not match backend. (Backend {backend})"
             out /= np.max(np.abs(out))
             A /= np.max(np.abs(A))
-            assert np.allclose(out, A), (
-                f"Output array does not match input array. (Backend {backend})"
-            )
+            assert np.allclose(
+                out, A
+            ), f"Output array does not match input array. (Backend {backend})"
         elif backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
-            assert isinstance(out, cp.ndarray), (
-                f"Output array type does not match backend. (Backend {backend})"
-            )
+            assert isinstance(
+                out, cp.ndarray
+            ), f"Output array type does not match backend. (Backend {backend})"
             out /= cp.max(cp.abs(out))
             A /= cp.max(cp.abs(A))
-            assert cp.allclose(out, A), (
-                f"Output array does not match input array. (Backend {backend})"
-            )
+            assert cp.allclose(
+                out, A
+            ), f"Output array does not match input array. (Backend {backend})"
 
 
 def test_send_arrays_to_gpu() -> None:
@@ -194,17 +194,17 @@ def test_send_arrays_to_gpu() -> None:
         )
         simu.propagator = simu._build_propagator()
         simu._send_arrays_to_gpu()
-        assert isinstance(simu.propagator, cp.ndarray), (
-            "propagator is not a cp.ndarray. (Backend CUPY)"
-        )
+        assert isinstance(
+            simu.propagator, cp.ndarray
+        ), "propagator is not a cp.ndarray. (Backend CUPY)"
         assert isinstance(simu.V, cp.ndarray), "V is not a cp.ndarray. (Backend CUPY)"
-        assert isinstance(simu.alpha, cp.ndarray), (
-            "alpha is not a cp.ndarray. (Backend CUPY)"
-        )
+        assert isinstance(
+            simu.alpha, cp.ndarray
+        ), "alpha is not a cp.ndarray. (Backend CUPY)"
         assert isinstance(simu.n2, cp.ndarray), "n2 is not a cp.ndarray. (Backend CUPY)"
-        assert isinstance(simu.I_sat, cp.ndarray), (
-            "I_sat is not a cp.ndarray. (Backend CUPY)"
-        )
+        assert isinstance(
+            simu.I_sat, cp.ndarray
+        ), "I_sat is not a cp.ndarray. (Backend CUPY)"
     else:
         pass
 
@@ -239,17 +239,17 @@ def test_retrieve_arrays_from_gpu() -> None:
         simu.propagator = simu._build_propagator()
         simu._send_arrays_to_gpu()
         simu._retrieve_arrays_from_gpu()
-        assert isinstance(simu.propagator, np.ndarray), (
-            "propagator is not a np.ndarray. (Backend CUPY)"
-        )
+        assert isinstance(
+            simu.propagator, np.ndarray
+        ), "propagator is not a np.ndarray. (Backend CUPY)"
         assert isinstance(simu.V, np.ndarray), "V is not a np.ndarray. (Backend CUPY)"
-        assert isinstance(simu.alpha, np.ndarray), (
-            "alpha is not a np.ndarray. (Backend CUPY)"
-        )
+        assert isinstance(
+            simu.alpha, np.ndarray
+        ), "alpha is not a np.ndarray. (Backend CUPY)"
         assert isinstance(simu.n2, np.ndarray), "n2 is not a np.ndarray. (Backend CUPY)"
-        assert isinstance(simu.I_sat, np.ndarray), (
-            "I_sat is not a np.ndarray. (Backend CUPY)"
-        )
+        assert isinstance(
+            simu.I_sat, np.ndarray
+        ), "I_sat is not a np.ndarray. (Backend CUPY)"
     else:
         pass
 
@@ -284,13 +284,13 @@ def test_split_step() -> None:
             E, A_sq, simu.V, simu.propagator, simu.plans, precision="double"
         )
         if backend == "CPU":
-            assert np.allclose(E, np.ones((N, N, NZ), dtype=PRECISION_COMPLEX)), (
-                f"Split step is not unitary. (Backend {backend})"
-            )
+            assert np.allclose(
+                E, np.ones((N, N, NZ), dtype=PRECISION_COMPLEX)
+            ), f"Split step is not unitary. (Backend {backend})"
         elif backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
-            assert cp.allclose(E, cp.ones((N, N, NZ), dtype=PRECISION_COMPLEX)), (
-                f"Split step is not unitary. (Backend {backend})"
-            )
+            assert cp.allclose(
+                E, cp.ones((N, N, NZ), dtype=PRECISION_COMPLEX)
+            ), f"Split step is not unitary. (Backend {backend})"
 
 
 # tests for convergence of the solver : the norm of the field should be
@@ -323,6 +323,6 @@ def test_out_field() -> None:
             N,
             NZ,
         ), f"Output array has wrong shape. (Backend {backend})"
-        assert np.allclose(norm, simu.energy, rtol=1e-4), (
-            f"Norm not conserved. (Backend {backend})"
-        )
+        assert np.allclose(
+            norm, simu.energy, rtol=1e-4
+        ), f"Norm not conserved. (Backend {backend})"

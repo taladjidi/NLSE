@@ -41,9 +41,9 @@ def test_build_propagator_rk4() -> None:
         )
         prop = simu._build_propagator(precision="RK4")
         expected = -1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k
-        assert np.allclose(prop, expected), (
-            f"RK4 propagator is wrong. (Backend {backend})"
-        )
+        assert np.allclose(
+            prop, expected
+        ), f"RK4 propagator is wrong. (Backend {backend})"
 
 
 def test_build_propagator_rk4_1d() -> None:
@@ -62,9 +62,9 @@ def test_build_propagator_rk4_1d() -> None:
         )
         prop = simu._build_propagator(precision="RK4")
         expected = -1j * 0.5 * (simu.Kx**2) / simu.k
-        assert np.allclose(prop, expected), (
-            f"1D RK4 propagator is wrong. (Backend {backend})"
-        )
+        assert np.allclose(
+            prop, expected
+        ), f"1D RK4 propagator is wrong. (Backend {backend})"
 
 
 def test_rk4_norm_conservation() -> None:
@@ -87,9 +87,9 @@ def test_rk4_norm_conservation() -> None:
         norm_out = (
             np.sum(np.abs(A) ** 2 * simu.delta_X * simu.delta_Y) * c * epsilon_0 / 2
         )
-        assert np.allclose(norm_out, power, rtol=1e-3), (
-            f"RK4 norm not conserved: {norm_out} vs {power}. (Backend {backend})"
-        )
+        assert np.allclose(
+            norm_out, power, rtol=1e-3
+        ), f"RK4 norm not conserved: {norm_out} vs {power}. (Backend {backend})"
 
 
 def test_rk4_norm_conservation_1d() -> None:
@@ -109,9 +109,9 @@ def test_rk4_norm_conservation_1d() -> None:
         E = np.ones(N_1d, dtype=PRECISION_COMPLEX)
         A = simu.out_field(E, L, verbose=False, plot=False, precision="RK4")
         norm_out = np.sum(np.abs(A) ** 2 * simu.delta_X**2) * c * epsilon_0 / 2
-        assert np.allclose(norm_out, power, rtol=1e-3), (
-            f"1D RK4 norm not conserved: {norm_out} vs {power}. (Backend {backend})"
-        )
+        assert np.allclose(
+            norm_out, power, rtol=1e-3
+        ), f"1D RK4 norm not conserved: {norm_out} vs {power}. (Backend {backend})"
 
 
 def test_rk4_split_step_single() -> None:
@@ -146,9 +146,9 @@ def test_rk4_split_step_single() -> None:
             A_np = A.get()
         else:
             A_np = np.asarray(A)
-        assert np.all(np.isfinite(A_np)), (
-            f"RK4 step produced non-finite values. (Backend {backend})"
-        )
+        assert np.all(
+            np.isfinite(A_np)
+        ), f"RK4 step produced non-finite values. (Backend {backend})"
 
 
 def test_rk4_with_potential() -> None:
@@ -172,6 +172,6 @@ def test_rk4_with_potential() -> None:
         simu.V = V
         E = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A = simu.out_field(E, L, verbose=False, plot=False, precision="RK4")
-        assert np.all(np.isfinite(A)), (
-            f"RK4 with potential produced non-finite values. (Backend {backend})"
-        )
+        assert np.all(
+            np.isfinite(A)
+        ), f"RK4 with potential produced non-finite values. (Backend {backend})"

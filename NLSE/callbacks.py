@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import numpy as np
 from scipy.constants import c, epsilon_0
 
@@ -14,16 +16,23 @@ def sample(
 ) -> None:
     """Save samples of the field.
 
-    This callback will save samples every save_every steps into the E_samples
-    array.
+    This callback saves samples every *save_every* steps into the
+    *E_samples* array.
 
-    Args:
-        simu (NLSE): Simulation object.
-        A (np.ndarray): The current field.
-        z (float): The current propagation distance.
-        i (int): Step number.
-        save_every (int): Number of propagation steps between each step.
-        E_samples (np.ndarray): Array to store the samples.
+    Parameters
+    ----------
+    simu : NLSE
+        Simulation object.
+    A : np.ndarray
+        The current field.
+    z : float
+        The current propagation distance.
+    i : int
+        Step number.
+    save_every : int
+        Number of propagation steps between each sample.
+    E_samples : np.ndarray
+        Array to store the samples.
     """
     if i % save_every == 0:
         E_samples[i // save_every] = A.copy()
@@ -39,16 +48,23 @@ def norm(
 ) -> None:
     """Save the norm of the field.
 
-    This callback will save the norm of the field every save_every steps into the
-    E_samples array.
+    This callback saves the norm of the field every *save_every* steps
+    into the *norms* array.
 
-    Args:
-        simu (NLSE): Simulation object.
-        A (np.ndarray): The current field.
-        z (float): The current propagation distance.
-        i (int): Step number.
-        save_every (int): Number of propagation steps between each step.
-        E_samples (np.ndarray): Array to store the samples.
+    Parameters
+    ----------
+    simu : NLSE
+        Simulation object.
+    A : np.ndarray
+        The current field.
+    z : float
+        The current propagation distance.
+    i : int
+        Step number.
+    save_every : int
+        Number of propagation steps between each sample.
+    norms : np.ndarray
+        Array to store the norms.
     """
     if i % save_every == 0:
         norms[i // save_every] = (A.real * A.real + A.imag * A.imag).sum()
@@ -64,16 +80,23 @@ def evaluate_delta_n(
 ) -> None:
     """Evaluate the non-linear refractive index change.
 
-    This will evaluate the weight of the non-linear refractive index change, allowing
-    to adjust the step size accordingly.
+    This evaluates the weight of the non-linear refractive index change,
+    allowing to adjust the step size accordingly.
 
-    Args:
-        simu (NLSE): Simulation object.
-        A (np.ndarray): The current field.
-        z (float): The current propagation distance.
-        i (int): Step number.
-        save_every (int): Number of propagation steps between each step.
-        delta_n (np.ndarray): The array of delta_n values.
+    Parameters
+    ----------
+    simu : NLSE
+        Simulation object.
+    A : np.ndarray
+        The current field.
+    z : float
+        The current propagation distance.
+    i : int
+        Step number.
+    save_every : int
+        Number of propagation steps between each sample.
+    delta_n : np.ndarray
+        Array to store the delta_n values.
     """
     if i % save_every == 0:
         A_sq = A.real * A.real + A.imag * A.imag
@@ -88,21 +111,28 @@ def adapt_delta_z(
     z: float,
     i: int,
     update_every: int,
-    delta_z: list,
+    delta_z: list[float],
 ) -> None:
     """Update the simulation step size.
 
-    This callback will update the simulation step size every update_every steps by
-    computing the nonlinear refractive index change and adjusting the step size
-    accordingly.
+    This callback updates the simulation step size every *update_every*
+    steps by computing the nonlinear refractive index change and
+    adjusting the step size accordingly.
 
-    Args:
-        simu (NLSE): Simulation object.
-        A (np.ndarray): The current field.
-        z (float): The current propagation distance.
-        i (int): Step number.
-        update_every (int): Update the step size every update_every steps.
-        delta_z (list): A list to store the size of the steps.
+    Parameters
+    ----------
+    simu : NLSE
+        Simulation object.
+    A : np.ndarray
+        The current field.
+    z : float
+        The current propagation distance.
+    i : int
+        Step number.
+    update_every : int
+        Update the step size every *update_every* steps.
+    delta_z : list of float
+        A list to store the size of the steps.
     """
     delta_z.append(simu.delta_z)
     if i % update_every == 0:

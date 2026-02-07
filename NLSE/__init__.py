@@ -33,7 +33,7 @@ from .solvers import NLSE_3d as NLSE_3d
 sys.modules[__name__ + ".kernels_cpu"] = kernels_cpu
 
 try:
-    from .kernels import gpu as kernels_gpu
+    from .kernels import cupy as kernels_gpu
 
     sys.modules[__name__ + ".kernels_gpu"] = kernels_gpu
 except ImportError:

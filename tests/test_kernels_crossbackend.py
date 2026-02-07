@@ -271,9 +271,9 @@ class TestNlPropWithoutV:
         cpu_nl_prop_without_V(
             A_cpu, A_sq.copy(), self.dz, self.alpha, self.g, self.Isat
         )
-        assert np.allclose(A_cpu, expected, rtol=1e-4), (
-            "CPU nl_prop_without_V != reference"
-        )
+        assert np.allclose(
+            A_cpu, expected, rtol=1e-4
+        ), "CPU nl_prop_without_V != reference"
 
     def test_cl_vs_ref(self):
         if not NLSE.__PYOPENCL_AVAILABLE__:
@@ -288,9 +288,9 @@ class TestNlPropWithoutV:
         A_sq_cl = cla.to_device(queue, A_sq.copy())
         cl_nl_prop_without_V(A_cl, A_sq_cl, self.dz, self.alpha, self.g, self.Isat)
         result = A_cl.get()
-        assert np.allclose(result, expected, rtol=1e-4), (
-            "CL nl_prop_without_V != reference"
-        )
+        assert np.allclose(
+            result, expected, rtol=1e-4
+        ), "CL nl_prop_without_V != reference"
 
     def test_cpu_vs_cl(self):
         if not NLSE.__PYOPENCL_AVAILABLE__:
@@ -474,9 +474,9 @@ class TestNlPropWithoutVCoupled:
             self.Isat1,
             self.Isat2,
         )
-        assert np.allclose(A1_cpu, expected, rtol=1e-4), (
-            "CPU nl_prop_without_V_c != reference"
-        )
+        assert np.allclose(
+            A1_cpu, expected, rtol=1e-4
+        ), "CPU nl_prop_without_V_c != reference"
 
     def test_cl_vs_ref(self):
         if not NLSE.__PYOPENCL_AVAILABLE__:
@@ -511,9 +511,9 @@ class TestNlPropWithoutVCoupled:
             self.Isat2,
         )
         result = A1_cl.get()
-        assert np.allclose(result, expected, rtol=1e-4), (
-            "CL nl_prop_without_V_c != reference"
-        )
+        assert np.allclose(
+            result, expected, rtol=1e-4
+        ), "CL nl_prop_without_V_c != reference"
 
 
 # ============================================================
@@ -537,12 +537,12 @@ class TestRabiCoupling:
         A1_cpu = A1.copy()
         A2_cpu = A2.copy()
         cpu_rabi_coupling(A1_cpu, A2_cpu, self.dz, self.omega)
-        assert np.allclose(A1_cpu, expected_A1, rtol=1e-5), (
-            "CPU rabi_coupling A1 != reference"
-        )
-        assert np.allclose(A2_cpu, expected_A2, rtol=1e-5), (
-            "CPU rabi_coupling A2 != reference"
-        )
+        assert np.allclose(
+            A1_cpu, expected_A1, rtol=1e-5
+        ), "CPU rabi_coupling A1 != reference"
+        assert np.allclose(
+            A2_cpu, expected_A2, rtol=1e-5
+        ), "CPU rabi_coupling A2 != reference"
 
     def test_cl_vs_ref(self):
         if not NLSE.__PYOPENCL_AVAILABLE__:
@@ -560,12 +560,12 @@ class TestRabiCoupling:
         A1_cl = cla.to_device(queue, A1.copy())
         A2_cl = cla.to_device(queue, A2.copy())
         cl_rabi_coupling(A1_cl, A2_cl, self.dz, self.omega)
-        assert np.allclose(A1_cl.get(), expected_A1, rtol=1e-5), (
-            "CL rabi_coupling A1 != reference"
-        )
-        assert np.allclose(A2_cl.get(), expected_A2, rtol=1e-5), (
-            "CL rabi_coupling A2 != reference"
-        )
+        assert np.allclose(
+            A1_cl.get(), expected_A1, rtol=1e-5
+        ), "CL rabi_coupling A1 != reference"
+        assert np.allclose(
+            A2_cl.get(), expected_A2, rtol=1e-5
+        ), "CL rabi_coupling A2 != reference"
 
     def test_unitarity(self):
         """Rabi coupling should conserve total norm."""
@@ -579,9 +579,9 @@ class TestRabiCoupling:
         A2_cpu = A2.copy()
         cpu_rabi_coupling(A1_cpu, A2_cpu, self.dz, self.omega)
         norm_after = np.sum(np.abs(A1_cpu) ** 2 + np.abs(A2_cpu) ** 2)
-        assert np.allclose(norm_before, norm_after, rtol=1e-6), (
-            f"Rabi coupling not unitary: {norm_before} -> {norm_after}"
-        )
+        assert np.allclose(
+            norm_before, norm_after, rtol=1e-6
+        ), f"Rabi coupling not unitary: {norm_before} -> {norm_after}"
 
 
 # ============================================================
@@ -655,9 +655,9 @@ class TestEdgeCases:
         A_cpu = A.copy()
         cpu_nl_prop(A_cpu, A_sq.copy(), dz, alpha, V, g, Isat)
         # No losses => |A| should be preserved element-wise
-        assert np.allclose(np.abs(A_cpu), np.abs(A), rtol=1e-5), (
-            "nl_prop with alpha=0 changed field amplitude"
-        )
+        assert np.allclose(
+            np.abs(A_cpu), np.abs(A), rtol=1e-5
+        ), "nl_prop with alpha=0 changed field amplitude"
 
     def test_nl_prop_zero_g(self):
         """No interaction: nl_prop should only apply losses + potential phase."""
@@ -679,9 +679,9 @@ class TestEdgeCases:
         expected = ref_nl_prop(A, A_sq, dz, alpha, V, g, Isat)
         A_cpu = A.copy()
         cpu_nl_prop(A_cpu, A_sq.copy(), dz, alpha, V, g, Isat)
-        assert np.allclose(A_cpu, expected, rtol=1e-4), (
-            "nl_prop with high Isat != reference"
-        )
+        assert np.allclose(
+            A_cpu, expected, rtol=1e-4
+        ), "nl_prop with high Isat != reference"
 
     def test_rabi_zero_omega(self):
         """Zero coupling: fields should be unchanged."""
@@ -732,9 +732,9 @@ class TestMetalKernels:
         A_buf = _metal_from_np(A)
         A_sq_buf = _metal_alloc((N, N), PRECISION_REAL)
         _metal_ctx.square_mod(A_buf, A_sq_buf)
-        assert np.allclose(A_sq_buf.to_numpy(), expected, rtol=1e-5), (
-            "Metal square_mod != reference"
-        )
+        assert np.allclose(
+            A_sq_buf.to_numpy(), expected, rtol=1e-5
+        ), "Metal square_mod != reference"
 
     def test_nl_prop(self):
         _skip_no_metal()
@@ -752,9 +752,9 @@ class TestMetalKernels:
             self.g,
             self.Isat,
         )
-        assert np.allclose(A_buf.to_numpy(), expected, rtol=1e-4), (
-            "Metal nl_prop != reference"
-        )
+        assert np.allclose(
+            A_buf.to_numpy(), expected, rtol=1e-4
+        ), "Metal nl_prop != reference"
 
     def test_nl_prop_without_V(self):
         _skip_no_metal()
@@ -772,9 +772,9 @@ class TestMetalKernels:
             self.g,
             self.Isat,
         )
-        assert np.allclose(A_buf.to_numpy(), expected, rtol=1e-4), (
-            "Metal nl_prop_without_V != reference"
-        )
+        assert np.allclose(
+            A_buf.to_numpy(), expected, rtol=1e-4
+        ), "Metal nl_prop_without_V != reference"
 
     def test_nl_prop_c(self):
         _skip_no_metal()
@@ -807,9 +807,9 @@ class TestMetalKernels:
             self.Isat1,
             self.Isat2,
         )
-        assert np.allclose(A1_buf.to_numpy(), expected, rtol=1e-4), (
-            "Metal nl_prop_c != reference"
-        )
+        assert np.allclose(
+            A1_buf.to_numpy(), expected, rtol=1e-4
+        ), "Metal nl_prop_c != reference"
 
     def test_nl_prop_without_V_c(self):
         _skip_no_metal()
@@ -839,9 +839,9 @@ class TestMetalKernels:
             self.Isat1,
             self.Isat2,
         )
-        assert np.allclose(A1_buf.to_numpy(), expected, rtol=1e-4), (
-            "Metal nl_prop_without_V_c != reference"
-        )
+        assert np.allclose(
+            A1_buf.to_numpy(), expected, rtol=1e-4
+        ), "Metal nl_prop_without_V_c != reference"
 
     def test_rabi_coupling(self):
         _skip_no_metal()
@@ -856,12 +856,12 @@ class TestMetalKernels:
         A2_buf = _metal_from_np(A2.copy())
         scratch = MetalBuffer(_metal_ctx._handle, (N, N), PRECISION_COMPLEX)
         _metal_ctx.rabi_coupling(A1_buf, A2_buf, scratch, dz_r, omega)
-        assert np.allclose(A1_buf.to_numpy(), expected_A1, rtol=1e-5), (
-            "Metal rabi_coupling A1 != reference"
-        )
-        assert np.allclose(A2_buf.to_numpy(), expected_A2, rtol=1e-5), (
-            "Metal rabi_coupling A2 != reference"
-        )
+        assert np.allclose(
+            A1_buf.to_numpy(), expected_A1, rtol=1e-5
+        ), "Metal rabi_coupling A1 != reference"
+        assert np.allclose(
+            A2_buf.to_numpy(), expected_A2, rtol=1e-5
+        ), "Metal rabi_coupling A2 != reference"
 
     def test_complex_multiply_inplace(self):
         _skip_no_metal()
@@ -871,6 +871,6 @@ class TestMetalKernels:
         A_buf = _metal_from_np(A.copy())
         B_buf = _metal_from_np(B)
         _metal_ctx.complex_multiply_inplace(A_buf, B_buf)
-        assert np.allclose(A_buf.to_numpy(), expected, rtol=1e-5), (
-            "Metal complex_multiply != reference"
-        )
+        assert np.allclose(
+            A_buf.to_numpy(), expected, rtol=1e-5
+        ), "Metal complex_multiply != reference"

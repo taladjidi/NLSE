@@ -160,6 +160,6 @@ def test_rabi_no_coupling_unchanged() -> None:
         )
         # With equal initial populations the results should differ
         # (Rabi coupling modifies relative phase/amplitude)
-        assert not np.allclose(A_no, A_yes, rtol=1e-2), (
-            f"Rabi coupling had no effect. (Backend {backend})"
-        )
+        assert not np.allclose(
+            A_no, A_yes, rtol=1e-2
+        ), f"Rabi coupling had no effect. (Backend {backend})"

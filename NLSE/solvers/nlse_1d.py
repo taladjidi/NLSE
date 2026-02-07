@@ -1,4 +1,4 @@
-from typing import Union
+from __future__ import annotations
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -9,7 +9,7 @@ from .nlse import NLSE
 
 
 class NLSE_1d(NLSE):
-    """A class to solve NLSE in 1d"""
+    """A class to solve the 1D NLSE."""
 
     def __init__(
         self,
@@ -17,32 +17,43 @@ class NLSE_1d(NLSE):
         power: float,
         window: float,
         n2: float,
-        V: Union[np.ndarray, None],
+        V: np.ndarray | None,
         L: float,
         NX: int = 1024,
         Isat: float = np.inf,
         nl_length: float = 0,
         wvl: float = 780e-9,
         backend: str = __BACKEND__,
-    ) -> object:
+    ) -> None:
         """Instantiate the simulation.
 
         Solves an equation : d/dz psi = -1/2k0(d2/dx2) psi + k0 dn psi +
-          k0 n2 psi**2 psi
+        k0 n2 psi**2 psi
 
-        Args:
-            alpha (float): Transmission coeff
-            power (float): Power in W
-            n2 (float): Non linear coeff in m^2/W
-            V (np.ndarray) : Potential
-            L (float): Length of the medium.
-            Isat (float): Saturation intensity in W/m^2
-            nl_length (float): Non local length in m.
-                The non-local kernel is the instantiated as a Bessel function
-                to model a diffusive non-locality stored in the nl_profile
-                attribute.
-            wvl (float, optional): Wavelength in m. Defaults to 780 nm.
-            backend (str, optional): "CUPY" or "CPU". Defaults to __BACKEND__.
+        Parameters
+        ----------
+        alpha : float
+            Absorption coefficient.
+        power : float
+            Power in W.
+        window : float
+            Computational window in the transverse direction in m.
+        n2 : float
+            Non linear coefficient in m^2/W.
+        V : np.ndarray or None
+            Potential.
+        L : float
+            Length of the medium in m.
+        NX : int, optional
+            Number of points in x. Defaults to 1024.
+        Isat : float, optional
+            Saturation intensity in W/m^2. Defaults to np.inf.
+        nl_length : float, optional
+            Non local length in m. Defaults to 0.
+        wvl : float, optional
+            Wavelength in m. Defaults to 780e-9.
+        backend : str, optional
+            Compute backend. Defaults to ``__BACKEND__``.
         """
         super().__init__(
             alpha=alpha,
@@ -73,10 +84,15 @@ class NLSE_1d(NLSE):
     def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Build the linear propagation matrix.
 
-        Args:
-            precision (str): "single", "double" or "RK4". Defaults to "single".
-        Returns:
-            propagator (np.ndarray): the propagator matrix
+        Parameters
+        ----------
+        precision : str, optional
+            ``"single"``, ``"double"`` or ``"RK4"``. Defaults to ``"single"``.
+
+        Returns
+        -------
+        np.ndarray
+            The propagator matrix.
         """
         match precision:
             case "single" | "double":
@@ -85,14 +101,17 @@ class NLSE_1d(NLSE):
                 ).astype(np.complex64)
             case "RK4":
                 propagator = (-1j * 0.5 * (self.Kx**2) / self.k).astype(np.complex64)
-        return propagator
+        return propagator  # type: ignore[no-any-return]
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot a field for monitoring.
 
-        Args:
-            A_plot (np.ndarray): Field to plot
-            z (float): Propagation distance in m.
+        Parameters
+        ----------
+        A_plot : np.ndarray
+            Field to plot.
+        z : float
+            Propagation distance in m.
         """
         A_plot = self._backend.to_host(A_plot)
         if not isinstance(A_plot, np.ndarray):

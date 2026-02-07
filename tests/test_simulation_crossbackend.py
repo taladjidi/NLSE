@@ -91,9 +91,9 @@ class TestNLSECrossBackend:
             )
             E = np.ones((N, N), dtype=PRECISION_COMPLEX)
             A = simu.out_field(E, L, verbose=False, plot=False, precision="single")
-            assert np.allclose(A, A_cpu, rtol=1e-3, atol=1e-6), (
-                f"NLSE out_field CPU != {backend}"
-            )
+            assert np.allclose(
+                A, A_cpu, rtol=1e-3, atol=1e-6
+            ), f"NLSE out_field CPU != {backend}"
 
     def test_out_field_with_potential(self):
         _skip_if_no_extra()
@@ -133,9 +133,9 @@ class TestNLSECrossBackend:
             simu.V = V.copy()
             E = _gaussian_2d(simu)
             A = simu.out_field(E, L, verbose=False, plot=False, precision="single")
-            assert np.allclose(A, A_cpu, rtol=1e-3, atol=1e-6), (
-                f"NLSE out_field with V: CPU != {backend}"
-            )
+            assert np.allclose(
+                A, A_cpu, rtol=1e-3, atol=1e-6
+            ), f"NLSE out_field with V: CPU != {backend}"
 
     def test_out_field_with_losses(self):
         _skip_if_no_extra()
@@ -171,9 +171,9 @@ class TestNLSECrossBackend:
             )
             E = _gaussian_2d(simu)
             A = simu.out_field(E, L, verbose=False, plot=False, precision="single")
-            assert np.allclose(A, A_cpu, rtol=1e-3, atol=1e-6), (
-                f"NLSE out_field with losses: CPU != {backend}"
-            )
+            assert np.allclose(
+                A, A_cpu, rtol=1e-3, atol=1e-6
+            ), f"NLSE out_field with losses: CPU != {backend}"
 
     def test_out_field_double_precision(self):
         _skip_if_no_extra()
@@ -208,9 +208,9 @@ class TestNLSECrossBackend:
             )
             E = _gaussian_2d(simu)
             A = simu.out_field(E, L, verbose=False, plot=False, precision="double")
-            assert np.allclose(A, A_cpu, rtol=1e-3, atol=1e-6), (
-                f"NLSE out_field double: CPU != {backend}"
-            )
+            assert np.allclose(
+                A, A_cpu, rtol=1e-3, atol=1e-6
+            ), f"NLSE out_field double: CPU != {backend}"
 
     def test_norm_conservation_matches(self):
         """CPU and other backends should conserve norm equally well."""
@@ -255,9 +255,9 @@ class TestNLSECrossBackend:
             norm = (
                 np.sum(np.abs(A) ** 2 * simu.delta_X * simu.delta_Y) * c * epsilon_0 / 2
             )
-            assert np.allclose(norm, norm_cpu, rtol=1e-3), (
-                f"Norm mismatch: CPU={norm_cpu}, {backend}={norm}"
-            )
+            assert np.allclose(
+                norm, norm_cpu, rtol=1e-3
+            ), f"Norm mismatch: CPU={norm_cpu}, {backend}={norm}"
 
 
 # ============================================================
@@ -286,9 +286,9 @@ class TestNLSE1DCrossBackend:
         E = np.ones(N, dtype=PRECISION_COMPLEX)
         A = simu_cpu.out_field(E, L, verbose=False, plot=False, precision="single")
         norm = np.sum(np.abs(A) ** 2 * simu_cpu.delta_X**2) * c * epsilon_0 / 2
-        assert np.allclose(norm, power, rtol=1e-3), (
-            f"NLSE_1d CPU norm not conserved: {norm} vs {power}"
-        )
+        assert np.allclose(
+            norm, power, rtol=1e-3
+        ), f"NLSE_1d CPU norm not conserved: {norm} vs {power}"
 
 
 # ============================================================
@@ -333,9 +333,9 @@ class TestCNLSECrossBackend:
             )
             E = np.ones((2, N, N), dtype=PRECISION_COMPLEX)
             A = simu.out_field(E, L, verbose=False, plot=False, precision="single")
-            assert np.allclose(A, A_cpu, rtol=1e-3, atol=1e-6), (
-                f"CNLSE out_field: CPU != {backend}"
-            )
+            assert np.allclose(
+                A, A_cpu, rtol=1e-3, atol=1e-6
+            ), f"CNLSE out_field: CPU != {backend}"
 
     def test_out_field_with_rabi(self):
         if not EXTRA_BACKENDS_CNLSE:
@@ -380,9 +380,9 @@ class TestCNLSECrossBackend:
             E[0] *= 2.0
             E[1] *= 0.5
             A = simu.out_field(E, L, verbose=False, plot=False, precision="single")
-            assert np.allclose(A, A_cpu, rtol=1e-3, atol=1e-6), (
-                f"CNLSE out_field with Rabi: CPU != {backend}"
-            )
+            assert np.allclose(
+                A, A_cpu, rtol=1e-3, atol=1e-6
+            ), f"CNLSE out_field with Rabi: CPU != {backend}"
 
 
 # ============================================================

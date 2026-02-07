@@ -1,7 +1,9 @@
 import importlib.util
 
-__BACKEND__ = "CUPY"
-
+__BACKEND__: str = "CUPY"
+__CUPY_AVAILABLE__: bool
+__PYOPENCL_AVAILABLE__: bool
+__METAL_AVAILABLE__: bool
 
 if importlib.util.find_spec("cupy") is not None:
     __CUPY_AVAILABLE__ = True
