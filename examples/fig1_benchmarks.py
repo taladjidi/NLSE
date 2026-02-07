@@ -5,6 +5,7 @@ import numpy as np
 import tqdm
 
 from NLSE import NLSE
+from NLSE.utils import __CUPY_AVAILABLE__, __PYOPENCL_AVAILABLE__, __METAL_AVAILABLE__
 
 PRECISION = "single"
 if PRECISION == "double":
@@ -30,10 +31,21 @@ alpha = 22
 dn = None
 N_avg = 2
 sizes = np.logspace(6, 14, 9, base=2, dtype=int)
-times = np.zeros((len(sizes), 3, N_avg))
+
+# Dynamically detect available backends
+backends = ["CPU"]
+if __CUPY_AVAILABLE__:
+    backends.append("GPU")
+if __PYOPENCL_AVAILABLE__:
+    backends.append("CL")
+if __METAL_AVAILABLE__:
+    backends.append("Metal")
+
+# +1 column for naive numpy
+times = np.zeros((len(sizes), len(backends) + 1, N_avg))
 pbar = tqdm.tqdm(total=np.prod(times.shape), desc="Benchmarks")
 for i, size in enumerate(sizes):
-    for j, backend in enumerate(["GPU", "CPU"]):
+    for j, backend in enumerate(backends):
         simu0 = NLSE(
             alpha,
             puiss,
@@ -58,6 +70,7 @@ for i, size in enumerate(sizes):
             times[i, j, k] = time.perf_counter() - t0
             pbar.update(1)
     # numpy naive implementation
+    np_col = len(backends)
     for k in range(N_avg):
         E1 = E_0.copy()
         t0 = time.perf_counter()
@@ -74,39 +87,32 @@ for i, size in enumerate(sizes):
                 / (1 + np.abs(E1) ** 2 / Isat)
             )
             E1 *= np.exp(-simu0.alpha * simu0.delta_z)
-        times[i, 2, k] = time.perf_counter() - t0
+        times[i, np_col, k] = time.perf_counter() - t0
         pbar.update(1)
 pbar.close()
-err_gpu = np.vstack(
-    [np.min(times[:, 0, :], axis=-1), np.max(times[:, 0, :], axis=-1)]
-)
-err_cpu = np.vstack(
-    [np.min(times[:, 1, :], axis=-1), np.max(times[:, 1, :], axis=-1)]
-)
-err_np = np.vstack(
-    [np.min(times[:, 2, :], axis=-1), np.max(times[:, 2, :], axis=-1)]
-)
+
+markers = ["o", "s", "D", "v", "^", "p", "*"]
 fig, ax = plt.subplots()
-ax.errorbar(
-    np.log2(sizes).astype(int),
-    np.median(times[:, 0, :], axis=-1),
-    yerr=err_gpu,
-    label="GPU",
-    marker="o",
-    capsize=4,
+for j, backend in enumerate(backends):
+    err = np.vstack(
+        [np.min(times[:, j, :], axis=-1), np.max(times[:, j, :], axis=-1)]
+    )
+    ax.errorbar(
+        np.log2(sizes).astype(int),
+        np.median(times[:, j, :], axis=-1),
+        yerr=err,
+        label=backend,
+        marker=markers[j % len(markers)],
+        capsize=4,
+    )
+np_col = len(backends)
+err_np = np.vstack(
+    [np.min(times[:, np_col, :], axis=-1), np.max(times[:, np_col, :], axis=-1)]
 )
 ax.errorbar(
     np.log2(sizes).astype(int),
-    np.median(times[:, 1, :], axis=-1),
-    yerr=err_cpu,
-    label="CPU",
-    marker="s",
-    capsize=4,
-)
-ax.errorbar(
-    np.log2(sizes).astype(int),
-    np.median(times[:, 2, :], axis=-1),
-    yerr=err_cpu,
+    np.median(times[:, np_col, :], axis=-1),
+    yerr=err_np,
     label="Numpy",
     marker="^",
     capsize=4,

@@ -12,7 +12,7 @@ $$
 ### Initialization
 
 The physical parameters listed above are defined at the instantiation of the `NLSE` class (`__init__` function).
-The backend (GPU or CPU) is tested when the library is imported, but you can then dynamically switch it when instantiating a `NLSE` class by setting the `self.backend` attribute to `"GPU"` or `"CPU"`.
+The backend is tested when the library is imported, but you can then dynamically switch it when instantiating a `NLSE` class by setting the `self.backend` attribute to `"CPU"`, `"GPU"`, `"CL"`, or `"Metal"`.
 
 ### Broadcasting
 

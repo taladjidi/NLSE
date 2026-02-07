@@ -19,7 +19,7 @@ pip install .
 
 This code has been tested on the three main platforms: Linux, MacOs and Windows.
 
-### GPU computing
+### GPU computing (CUDA/ROCm)
 
 For optimal speed, this code uses your GPU (graphics card).
 For this, you need specific libraries.
@@ -29,6 +29,19 @@ Of course, you need to update your graphics driver to take full advantage of the
 In any case we use [CuPy](https://cupy.dev) for the Python interface to these libraries.
 
 **The `cupy` dependency is not included in [`setup.py`](https://github.com/Quantum-Optics-LKB/NLSE/tree/main/setup.py) in order to not break installation on platforms that do not support it !**
+
+### OpenCL
+
+There is experimental support for OpenCL via [PyOpenCL](https://github.com/inducer/pyopencl).
+OpenCL can target both GPUs and CPUs from Intel, AMD and other vendors.
+To use the OpenCL backend, install PyOpenCL and ensure you have appropriate OpenCL drivers for your hardware.
+Set `backend="CL"` when instantiating a solver.
+
+### Metal (Apple Silicon)
+
+On macOS with Apple Silicon (M1/M2/M3/M4), the Metal backend provides GPU-accelerated computation.
+It is automatically detected when running on supported hardware. No additional installation is needed as the compiled Metal library is bundled with the package.
+Set `backend="Metal"` when instantiating a solver.
 
 ### PyFFTW
 
@@ -52,7 +65,7 @@ Other than this, the code relies on these libraries :
 
 Tests are included to check functionalities and benchmark performance.
 You can run all tests by executing `pytest` at the root of the package (warning: this might take some time !).
-It will test both CPU and GPU backends.
+It will test all available backends (CPU, GPU, OpenCL, Metal).
 
 The benchmarks can be run using [`tests/benchmarks.py`](https://github.com/Quantum-Optics-LKB/NLSE/tree/main/tests/benchmarks.py) and compare a "naive" numpy implementation of the main solver loop to our solver.
 On a Nvidia RTX4090 GPU and Ryzen 7950X CPU, we test our solver to the following results:

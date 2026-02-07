@@ -11,7 +11,7 @@ Due to the manual indexing involved in the implementations, these kernels **do n
 CPU kernels are suitable for small to medium-sized problems or when GPU resources are not available.
 As it uses multithreading internally, they will benefit from higher core counts.
 
-::: NLSE.kernels_cpu
+::: NLSE.kernels.cpu
 
 ## GPU (CUDA)
 
@@ -34,7 +34,7 @@ def kernel(A: cp.ndarray, *args):
     A *= args[1]
 ```
 
-::: NLSE.kernels_gpu
+::: NLSE.kernels.gpu
 
 ## OpenCL (GPU or CPU)
 
@@ -44,6 +44,16 @@ The long-term goal is to use a unified interface for GPU and CPU (which is what 
 
 This uses [`PyOpenCL`](https://github.com/inducer/pyopencl) and its [`array`](https://github.com/inducer/pyopencl/blob/main/pyopencl/array.py) interface to follow the same approach as the other two implementations.
 
-Due to the limited support for OpenCL on newer hardware (mostly Macs), this might not be the winning strategy so use at your own risk ! 😇
+Due to the limited support for OpenCL on newer hardware (mostly Macs), this might not be the winning strategy so use at your own risk !
 
-::: NLSE.kernels_cl
+::: NLSE.kernels.cl
+
+## Metal (Apple Silicon)
+
+Metal kernels provide GPU-accelerated computation on Apple Silicon Macs (M1/M2/M3/M4).
+
+These kernels use Apple's Metal compute shaders compiled into a native `.metallib` library, accessed through a Python C extension. This provides near-native GPU performance on macOS without requiring CUDA or OpenCL.
+
+The Metal backend is automatically detected on supported hardware. No additional installation is needed as the compiled Metal library is bundled with the package.
+
+::: NLSE.kernels.metal

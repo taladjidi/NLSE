@@ -33,7 +33,7 @@ power = 1.05 # input optical power in W
 Isat = 10e4  # saturation intensity in W/m^2
 L = 10e-3 # Length of the medium in m
 alpha = 20 # linear losses coefficient in m^-1
-backend = "GPU" # whether to run on the GPU or the CPU
+backend = "GPU" # "CPU", "GPU", "CL", or "Metal"
 
 simu = NLSE(
     alpha, power, window, n2, None, L, NX=N, NY=N, Isat=Isat, backend=backend
@@ -52,11 +52,19 @@ simu.out_field(E_0, L, verbose=True, plot=True, precision="single")
 
 This code has been tested on the three main platforms: Linux, MacOs and Windows. The requirements are in the [`requirements.txt`](requirements.txt) at the root of the repo.
 
-### GPU computing
+### GPU computing (CUDA/ROCm)
 
 For optimal speed, this code uses your GPU (graphics card). For this, you need specific libraries. For Nvidia cards, you need a [CUDA](https://developer.nvidia.com/cuda-toolkit) install. For AMD cards, you need a [ROCm](https://rocmdocs.amd.com/en/latest/) install. Of course, you need to update your graphics driver to take full advantage of these. In any case we use [CuPy](cupy.dev) for the Python interface to these libraries.
 
 **The `cupy` dependency is not included in `setup.py` in order to not break installation on platforms that do not support it !**
+
+### OpenCL
+
+There is experimental support for OpenCL via [PyOpenCL](https://github.com/inducer/pyopencl). OpenCL can target both GPUs and CPUs from Intel, AMD and other vendors. To use the OpenCL backend, install PyOpenCL and ensure you have appropriate OpenCL drivers for your hardware. Set `backend="CL"` when instantiating a solver.
+
+### Metal (Apple Silicon)
+
+On macOS with Apple Silicon (M1/M2/M3/M4), the Metal backend provides GPU-accelerated computation. It is automatically detected when running on supported hardware. No additional installation is needed as the compiled Metal library is bundled with the package. Set `backend="Metal"` when instantiating a solver.
 
 ### PyFFTW
 
@@ -84,7 +92,7 @@ Other than this, the code relies on these libraries :
 
 Tests are included to check functionalities and benchmark performance.
 You can run all tests by using [`pytest`](https://docs.pytest.org/en/8.2.x/) at the root of the repo.
-It will test both CPU and GPU backends (if available).
+It will test all available backends (CPU, GPU, OpenCL, Metal).
 This can take some time !
 
 The benchmarks can be run using [`examples/benchmarks.py`](examples/benchmarks.py) and compare a "naive" numpy implementation of the main solver loop to our solver.
@@ -142,7 +150,7 @@ $$
 #### Initialization
 
 The physical parameters listed above are defined at the instantiation of the `NLSE` class (`__init__` function).
-The backend (GPU or CPU) is tested when the library is imported, but you can then dynamically switch it when instantiating a `NLSE` class by setting the `self.backend` attribute to `"GPU"` or `"CPU"`.
+The backend is tested when the library is imported, but you can then dynamically switch it when instantiating a `NLSE` class by setting the `self.backend` attribute to `"CPU"`, `"GPU"`, `"CL"`, or `"Metal"`.
 
 #### Broadcasting
 
