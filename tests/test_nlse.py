@@ -51,6 +51,8 @@ def test_build_propagator() -> None:
 
 
 def test_build_fft_plan() -> None:
+    from NLSE.backends import FFTPlan
+
     for backend in AVAILABLE_BACKENDS:
         simu = NLSE(
             alpha,
@@ -64,39 +66,24 @@ def test_build_fft_plan() -> None:
             Isat=Isat,
             backend=backend,
         )
-        if backend == "CPU" or backend == "CL":
-            A = np.random.random((N, N)) + 1j * np.random.random((N, N))
-        elif backend == "GPU" and NLSE.__CUPY_AVAILABLE__:
-            A = cp.random.random((N, N)) + 1j * cp.random.random((N, N))
-        A = A.astype(PRECISION_COMPLEX)
-        plans = simu._build_fft_plan(A)
+        # Allocate on the right device
+        A, _ = simu._prepare_output_array(
+            np.random.random((N, N)).astype(PRECISION_COMPLEX)
+            + 1j * np.random.random((N, N)).astype(PRECISION_COMPLEX),
+            normalize=False,
+        )
+        plan = simu._build_fft_plan(A)
+        assert isinstance(plan, FFTPlan), (
+            f"Plan should be a FFTPlan instance. (Backend {backend})"
+        )
+        # Verify the plan can do a roundtrip FFT (CPU only, others have device arrays)
         if backend == "CPU":
-            assert len(plans) == 2, f"Number of plans is wrong. (Backend {backend})"
-            assert isinstance(plans[0], pyfftw.FFTW), (
-                f"Plan type is wrong. (Backend {backend})"
+            A_copy = A.copy()
+            plan.fft(A_copy)
+            plan.ifft(A_copy)
+            assert np.allclose(A_copy, A, atol=1e-5), (
+                f"FFT roundtrip failed. (Backend {backend})"
             )
-            assert plans[0].output_shape == (
-                N,
-                N,
-            ), f"Plan shape is wrong. (Backend {backend})"
-        elif backend == "GPU" and NLSE.__CUPY_AVAILABLE__:
-            assert len(plans) == 1, f"Number of plans is wrong. (Backend {backend})"
-            assert isinstance(plans[0], VkFFTApp_cuda), (
-                f"Plan type is wrong. (Backend {backend})"
-            )
-            assert plans[0].shape0 == (
-                N,
-                N,
-            ), f"Plan shape is wrong. (Backend {backend})"
-        elif backend == "CL" and NLSE.__PYOPENCL_AVAILABLE__:
-            assert len(plans) == 1, f"Number of plans is wrong. (Backend {backend})"
-            assert isinstance(plans[0], VkFFTApp_cl), (
-                f"Plan type is wrong. (Backend {backend})"
-            )
-            assert plans[0].shape0 == (
-                N,
-                N,
-            ), f"Plan shape is wrong. (Backend {backend})"
 
 
 def test_prepare_output_array() -> None:

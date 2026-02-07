@@ -1,13 +1,9 @@
 import matplotlib.pyplot as plt
 import numpy as np
-import pyfftw
 from scipy.constants import c, epsilon_0
 
 from .cnlse import CNLSE
-from .utils import __BACKEND__, __CUPY_AVAILABLE__
-
-if __CUPY_AVAILABLE__:
-    import cupy as cp
+from ..utils import __BACKEND__
 
 
 class CNLSE_1d(CNLSE):
@@ -72,36 +68,32 @@ class CNLSE_1d(CNLSE):
         self.nl_profile = self.nl_profile[0]
         self.nl_profile /= self.nl_profile.sum()
 
-    def _prepare_output_array(self, E: np.ndarray, normalize: bool) -> np.ndarray:
-        """Prepare the output arrays depending on __BACKEND__.
+    def _prepare_output_array(
+        self, E: np.ndarray, normalize: bool
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Prepare the output arrays for 1D CNLSE.
 
-        Prepares the A and A_sq arrays to store the field and its modulus.
+        Two-component normalization with delta_X**2.
+
         Args:
-            E_in (np.ndarray): Input array
+            E (np.ndarray): Input array of shape (2, NX)
             normalize (bool): Normalize the field to the total power.
         Returns:
             A (np.ndarray): Output field array
             A_sq (np.ndarray): Output field modulus squared array
         """
-        if self.backend == "GPU" and self.__CUPY_AVAILABLE__:
-            A = cp.zeros_like(E)
-            A_sq = cp.zeros_like(E, dtype=E.real.dtype)
-            E = cp.asarray(E)
-            puiss_arr = cp.array([self.power, self.power2], dtype=E.dtype)
-        else:
-            A = pyfftw.zeros_aligned(E.shape, dtype=E.dtype, n=pyfftw.simd_alignment)
-            A_sq = np.zeros_like(E, dtype=E.real.dtype)
-            puiss_arr = np.array([self.power, self.power2], dtype=E.dtype)
+        A, A_sq = self._backend.allocate_pair(E.shape, E.dtype)
+        E_dev = self._backend.to_device(E)
         if normalize:
-            # normalization of the field
+            puiss_arr = np.array([self.power, self.power2], dtype=E.dtype)
             integral = ((E.real * E.real + E.imag * E.imag) * self.delta_X**2).sum(
                 axis=self._last_axes
             )
             integral *= c * epsilon_0 / 2
             E_00 = (puiss_arr / integral) ** 0.5
-            A[:] = (E_00.T * E.T).T
+            A[:] = (E_00.T * E_dev.T).T
         else:
-            A[:] = E
+            A[:] = E_dev
         return A, A_sq
 
     def _take_components(self, A: np.ndarray) -> tuple:
@@ -152,8 +144,9 @@ class CNLSE_1d(CNLSE):
         if A_plot.ndim > 2:
             while len(A_plot.shape) > 2:
                 A_plot = A_plot[0]
-        if self.__CUPY_AVAILABLE__ and isinstance(A_plot, cp.ndarray):
-            A_plot = A_plot.get()
+        A_plot = self._backend.to_host(A_plot)
+        if not isinstance(A_plot, np.ndarray):
+            A_plot = np.asarray(A_plot)
         A_1_plot = A_plot[0]
         A_2_plot = A_plot[1]
         fig, ax = plt.subplots(2, 2, layout="constrained", figsize=(10, 10))

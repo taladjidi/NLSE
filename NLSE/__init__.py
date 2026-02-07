@@ -1,7 +1,7 @@
 """
 NLSE.
 
-A package for solving the Nonlinear Schrödinger Equation (NLSE) using the
+A package for solving the Nonlinear Schrodinger Equation (NLSE) using the
 Split-Step Fourier method.
 """
 
@@ -14,10 +14,41 @@ __email__ = "tangui.aladjidi@lkb.upmc.fr"
 
 from . import utils
 from .callbacks import *
-from .cnlse import CNLSE
-from .cnlse_1d import CNLSE_1d
-from .ddgpe import DDGPE
-from .gpe import GPE
-from .nlse import NLSE
-from .nlse_1d import NLSE_1d
-from .nlse_3d import NLSE_3d
+from .solvers import CNLSE, CNLSE_1d, DDGPE, GPE, NLSE, NLSE_1d, NLSE_3d
+
+# Backward-compatible submodule aliases so that
+# `from NLSE.kernels_cpu import ...` and `from NLSE.kernels_cl import ...` still work.
+import sys
+
+from .kernels import cpu as kernels_cpu
+
+sys.modules[__name__ + ".kernels_cpu"] = kernels_cpu
+
+try:
+    from .kernels import gpu as kernels_gpu
+
+    sys.modules[__name__ + ".kernels_gpu"] = kernels_gpu
+except ImportError:
+    pass
+
+try:
+    from .kernels import cl as kernels_cl
+
+    sys.modules[__name__ + ".kernels_cl"] = kernels_cl
+except ImportError:
+    pass
+
+try:
+    from .kernels import metal as kernels_metal
+
+    sys.modules[__name__ + ".kernels_metal"] = kernels_metal
+except (ImportError, FileNotFoundError, OSError):
+    pass
+
+# Alias for NLSE.metal.metal_api -> NLSE.kernels.metal_native.metal_api
+try:
+    from .kernels import metal_native as metal
+
+    sys.modules[__name__ + ".metal"] = metal
+except (ImportError, FileNotFoundError, OSError):
+    pass

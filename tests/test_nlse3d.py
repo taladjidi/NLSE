@@ -60,6 +60,8 @@ def test_build_propagator() -> None:
 
 
 def test_build_fft_plan() -> None:
+    from NLSE.backends import FFTPlan
+
     for backend in AVAILABLE_BACKENDS:
         simu = NLSE_3d(
             alpha=alpha,
@@ -76,31 +78,23 @@ def test_build_fft_plan() -> None:
             Isat=Isat,
             backend=backend,
         )
+        # Allocate on the right device
+        A, _ = simu._prepare_output_array(
+            np.random.random((N, N, NZ)).astype(PRECISION_COMPLEX)
+            + 1j * np.random.random((N, N, NZ)).astype(PRECISION_COMPLEX),
+            normalize=False,
+        )
+        plan = simu._build_fft_plan(A)
+        assert isinstance(plan, FFTPlan), (
+            f"Plan should be a FFTPlan instance. (Backend {backend})"
+        )
         if backend == "CPU":
-            A = np.random.random((N, N, NZ)) + 1j * np.random.random((N, N, NZ))
-        elif backend == "GPU" and NLSE_3d.__CUPY_AVAILABLE__:
-            A = cp.random.random((N, N, NZ)) + 1j * cp.random.random((N, N, NZ))
-        plans = simu._build_fft_plan(A)
-        if backend == "CPU":
-            assert len(plans) == 2, f"Number of plans is wrong. (Backend {backend})"
-            assert isinstance(plans[0], pyfftw.FFTW), (
-                f"Plan type is wrong. (Backend {backend})"
+            A_copy = A.copy()
+            plan.fft(A_copy)
+            plan.ifft(A_copy)
+            assert np.allclose(A_copy, A, atol=1e-5), (
+                f"FFT roundtrip failed. (Backend {backend})"
             )
-            assert plans[0].output_shape == (
-                N,
-                N,
-                NZ,
-            ), f"Plan shape is wrong. (Backend {backend})"
-        elif backend == "GPU" and NLSE_3d.__CUPY_AVAILABLE__:
-            assert len(plans) == 1, f"Number of plans is wrong. (Backend {backend})"
-            assert isinstance(plans[0], VkFFTApp), (
-                f"Plan type is wrong. (Backend {backend})"
-            )
-            assert plans[0].shape0 == (
-                N,
-                N,
-                NZ,
-            ), f"Plan shape is wrong. (Backend {backend})"
 
 
 def test_prepare_output_array() -> None:

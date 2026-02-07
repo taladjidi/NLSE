@@ -2,10 +2,9 @@ from typing import Union
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pyfftw
 
 from .cnlse import CNLSE
-from .utils import __BACKEND__, __CUPY_AVAILABLE__
+from ..utils import __BACKEND__, __CUPY_AVAILABLE__
 
 if __CUPY_AVAILABLE__:
     import cupy as cp
@@ -160,46 +159,22 @@ class DDGPE(CNLSE):
         Send arrays to GPU.
         """
         super()._send_arrays_to_gpu()
-        # for broadcasting of parameters in case they are
-        # not already on the GPU
-        if isinstance(self.gamma, np.ndarray):
-            self.gamma = cp.asarray(self.gamma)
-        if isinstance(self.g, np.ndarray):
-            self.g = cp.asarray(self.g)
-        if isinstance(self.omega, np.ndarray):
-            self.omega = cp.asarray(self.omega)
-        if isinstance(self.k_z, np.ndarray):
-            self.k_z = cp.asarray(self.k_z)
-        if isinstance(self.omega_exc, np.ndarray):
-            self.omega_exc = cp.asarray(self.omega_exc)
-        if isinstance(self.omega_cav, np.ndarray):
-            self.omega_cav = cp.asarray(self.omega_cav)
-        if isinstance(self.detuning, np.ndarray):
-            self.detuning = cp.asarray(self.detuning)
-        if isinstance(self.omega_pump, np.ndarray):
-            self.omega_pump = cp.asarray(self.omega_pump)
+        for attr in ("gamma", "g", "omega", "k_z", "omega_exc",
+                      "omega_cav", "detuning", "omega_pump"):
+            val = getattr(self, attr)
+            if isinstance(val, np.ndarray):
+                setattr(self, attr, self._backend.to_device(val))
 
     def _retrieve_arrays_from_gpu(self) -> None:
         """
         Retrieve arrays from GPU.
         """
         super()._retrieve_arrays_from_gpu()
-        if isinstance(self.gamma, cp.ndarray):
-            self.gamma = self.gamma.get()
-        if isinstance(self.g, cp.ndarray):
-            self.g = self.g.get()
-        if isinstance(self.omega, cp.ndarray):
-            self.omega = self.omega.get()
-        if isinstance(self.k_z, cp.ndarray):
-            self.k_z = self.k_z.get()
-        if isinstance(self.omega_exc, cp.ndarray):
-            self.omega_exc = self.omega_exc.get()
-        if isinstance(self.omega_cav, cp.ndarray):
-            self.omega_cav = self.omega_cav.get()
-        if isinstance(self.detuning, cp.ndarray):
-            self.detuning = self.detuning.get()
-        if isinstance(self.omega_pump, cp.ndarray):
-            self.omega_pump = self.omega_pump.get()
+        for attr in ("gamma", "g", "omega", "k_z", "omega_exc",
+                      "omega_cav", "detuning", "omega_pump"):
+            val = getattr(self, attr)
+            if self._backend.is_device_array(val):
+                setattr(self, attr, self._backend.to_host(val))
 
     def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Build the propagators.
@@ -222,8 +197,12 @@ class DDGPE(CNLSE):
         ).astype(np.complex64)
         return np.array([propagator1, propagator2])
 
+    def _compute_norm_factor(self, E_in):
+        """DDGPE: no normalization (returns 1)."""
+        return 1
+
     def _prepare_output_array(self, E_in: np.ndarray, normalize: bool) -> np.ndarray:
-        """Prepare the output array depending on __BACKEND__.
+        """Prepare the output array depending on backend.
 
         Args:
             E_in (np.ndarray): Input array
@@ -231,16 +210,8 @@ class DDGPE(CNLSE):
         Returns:
             np.ndarray: Output array
         """
-        if self.backend == "GPU" and self.__CUPY_AVAILABLE__:
-            A = cp.zeros_like(E_in)
-            A_sq = cp.zeros_like(A, dtype=A.real.dtype)
-            A[:] = cp.asarray(E_in)
-        else:
-            A = pyfftw.zeros_aligned(E_in.shape, dtype=E_in.dtype)
-            A_sq = np.empty_like(A, dtype=A.real.dtype)
-            A[:] = E_in
-        if normalize:
-            pass
+        A, A_sq = self._backend.allocate_pair(E_in.shape, E_in.dtype)
+        A[:] = self._backend.to_device(E_in)
         return A, A_sq
 
     def split_step(
@@ -249,7 +220,7 @@ class DDGPE(CNLSE):
         A_sq: np.ndarray,
         V: np.ndarray,
         propagator: np.ndarray,
-        plans: list,
+        plans,
         precision: str = "single",
     ) -> None:
         """Split step function for one propagation step
@@ -258,31 +229,23 @@ class DDGPE(CNLSE):
             A (np.ndarray): Fields to propagate of shape (2, NY, NX)
             A_sq (np.ndarray): Squared modulus of the fields
             V (np.ndarray): Potential field (can be None).
-            propagator1 (np.ndarray): Propagator matrix for field 1.
-            propagator2 (np.ndarray): Propagator matrix for field 2.
-            plans (list): List of FFT plan objects. Either a single FFT plan for
-            both directions
-            (GPU case) or distinct FFT and IFFT plans for FFTW.
+            propagator (np.ndarray): Propagator matrix for both fields.
+            plans: FFT plan object.
             precision (str, optional): Single or double application of the nonlinear
             propagation step.
             Defaults to "single".
         Returns:
             None
         """
-        if self.backend == "GPU" and self.__CUPY_AVAILABLE__:
-            # on GPU, only one plan for both FFT directions
-            plan_fft = plans[0]
-        else:
-            plan_fft, plan_ifft = plans
         A1, A2 = self._take_components(A)
         if precision == "double":
             self._kernels.square_mod(A, A_sq)
             A_sq_1, A_sq_2 = self._take_components(A_sq)
             if self.nl_length > 0:
-                A_sq_1 = self._convolution(
+                A_sq_1 = self._backend.convolution(
                     A_sq_1, self.nl_profile, mode="same", axes=self._last_axes
                 )
-                A_sq_2 = self._convolution(
+                A_sq_2 = self._backend.convolution(
                     A_sq_2, self.nl_profile, mode="same", axes=self._last_axes
                 )
 
@@ -334,24 +297,15 @@ class DDGPE(CNLSE):
                     self.I_sat,
                     self.I_sat2,
                 )
-        if self.backend == "GPU" and self.__CUPY_AVAILABLE__:
-            plan_fft.fft(A, A)
-            # linear step in Fourier domain (shifted)
-            cp.multiply(A, propagator, out=A)
-            plan_fft.ifft(A, A)
-        else:
-            plan_fft, plan_ifft = plans
-            plan_fft(input_array=A, output_array=A)
-            np.multiply(A, propagator, out=A)
-            plan_ifft(input_array=A, output_array=A, normalise_idft=True)
+        self._linear_step(A, propagator)
         # fft normalization
         self._kernels.square_mod(A, A_sq)
         A_sq_1, A_sq_2 = self._take_components(A_sq)
         if self.nl_length > 0:
-            A_sq_1 = self._convolution(
+            A_sq_1 = self._backend.convolution(
                 A_sq_1, self.nl_profile, mode="same", axes=self._last_axes
             )
-            A_sq_2 = self._convolution(
+            A_sq_2 = self._backend.convolution(
                 A_sq_2, self.nl_profile, mode="same", axes=self._last_axes
             )
         if precision == "double":
@@ -466,8 +420,9 @@ class DDGPE(CNLSE):
         if A_plot.ndim > 3:
             while len(A_plot.shape) > 3:
                 A_plot = A_plot[0]
-        if self.__CUPY_AVAILABLE__ and isinstance(A_plot, cp.ndarray):
-            A_plot = A_plot.get()
+        A_plot = self._backend.to_host(A_plot)
+        if not isinstance(A_plot, np.ndarray):
+            A_plot = np.asarray(A_plot)
         fig, ax = plt.subplots(2, 2, layout="constrained", figsize=(10, 10))
         fig.suptitle(rf"Field at $t$ = {t:} ps")
         ext_real = [

@@ -7,7 +7,7 @@ Arrays are MetalArray objects that wrap Metal shared-memory buffers.
 """
 
 import numpy as np
-from .metal.metal_api import MetalContext, MetalBuffer, _lib
+from .metal_native.metal_api import MetalContext, MetalBuffer, _lib
 
 
 # Global context (initialized lazily)

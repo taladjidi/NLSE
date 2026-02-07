@@ -27,7 +27,7 @@ except ImportError:
     __BACKEND__ = "CPU"
 
 try:
-    from .metal.metal_api import MetalContext
+    from .kernels.metal_native.metal_api import MetalContext
 
     __METAL_AVAILABLE__ = True
 except (ImportError, FileNotFoundError, OSError):

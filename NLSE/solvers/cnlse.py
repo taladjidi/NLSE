@@ -2,17 +2,10 @@ from typing import Union
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pyfftw
 from scipy.constants import c, epsilon_0
 
 from .nlse import NLSE
-from .utils import __BACKEND__, __CUPY_AVAILABLE__, __PYOPENCL_AVAILABLE__
-
-if __CUPY_AVAILABLE__:
-    import cupy as cp
-
-if __PYOPENCL_AVAILABLE__:
-    from pyopencl import array as cla
+from ..utils import __BACKEND__
 
 
 class CNLSE(NLSE):
@@ -99,55 +92,34 @@ class CNLSE(NLSE):
     def _prepare_output_array(
         self, E: np.ndarray, normalize: bool
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Prepare the output arrays depending on __BACKEND__.
+        """Prepare the output arrays for CNLSE.
 
-        Prepares the A and A_sq arrays to store the field and its modulus.
+        Two-component normalization requires per-component broadcasting.
+
         Args:
-            E_in (np.ndarray): Input array
+            E (np.ndarray): Input array of shape (2, NY, NX)
             normalize (bool): Normalize the field to the total power.
         Returns:
             A (np.ndarray): Output field array
             A_sq (np.ndarray): Output field modulus squared array
         """
-        puiss_arr = np.array([self.power, self.power2], dtype=E.dtype)
-        if self.backend == "GPU" and self.__CUPY_AVAILABLE__:
-            A = cp.zeros_like(E)
-            A_sq = cp.zeros_like(A, dtype=A.real.dtype)
-            E = cp.asarray(E)
-            puiss_arr = cp.array(puiss_arr)
-        elif self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
-            A = cla.zeros(self._cl_queue, E.shape, E.dtype)
-            A_sq = cla.zeros(self._cl_queue, E.shape, E.real.dtype)
-            # E = cla.to_device(self._cl_queue, E)
-            # puiss_arr = cla.to_device(self._cl_queue, puiss_arr)
-        else:
-            A = pyfftw.zeros_aligned(E.shape, dtype=E.dtype, n=pyfftw.simd_alignment)
-            A_sq = np.zeros_like(A, dtype=A.real.dtype)
+        A, A_sq = self._backend.allocate_pair(E.shape, E.dtype)
+        E_dev = self._backend.to_device(E)
         if normalize:
-            # normalization of the field
-            match self.backend:
-                case "GPU" | "CPU":
-                    integral = (
-                        (E.real * E.real + E.imag * E.imag)
-                        * self.delta_X
-                        * self.delta_Y
-                    ).sum(axis=self._last_axes)
-                    integral = integral * c * epsilon_0 / 2
-                    E_00 = (puiss_arr / integral) ** 0.5
-                case "CL":
-                    integral = (
-                        (E.real * E.real + E.imag * E.imag)
-                        * self.delta_X
-                        * self.delta_Y
-                    ).sum(axis=self._last_axes)
-                    integral = integral * c * epsilon_0 / 2
-                    E_00 = (puiss_arr / integral) ** 0.5
-                    E_00 = cla.to_device(self._cl_queue, E_00.astype(E.dtype))
-                    E = cla.to_device(self._cl_queue, E.astype(E.dtype))
-            A[0] = E_00[0] * E[0]
-            A[1] = E_00[1] * E[1]
+            puiss_arr = np.array([self.power, self.power2], dtype=E.real.dtype)
+            arr = E.real * E.real + E.imag * E.imag
+            arr = (arr * self.delta_X * self.delta_Y).astype(E.real.dtype)
+            integral = arr.sum(axis=self._last_axes)
+            integral = integral * c * epsilon_0 / 2
+            E_00 = (puiss_arr / integral) ** 0.5
+            if self.backend == "CL":
+                from pyopencl import array as cla
+                E_00 = cla.to_device(self._cl_queue, E_00.astype(E.dtype))
+                E_dev = cla.to_device(self._cl_queue, E.astype(E.dtype))
+            A[0] = E_00[0] * E_dev[0]
+            A[1] = E_00[1] * E_dev[1]
         else:
-            A[:] = E
+            A[:] = E_dev
         return A, A_sq
 
     def _send_arrays_to_gpu(self) -> None:
@@ -157,27 +129,20 @@ class CNLSE(NLSE):
         super()._send_arrays_to_gpu()
         # for broadcasting of parameters in case they are
         # not already on the GPU
-        if isinstance(self.n22, np.ndarray):
-            self.n22 = cp.asarray(self.n22)
-        if isinstance(self.n12, np.ndarray):
-            self.n12 = cp.asarray(self.n12)
+        for attr in ("n22", "n12"):
+            val = getattr(self, attr)
+            if isinstance(val, np.ndarray):
+                setattr(self, attr, self._backend.to_device(val))
 
     def _retrieve_arrays_from_gpu(self) -> None:
         """
         Retrieve arrays from GPU.
         """
         super()._retrieve_arrays_from_gpu()
-        match self.backend:
-            case "GPU":
-                if isinstance(self.n22, cp.ndarray):
-                    self.n22 = self.n22.get()
-                if isinstance(self.n12, cp.ndarray):
-                    self.n12 = self.n12.get()
-            case "CL":
-                if isinstance(self.n22, cla.Array):
-                    self.n22 = self.n22.get()
-                if isinstance(self.n12, cla.Array):
-                    self.n12 = self.n12.get()
+        for attr in ("n22", "n12"):
+            val = getattr(self, attr)
+            if self._backend.is_device_array(val):
+                setattr(self, attr, self._backend.to_host(val))
 
     def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Build the propagators.
@@ -233,26 +198,9 @@ class CNLSE(NLSE):
         # prepare output array, this kills performance but we need it
         A_prop = A.copy()
         A_sq = A.real * A.real + A.imag * A.imag
-        if (self.backend == "GPU" and self.__CUPY_AVAILABLE__) or (
-            self.backend == "CL" and self.__PYOPENCL_AVAILABLE__
-        ):
-            # on GPU, only one plan for both FFT directions
-            plan_fft = plans[0]
-        else:
-            plan_fft, plan_ifft = plans
-        if (self.backend == "GPU" and self.__CUPY_AVAILABLE__) or (
-            self.backend == "CL" and self.__PYOPENCL_AVAILABLE__
-        ):
-            plan_fft.fft(A_prop, A_prop)
-            # linear step in Fourier domain (shifted)
-            A_prop *= propagator
-            plan_fft.ifft(A_prop, A_prop)
-        else:
-            plan_fft(input_array=A_prop, output_array=A_prop)
-            np.multiply(A_prop, propagator, out=A_prop)
-            plan_ifft(input_array=A_prop, output_array=A_prop, normalise_idft=True)
+        self._linear_step(A_prop, propagator)
         if self.nl_length > 0:
-            A_sq[:] = self._convolution(
+            A_sq[:] = self._backend.convolution(
                 A_sq, self.nl_profile, mode="same", axes=self._last_axes
             )
         # Linear prop
@@ -286,7 +234,7 @@ class CNLSE(NLSE):
         A_sq: np.ndarray,
         V: Union[np.ndarray, None],
         propagator: np.ndarray,
-        plans: list,
+        plans,
         precision: str = "single",
     ) -> None:
         """Split step function for one propagation step
@@ -297,33 +245,21 @@ class CNLSE(NLSE):
             V (np.ndarray): Potential field (can be None).
             propagator (np.ndarray): Propagator matrix for both fields
                 [propagator1, propagator2].
-            plans (list): List of FFT plan objects. Either a single FFT plan for
-                both directions (GPU case) or distinct FFT and IFFT plans for
-                FFTW.
+            plans: FFT plan object.
             precision (str, optional): Single or double application of the
                 nonlinear propagation step. Defaults to "single".
         Returns:
             None
         """
-        if (
-            self.backend == "GPU"
-            and self.__CUPY_AVAILABLE__
-            or self.backend == "CL"
-            and self.__PYOPENCL_AVAILABLE__
-        ):
-            # on GPU, only one plan for both FFT directions
-            plan_fft = plans[0]
-        else:
-            plan_fft, plan_ifft = plans
         A1, A2 = self._take_components(A)
         if precision == "double":
             self._kernels.square_mod(A, A_sq)
             A_sq_1, A_sq_2 = self._take_components(A_sq)
             if self.nl_length > 0:
-                A_sq_1 = self._convolution(
+                A_sq_1 = self._backend.convolution(
                     A_sq_1, self.nl_profile, mode="same", axes=self._last_axes
                 )
-                A_sq_2 = self._convolution(
+                A_sq_2 = self._backend.convolution(
                     A_sq_2, self.nl_profile, mode="same", axes=self._last_axes
                 )
 
@@ -375,29 +311,15 @@ class CNLSE(NLSE):
                     2 * self.I_sat2 / (epsilon_0 * c),
                     2 * self.I_sat / (epsilon_0 * c),
                 )
-        if (
-            self.backend == "GPU"
-            and self.__CUPY_AVAILABLE__
-            or self.backend == "CL"
-            and self.__PYOPENCL_AVAILABLE__
-        ):
-            plan_fft.fft(A, A)
-            # linear step in Fourier domain (shifted)
-            A *= propagator
-            plan_fft.ifft(A, A)
-        else:
-            plan_fft, plan_ifft = plans
-            plan_fft(input_array=A, output_array=A)
-            np.multiply(A, propagator, out=A)
-            plan_ifft(input_array=A, output_array=A, normalise_idft=True)
+        self._linear_step(A, propagator)
         # fft normalization
         self._kernels.square_mod(A, A_sq)
         A_sq_1, A_sq_2 = self._take_components(A_sq)
         if self.nl_length > 0:
-            A_sq_1 = self._convolution(
+            A_sq_1 = self._backend.convolution(
                 A_sq_1, self.nl_profile, mode="same", axes=self._last_axes
             )
-            A_sq_2 = self._convolution(
+            A_sq_2 = self._backend.convolution(
                 A_sq_2, self.nl_profile, mode="same", axes=self._last_axes
             )
         if precision == "double":
@@ -512,8 +434,9 @@ class CNLSE(NLSE):
         if A_plot.ndim > 3:
             while len(A_plot.shape) > 3:
                 A_plot = A_plot[0]
-        if self.__CUPY_AVAILABLE__ and isinstance(A_plot, cp.ndarray):
-            A_plot = A_plot.get()
+        A_plot = self._backend.to_host(A_plot)
+        if not isinstance(A_plot, np.ndarray):
+            A_plot = np.asarray(A_plot)
         fig, ax = plt.subplots(2, 2, layout="constrained", figsize=(10, 10))
         fig.suptitle(rf"Field at $z$ = {z:.2e} m")
         ext_real = [

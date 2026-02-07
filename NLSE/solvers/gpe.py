@@ -2,17 +2,10 @@ from typing import Union
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pyfftw
 from scipy.constants import atomic_mass, c, epsilon_0, hbar
 
 from .nlse import NLSE
-from .utils import __BACKEND__, __CUPY_AVAILABLE__, __METAL_AVAILABLE__
-
-if __CUPY_AVAILABLE__:
-    import cupy as cp
-
-if __METAL_AVAILABLE__:
-    from .kernels_metal import MetalArray
+from ..utils import __BACKEND__
 
 
 class GPE(NLSE):
@@ -105,52 +98,13 @@ class GPE(NLSE):
                 )
         return propagator
 
-    def _prepare_output_array(self, E_in: np.ndarray, normalize: bool) -> np.ndarray:
-        """Prepare the output array depending on __BACKEND__.
-
-        Args:
-            E_in (np.ndarray): Input array
-            normalize (bool): Normalize the field to the total power.
-        Returns:
-            np.ndarray: Output array
-        """
-        if self.backend == "GPU" and self.__CUPY_AVAILABLE__:
-            A = cp.zeros_like(E_in)
-            A_sq = cp.zeros_like(A, dtype=A.real.dtype)
-            E_in = cp.asarray(E_in)
-        elif self.backend == "Metal":
-            A_np = np.zeros(E_in.shape, dtype=E_in.dtype)
-            A_sq_np = np.zeros(E_in.shape, dtype=np.float32)
-            if normalize:
-                integral = (
-                    (E_in.real * E_in.real + E_in.imag * E_in.imag)
-                    * self.delta_X
-                    * self.delta_Y
-                ).sum(axis=self._last_axes)
-                E_00 = (self.N / integral) ** 0.5
-                A_np[:] = (E_00.T * E_in.T).T
-            else:
-                A_np[:] = E_in
-            A = MetalArray.from_numpy(A_np.astype(np.complex64))
-            A_sq = MetalArray.from_numpy(A_sq_np.astype(np.float32))
-            return A, A_sq
-        else:
-            A = pyfftw.zeros_aligned(
-                E_in.shape, dtype=E_in.dtype, n=pyfftw.simd_alignment
-            )
-            A_sq = np.zeros_like(A, dtype=A.real.dtype)
-        if normalize:
-            # normalization of the field
-            integral = (
-                (E_in.real * E_in.real + E_in.imag * E_in.imag)
-                * self.delta_X
-                * self.delta_Y
-            ).sum(axis=self._last_axes)
-            E_00 = (self.N / integral) ** 0.5
-            A[:] = (E_00.T * E_in.T).T
-        else:
-            A[:] = E_in
-        return A, A_sq
+    def _compute_norm_factor(self, E_in):
+        """GPE normalization: no c*epsilon_0/2 factor, uses N instead of power."""
+        arr = E_in.real * E_in.real + E_in.imag * E_in.imag
+        arr = (arr * self.delta_X * self.delta_Y).astype(E_in.real.dtype)
+        integral = self._backend.sum(arr, axis=self._last_axes)
+        E_00 = self._backend.sqrt(self.N / integral)
+        return E_00
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot a field for monitoring.
@@ -163,8 +117,9 @@ class GPE(NLSE):
         if A_plot.ndim > 2:
             while len(A_plot.shape) > 2:
                 A_plot = A_plot[0]
-        if self.__CUPY_AVAILABLE__ and isinstance(A_plot, cp.ndarray):
-            A_plot = A_plot.get()
+        A_plot = self._backend.to_host(A_plot)
+        if not isinstance(A_plot, np.ndarray):
+            A_plot = np.asarray(A_plot)
         fig, ax = plt.subplots(1, 3, layout="constrained", figsize=(15, 5))
         fig.suptitle(rf"Field at $z$ = {z:.2e} m")
         ext_real = [

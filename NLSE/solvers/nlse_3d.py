@@ -2,17 +2,10 @@ from typing import Union
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pyfftw
 from scipy.constants import c, epsilon_0
 
 from .nlse import NLSE
-from .utils import __BACKEND__, __CUPY_AVAILABLE__, __METAL_AVAILABLE__
-
-if __CUPY_AVAILABLE__:
-    import cupy as cp
-
-if __METAL_AVAILABLE__:
-    from .kernels_metal import MetalArray
+from ..utils import __BACKEND__
 
 
 class NLSE_3d(NLSE):
@@ -126,59 +119,16 @@ class NLSE_3d(NLSE):
         # prop_t *= np.exp(1 / self.vg * self.Omega)
         return (prop_2d * prop_t).astype(np.complex64)
 
-    def _prepare_output_array(self, E_in: np.ndarray, normalize: bool) -> np.ndarray:
-        """Prepare the output arrays depending on __BACKEND__.
-
-        Prepares the A and A_sq arrays to store the field and its modulus.
-
-        Args:
-            E_in (np.ndarray): Input array
-            normalize (bool): Normalize the field to the total power.
-        Returns:
-            A (np.ndarray): Output field array
-            A_sq (np.ndarray): Output field modulus squared array
-        """
-        if self.backend == "GPU" and self.__CUPY_AVAILABLE__:
-            A = cp.zeros_like(E_in)
-            A_sq = cp.zeros_like(A, dtype=A.real.dtype)
-            E_in = cp.asarray(E_in)
-        elif self.backend == "Metal":
-            A_np = np.zeros(E_in.shape, dtype=E_in.dtype)
-            A_sq_np = np.zeros(E_in.shape, dtype=np.float32)
-            if normalize:
-                integral = (
-                    (E_in.real * E_in.real + E_in.imag * E_in.imag)
-                    * self.delta_X
-                    * self.delta_Y
-                    * self.delta_T
-                ).sum(axis=self._last_axes)
-                integral *= c * epsilon_0 / 2
-                E_00 = (self.energy / integral) ** 0.5
-                A_np[:] = (E_00.T * E_in.T).T
-            else:
-                A_np[:] = E_in
-            A = MetalArray.from_numpy(A_np.astype(np.complex64))
-            A_sq = MetalArray.from_numpy(A_sq_np.astype(np.float32))
-            return A, A_sq
-        else:
-            A = pyfftw.zeros_aligned(
-                E_in.shape, dtype=E_in.dtype, n=pyfftw.simd_alignment
-            )
-            A_sq = np.zeros_like(A, dtype=A.real.dtype)
-        if normalize:
-            # normalization of the field
-            integral = (
-                (E_in.real * E_in.real + E_in.imag * E_in.imag)
-                * self.delta_X
-                * self.delta_Y
-                * self.delta_T
-            ).sum(axis=self._last_axes)
-            integral *= c * epsilon_0 / 2
-            E_00 = (self.energy / integral) ** 0.5
-            A[:] = (E_00.T * E_in.T).T
-        else:
-            A[:] = E_in
-        return A, A_sq
+    def _compute_norm_factor(self, E_in):
+        """3D normalization includes delta_T and uses energy instead of power."""
+        arr = E_in.real * E_in.real + E_in.imag * E_in.imag
+        arr = (arr * self.delta_X * self.delta_Y * self.delta_T).astype(
+            E_in.real.dtype
+        )
+        integral = self._backend.sum(arr, axis=self._last_axes)
+        integral = integral * c * epsilon_0 / 2
+        E_00 = self._backend.sqrt(self.energy / integral)
+        return E_00
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot a field for monitoring.
@@ -191,8 +141,9 @@ class NLSE_3d(NLSE):
         if A_plot.ndim > 3:
             while len(A_plot.shape) > 3:
                 A_plot = A_plot[0]
-        if self.__CUPY_AVAILABLE__ and isinstance(A_plot, cp.ndarray):
-            A_plot = A_plot.get()
+        A_plot = self._backend.to_host(A_plot)
+        if not isinstance(A_plot, np.ndarray):
+            A_plot = np.asarray(A_plot)
         fig, ax = plt.subplots(2, 2, layout="constrained", figsize=(10, 10))
         fig.suptitle(rf"Field at $z$ = {z:.2e} m")
         ext_real = [
