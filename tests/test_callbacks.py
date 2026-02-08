@@ -68,9 +68,9 @@ def test_norm_callback() -> None:
     # without losses (alpha=0), norms should be roughly conserved
     nonzero_norms = norms[norms > 0]
     assert len(nonzero_norms) > 1, "Not enough norm samples"
-    assert np.allclose(
-        nonzero_norms, nonzero_norms[0], rtol=1e-3
-    ), "Norm not conserved (no losses case)"
+    assert np.allclose(nonzero_norms, nonzero_norms[0], rtol=1e-3), (
+        "Norm not conserved (no losses case)"
+    )
 
 
 def test_evaluate_delta_n_callback() -> None:

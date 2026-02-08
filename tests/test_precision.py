@@ -32,9 +32,9 @@ def test_double_precision_norm_conservation() -> None:
     E = np.ones((N, N), dtype=PRECISION_COMPLEX)
     A = simu.out_field(E, L, verbose=False, plot=False, precision="double")
     norm_out = np.sum(np.abs(A) ** 2 * simu.delta_X * simu.delta_Y) * c * epsilon_0 / 2
-    assert np.allclose(
-        norm_out, power, rtol=1e-4
-    ), f"Double precision norm not conserved: {norm_out} vs {power}"
+    assert np.allclose(norm_out, power, rtol=1e-4), (
+        f"Double precision norm not conserved: {norm_out} vs {power}"
+    )
 
 
 def test_double_vs_single_precision_accuracy() -> None:
@@ -74,9 +74,9 @@ def test_double_vs_single_precision_accuracy() -> None:
     assert np.all(np.isfinite(A_s)), "Single precision produced non-finite values"
     assert np.all(np.isfinite(A_d)), "Double precision produced non-finite values"
     # Results should be different (different order of accuracy)
-    assert not np.allclose(
-        A_s, A_d, rtol=1e-6
-    ), "Single and double precision gave identical results"
+    assert not np.allclose(A_s, A_d, rtol=1e-6), (
+        "Single and double precision gave identical results"
+    )
 
 
 def test_double_precision_1d() -> None:
@@ -95,9 +95,9 @@ def test_double_precision_1d() -> None:
     E = np.ones(N, dtype=PRECISION_COMPLEX)
     A = simu.out_field(E, L, verbose=False, plot=False, precision="double")
     norm_out = np.sum(np.abs(A) ** 2 * simu.delta_X**2) * c * epsilon_0 / 2
-    assert np.allclose(
-        norm_out, power, rtol=1e-4
-    ), f"1D double precision norm not conserved: {norm_out} vs {power}"
+    assert np.allclose(norm_out, power, rtol=1e-4), (
+        f"1D double precision norm not conserved: {norm_out} vs {power}"
+    )
 
 
 def test_double_precision_with_potential() -> None:
@@ -118,6 +118,6 @@ def test_double_precision_with_potential() -> None:
     simu.V = V
     E = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(PRECISION_COMPLEX)
     A = simu.out_field(E, L, verbose=False, plot=False, precision="double")
-    assert np.all(
-        np.isfinite(A)
-    ), "Double precision with potential produced non-finite values"
+    assert np.all(np.isfinite(A)), (
+        "Double precision with potential produced non-finite values"
+    )

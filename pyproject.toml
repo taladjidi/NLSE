@@ -42,6 +42,9 @@ dependencies = [
 [project.optional-dependencies]
 cuda = ["cupy"]
 opencl = ["pyopencl", "pyvkfft"]
+test = ["pytest", "pytest-cov"]
+benchmark = ["pytest", "pytest-benchmark"]
+dev = ["ruff", "mypy", "pytest", "pytest-cov", "pytest-benchmark"]
 
 [project.urls]
 Homepage = "https://github.com/Quantum-Optics-LKB/NLSE"

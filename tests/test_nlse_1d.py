@@ -54,43 +54,43 @@ def test_prepare_output_array() -> None:
         elif backend == "CUPY" and NLSE_1d.__CUPY_AVAILABLE__:
             A = cp.ones(N, dtype=PRECISION_COMPLEX)
         out, out_sq = simu._prepare_output_array(A, normalize=True)
-        assert (
-            out.flags.c_contiguous
-        ), f"Output array is not C-contiguous. (Backend {backend})"
-        assert (
-            out_sq.flags.c_contiguous
-        ), f"Output array is not C-contiguous. (Backend {backend})"
+        assert out.flags.c_contiguous, (
+            f"Output array is not C-contiguous. (Backend {backend})"
+        )
+        assert out_sq.flags.c_contiguous, (
+            f"Output array is not C-contiguous. (Backend {backend})"
+        )
         if backend == "CPU":
-            assert (
-                out.flags.aligned
-            ), f"Output array is not aligned. (Backend {backend})"
-            assert (
-                out_sq.flags.aligned
-            ), f"Output array is not aligned. (Backend {backend})"
+            assert out.flags.aligned, (
+                f"Output array is not aligned. (Backend {backend})"
+            )
+            assert out_sq.flags.aligned, (
+                f"Output array is not aligned. (Backend {backend})"
+            )
         integral = (np.abs(out) ** 2 * simu.delta_X**2).sum()
         integral *= c * epsilon_0 / 2
-        assert np.allclose(
-            integral, simu.power
-        ), f"Normalization failed. (Backend {backend})"
+        assert np.allclose(integral, simu.power), (
+            f"Normalization failed. (Backend {backend})"
+        )
         assert out.shape == (N,), f"Output array has wrong shape. (Backend {backend})"
         if backend == "CPU":
-            assert isinstance(
-                out, np.ndarray
-            ), f"Output array type does not match backend. (Backend {backend})"
+            assert isinstance(out, np.ndarray), (
+                f"Output array type does not match backend. (Backend {backend})"
+            )
             out /= np.max(np.abs(out))
             A /= np.max(np.abs(A))
-            assert np.allclose(
-                out, A
-            ), f"Output array does not match input array. (Backend {backend})"
+            assert np.allclose(out, A), (
+                f"Output array does not match input array. (Backend {backend})"
+            )
         elif backend == "CUPY" and NLSE_1d.__CUPY_AVAILABLE__:
-            assert isinstance(
-                out, cp.ndarray
-            ), f"Output array type does not match backend. (Backend {backend})"
+            assert isinstance(out, cp.ndarray), (
+                f"Output array type does not match backend. (Backend {backend})"
+            )
             out /= cp.max(cp.abs(out))
             A /= cp.max(cp.abs(A))
-            assert cp.allclose(
-                out, A
-            ), f"Output array does not match input array. (Backend {backend})"
+            assert cp.allclose(out, A), (
+                f"Output array does not match input array. (Backend {backend})"
+            )
 
 
 def test_split_step() -> None:
@@ -111,13 +111,13 @@ def test_split_step() -> None:
             E, A_sq, simu.V, simu.propagator, simu.plans, precision="double"
         )
         if backend == "CPU":
-            assert np.allclose(
-                E, np.ones((N,), dtype=PRECISION_COMPLEX)
-            ), f"Split step is not unitary. (Backend {backend})"
+            assert np.allclose(E, np.ones((N,), dtype=PRECISION_COMPLEX)), (
+                f"Split step is not unitary. (Backend {backend})"
+            )
         elif backend == "CUPY" and NLSE_1d.__CUPY_AVAILABLE__:
-            assert cp.allclose(
-                E, cp.ones((N,), dtype=PRECISION_COMPLEX)
-            ), f"Split step is not unitary. (Backend {backend})"
+            assert cp.allclose(E, cp.ones((N,), dtype=PRECISION_COMPLEX)), (
+                f"Split step is not unitary. (Backend {backend})"
+            )
 
 
 def test_out_field() -> None:
@@ -131,6 +131,6 @@ def test_out_field() -> None:
         norm = (rho * simu.delta_X**2).sum(axis=simu._last_axes)
         norm *= c * epsilon_0 / 2
         assert A.shape == (N,), f"Output array has wrong shape. (Backend {backend})"
-        assert np.allclose(
-            norm, power, rtol=1e-4
-        ), f"Normalization failed. (Backend {backend})"
+        assert np.allclose(norm, power, rtol=1e-4), (
+            f"Normalization failed. (Backend {backend})"
+        )
