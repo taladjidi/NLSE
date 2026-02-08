@@ -1,6 +1,6 @@
 import numpy as np
-import pytest
 import pyfftw
+import pytest
 from scipy.constants import c, epsilon_0
 
 from NLSE import NLSE
@@ -145,7 +145,7 @@ def test_prepare_output_array() -> None:
             integral = cla.sum(
                 arr,
                 dtype=arr.dtype,
-                queue=simu._cl_queue,
+                queue=simu._backend.queue,
             )
             integral = integral.get()
         integral = integral * c * epsilon_0 / 2

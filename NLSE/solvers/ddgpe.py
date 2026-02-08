@@ -278,7 +278,7 @@ class DDGPE(CNLSE):
             plan_fft, plan_ifft = plans
         A1, A2 = self._take_components(A)
         if precision == "double":
-            self._kernels.square_mod(A, A_sq)
+            self._backend.kernels.square_mod(A, A_sq)
             A_sq_1, A_sq_2 = self._take_components(A_sq)
             if self.nl_length > 0:
                 A_sq_1 = self._convolution(
@@ -289,7 +289,7 @@ class DDGPE(CNLSE):
                 )
 
             if V is None:
-                self._kernels.nl_prop_without_V_c(
+                self._backend.kernels.nl_prop_without_V_c(
                     A1,
                     A_sq_1,
                     A_sq_2,
@@ -300,7 +300,7 @@ class DDGPE(CNLSE):
                     self.I_sat,
                     self.I_sat2,
                 )
-                self._kernels.nl_prop_without_V_c(
+                self._backend.kernels.nl_prop_without_V_c(
                     A2,
                     A_sq_2,
                     A_sq_1,
@@ -312,7 +312,7 @@ class DDGPE(CNLSE):
                     self.I_sat2,
                 )
             else:
-                self._kernels.nl_prop_c(
+                self._backend.kernels.nl_prop_c(
                     A1,
                     A_sq_1,
                     A_sq_2,
@@ -324,7 +324,7 @@ class DDGPE(CNLSE):
                     self.I_sat,
                     self.I_sat2,
                 )
-                self._kernels.nl_prop_c(
+                self._backend.kernels.nl_prop_c(
                     A2,
                     A_sq_2,
                     A_sq_1,
@@ -347,7 +347,7 @@ class DDGPE(CNLSE):
             np.multiply(A, propagator, out=A)
             plan_ifft(input_array=A, output_array=A, normalise_idft=True)
         # fft normalization
-        self._kernels.square_mod(A, A_sq)
+        self._backend.kernels.square_mod(A, A_sq)
         A_sq_1, A_sq_2 = self._take_components(A_sq)
         if self.nl_length > 0:
             A_sq_1 = self._convolution(
@@ -358,7 +358,7 @@ class DDGPE(CNLSE):
             )
         if precision == "double":
             if V is None:
-                self._kernels.nl_prop_without_V_c(
+                self._backend.kernels.nl_prop_without_V_c(
                     A1,
                     A_sq_1,
                     A_sq_2,
@@ -369,7 +369,7 @@ class DDGPE(CNLSE):
                     self.I_sat,
                     self.I_sat2,
                 )
-                self._kernels.nl_prop_without_V_c(
+                self._backend.kernels.nl_prop_without_V_c(
                     A2,
                     A_sq_2,
                     A_sq_1,
@@ -381,7 +381,7 @@ class DDGPE(CNLSE):
                     self.I_sat2,
                 )
             else:
-                self._kernels.nl_prop_c(
+                self._backend.kernels.nl_prop_c(
                     A1,
                     A_sq_1,
                     A_sq_2,
@@ -393,7 +393,7 @@ class DDGPE(CNLSE):
                     self.I_sat,
                     self.I_sat2,
                 )
-                self._kernels.nl_prop_c(
+                self._backend.kernels.nl_prop_c(
                     A2,
                     A_sq_2,
                     A_sq_1,
@@ -407,7 +407,7 @@ class DDGPE(CNLSE):
                 )
         else:
             if V is None:
-                self._kernels.nl_prop_without_V_c(
+                self._backend.kernels.nl_prop_without_V_c(
                     A1,
                     A_sq_1,
                     A_sq_2,
@@ -418,7 +418,7 @@ class DDGPE(CNLSE):
                     self.I_sat,
                     self.I_sat2,
                 )
-                self._kernels.nl_prop_without_V_c(
+                self._backend.kernels.nl_prop_without_V_c(
                     A2,
                     A_sq_2,
                     A_sq_1,
@@ -430,7 +430,7 @@ class DDGPE(CNLSE):
                     self.I_sat2,
                 )
             else:
-                self._kernels.nl_prop_c(
+                self._backend.kernels.nl_prop_c(
                     A1,
                     A_sq_1,
                     A_sq_2,
@@ -442,7 +442,7 @@ class DDGPE(CNLSE):
                     self.I_sat,
                     self.I_sat2,
                 )
-                self._kernels.nl_prop_c(
+                self._backend.kernels.nl_prop_c(
                     A2,
                     A_sq_2,
                     A_sq_1,
@@ -455,7 +455,7 @@ class DDGPE(CNLSE):
                     self.I_sat2,
                 )
             if self.omega is not None:
-                self._kernels.rabi_coupling(A1, A2, self.delta_z, self.omega / 2)
+                self._backend.kernels.rabi_coupling(A1, A2, self.delta_z, self.omega / 2)
 
     def plot_field(self, A_plot: np.ndarray, t: float) -> None:
         """Plot the field for monitoring.

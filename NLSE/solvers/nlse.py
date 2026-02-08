@@ -5,7 +5,6 @@
 import multiprocessing
 import pickle
 import time
-import types
 from collections.abc import Callable
 from typing import Any
 
@@ -16,23 +15,16 @@ import tqdm
 from scipy import signal, special
 from scipy.constants import c, epsilon_0
 
-from ..kernels import cpu as kernels_cpu
+from ..backends import Backend, get_backend
 from ..utils import __BACKEND__, __CUPY_AVAILABLE__, __PYOPENCL_AVAILABLE__
 
 if __CUPY_AVAILABLE__:
     import cupy as cp
     import cupyx.scipy.signal as signal_cp  # type: ignore[import-not-found]
-    from pyvkfft.cuda import VkFFTApp as VkFFTApp_cuda
-
-    from ..kernels import cupy as kernels_gpu
 
 if __PYOPENCL_AVAILABLE__:
-    import pyopencl as cl
     from pyopencl import array as cla
     from pyopencl import clmath
-    from pyvkfft.opencl import VkFFTApp as VkFFTApp_cl
-
-    from ..kernels import cl as kernels_cl
 
 pyfftw.config.NUM_THREADS = multiprocessing.cpu_count()
 pyfftw.config.PLANNER_EFFORT = "FFTW_MEASURE"
@@ -88,7 +80,13 @@ class NLSE:
                 Defaults to __BACKEND__.
         """
         # list of physical parameters
-        self.backend = backend
+        self._backend: Backend = get_backend(backend)
+        # Setup backend-specific convolution
+        if self._backend.name == "CUPY":
+            self._convolution = signal_cp.oaconvolve
+        elif self._backend.name == "CPU":
+            self._convolution = signal.oaconvolve
+        # CL backend doesn't have convolution yet
         self.n2 = n2
         self.V = V
         self.wl = wvl
@@ -108,10 +106,9 @@ class NLSE:
             self.window = window
         Dn = self.n2 * self.power / min(self.window) ** 2
         z_nl = 1 / (self.k * abs(Dn))
-        if isinstance(z_nl, np.ndarray) or (
-            self.__CUPY_AVAILABLE__ and isinstance(z_nl, cp.ndarray)
-        ):
-            z_nl = float(z_nl.min())
+        if not isinstance(z_nl, (int, float)):
+            # z_nl might be an array - extract scalar
+            z_nl = float(np.min(z_nl))
         self.delta_z = 5e-3 * z_nl
         # transverse coordinate
         self.X, self.delta_X = np.linspace(
@@ -158,33 +155,18 @@ class NLSE:
     @property
     def backend(self) -> str:
         """Return the backend used for the simulation."""
-        return self.__backend
+        return self._backend.name
 
     @backend.setter
     def backend(self, value: str) -> None:
         """Set the backend for the simulation."""
-        if value not in ["CPU", "GPU", "CL"]:
-            raise ValueError("Backend must be 'CPU', 'GPU' or 'CL'")
-        match value:
-            case "GPU":
-                if not self.__CUPY_AVAILABLE__:
-                    raise ImportError("Cupy is not available.")
-                self.__backend = "GPU"
-                self._kernels: types.ModuleType = kernels_gpu
-                self._convolution = signal_cp.oaconvolve
-            case "CL":
-                if not self.__PYOPENCL_AVAILABLE__:
-                    raise ImportError("PyOpenCL is not available.")
-                self.__backend = "CL"
-                self._kernels = kernels_cl
-                self._cl_queue = cl.CommandQueue(
-                    cl.create_some_context(interactive=False)
-                )
-                # FIXME: no convolution kernel for CL backend yet ??
-            case "CPU":
-                self.__backend = "CPU"
-                self._kernels = kernels_cpu
-                self._convolution = signal.oaconvolve
+        self._backend = get_backend(value)
+        # Setup backend-specific convolution
+        if self._backend.name == "CUPY":
+            self._convolution = signal_cp.oaconvolve
+        elif self._backend.name == "CPU":
+            self._convolution = signal.oaconvolve
+        # CL backend doesn't have convolution yet
 
     def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Build the linear propagation matrix.
@@ -209,62 +191,31 @@ class NLSE:
         Args:
             A (np.ndarray): Array to transform.
         Returns:
-            list: A list containing the FFT plans
+            list: List of FFT plan objects from the backend
         """
-        if self.backend == "GPU" and self.__CUPY_AVAILABLE__:
-            stream = cp.cuda.get_current_stream()
-            plan_fft = VkFFTApp_cuda(
-                A.shape,
-                A.dtype,
-                ndim=len(self._last_axes),
-                stream=stream,
-                inplace=True,
-                norm=1,
-                tune=True,
-            )
-            return [plan_fft]
-        elif self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
-            plan_fft = VkFFTApp_cl(
-                A.shape,
-                A.dtype,
-                ndim=len(self._last_axes),
-                queue=self._cl_queue,
-                inplace=True,
-                norm=1,
-                tune=True,
-            )
-            return [plan_fft]
-        else:
-            # try to load previous fftw wisdom
+        # Load FFTW wisdom for CPU backend
+        if self._backend.name == "CPU":
             try:
                 with open("fft.wisdom", "rb") as file:
                     wisdom = pickle.load(file)
                     pyfftw.import_wisdom(wisdom)
             except FileNotFoundError:
                 print("No FFT wisdom found, starting over ...")
-            plan_fft = pyfftw.FFTW(
-                A,
-                A,
-                direction="FFTW_FORWARD",
-                threads=multiprocessing.cpu_count(),
-                axes=self._last_axes,
-            )
-            plan_ifft = pyfftw.FFTW(
-                A,
-                A,
-                direction="FFTW_BACKWARD",
-                threads=multiprocessing.cpu_count(),
-                axes=self._last_axes,
-            )
+
+        plan = self._backend.build_fft(A.shape, self._last_axes, A.dtype)
+
+        # Save FFTW wisdom for CPU backend
+        if self._backend.name == "CPU":
             with open("fft.wisdom", "wb") as file:
                 wisdom = pyfftw.export_wisdom()
                 pickle.dump(wisdom, file)
-            return [plan_fft, plan_ifft]
+
+        return plan
 
     def _prepare_output_array(
         self, E_in: np.ndarray, normalize: bool
     ) -> tuple[np.ndarray | Any, np.ndarray | Any]:
-        """Prepare the output arrays depending on __BACKEND__.
+        """Prepare the output arrays depending on backend.
 
         Prepares the A and A_sq arrays to store the field and its modulus.
 
@@ -275,29 +226,21 @@ class NLSE:
             A (np.ndarray): Output field array
             A_sq (np.ndarray): Output field modulus squared array
         """
-        if self.backend == "GPU" and self.__CUPY_AVAILABLE__:
-            A = cp.zeros_like(E_in)
-            A_sq = cp.zeros_like(A, dtype=A.real.dtype)
-            E_in = cp.asarray(E_in)
-        elif self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
-            A = cla.zeros(self._cl_queue, E_in.shape, E_in.dtype)
-            A_sq = cla.zeros(self._cl_queue, E_in.shape, E_in.real.dtype)
-            E_in = cla.to_device(self._cl_queue, E_in)
-        else:
-            A = pyfftw.zeros_aligned(
-                E_in.shape, dtype=E_in.dtype, n=pyfftw.simd_alignment
-            )
-            A_sq = np.zeros_like(A, dtype=A.real.dtype)
+        # Allocate arrays on the backend
+        A = self._backend.allocate_field(E_in.shape, E_in.dtype)
+        A_sq = self._backend.allocate_real_field(E_in.shape, E_in.real.dtype)
+        E_in = self._backend.from_numpy(E_in)
+
         if normalize:
             # normalization of the field
             arr = E_in.real * E_in.real + E_in.imag * E_in.imag
             # forbid numpy systematically upcasting to double precision
             arr = (arr * self.delta_X * self.delta_Y).astype(E_in.real.dtype)
-            if self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
+            if self._backend.name == "CL":
                 integral = cla.sum(
                     arr,
                     dtype=arr.dtype,
-                    queue=self._cl_queue,
+                    queue=self._backend.queue,
                 )
                 integral = integral * c * epsilon_0 / 2
                 E_00 = clmath.sqrt(self.power / integral)
@@ -311,67 +254,39 @@ class NLSE:
         return A, A_sq
 
     def _send_arrays_to_gpu(self) -> None:
-        """
-        Send arrays to GPU.
-        """
-        if self.backend == "GPU" and self.__CUPY_AVAILABLE__:
+        """Send arrays to device using backend."""
+        if self._backend.name in ["CUPY", "CL"]:
             if self.V is not None:
-                self.V = cp.asarray(self.V)
-            self.nl_profile = cp.asarray(self.nl_profile)
-            self.propagator = cp.asarray(self.propagator)
+                self.V = self._backend.from_numpy(self.V)
+            self.nl_profile = self._backend.from_numpy(self.nl_profile)
+            self.propagator = self._backend.from_numpy(self.propagator)
             # for broadcasting of parameters in case they are
-            # not already on the GPU
+            # not already on the device
             if isinstance(self.power, np.ndarray):
-                self.power = cp.asarray(self.power)
+                self.power = self._backend.from_numpy(self.power)
             if isinstance(self.n2, np.ndarray):
-                self.n2 = cp.asarray(self.n2)
+                self.n2 = self._backend.from_numpy(self.n2)
             if isinstance(self.alpha, np.ndarray):
-                self.alpha = cp.asarray(self.alpha)
+                self.alpha = self._backend.from_numpy(self.alpha)
             if isinstance(self.I_sat, np.ndarray):
-                self.I_sat = cp.asarray(self.I_sat)
-        elif self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
-            if self.V is not None:
-                self.V = cla.to_device(self._cl_queue, self.V)
-            self.nl_profile = cla.to_device(self._cl_queue, self.nl_profile)
-            self.propagator = cla.to_device(self._cl_queue, self.propagator)
-            # for broadcasting of parameters in case they are
-            # not already on the GPU
-            if isinstance(self.power, np.ndarray):
-                self.power = cla.to_device(self._cl_queue, self.power)
-            if isinstance(self.n2, np.ndarray):
-                self.n2 = cla.to_device(self._cl_queue, self.n2)
-            if isinstance(self.alpha, np.ndarray):
-                self.alpha = cla.to_device(self._cl_queue, self.alpha)
-            if isinstance(self.I_sat, np.ndarray):
-                self.I_sat = cla.to_device(self._cl_queue, self.I_sat)
+                self.I_sat = self._backend.from_numpy(self.I_sat)
 
     def _retrieve_arrays_from_gpu(self) -> None:
-        """
-        Retrieve arrays from GPU.
-        """
-        if self.V is not None:
-            self.V = self.V.get()
-        self.nl_profile = self.nl_profile.get()
-        self.propagator = self.propagator.get()
-        match self.backend:
-            case "GPU":
-                if isinstance(self.power, cp.ndarray):
-                    self.power = self.power.get()
-                if isinstance(self.n2, cp.ndarray):
-                    self.n2 = self.n2.get()
-                if isinstance(self.alpha, cp.ndarray):
-                    self.alpha = self.alpha.get()
-                if isinstance(self.I_sat, cp.ndarray):
-                    self.I_sat = self.I_sat.get()
-            case "CL":
-                if isinstance(self.power, cla.Array):
-                    self.power = self.power.get()
-                if isinstance(self.n2, cla.Array):
-                    self.n2 = self.n2.get()
-                if isinstance(self.alpha, cla.Array):
-                    self.alpha = self.alpha.get()
-                if isinstance(self.I_sat, cla.Array):
-                    self.I_sat = self.I_sat.get()
+        """Retrieve arrays from device using backend."""
+        if self._backend.name in ["CUPY", "CL"]:
+            if self.V is not None:
+                self.V = self._backend.to_numpy(self.V)
+            self.nl_profile = self._backend.to_numpy(self.nl_profile)
+            self.propagator = self._backend.to_numpy(self.propagator)
+            # Retrieve parameters if they were sent to device
+            if not isinstance(self.power, (int, float)):
+                self.power = self._backend.to_numpy(self.power)
+            if not isinstance(self.n2, (int, float)):
+                self.n2 = self._backend.to_numpy(self.n2)
+            if not isinstance(self.alpha, (int, float)):
+                self.alpha = self._backend.to_numpy(self.alpha)
+            if not isinstance(self.I_sat, (int, float)):
+                self.I_sat = self._backend.to_numpy(self.I_sat)
 
     def split_step(
         self,
@@ -389,27 +304,19 @@ class NLSE:
             A_sq (np.ndarray): Field modulus squared.
             V (np.ndarray): Potential field (can be None).
             propagator (np.ndarray): Propagator matrix.
-            plans (list): List of FFT plan objects.
-                Either a single FFT plan for both directions (GPU case)
-                or distinct FFT and IFFT plans for FFTW.
+            plans (list): List of FFT plan objects from backend.
             precision (str, optional): Single or double application of
                 the nonlinear propagation step. Defaults to "single".
         """
-        if (self.backend == "GPU" and self.__CUPY_AVAILABLE__) or (
-            self.backend == "CL" and self.__PYOPENCL_AVAILABLE__
-        ):
-            # on GPU, only one plan for both FFT directions
-            plan_fft = plans[0]
-        else:
-            plan_fft, plan_ifft = plans
+        kernels = self._backend.kernels
         if precision == "double":
-            self._kernels.square_mod(A, A_sq)
+            kernels.square_mod(A, A_sq)
             if self.nl_length > 0:
                 A_sq[:] = self._convolution(
                     A_sq, self.nl_profile, mode="same", axes=self._last_axes
                 )
             if V is None:
-                self._kernels.nl_prop_without_V(
+                kernels.nl_prop_without_V(
                     A,
                     A_sq,
                     self.delta_z / 2,
@@ -418,7 +325,7 @@ class NLSE:
                     2 * self.I_sat / (epsilon_0 * c),
                 )
             else:
-                self._kernels.nl_prop(
+                kernels.nl_prop(
                     A,
                     A_sq,
                     self.delta_z / 2,
@@ -427,25 +334,19 @@ class NLSE:
                     self.k / 2 * self.n2 * c * epsilon_0,
                     2 * self.I_sat / (epsilon_0 * c),
                 )
-        if (self.backend == "GPU" and self.__CUPY_AVAILABLE__) or (
-            self.backend == "CL" and self.__PYOPENCL_AVAILABLE__
-        ):
-            plan_fft.fft(A, A)
-            # linear step in Fourier domain (shifted)
-            A *= propagator
-            plan_fft.ifft(A, A)
-        else:
-            plan_fft(input_array=A, output_array=A)
-            np.multiply(A, propagator, out=A)
-            plan_ifft(input_array=A, output_array=A, normalise_idft=True)
-        self._kernels.square_mod(A, A_sq)
+        # Linear propagation step in Fourier domain
+        self._backend.fft(A, plans)
+        A *= propagator
+        self._backend.ifft(A, plans)
+
+        kernels.square_mod(A, A_sq)
         if self.nl_length > 0:
             A_sq[:] = self._convolution(
                 A_sq, self.nl_profile, mode="same", axes=self._last_axes
             )
         if precision == "double":
             if V is None:
-                self._kernels.nl_prop_without_V(
+                kernels.nl_prop_without_V(
                     A,
                     A_sq,
                     self.delta_z / 2,
@@ -454,7 +355,7 @@ class NLSE:
                     2 * self.I_sat / (epsilon_0 * c),
                 )
             else:
-                self._kernels.nl_prop(
+                kernels.nl_prop(
                     A,
                     A_sq,
                     self.delta_z / 2,
@@ -465,7 +366,7 @@ class NLSE:
                 )
         else:
             if V is None:
-                self._kernels.nl_prop_without_V(
+                kernels.nl_prop_without_V(
                     A,
                     A_sq,
                     self.delta_z,
@@ -474,7 +375,7 @@ class NLSE:
                     2 * self.I_sat / (epsilon_0 * c),
                 )
             else:
-                self._kernels.nl_prop(
+                kernels.nl_prop(
                     A,
                     A_sq,
                     self.delta_z,
@@ -497,36 +398,19 @@ class NLSE:
 
         Args:
             A (np.ndarray): Field to propagate
-            A_sq (np.ndarray): Field modulus squared.
             V (np.ndarray): Potential field (can be None).
             propagator (np.ndarray): Propagator matrix.
-            plans (list): List of FFT plan objects.
-                Either a single FFT plan for both directions (GPU case)
-                or distinct FFT and IFFT plans for FFTW.
-            precision (str, optional): Single or double application of
-                the nonlinear propagation step. Defaults to "single".
+            plans (list): List of FFT plan objects from backend.
         """
         # prepare output array, this kills performance but we need it
         A_prop = A.copy()
         A_sq = A.real * A.real + A.imag * A.imag
-        if (self.backend == "GPU" and self.__CUPY_AVAILABLE__) or (
-            self.backend == "CL" and self.__PYOPENCL_AVAILABLE__
-        ):
-            # on GPU, only one plan for both FFT directions
-            plan_fft = plans[0]
-        else:
-            plan_fft, plan_ifft = plans
-        if (self.backend == "GPU" and self.__CUPY_AVAILABLE__) or (
-            self.backend == "CL" and self.__PYOPENCL_AVAILABLE__
-        ):
-            plan_fft.fft(A_prop, A_prop)
-            # linear step in Fourier domain (shifted)
-            A_prop *= propagator
-            plan_fft.ifft(A_prop, A_prop)
-        else:
-            plan_fft(input_array=A_prop, output_array=A_prop)
-            np.multiply(A_prop, propagator, out=A_prop)
-            plan_ifft(input_array=A_prop, output_array=A_prop, normalise_idft=True)
+
+        # Linear propagation step in Fourier domain
+        self._backend.fft(A_prop, plans)
+        A_prop *= propagator
+        self._backend.ifft(A_prop, plans)
+
         if self.nl_length > 0:
             A_sq[:] = self._convolution(
                 A_sq, self.nl_profile, mode="same", axes=self._last_axes
@@ -563,9 +447,7 @@ class NLSE:
             A (np.ndarray): Field to propagate
             V (np.ndarray): Potential field (can be None).
             propagator (np.ndarray): Propagator matrix.
-            plans (list): List of FFT plan objects.
-                Either a single FFT plan for both directions (GPU case)
-                or distinct FFT and IFFT plans for FFTW.
+            plans (list): List of FFT plan objects from backend.
         """
         k_1 = self._RK4_rhs_non_mutating(A, V, propagator, plans)
         k_2 = self._RK4_rhs_non_mutating(
@@ -628,12 +510,7 @@ class NLSE:
         # define propagator if not already done
         if self.propagator is None:
             self.propagator = self._build_propagator(precision=precision)
-        if (
-            self.backend == "GPU"
-            and self.__CUPY_AVAILABLE__
-            or self.backend == "CL"
-            and self.__PYOPENCL_AVAILABLE__
-        ):
+        if self._backend.name in ["CUPY", "CL"]:
             self._send_arrays_to_gpu()
         if self.V is None:
             V = self.V
@@ -651,7 +528,7 @@ class NLSE:
                 unit_scale=True,
             )
         n2_old = self.n2
-        if self.backend == "GPU" and self.__CUPY_AVAILABLE__:
+        if self._backend.name == "CUPY":
             start_gpu = cp.cuda.Event()
             end_gpu = cp.cuda.Event()
             start_gpu.record()
@@ -687,12 +564,12 @@ class NLSE:
         if verbose:
             pbar.close()
 
-        if self.backend == "GPU" and self.__CUPY_AVAILABLE__:
+        if self._backend.name == "CUPY":
             end_gpu.record()
             end_gpu.synchronize()
             t_gpu = cp.cuda.get_elapsed_time(start_gpu, end_gpu)
         if verbose:
-            if self.backend == "GPU" and self.__CUPY_AVAILABLE__:
+            if self._backend.name == "CUPY":
                 print(
                     f"\nTime spent to solve : {t_gpu * 1e-3} s (GPU) /"
                     f" {time.perf_counter() - t0} s (CPU)\n"
@@ -701,14 +578,9 @@ class NLSE:
                 print(f"\nTime spent to solve : {t_cpu} s (CPU)\n")
         self.n2 = n2_old
         return_np_array = isinstance(E_in, np.ndarray)
-        if (
-            self.backend == "GPU"
-            and self.__CUPY_AVAILABLE__
-            or self.backend == "CL"
-            and self.__PYOPENCL_AVAILABLE__
-        ):
+        if self._backend.name in ["CUPY", "CL"]:
             if return_np_array:
-                A = A.get()
+                A = self._backend.to_numpy(A)
             self._retrieve_arrays_from_gpu()
 
         if plot:
@@ -726,13 +598,9 @@ class NLSE:
         if A_plot.ndim > 2:
             while len(A_plot.shape) > 2:
                 A_plot = A_plot[0]
-        if (
-            self.__CUPY_AVAILABLE__
-            and isinstance(A_plot, cp.ndarray)
-            or self.__PYOPENCL_AVAILABLE__
-            and isinstance(A_plot, cla.Array)
-        ):
-            A_plot = A_plot.get()
+        # Convert to numpy if on device
+        if not isinstance(A_plot, np.ndarray):
+            A_plot = self._backend.to_numpy(A_plot)
         fig, ax = plt.subplots(1, 3, layout="constrained", figsize=(15, 5))
         fig.suptitle(rf"Field at $z$ = {z:.2e} m")
         ext_real = [
