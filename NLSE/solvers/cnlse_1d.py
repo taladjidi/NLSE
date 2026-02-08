@@ -75,6 +75,9 @@ class CNLSE_1d(CNLSE):
         self.nl_profile = self.nl_profile[0]
         self.nl_profile /= self.nl_profile.sum()
 
+        # Override normalization factor for 1D (delta_X^2 instead of delta_X * delta_Y)
+        self._norm_grid_factor = np.float32(self.delta_X**2)
+
     def _prepare_output_array(self, E: np.ndarray, normalize: bool) -> np.ndarray:
         """Prepare the output arrays depending on __BACKEND__.
 
@@ -99,22 +102,21 @@ class CNLSE_1d(CNLSE):
             A = pyfftw.empty_aligned(E.shape, dtype=E.dtype)
             A_sq = np.empty_like(E, dtype=E.real.dtype)
         if normalize:
-            # normalization of the field
+            # normalization of the field (use contiguous formula)
             if self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
                 E_cl = cla.to_device(self._backend.queue, E)
-                arr = E_cl.real * E_cl.real + E_cl.imag * E_cl.imag
-                arr = arr * self.delta_X**2
+                arr = (E_cl * E_cl.conj()).real
+                arr = arr * self._norm_grid_factor
                 integral = cla.sum(arr, dtype=arr.dtype, queue=self._backend.queue).get()
-                integral *= c * epsilon_0 / 2
+                integral *= self._norm_constant
                 E_00 = (puiss_arr / integral) ** 0.5
                 E_00_cl = cla.to_device(self._backend.queue, E_00.astype(E.dtype))
                 A[0] = E_00_cl[0] * E_cl[0]
                 A[1] = E_00_cl[1] * E_cl[1]
             else:
-                integral = ((E.real * E.real + E.imag * E.imag) * self.delta_X**2).sum(
-                    axis=self._last_axes
-                )
-                integral *= c * epsilon_0 / 2
+                arr = (E * E.conj()).real * self._norm_grid_factor
+                integral = arr.sum(axis=self._last_axes)
+                integral *= self._norm_constant
                 E_00 = (puiss_arr / integral) ** 0.5
                 A[:] = (E_00.T * E.T).T
         else:
@@ -140,6 +142,8 @@ class CNLSE_1d(CNLSE):
     def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Builds the linear propagation matrix
 
+        Uses caching to avoid recomputing propagators with identical parameters.
+
         Args:
             precision (str, optional): "single" or "double" application of the
             propagator.
@@ -147,10 +151,21 @@ class CNLSE_1d(CNLSE):
         Returns:
             propagator (np.ndarray): the propagator matrix
         """
+        # Create cache key (1D version, includes k2 for second component)
+        cache_key = (self.NX, float(self.delta_z), precision, float(self.k), float(self.k2))
+
+        # Return cached propagator if available
+        if cache_key in self._propagator_cache:
+            return self._propagator_cache[cache_key]
+
         dtype = np.complex128 if precision == "double" else np.complex64
         propagator1 = np.exp(-1j * 0.5 * (self.Kx**2) / self.k * self.delta_z, dtype=dtype)
         propagator2 = np.exp(-1j * 0.5 * (self.Kx**2) / self.k2 * self.delta_z, dtype=dtype)
-        return np.array([propagator1, propagator2])
+        propagator = np.array([propagator1, propagator2])
+
+        # Cache for future use
+        self._propagator_cache[cache_key] = propagator
+        return propagator
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot a field for monitoring.

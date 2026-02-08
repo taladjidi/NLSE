@@ -66,6 +66,9 @@ class NLSE_1d(NLSE):
         self.nl_profile = self.nl_profile[0]
         self.nl_profile /= self.nl_profile.sum()
 
+        # Override normalization factor for 1D (delta_X^2 instead of delta_X * delta_Y)
+        self._norm_grid_factor = np.float32(self.delta_X**2)
+
     def _prepare_output_array(self, E_in: np.ndarray, normalize: bool) -> np.ndarray:
         """Prepare the output array depending on __BACKEND__.
 
@@ -88,20 +91,19 @@ class NLSE_1d(NLSE):
             )
             A_sq = np.zeros_like(A, dtype=A.real.dtype)
         if normalize:
-            # normalization of the field
+            # normalization of the field (use contiguous formula)
             if self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
                 E_in_cl = cla.to_device(self._backend.queue, E_in)
-                arr = E_in_cl.real * E_in_cl.real + E_in_cl.imag * E_in_cl.imag
-                arr = arr * self.delta_X**2
+                arr = (E_in_cl * E_in_cl.conj()).real
+                arr = arr * self._norm_grid_factor
                 integral = cla.sum(arr, dtype=arr.dtype, queue=self._backend.queue).get()
-                integral *= c * epsilon_0 / 2
+                integral *= self._norm_constant
                 E_00 = (self.power / integral) ** 0.5
                 A[:] = E_00 * E_in_cl
             else:
-                integral = (
-                    (E_in.real * E_in.real + E_in.imag * E_in.imag) * self.delta_X**2
-                ).sum(axis=self._last_axes)
-                integral *= c * epsilon_0 / 2
+                arr = (E_in * E_in.conj()).real * self._norm_grid_factor
+                integral = arr.sum(axis=self._last_axes)
+                integral *= self._norm_constant
                 E_00 = (self.power / integral) ** 0.5
                 A[:] = (E_00.T * E_in.T).T
         else:
@@ -114,11 +116,23 @@ class NLSE_1d(NLSE):
     def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Build the linear propagation matrix.
 
+        Uses caching to avoid recomputing propagators with identical parameters.
+
         Returns:
             propagator (np.ndarray): the propagator matrix
         """
+        # Create cache key (1D version)
+        cache_key = (self.NX, float(self.delta_z), precision, float(self.k))
+
+        # Return cached propagator if available
+        if cache_key in self._propagator_cache:
+            return self._propagator_cache[cache_key]
+
         dtype = np.complex128 if precision == "double" else np.complex64
         propagator = np.exp(-1j * 0.5 * (self.Kx**2) / self.k * self.delta_z, dtype=dtype)
+
+        # Cache for future use
+        self._propagator_cache[cache_key] = propagator
         return propagator
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:

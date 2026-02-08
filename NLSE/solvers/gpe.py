@@ -82,14 +82,26 @@ class GPE(NLSE):
     def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Build the linear propagation matrix.
 
+        Uses caching to avoid recomputing propagators with identical parameters.
+
         Returns:
             propagator (np.ndarray): the propagator matrix
         """
+        # Create cache key (GPE uses delta_t and m instead of delta_z and k)
+        cache_key = (self.NX, self.NY, float(self.delta_t), precision, float(self.m))
+
+        # Return cached propagator if available
+        if cache_key in self._propagator_cache:
+            return self._propagator_cache[cache_key]
+
         dtype = np.complex128 if precision == "double" else np.complex64
         propagator = np.exp(
             -1j * 0.5 * hbar * (self.Kxx**2 + self.Kyy**2) / self.m * self.delta_t,
             dtype=dtype
         )
+
+        # Cache for future use
+        self._propagator_cache[cache_key] = propagator
         return propagator
 
     def _prepare_output_array(self, E_in: np.ndarray, normalize: bool) -> np.ndarray:
@@ -114,20 +126,17 @@ class GPE(NLSE):
             )
             A_sq = np.empty_like(A, dtype=A.real.dtype)
         if normalize:
-            # normalization of the field
+            # normalization of the field (use contiguous formula)
             if self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
                 E_in_cl = cla.to_device(self._backend.queue, E_in)
-                arr = E_in_cl.real * E_in_cl.real + E_in_cl.imag * E_in_cl.imag
-                arr = arr * self.delta_X * self.delta_Y
+                arr = (E_in_cl * E_in_cl.conj()).real
+                arr = arr * self._norm_grid_factor
                 integral = cla.sum(arr, dtype=arr.dtype, queue=self._backend.queue).get()
                 E_00 = (self.N / integral) ** 0.5
                 A[:] = E_00 * E_in_cl
             else:
-                integral = (
-                    (E_in.real * E_in.real + E_in.imag * E_in.imag)
-                    * self.delta_X
-                    * self.delta_Y
-                ).sum(axis=self._last_axes)
+                arr = (E_in * E_in.conj()).real * self._norm_grid_factor
+                integral = arr.sum(axis=self._last_axes)
                 E_00 = (self.N / integral) ** 0.5
                 A[:] = (E_00.T * E_in.T).T
         return A, A_sq

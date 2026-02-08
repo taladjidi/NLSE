@@ -207,9 +207,27 @@ class DDGPE(CNLSE):
     def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Build the propagators.
 
+        Uses caching to avoid recomputing propagators with identical parameters.
+
         Returns:
             np.ndarray: A tuple of linear propagators for each component.
         """
+        # Create cache key (includes DDGPE-specific parameters)
+        cache_key = (
+            self.NX,
+            self.NY,
+            float(self.delta_z),
+            precision,
+            float(self.omega_exc),
+            float(self.omega_cav),
+            float(self.omega_pump),
+            float(self.k_z),
+        )
+
+        # Return cached propagator if available
+        if cache_key in self._propagator_cache:
+            return self._propagator_cache[cache_key]
+
         dtype = np.complex128 if precision == "double" else np.complex64
         propagator1 = np.exp(
             -1j
@@ -226,7 +244,11 @@ class DDGPE(CNLSE):
             * self.delta_z,
             dtype=dtype
         )
-        return np.array([propagator1, propagator2])
+        propagator = np.array([propagator1, propagator2])
+
+        # Cache for future use
+        self._propagator_cache[cache_key] = propagator
+        return propagator
 
     def _prepare_output_array(self, E_in: np.ndarray, normalize: bool) -> np.ndarray:
         """Prepare the output array depending on __BACKEND__.

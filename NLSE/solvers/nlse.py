@@ -152,6 +152,13 @@ class NLSE:
         else:
             self.nl_profile = np.ones((self.NY, self.NX), dtype=np.float32)
 
+        # Pre-compute normalization factors to avoid runtime upcasting
+        self._norm_grid_factor = np.float32(self.delta_X * self.delta_Y)
+        self._norm_constant = np.float32(c * epsilon_0 / 2)
+
+        # Propagator cache for repeated calls with same parameters
+        self._propagator_cache: dict[tuple, np.ndarray] = {}
+
     @property
     def backend(self) -> str:
         """Return the backend used for the simulation."""
@@ -171,11 +178,20 @@ class NLSE:
     def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Build the linear propagation matrix.
 
+        Uses caching to avoid recomputing propagators with identical parameters.
+
         Returns:
             propagator (np.ndarray): the propagator matrix
             precision (str): Type of propagator to generate. For split step schemes
             the step is inside the propagator, for RK4 it is not.
         """
+        # Create cache key from parameters that affect propagator
+        cache_key = (self.NX, self.NY, float(self.delta_z), precision, float(self.k))
+
+        # Return cached propagator if available
+        if cache_key in self._propagator_cache:
+            return self._propagator_cache[cache_key]
+
         # Use appropriate dtype based on precision
         dtype = np.complex128 if precision == "double" else np.complex64
 
@@ -187,6 +203,9 @@ class NLSE:
                 )
             case "RK4":
                 propagator = (-1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k).astype(dtype)
+
+        # Cache for future use
+        self._propagator_cache[cache_key] = propagator
         return propagator
 
     def _build_fft_plan(self, A: np.ndarray) -> list:
@@ -236,21 +255,21 @@ class NLSE:
         E_in = self._backend.from_numpy(E_in)
 
         if normalize:
-            # normalization of the field
-            arr = E_in.real * E_in.real + E_in.imag * E_in.imag
-            # forbid numpy systematically upcasting to double precision
-            arr = (arr * self.delta_X * self.delta_Y).astype(E_in.real.dtype)
+            # normalization of the field (use contiguous formula)
+            arr = (E_in * E_in.conj()).real
+            # Use pre-computed grid factor to avoid runtime upcasting
+            arr = arr * self._norm_grid_factor
             if self._backend.name == "CL":
                 integral = cla.sum(
                     arr,
                     dtype=arr.dtype,
                     queue=self._backend.queue,
                 )
-                integral = integral * c * epsilon_0 / 2
+                integral = integral * self._norm_constant
                 E_00 = clmath.sqrt(self.power / integral)
             else:
                 integral = np.sum(arr, axis=self._last_axes)
-                integral = integral * c * epsilon_0 / 2
+                integral = integral * self._norm_constant
                 E_00 = (self.power / integral) ** 0.5
             A[:] = (E_00.T * E_in.T).T
         else:

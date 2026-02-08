@@ -103,17 +103,41 @@ class NLSE_3d(NLSE):
         self.Kxx, self.Kyy, self.Omega = np.meshgrid(self.Kx, self.Ky, self.omega)
         self._last_axes = (-3, -2, -1)  # Axes are x, y, t
 
+        # Override normalization factor for 3D (includes delta_T)
+        self._norm_grid_factor = np.float32(self.delta_X * self.delta_Y * self.delta_T)
+
     def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Build the linear propagation matrix.
+
+        Uses caching to avoid recomputing propagators with identical parameters.
 
         Returns:
             np.ndarray: The propagator
         """
+        # Create cache key (3D version includes D0 and NZ)
+        cache_key = (
+            self.NX,
+            self.NY,
+            self.NZ,
+            float(self.delta_z),
+            precision,
+            float(self.k),
+            float(self.D0),
+        )
+
+        # Return cached propagator if available
+        if cache_key in self._propagator_cache:
+            return self._propagator_cache[cache_key]
+
         dtype = np.complex128 if precision == "double" else np.complex64
         prop_2d = super()._build_propagator(precision)
         prop_t = np.exp(-1j * self.D0 / 2 * self.Omega**2, dtype=dtype)
         # prop_t *= np.exp(1 / self.vg * self.Omega)
-        return prop_2d * prop_t
+        propagator = prop_2d * prop_t
+
+        # Cache for future use
+        self._propagator_cache[cache_key] = propagator
+        return propagator
 
     def _prepare_output_array(self, E_in: np.ndarray, normalize: bool) -> np.ndarray:
         """Prepare the output arrays depending on __BACKEND__.
@@ -140,23 +164,19 @@ class NLSE_3d(NLSE):
             )
             A_sq = np.zeros_like(A, dtype=A.real.dtype)
         if normalize:
-            # normalization of the field
+            # normalization of the field (use contiguous formula)
             if self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
                 E_in_cl = cla.to_device(self._backend.queue, E_in)
-                arr = E_in_cl.real * E_in_cl.real + E_in_cl.imag * E_in_cl.imag
-                arr = arr * self.delta_X * self.delta_Y * self.delta_T
+                arr = (E_in_cl * E_in_cl.conj()).real
+                arr = arr * self._norm_grid_factor
                 integral = cla.sum(arr, dtype=arr.dtype, queue=self._backend.queue).get()
-                integral *= c * epsilon_0 / 2
+                integral *= self._norm_constant
                 E_00 = (self.energy / integral) ** 0.5
                 A[:] = E_00 * E_in_cl
             else:
-                integral = (
-                    (E_in.real * E_in.real + E_in.imag * E_in.imag)
-                    * self.delta_X
-                    * self.delta_Y
-                    * self.delta_T
-                ).sum(axis=self._last_axes)
-                integral *= c * epsilon_0 / 2
+                arr = (E_in * E_in.conj()).real * self._norm_grid_factor
+                integral = arr.sum(axis=self._last_axes)
+                integral *= self._norm_constant
                 E_00 = (self.energy / integral) ** 0.5
                 A[:] = (E_00.T * E_in.T).T
         else:

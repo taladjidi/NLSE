@@ -121,23 +121,17 @@ class CNLSE(NLSE):
             A = pyfftw.zeros_aligned(E.shape, dtype=E.dtype, n=pyfftw.simd_alignment)
             A_sq = np.zeros_like(A, dtype=A.real.dtype)
         if normalize:
-            # normalization of the field
+            # normalization of the field (use contiguous formula)
             match self.backend:
                 case "CUPY" | "CPU":
-                    integral = (
-                        (E.real * E.real + E.imag * E.imag)
-                        * self.delta_X
-                        * self.delta_Y
-                    ).sum(axis=self._last_axes)
-                    integral = integral * c * epsilon_0 / 2
+                    arr = (E * E.conj()).real * self._norm_grid_factor
+                    integral = arr.sum(axis=self._last_axes)
+                    integral = integral * self._norm_constant
                     E_00 = (puiss_arr / integral) ** 0.5
                 case "CL":
-                    integral = (
-                        (E.real * E.real + E.imag * E.imag)
-                        * self.delta_X
-                        * self.delta_Y
-                    ).sum(axis=self._last_axes)
-                    integral = integral * c * epsilon_0 / 2
+                    arr = (E * E.conj()).real * self._norm_grid_factor
+                    integral = arr.sum(axis=self._last_axes)
+                    integral = integral * self._norm_constant
                     E_00 = (puiss_arr / integral) ** 0.5
                     E_00 = cla.to_device(self._backend.queue, E_00.astype(E.dtype))
                     E = cla.to_device(self._backend.queue, E.astype(E.dtype))
@@ -183,6 +177,20 @@ class CNLSE(NLSE):
             propagator1 (np.ndarray): The propagator for the first component.
             propagator2 (np.ndarray): The propagator for the second component.
         """
+        # Create cache key (includes k2 for second component)
+        cache_key = (
+            self.NX,
+            self.NY,
+            float(self.delta_z),
+            precision,
+            float(self.k),
+            float(self.k2),
+        )
+
+        # Return cached propagator if available
+        if cache_key in self._propagator_cache:
+            return self._propagator_cache[cache_key]
+
         dtype = np.complex128 if precision == "double" else np.complex64
         propagator1 = super()._build_propagator(precision=precision)
         match precision:
@@ -193,7 +201,12 @@ class CNLSE(NLSE):
                 )
             case "RK4":
                 propagator2 = (-1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k2).astype(dtype)
-        return np.array([propagator1, propagator2])
+
+        propagator = np.array([propagator1, propagator2])
+
+        # Cache for future use
+        self._propagator_cache[cache_key] = propagator
+        return propagator
 
     def _take_components(self, A: np.ndarray) -> tuple:
         """Take the components of the field.
