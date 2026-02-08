@@ -8,7 +8,6 @@ __METAL_AVAILABLE__: bool
 if importlib.util.find_spec("cupy") is not None:
     __CUPY_AVAILABLE__ = True
 else:
-    print("CuPy not available, falling back to CPU BACKEND ...")
     __CUPY_AVAILABLE__ = False
     __BACKEND__ = "CPU"
 
@@ -16,7 +15,6 @@ else:
 if importlib.util.find_spec("pyopencl") is not None:
     __PYOPENCL_AVAILABLE__ = True
 else:
-    print("PyOpenCL not available, falling back to CPU BACKEND ...")
     __PYOPENCL_AVAILABLE__ = False
     __BACKEND__ = "CPU"
 
