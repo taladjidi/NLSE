@@ -10,7 +10,8 @@ import numpy as np
 import pytest
 from scipy.constants import c
 
-from NLSE import CNLSE, CNLSE_1d, DDGPE, GPE, NLSE, NLSE_1d, NLSE_3d
+from NLSE import CNLSE, DDGPE, GPE, NLSE, CNLSE_1d, NLSE_1d, NLSE_3d
+from NLSE.backends import list_available_backends
 from NLSE.kernels.cpu import (
     nl_prop,
     nl_prop_c,
@@ -44,8 +45,6 @@ Isat_k = 1e4
 omega_k = 1e3
 
 # Get available backends
-from NLSE.backends import list_available_backends
-
 BACKENDS = list_available_backends()
 
 
@@ -79,7 +78,7 @@ class TestKernelBenchmark:
         def kernel():
             square_mod(A.copy(), A_sq.copy())
 
-        result = benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
+        benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
         assert np.all(np.isfinite(A_sq))
 
     def test_nl_prop(self, benchmark):
@@ -99,7 +98,7 @@ class TestKernelBenchmark:
                 Isat_k,
             )
 
-        result = benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
+        benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
         assert np.all(np.isfinite(A))
 
     def test_nl_prop_without_V(self, benchmark):
@@ -117,7 +116,7 @@ class TestKernelBenchmark:
                 Isat_k,
             )
 
-        result = benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
+        benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
         assert np.all(np.isfinite(A))
 
     @pytest.mark.skip(reason="numba typing issue with nl_prop_c kernel")
@@ -143,7 +142,7 @@ class TestKernelBenchmark:
                 Isat_k,
             )
 
-        result = benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
+        benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
         assert np.all(np.isfinite(A1))
 
     def test_nl_prop_without_V_c(self, benchmark):
@@ -165,7 +164,7 @@ class TestKernelBenchmark:
                 Isat_k,
             )
 
-        result = benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
+        benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
         assert np.all(np.isfinite(A1))
 
     def test_rabi_coupling(self, benchmark):
@@ -176,7 +175,7 @@ class TestKernelBenchmark:
         def kernel():
             rabi_coupling(A1.copy(), A2.copy(), dz, omega_k)
 
-        result = benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
+        benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
         assert np.all(np.isfinite(A1))
         assert np.all(np.isfinite(A2))
 
@@ -191,7 +190,7 @@ class TestKernelBenchmark:
         def kernel():
             vortex(im.copy(), i, j, ii, jj, ll)
 
-        result = benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
+        benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
         assert np.all(np.isfinite(im))
 
 
