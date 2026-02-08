@@ -31,8 +31,8 @@ if NLSE.__PYOPENCL_AVAILABLE__:
 if NLSE.__METAL_AVAILABLE__:
     EXTRA_BACKENDS.append("Metal")
 
-# Backends that support coupled NLSE (Metal doesn't yet)
-EXTRA_BACKENDS_CNLSE = [b for b in EXTRA_BACKENDS if b != "Metal"]
+# Backends that support coupled NLSE (Metal now supported)
+EXTRA_BACKENDS_CNLSE = EXTRA_BACKENDS
 
 
 def _skip_if_no_extra():

@@ -84,6 +84,10 @@ class MetalBackend(Backend):
     def convolution(self, A, kernel, mode, axes):
         from ..kernels.metal import MetalArray
 
-        a = A.get() if isinstance(A, MetalArray) else A
+        is_metal = isinstance(A, MetalArray)
+        a = A.get() if is_metal else A
         k = kernel.get() if isinstance(kernel, MetalArray) else kernel
-        return signal.oaconvolve(a, k, mode=mode, axes=axes)
+        result = signal.oaconvolve(a, k, mode=mode, axes=axes)
+        if is_metal:
+            return MetalArray.from_numpy(np.ascontiguousarray(result.astype(a.dtype)))
+        return result

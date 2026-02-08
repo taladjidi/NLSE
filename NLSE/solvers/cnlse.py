@@ -64,11 +64,6 @@ class CNLSE(NLSE):
         backend : str, optional
             Compute backend. Defaults to ``__BACKEND__``.
         """
-        if backend == "Metal":
-            raise NotImplementedError(
-                "Metal backend is not yet supported for CNLSE. "
-                "Use CPU, CUPY or CL backend."
-            )
         super().__init__(
             alpha=alpha,
             power=power,
@@ -201,6 +196,26 @@ class CNLSE(NLSE):
         A1 = A[..., 0, :, :]
         A2 = A[..., 1, :, :]
         return A1, A2
+
+    def _put_components(self, A: np.ndarray, A1: np.ndarray, A2: np.ndarray) -> None:
+        """Write components back into the combined array.
+
+        For CPU/CUPY, ``_take_components`` returns views so mutations
+        propagate automatically.  Metal slicing returns copies, so the
+        modified components must be written back explicitly.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            Combined field array.
+        A1 : np.ndarray
+            First component.
+        A2 : np.ndarray
+            Second component.
+        """
+        if self.backend == "Metal":
+            A[..., 0, :, :] = A1
+            A[..., 1, :, :] = A2
 
     def _RK4_rhs_non_mutating(
         self,
@@ -347,7 +362,9 @@ class CNLSE(NLSE):
                     2 * self.I_sat2 / (epsilon_0 * c),
                     2 * self.I_sat / (epsilon_0 * c),
                 )
+            self._put_components(A, A1, A2)
         self._linear_step(A, propagator)
+        A1, A2 = self._take_components(A)
         # fft normalization
         self._kernels.square_mod(A, A_sq)
         A_sq_1, A_sq_2 = self._take_components(A_sq)
@@ -458,6 +475,7 @@ class CNLSE(NLSE):
                 )
             if self.omega is not None:
                 self._kernels.rabi_coupling(A1, A2, self.delta_z, self.omega / 2)
+        self._put_components(A, A1, A2)
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot the field.

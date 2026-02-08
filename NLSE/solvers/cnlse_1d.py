@@ -100,7 +100,6 @@ class CNLSE_1d(CNLSE):
             Output field modulus squared array.
         """
         A, A_sq = self._backend.allocate_pair(E.shape, E.dtype)
-        E_dev = self._backend.to_device(E)
         if normalize:
             puiss_arr = np.array([self.power, self.power2], dtype=E.dtype)
             integral = ((E.real * E.real + E.imag * E.imag) * self.delta_X**2).sum(
@@ -108,9 +107,10 @@ class CNLSE_1d(CNLSE):
             )
             integral *= c * epsilon_0 / 2
             E_00 = (puiss_arr / integral) ** 0.5
-            A[:] = (E_00.T * E_dev.T).T
+            E_norm = (E_00.T * E.T).T
+            A[:] = self._backend.to_device(E_norm)
         else:
-            A[:] = E_dev
+            A[:] = self._backend.to_device(E)
         return A, A_sq
 
     def _take_components(self, A: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -129,6 +129,22 @@ class CNLSE_1d(CNLSE):
         A1 = A[..., 0, :]
         A2 = A[..., 1, :]
         return A1, A2
+
+    def _put_components(self, A: np.ndarray, A1: np.ndarray, A2: np.ndarray) -> None:
+        """Write components back into the combined array (1D variant).
+
+        Parameters
+        ----------
+        A : np.ndarray
+            Combined field array.
+        A1 : np.ndarray
+            First component.
+        A2 : np.ndarray
+            Second component.
+        """
+        if self.backend == "Metal":
+            A[..., 0, :] = A1
+            A[..., 1, :] = A2
 
     def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Build the linear propagation matrix.

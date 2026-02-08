@@ -366,7 +366,9 @@ class DDGPE(CNLSE):
                     self.I_sat,
                     self.I_sat2,
                 )
+            self._put_components(A, A1, A2)
         self._linear_step(A, propagator)
+        A1, A2 = self._take_components(A)
         # fft normalization
         self._kernels.square_mod(A, A_sq)
         A_sq_1, A_sq_2 = self._take_components(A_sq)
@@ -477,6 +479,7 @@ class DDGPE(CNLSE):
                 )
             if self.omega is not None:
                 self._kernels.rabi_coupling(A1, A2, self.delta_z, self.omega / 2)
+        self._put_components(A, A1, A2)
 
     def plot_field(self, A_plot: np.ndarray, t: float) -> None:
         """Plot the field for monitoring.
