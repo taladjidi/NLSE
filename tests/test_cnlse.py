@@ -90,30 +90,30 @@ def test_prepare_output_array() -> None:
 
 def test_send_arrays_to_gpu() -> None:
     if CNLSE.__CUPY_AVAILABLE__:
-        alpha = 20
-        Isat = 10e4
-        n2 = -1.6e-9
-        n12 = -1e-10
+        alpha_val = 20
+        Isat_val = 10e4
+        n2_val = -1.6e-9
+        n12_val = -1e-10
         V = np.random.random((N, N)) + 1j * np.random.random((N, N))
-        alpha = np.repeat(alpha, 2)
-        alpha = alpha[..., np.newaxis, np.newaxis, np.newaxis]
-        n2 = np.repeat(n2, 2)
-        n2 = n2[..., np.newaxis, np.newaxis, np.newaxis]
-        n12 = np.repeat(n2, 2)
-        n12 = n12[..., np.newaxis, np.newaxis, np.newaxis]
-        Isat = np.repeat(Isat, 2)
-        Isat = Isat[..., np.newaxis, np.newaxis, np.newaxis]
-        simu = CNLSE(
-            alpha,
+        alpha_arr = np.repeat(alpha_val, 2)  # type: ignore[arg-type]
+        alpha_arr = alpha_arr[..., np.newaxis, np.newaxis, np.newaxis]  # type: ignore[arg-type]
+        n2_arr = np.repeat(n2_val, 2)  # type: ignore[arg-type]
+        n2_arr = n2_arr[..., np.newaxis, np.newaxis, np.newaxis]  # type: ignore[arg-type]
+        n12_arr = np.repeat(n12_val, 2)  # type: ignore[arg-type]
+        n12_arr = n12_arr[..., np.newaxis, np.newaxis, np.newaxis]  # type: ignore[arg-type]
+        Isat_arr = np.repeat(Isat_val, 2)  # type: ignore[arg-type]
+        Isat_arr = Isat_arr[..., np.newaxis, np.newaxis, np.newaxis]  # type: ignore[arg-type]
+        simu = CNLSE(  # type: ignore[arg-type]
+            alpha_arr,  # type: ignore[arg-type]
             power,
             window,
-            n2,
-            n12,
+            n2_arr,  # type: ignore[arg-type]
+            n12_arr,  # type: ignore[arg-type]
             V,
             L,
             NX=N,
             NY=N,
-            Isat=Isat,
+            Isat=Isat_arr,  # type: ignore[arg-type]
             backend="CUPY",
         )
         simu.propagator = simu._build_propagator()
@@ -138,30 +138,30 @@ def test_send_arrays_to_gpu() -> None:
 
 def test_retrieve_arrays_from_gpu() -> None:
     if CNLSE.__CUPY_AVAILABLE__:
-        alpha = 20
-        Isat = 10e4
-        n2 = -1.6e-9
-        n12 = -1e-10
+        alpha_val = 20
+        Isat_val = 10e4
+        n2_val = -1.6e-9
+        n12_val = -1e-10
         V = np.random.random((N, N)) + 1j * np.random.random((N, N))
-        alpha = np.repeat(alpha, 2)
-        alpha = alpha[..., np.newaxis, np.newaxis, np.newaxis]
-        n2 = np.repeat(n2, 2)
-        n2 = n2[..., np.newaxis, np.newaxis, np.newaxis]
-        n12 = np.repeat(n2, 2)
-        n12 = n12[..., np.newaxis, np.newaxis, np.newaxis]
-        Isat = np.repeat(Isat, 2)
-        Isat = Isat[..., np.newaxis, np.newaxis, np.newaxis]
-        simu = CNLSE(
-            alpha,
+        alpha_arr = np.repeat(alpha_val, 2)  # type: ignore[arg-type]
+        alpha_arr = alpha_arr[..., np.newaxis, np.newaxis, np.newaxis]  # type: ignore[arg-type]
+        n2_arr = np.repeat(n2_val, 2)  # type: ignore[arg-type]
+        n2_arr = n2_arr[..., np.newaxis, np.newaxis, np.newaxis]  # type: ignore[arg-type]
+        n12_arr = np.repeat(n12_val, 2)  # type: ignore[arg-type]
+        n12_arr = n12_arr[..., np.newaxis, np.newaxis, np.newaxis]  # type: ignore[arg-type]
+        Isat_arr = np.repeat(Isat_val, 2)  # type: ignore[arg-type]
+        Isat_arr = Isat_arr[..., np.newaxis, np.newaxis, np.newaxis]  # type: ignore[arg-type]
+        simu = CNLSE(  # type: ignore[arg-type]
+            alpha_arr,  # type: ignore[arg-type]
             power,
             window,
-            n2,
-            n12,
+            n2_arr,  # type: ignore[arg-type]
+            n12_arr,  # type: ignore[arg-type]
             V,
             L,
             NX=N,
             NY=N,
-            Isat=Isat,
+            Isat=Isat_arr,  # type: ignore[arg-type]
             backend="CUPY",
         )
         simu.propagator = simu._build_propagator()
@@ -282,6 +282,6 @@ def test_out_field() -> None:
             np.abs(E) ** 2 * simu.delta_X * simu.delta_Y * c * epsilon_0 / 2,
             axis=simu._last_axes,
         )
-        assert np.allclose(norm, [simu.power, simu.power2], rtol=1e-4), (
+        assert np.allclose(norm, np.array([simu.power, simu.power2]), rtol=1e-4), (
             "Norm not conserved."
         )

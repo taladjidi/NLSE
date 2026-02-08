@@ -166,6 +166,6 @@ def test_out_field() -> None:
             2,
             N,
         ), f"Output array has wrong shape. (Backend {backend})"
-        assert np.allclose(integral, [simu.power, simu.power2], rtol=1e-4), (
+        assert np.allclose(integral, np.array([simu.power, simu.power2]), rtol=1e-4), (
             f"Normalization failed. (Backend {backend})"
         )

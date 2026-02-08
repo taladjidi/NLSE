@@ -22,7 +22,7 @@ vg = 1e-1 * c
 waist = 2.23e-3
 duration = 2e-6
 waist2 = 70e-6
-window = np.array([4 * waist, 8 * duration])  # 4*waist transverse, 10e-6 s temporal
+window = (4 * waist, 8 * duration)  # 4*waist transverse, 10e-6 s temporal
 energy = 1.05 * duration
 Isat = 10e4  # saturation intensity in W/m^2
 L = 1e-2
@@ -167,21 +167,21 @@ def test_prepare_output_array() -> None:
 
 def test_send_arrays_to_gpu() -> None:
     if NLSE_3d.__CUPY_AVAILABLE__:
-        alpha = 20
-        Isat = 10e4
-        n2 = -1.6e-9
+        alpha_val = 20
+        Isat_val = 10e4
+        n2_val = -1.6e-9
         V = np.random.random((N, N, NZ)) + 1j * np.random.random((N, N, NZ))
-        alpha = np.repeat(alpha, 2)
-        alpha = alpha[..., np.newaxis, np.newaxis]
-        n2 = np.repeat(n2, 2)
-        n2 = n2[..., np.newaxis, np.newaxis]
-        Isat = np.repeat(Isat, 2)
-        Isat = Isat[..., np.newaxis, np.newaxis]
+        alpha_arr = np.repeat(alpha_val, 2)
+        alpha_arr = alpha_arr[..., np.newaxis, np.newaxis]
+        n2_arr = np.repeat(n2_val, 2)
+        n2_arr = n2_arr[..., np.newaxis, np.newaxis]
+        Isat_arr = np.repeat(Isat_val, 2)
+        Isat_arr = Isat_arr[..., np.newaxis, np.newaxis]
         simu = NLSE_3d(
-            alpha=alpha,
+            alpha=alpha_arr,  # type: ignore[arg-type]
             energy=energy,
             window=window,
-            n2=n2,
+            n2=n2_arr,  # type: ignore[arg-type]
             D0=D0,
             vg=vg,
             V=V,
@@ -189,7 +189,7 @@ def test_send_arrays_to_gpu() -> None:
             NX=N,
             NY=N,
             NZ=NZ,
-            Isat=Isat,
+            Isat=Isat_arr,  # type: ignore[arg-type]
             backend="CUPY",
         )
         simu.propagator = simu._build_propagator()
@@ -211,21 +211,21 @@ def test_send_arrays_to_gpu() -> None:
 
 def test_retrieve_arrays_from_gpu() -> None:
     if NLSE_3d.__CUPY_AVAILABLE__:
-        alpha = 20
-        Isat = 10e4
-        n2 = -1.6e-9
+        alpha_val = 20
+        Isat_val = 10e4
+        n2_val = -1.6e-9
         V = np.random.random((N, N, NZ)) + 1j * np.random.random((N, N, NZ))
-        alpha = np.repeat(alpha, 2)
-        alpha = alpha[..., np.newaxis, np.newaxis]
-        n2 = np.repeat(n2, 2)
-        n2 = n2[..., np.newaxis, np.newaxis]
-        Isat = np.repeat(Isat, 2)
-        Isat = Isat[..., np.newaxis, np.newaxis]
+        alpha_arr = np.repeat(alpha_val, 2)
+        alpha_arr = alpha_arr[..., np.newaxis, np.newaxis]
+        n2_arr = np.repeat(n2_val, 2)
+        n2_arr = n2_arr[..., np.newaxis, np.newaxis]
+        Isat_arr = np.repeat(Isat_val, 2)
+        Isat_arr = Isat_arr[..., np.newaxis, np.newaxis]
         simu = NLSE_3d(
-            alpha=alpha,
+            alpha=alpha_arr,  # type: ignore[arg-type]
             energy=energy,
             window=window,
-            n2=n2,
+            n2=n2_arr,  # type: ignore[arg-type]
             D0=D0,
             vg=vg,
             V=V,
@@ -233,7 +233,7 @@ def test_retrieve_arrays_from_gpu() -> None:
             NX=N,
             NY=N,
             NZ=NZ,
-            Isat=Isat,
+            Isat=Isat_arr,  # type: ignore[arg-type]
             backend="CUPY",
         )
         simu.propagator = simu._build_propagator()

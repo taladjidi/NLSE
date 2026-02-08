@@ -161,18 +161,18 @@ def test_prepare_output_array() -> None:
 
 def test_send_arrays_to_gpu() -> None:
     if NLSE.__CUPY_AVAILABLE__:
-        alpha = 20
-        Isat = 10e4
-        n2 = -1.6e-9
+        alpha_val = 20
+        Isat_val = 10e4
+        n2_val = -1.6e-9
         V = np.random.random((N, N)) + 1j * np.random.random((N, N))
-        alpha = np.repeat(alpha, 2)
-        alpha = alpha[..., cp.newaxis, cp.newaxis]
-        n2 = np.repeat(n2, 2)
-        n2 = n2[..., cp.newaxis, cp.newaxis]
-        Isat = np.repeat(Isat, 2)
-        Isat = Isat[..., cp.newaxis, cp.newaxis]
+        alpha_arr = np.repeat(alpha_val, 2)  # type: ignore[arg-type]
+        alpha_arr = alpha_arr[..., cp.newaxis, cp.newaxis]  # type: ignore[arg-type]
+        n2_arr = np.repeat(n2_val, 2)  # type: ignore[arg-type]
+        n2_arr = n2_arr[..., cp.newaxis, cp.newaxis]  # type: ignore[arg-type]
+        Isat_arr = np.repeat(Isat_val, 2)  # type: ignore[arg-type]
+        Isat_arr = Isat_arr[..., cp.newaxis, cp.newaxis]  # type: ignore[arg-type]
         simu = NLSE(
-            alpha, power, window, n2, V, L, NX=N, NY=N, Isat=Isat, backend="CUPY"
+            alpha_arr, power, window, n2_arr, V, L, NX=N, NY=N, Isat=Isat_arr, backend="CUPY"  # type: ignore[arg-type]
         )
         simu.propagator = simu._build_propagator()
         simu._send_arrays_to_gpu()
@@ -193,18 +193,18 @@ def test_send_arrays_to_gpu() -> None:
 
 def test_retrieve_arrays_from_gpu() -> None:
     if NLSE.__CUPY_AVAILABLE__:
-        alpha = 20
-        Isat = 10e4
-        n2 = -1.6e-9
+        alpha_val = 20
+        Isat_val = 10e4
+        n2_val = -1.6e-9
         V = np.random.random((N, N)) + 1j * np.random.random((N, N))
-        alpha = np.repeat(alpha, 2)
-        alpha = alpha[..., cp.newaxis, cp.newaxis]
-        n2 = np.repeat(n2, 2)
-        n2 = n2[..., cp.newaxis, cp.newaxis]
-        Isat = np.repeat(Isat, 2)
-        Isat = Isat[..., cp.newaxis, cp.newaxis]
+        alpha_arr = np.repeat(alpha_val, 2)  # type: ignore[arg-type]
+        alpha_arr = alpha_arr[..., cp.newaxis, cp.newaxis]  # type: ignore[arg-type]
+        n2_arr = np.repeat(n2_val, 2)  # type: ignore[arg-type]
+        n2_arr = n2_arr[..., cp.newaxis, cp.newaxis]  # type: ignore[arg-type]
+        Isat_arr = np.repeat(Isat_val, 2)  # type: ignore[arg-type]
+        Isat_arr = Isat_arr[..., cp.newaxis, cp.newaxis]  # type: ignore[arg-type]
         simu = NLSE(
-            alpha, power, window, n2, V, L, NX=N, NY=N, Isat=Isat, backend="CUPY"
+            alpha_arr, power, window, n2_arr, V, L, NX=N, NY=N, Isat=Isat_arr, backend="CUPY"  # type: ignore[arg-type]
         )
         simu.propagator = simu._build_propagator()
         simu._send_arrays_to_gpu()

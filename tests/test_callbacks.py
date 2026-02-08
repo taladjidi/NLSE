@@ -91,7 +91,7 @@ def test_adapt_delta_z_callback() -> None:
     """Test that adapt_delta_z adjusts the step size."""
     simu = _make_simu(alpha_val=alpha)
     E = np.ones((N, N), dtype=PRECISION_COMPLEX)
-    delta_z_history = []
+    delta_z_history: list[float] = []
     update_every = 5
     cb = partial(
         adapt_delta_z,
@@ -125,7 +125,7 @@ def test_multiple_callbacks() -> None:
         verbose=False,
         plot=False,
         precision="single",
-        callback=callbacks,
+        callback=callbacks,  # type: ignore[arg-type]
         callback_args=[(), ()],
     )
     assert norms[0] > 0, "Norm callback did not fire"

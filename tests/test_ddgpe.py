@@ -84,34 +84,34 @@ def test_prepare_output_array() -> None:
 
 def test_send_arrays_to_gpu() -> None:
     if DDGPE.__CUPY_AVAILABLE__:
-        omega_exc = 1484.44 / h_bar
-        omega_cav = 1482.76 / h_bar
-        detuning = 0.17 / h_bar
+        omega_exc_val = 1484.44 / h_bar
+        omega_cav_val = 1482.76 / h_bar
+        detuning_val = 0.17 / h_bar
         k_z = 27
-        gamma = 0 * 0.07 / h_bar
-        omega = 5.07 / h_bar
-        g = 1e-2 / h_bar
+        gamma_val = 0 * 0.07 / h_bar
+        omega_val = 5.07 / h_bar
+        g_val = 1e-2 / h_bar
         V = np.random.random((N, N)) + 1j * np.random.random((N, N))
-        omega_cav = np.repeat(omega_cav, 2)
-        omega_cav = omega_cav[..., np.newaxis, np.newaxis, np.newaxis]
-        omega_exc = np.repeat(omega_exc, 2)
-        omega_exc = omega_exc[..., np.newaxis, np.newaxis, np.newaxis]
-        gamma = np.repeat(gamma, 2)
-        gamma = gamma[..., np.newaxis, np.newaxis, np.newaxis]
-        omega = np.repeat(omega, 2)
-        omega = omega[..., np.newaxis, np.newaxis, np.newaxis]
-        g = np.repeat(g, 2)
-        g = g[..., np.newaxis, np.newaxis, np.newaxis]
-        simu = DDGPE(
-            gamma,
+        omega_cav_arr = np.repeat(omega_cav_val, 2)  # type: ignore[arg-type]
+        omega_cav_arr = omega_cav_arr[..., np.newaxis, np.newaxis, np.newaxis]  # type: ignore[arg-type]
+        omega_exc_arr = np.repeat(omega_exc_val, 2)  # type: ignore[arg-type]
+        omega_exc_arr = omega_exc_arr[..., np.newaxis, np.newaxis, np.newaxis]  # type: ignore[arg-type]
+        gamma_arr = np.repeat(gamma_val, 2)  # type: ignore[arg-type]
+        gamma_arr = gamma_arr[..., np.newaxis, np.newaxis, np.newaxis]  # type: ignore[arg-type]
+        omega_arr = np.repeat(omega_val, 2)  # type: ignore[arg-type]
+        omega_arr = omega_arr[..., np.newaxis, np.newaxis, np.newaxis]  # type: ignore[arg-type]
+        g_arr = np.repeat(g_val, 2)  # type: ignore[arg-type]
+        g_arr = g_arr[..., np.newaxis, np.newaxis, np.newaxis]  # type: ignore[arg-type]
+        simu = DDGPE(  # type: ignore[arg-type]
+            gamma_arr,  # type: ignore[arg-type]
             puiss,
             window,
-            g,
-            omega,
+            g_arr,  # type: ignore[arg-type]
+            omega_arr,  # type: ignore[arg-type]
             T,
-            omega_exc,
-            omega_cav,
-            detuning,
+            omega_exc_arr,  # type: ignore[arg-type]
+            omega_cav_arr,  # type: ignore[arg-type]
+            detuning_val,
             k_z,
             V=V,
             NX=N,
@@ -143,34 +143,34 @@ def test_send_arrays_to_gpu() -> None:
 
 def test_retrieve_arrays_from_gpu() -> None:
     if DDGPE.__CUPY_AVAILABLE__:
-        omega_exc = 1484.44 / h_bar
-        omega_cav = 1482.76 / h_bar
-        detuning = 0.17 / h_bar
+        omega_exc_val = 1484.44 / h_bar
+        omega_cav_val = 1482.76 / h_bar
+        detuning_val = 0.17 / h_bar
         k_z = 27
-        gamma = 0 * 0.07 / h_bar
-        g = 1e-2 / h_bar
-        omega = 5.07 / h_bar
+        gamma_val = 0 * 0.07 / h_bar
+        g_val = 1e-2 / h_bar
+        omega_val = 5.07 / h_bar
         V = np.random.random((N, N)) + 1j * np.random.random((N, N))
-        omega_cav = np.repeat(omega_cav, 2)
-        omega_cav = omega_cav[..., np.newaxis, np.newaxis, np.newaxis]
-        omega_exc = np.repeat(omega_exc, 2)
-        omega_exc = omega_exc[..., np.newaxis, np.newaxis, np.newaxis]
-        gamma = np.repeat(gamma, 2)
-        gamma = gamma[..., np.newaxis, np.newaxis, np.newaxis]
-        omega = np.repeat(omega, 2)
-        omega = omega[..., np.newaxis, np.newaxis, np.newaxis]
-        g = np.repeat(g, 2)
-        g = g[..., np.newaxis, np.newaxis, np.newaxis]
-        simu = DDGPE(
-            gamma,
+        omega_cav_arr = np.repeat(omega_cav_val, 2)  # type: ignore[arg-type]
+        omega_cav_arr = omega_cav_arr[..., np.newaxis, np.newaxis, np.newaxis]  # type: ignore[arg-type]
+        omega_exc_arr = np.repeat(omega_exc_val, 2)  # type: ignore[arg-type]
+        omega_exc_arr = omega_exc_arr[..., np.newaxis, np.newaxis, np.newaxis]  # type: ignore[arg-type]
+        gamma_arr = np.repeat(gamma_val, 2)  # type: ignore[arg-type]
+        gamma_arr = gamma_arr[..., np.newaxis, np.newaxis, np.newaxis]  # type: ignore[arg-type]
+        omega_arr = np.repeat(omega_val, 2)  # type: ignore[arg-type]
+        omega_arr = omega_arr[..., np.newaxis, np.newaxis, np.newaxis]  # type: ignore[arg-type]
+        g_arr = np.repeat(g_val, 2)  # type: ignore[arg-type]
+        g_arr = g_arr[..., np.newaxis, np.newaxis, np.newaxis]  # type: ignore[arg-type]
+        simu = DDGPE(  # type: ignore[arg-type]
+            gamma_arr,  # type: ignore[arg-type]
             puiss,
             window,
-            g,
-            omega,
+            g_arr,  # type: ignore[arg-type]
+            omega_arr,  # type: ignore[arg-type]
             T,
-            omega_exc,
-            omega_cav,
-            detuning,
+            omega_exc_arr,  # type: ignore[arg-type]
+            omega_cav_arr,  # type: ignore[arg-type]
+            detuning_val,
             k_z,
             V=V,
             NX=N,
@@ -348,23 +348,23 @@ def test_out_field() -> None:
         callback = [callback_sample]
         if backend == "CPU":
             callback_args = [
-                [
+                (
                     F_pump_r,
                     F_pump_t,
                     F_probe_r,
                     F_probe_t,
-                ],
-                [save_every, sample1, sample2, sample3],
+                ),
+                (save_every, sample1, sample2, sample3),
             ]
         if backend == "CUPY" and DDGPE.__CUPY_AVAILABLE__:
             callback_args = [
-                [
+                (
                     cp.asarray(F_pump_r),
                     F_pump_t,
                     cp.asarray(F_probe_r),
                     F_probe_t,
-                ],
-                [save_every, sample1, sample2, sample3],
+                ),
+                (save_every, sample1, sample2, sample3),
             ]
         simu.out_field(
             E0,
