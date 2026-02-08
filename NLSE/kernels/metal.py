@@ -21,24 +21,69 @@ def _get_ctx():
     return _ctx
 
 
-class MetalFFTPlan:
-    """FFT plan using numpy FFT for Metal backend.
+# Try to import optimized FFT libraries
+# Priority: pyfftw > scipy.fft > numpy.fft
+_FFT_BACKEND = "numpy"
+_fft_fn = np.fft.fftn  # type: ignore[assignment]
+_ifft_fn = np.fft.ifftn  # type: ignore[assignment]
 
-    Wraps numpy FFT to provide the same .fft()/.ifft() interface
-    as VkFFT plans used by GPU/CL backends.
+try:
+    import pyfftw
+    # Configure pyfftw for best performance
+    pyfftw.interfaces.cache.enable()
+    pyfftw.config.NUM_THREADS = 4  # Adjust based on CPU cores
+    _fft_fn = pyfftw.interfaces.numpy_fft.fftn  # type: ignore[assignment]
+    _ifft_fn = pyfftw.interfaces.numpy_fft.ifftn  # type: ignore[assignment]
+    _FFT_BACKEND = "pyfftw"
+except ImportError:
+    try:
+        from scipy import fft as scipy_fft
+        _fft_fn = scipy_fft.fftn  # type: ignore[assignment]
+        _ifft_fn = scipy_fft.ifftn  # type: ignore[assignment]
+        _FFT_BACKEND = "scipy"
+    except ImportError:
+        pass
+
+
+class MetalFFTPlan:
+    """FFT plan using optimized FFT for Metal backend.
+
+    Uses the best available FFT library (pyfftw > scipy.fft > numpy.fft).
+    Provides the same .fft()/.ifft() interface as VkFFT plans used by
+    GPU/CL backends.
+
+    Note: This still involves CPU↔GPU transfers for FFT computation.
+    For optimal performance, a native Metal FFT implementation using
+    Metal Performance Shaders or a custom Metal FFT kernel would be needed.
     """
 
     def __init__(self, shape, ndim):
         self.axes = tuple(range(-ndim, 0))
+        self.shape = shape
+        self._fft_fn = _fft_fn
+        self._ifft_fn = _ifft_fn
+
+        # Pre-allocate workspace to reduce allocations
+        self._workspace = np.empty(shape, dtype=np.complex64)
 
     def fft(self, A, A_out):
+        # Get data from Metal buffer (shared memory, relatively fast)
         data = A.get()
-        result = np.fft.fftn(data, axes=self.axes).astype(data.dtype)
+        # Perform FFT using optimized backend
+        result = self._fft_fn(data, axes=self.axes)
+        # Write back (ensure correct dtype)
+        if result.dtype != data.dtype:
+            result = result.astype(data.dtype)
         A_out[:] = result
 
     def ifft(self, A, A_out):
+        # Get data from Metal buffer (shared memory, relatively fast)
         data = A.get()
-        result = np.fft.ifftn(data, axes=self.axes).astype(data.dtype)
+        # Perform inverse FFT using optimized backend
+        result = self._ifft_fn(data, axes=self.axes)
+        # Write back (ensure correct dtype)
+        if result.dtype != data.dtype:
+            result = result.astype(data.dtype)
         A_out[:] = result
 
 

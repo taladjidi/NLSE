@@ -186,11 +186,20 @@ class DDGPE(CNLSE):
         A[..., 1, :, :] -= F_pump_r * F_pump_t[i] * simu.delta_z * 1j
         A[..., 1, :, :] -= F_probe_r * F_probe_t[i] * simu.delta_z * 1j
 
-    def _send_arrays_to_gpu(self) -> None:
+    def _send_arrays_to_gpu(self, force_refresh: bool = False) -> None:
+        """Send arrays to GPU.
+
+        Parameters
+        ----------
+        force_refresh : bool, optional
+            Force re-uploading arrays even if already on GPU. Defaults to False.
         """
-        Send arrays to GPU.
-        """
-        super()._send_arrays_to_gpu()
+        super()._send_arrays_to_gpu(force_refresh=force_refresh)
+
+        # Lazy GPU transfer: skip if arrays are already on device
+        if not force_refresh and hasattr(self, "_gpu_initialized") and self._gpu_initialized:
+            return
+
         for attr in (
             "gamma",
             "g",

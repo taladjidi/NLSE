@@ -162,6 +162,9 @@ class NLSE:
         else:
             self.nl_profile = np.ones((self.NY, self.NX), dtype=np.float32)
 
+        # GPU transfer caching flag
+        self._gpu_initialized = False
+
     @property
     def backend(self) -> str:
         """str : The backend name used for the simulation."""
@@ -194,6 +197,9 @@ class NLSE:
         np.ndarray
             The propagator matrix.
         """
+        # Reset GPU initialization flag when propagator changes
+        self._gpu_initialized = False
+
         match precision:
             case "single" | "double":
                 propagator = np.exp(
@@ -282,10 +288,21 @@ class NLSE:
             A[:] = E_dev
         return A, A_sq
 
-    def _send_arrays_to_gpu(self) -> None:
-        """Send arrays to device memory."""
+    def _send_arrays_to_gpu(self, force_refresh: bool = False) -> None:
+        """Send arrays to device memory.
+
+        Parameters
+        ----------
+        force_refresh : bool, optional
+            Force re-uploading arrays even if already on GPU. Defaults to False.
+        """
         if self.backend == "CPU":
             return
+
+        # Lazy GPU transfer: skip if arrays are already on device
+        if not force_refresh and hasattr(self, "_gpu_initialized") and self._gpu_initialized:
+            return
+
         if self.V is not None:
             self.V = self._backend.to_device(self.V)
         assert self.propagator is not None
@@ -298,6 +315,9 @@ class NLSE:
                 val = getattr(self, attr)
                 if isinstance(val, np.ndarray):
                     setattr(self, attr, self._backend.to_device(val))
+
+        # Mark as initialized
+        self._gpu_initialized = True
 
     def _retrieve_arrays_from_gpu(self) -> None:
         """Retrieve arrays from device memory."""
