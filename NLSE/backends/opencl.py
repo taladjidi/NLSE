@@ -7,18 +7,18 @@ import numpy as np
 from ..utils import __PYOPENCL_AVAILABLE__, __PYOPENCL_DOUBLE_SUPPORT__
 from .backend import Backend
 
-if __PYOPENCL_AVAILABLE__:
-    import pyopencl as cl
-    from pyopencl import array as cla
-    from pyvkfft.opencl import VkFFTApp
+if not __PYOPENCL_AVAILABLE__:
+    raise ImportError("PyOpenCL is not available - cannot import OpenCLBackend")
+
+import pyopencl as cl
+from pyopencl import array as cla
+from pyvkfft.opencl import VkFFTApp
 
 
 class OpenCLBackend(Backend):
     """OpenCL backend using PyOpenCL and VkFFT."""
 
     def __init__(self):
-        if not __PYOPENCL_AVAILABLE__:
-            raise ImportError("PyOpenCL is not available")
         self._context = cl.create_some_context(interactive=False)
         self._queue = cl.CommandQueue(self._context)
         self._vkfft_apps = {}

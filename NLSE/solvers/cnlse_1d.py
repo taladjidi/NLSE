@@ -3,11 +3,14 @@ import numpy as np
 import pyfftw
 from scipy.constants import c, epsilon_0
 
-from ..utils import __BACKEND__, __CUPY_AVAILABLE__
+from ..utils import __BACKEND__, __CUPY_AVAILABLE__, __PYOPENCL_AVAILABLE__
 from .cnlse import CNLSE
 
 if __CUPY_AVAILABLE__:
     import cupy as cp
+
+if __PYOPENCL_AVAILABLE__:
+    from pyopencl import array as cla
 
 
 class CNLSE_1d(CNLSE):
@@ -83,25 +86,43 @@ class CNLSE_1d(CNLSE):
             A (np.ndarray): Output field array
             A_sq (np.ndarray): Output field modulus squared array
         """
-        if self.backend == "GPU" and self.__CUPY_AVAILABLE__:
+        puiss_arr = np.array([self.power, self.power2], dtype=E.dtype)
+        if self.backend == "CUPY" and self.__CUPY_AVAILABLE__:
             A = cp.empty_like(E)
             A_sq = cp.empty_like(E, dtype=E.real.dtype)
             E = cp.asarray(E)
-            puiss_arr = cp.array([self.power, self.power2], dtype=E.dtype)
+            puiss_arr = cp.array(puiss_arr)
+        elif self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
+            A = cla.zeros(self._backend.queue, E.shape, E.dtype)
+            A_sq = cla.zeros(self._backend.queue, E.shape, E.real.dtype)
         else:
             A = pyfftw.empty_aligned(E.shape, dtype=E.dtype)
             A_sq = np.empty_like(E, dtype=E.real.dtype)
-            puiss_arr = np.array([self.power, self.power2], dtype=E.dtype)
         if normalize:
             # normalization of the field
-            integral = ((E.real * E.real + E.imag * E.imag) * self.delta_X**2).sum(
-                axis=self._last_axes
-            )
-            integral *= c * epsilon_0 / 2
-            E_00 = (puiss_arr / integral) ** 0.5
-            A[:] = (E_00.T * E.T).T
+            if self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
+                E_cl = cla.to_device(self._backend.queue, E)
+                arr = E_cl.real * E_cl.real + E_cl.imag * E_cl.imag
+                arr = arr * self.delta_X**2
+                integral = cla.sum(arr, dtype=arr.dtype, queue=self._backend.queue).get()
+                integral *= c * epsilon_0 / 2
+                E_00 = (puiss_arr / integral) ** 0.5
+                E_00_cl = cla.to_device(self._backend.queue, E_00.astype(E.dtype))
+                A[0] = E_00_cl[0] * E_cl[0]
+                A[1] = E_00_cl[1] * E_cl[1]
+            else:
+                integral = ((E.real * E.real + E.imag * E.imag) * self.delta_X**2).sum(
+                    axis=self._last_axes
+                )
+                integral *= c * epsilon_0 / 2
+                E_00 = (puiss_arr / integral) ** 0.5
+                A[:] = (E_00.T * E.T).T
         else:
-            A[:] = E
+            if self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
+                E_cl = cla.to_device(self._backend.queue, E)
+                A[:] = E_cl
+            else:
+                A[:] = E
         return A, A_sq
 
     def _take_components(self, A: np.ndarray) -> tuple:
@@ -126,8 +147,9 @@ class CNLSE_1d(CNLSE):
         Returns:
             propagator (np.ndarray): the propagator matrix
         """
-        propagator1 = np.exp(-1j * 0.5 * (self.Kx**2) / self.k * self.delta_z)
-        propagator2 = np.exp(-1j * 0.5 * (self.Kx**2) / self.k2 * self.delta_z)
+        dtype = np.complex128 if precision == "double" else np.complex64
+        propagator1 = np.exp(-1j * 0.5 * (self.Kx**2) / self.k * self.delta_z, dtype=dtype)
+        propagator2 = np.exp(-1j * 0.5 * (self.Kx**2) / self.k2 * self.delta_z, dtype=dtype)
         return np.array([propagator1, propagator2])
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:

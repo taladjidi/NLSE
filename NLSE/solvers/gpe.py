@@ -3,11 +3,14 @@ import numpy as np
 import pyfftw
 from scipy.constants import atomic_mass, c, epsilon_0, hbar
 
-from ..utils import __BACKEND__, __CUPY_AVAILABLE__
+from ..utils import __BACKEND__, __CUPY_AVAILABLE__, __PYOPENCL_AVAILABLE__
 from .nlse import NLSE
 
 if __CUPY_AVAILABLE__:
     import cupy as cp
+
+if __PYOPENCL_AVAILABLE__:
+    from pyopencl import array as cla
 
 
 class GPE(NLSE):
@@ -82,9 +85,11 @@ class GPE(NLSE):
         Returns:
             propagator (np.ndarray): the propagator matrix
         """
+        dtype = np.complex128 if precision == "double" else np.complex64
         propagator = np.exp(
-            -1j * 0.5 * hbar * (self.Kxx**2 + self.Kyy**2) / self.m * self.delta_t
-        ).astype(np.complex64)
+            -1j * 0.5 * hbar * (self.Kxx**2 + self.Kyy**2) / self.m * self.delta_t,
+            dtype=dtype
+        )
         return propagator
 
     def _prepare_output_array(self, E_in: np.ndarray, normalize: bool) -> np.ndarray:
@@ -96,10 +101,13 @@ class GPE(NLSE):
         Returns:
             np.ndarray: Output array
         """
-        if self.backend == "GPU" and self.__CUPY_AVAILABLE__:
+        if self.backend == "CUPY" and self.__CUPY_AVAILABLE__:
             A = cp.empty_like(E_in)
             A_sq = cp.empty_like(A, dtype=A.real.dtype)
             E_in = cp.asarray(E_in)
+        elif self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
+            A = cla.zeros(self._backend.queue, E_in.shape, E_in.dtype)
+            A_sq = cla.zeros(self._backend.queue, E_in.shape, E_in.real.dtype)
         else:
             A = pyfftw.empty_aligned(
                 E_in.shape, dtype=E_in.dtype, n=pyfftw.simd_alignment
@@ -107,13 +115,21 @@ class GPE(NLSE):
             A_sq = np.empty_like(A, dtype=A.real.dtype)
         if normalize:
             # normalization of the field
-            integral = (
-                (E_in.real * E_in.real + E_in.imag * E_in.imag)
-                * self.delta_X
-                * self.delta_Y
-            ).sum(axis=self._last_axes)
-            E_00 = (self.N / integral) ** 0.5
-            A[:] = (E_00.T * E_in.T).T
+            if self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
+                E_in_cl = cla.to_device(self._backend.queue, E_in)
+                arr = E_in_cl.real * E_in_cl.real + E_in_cl.imag * E_in_cl.imag
+                arr = arr * self.delta_X * self.delta_Y
+                integral = cla.sum(arr, dtype=arr.dtype, queue=self._backend.queue).get()
+                E_00 = (self.N / integral) ** 0.5
+                A[:] = E_00 * E_in_cl
+            else:
+                integral = (
+                    (E_in.real * E_in.real + E_in.imag * E_in.imag)
+                    * self.delta_X
+                    * self.delta_Y
+                ).sum(axis=self._last_axes)
+                E_00 = (self.N / integral) ** 0.5
+                A[:] = (E_00.T * E_in.T).T
         return A, A_sq
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:

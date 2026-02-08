@@ -48,6 +48,12 @@ omega_k = 1e3
 BACKENDS = list_available_backends()
 
 
+def skip_if_backend_unavailable(backend: str):
+    """Skip benchmark if backend is not available."""
+    if backend not in BACKENDS:
+        pytest.skip(f"Backend {backend} not available")
+
+
 def _random_field_2d(seed: int = 42) -> np.ndarray:
     """Create random 2D complex field."""
     rng = np.random.default_rng(seed)
@@ -119,7 +125,6 @@ class TestKernelBenchmark:
         benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
         assert np.all(np.isfinite(A))
 
-    @pytest.mark.skip(reason="numba typing issue with nl_prop_c kernel")
     def test_nl_prop_c(self, benchmark):
         """Benchmark nl_prop_c kernel (coupled with potential)."""
         A1 = _random_field_2d(seed=42)
@@ -201,6 +206,7 @@ class TestSolverBenchmark:
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_nlse_2d(self, benchmark, backend):
         """Benchmark NLSE 2D propagation."""
+        skip_if_backend_unavailable(backend)
         simu = NLSE(
             alpha=alpha,
             power=power,
@@ -216,7 +222,7 @@ class TestSolverBenchmark:
         E_in = _gaussian_field_2d(waist, simu.X, simu.Y)
 
         def propagate():
-            return simu.out_field(E_in, z=1e-3, verbose=False)
+            return simu.out_field(E_in, z=1e-3, verbose=False, precision="single")
 
         result = benchmark.pedantic(propagate, rounds=10, warmup_rounds=2)
         assert result.shape == (N, N)
@@ -225,6 +231,7 @@ class TestSolverBenchmark:
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_nlse_1d(self, benchmark, backend):
         """Benchmark NLSE_1d propagation."""
+        skip_if_backend_unavailable(backend)
         simu = NLSE_1d(
             alpha=alpha,
             power=power,
@@ -239,7 +246,7 @@ class TestSolverBenchmark:
         E_in = np.exp(-(simu.X**2) / waist**2).astype(PRECISION_COMPLEX)
 
         def propagate():
-            return simu.out_field(E_in, z=1e-3, verbose=False)
+            return simu.out_field(E_in, z=1e-3, verbose=False, precision="single")
 
         result = benchmark.pedantic(propagate, rounds=10, warmup_rounds=2)
         assert result.shape == (N,)
@@ -248,6 +255,7 @@ class TestSolverBenchmark:
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_nlse_3d(self, benchmark, backend):
         """Benchmark NLSE_3d propagation."""
+        skip_if_backend_unavailable(backend)
         simu = NLSE_3d(
             alpha=alpha,
             energy=1e-6,
@@ -270,7 +278,7 @@ class TestSolverBenchmark:
             E_in[:, :, i] = np.exp(-(XX**2 + YY**2) / waist**2)
 
         def propagate():
-            return simu.out_field(E_in, z=1e-3, verbose=False)
+            return simu.out_field(E_in, z=1e-3, verbose=False, precision="single")
 
         result = benchmark.pedantic(propagate, rounds=5, warmup_rounds=1)
         assert result.shape == (N, N, N)
@@ -279,6 +287,7 @@ class TestSolverBenchmark:
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_gpe(self, benchmark, backend):
         """Benchmark GPE propagation."""
+        skip_if_backend_unavailable(backend)
         from scipy.constants import atomic_mass
 
         simu = GPE(
@@ -296,7 +305,7 @@ class TestSolverBenchmark:
         E_in = _gaussian_field_2d(waist, simu.X, simu.Y)
 
         def propagate():
-            return simu.out_field(E_in, z=1e-3, verbose=False)
+            return simu.out_field(E_in, z=1e-3, verbose=False, precision="single")
 
         result = benchmark.pedantic(propagate, rounds=10, warmup_rounds=2)
         assert result.shape == (N, N)
@@ -310,6 +319,7 @@ class TestCoupledSolverBenchmark:
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_cnlse_2d(self, benchmark, backend):
         """Benchmark CNLSE 2D propagation."""
+        skip_if_backend_unavailable(backend)
         simu = CNLSE(
             alpha=alpha,
             power=power,
@@ -328,7 +338,7 @@ class TestCoupledSolverBenchmark:
         E_in[1] = _gaussian_field_2d(waist * 1.2, simu.X, simu.Y) * 0.5
 
         def propagate():
-            return simu.out_field(E_in, z=1e-3, verbose=False)
+            return simu.out_field(E_in, z=1e-3, verbose=False, precision="single")
 
         result = benchmark.pedantic(propagate, rounds=10, warmup_rounds=2)
         assert result.shape == (2, N, N)
@@ -337,6 +347,7 @@ class TestCoupledSolverBenchmark:
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_cnlse_1d(self, benchmark, backend):
         """Benchmark CNLSE_1d propagation."""
+        skip_if_backend_unavailable(backend)
         simu = CNLSE_1d(
             alpha=alpha,
             power=power,
@@ -354,7 +365,7 @@ class TestCoupledSolverBenchmark:
         E_in[1] = np.exp(-(simu.X**2) / (waist * 1.2) ** 2) * 0.5
 
         def propagate():
-            return simu.out_field(E_in, z=1e-3, verbose=False)
+            return simu.out_field(E_in, z=1e-3, verbose=False, precision="single")
 
         result = benchmark.pedantic(propagate, rounds=10, warmup_rounds=2)
         assert result.shape == (2, N)

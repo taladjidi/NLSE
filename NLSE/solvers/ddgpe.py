@@ -4,11 +4,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pyfftw
 
-from ..utils import __BACKEND__, __CUPY_AVAILABLE__
+from ..utils import __BACKEND__, __CUPY_AVAILABLE__, __PYOPENCL_AVAILABLE__
 from .cnlse import CNLSE
 
 if __CUPY_AVAILABLE__:
     import cupy as cp
+
+if __PYOPENCL_AVAILABLE__:
+    from pyopencl import array as cla
 
 
 class DDGPE(CNLSE):
@@ -88,7 +91,7 @@ class DDGPE(CNLSE):
             (omega_exc - omega_cav) ** 2 + (omega) ** 2
         )
         self.omega_pump = omega_lp + detuning
-        if self.backend == "GPU" and self.__CUPY_AVAILABLE__:
+        if self.backend == "CUPY" and self.__CUPY_AVAILABLE__:
             self._random = cp.random.normal
         else:
             self._random = np.random.normal
@@ -207,21 +210,23 @@ class DDGPE(CNLSE):
         Returns:
             np.ndarray: A tuple of linear propagators for each component.
         """
+        dtype = np.complex128 if precision == "double" else np.complex64
         propagator1 = np.exp(
             -1j
             * (self.omega_exc * (1 + 0 * self.Kxx**2) - self.omega_pump)
-            * self.delta_z
-        ).astype(np.complex64)
+            * self.delta_z,
+            dtype=dtype
+        )
         propagator2 = np.exp(
             -1j
             * (
                 self.omega_cav * np.sqrt(1 + (self.Kxx**2 + self.Kyy**2) / self.k_z**2)
                 - self.omega_pump
             )
-            * self.delta_z
-        ).astype(np.complex64)
+            * self.delta_z,
+            dtype=dtype
+        )
         return np.array([propagator1, propagator2])
-        pass
 
     def _prepare_output_array(self, E_in: np.ndarray, normalize: bool) -> np.ndarray:
         """Prepare the output array depending on __BACKEND__.
@@ -232,10 +237,14 @@ class DDGPE(CNLSE):
         Returns:
             np.ndarray: Output array
         """
-        if self.backend == "GPU" and self.__CUPY_AVAILABLE__:
+        if self.backend == "CUPY" and self.__CUPY_AVAILABLE__:
             A = cp.zeros_like(E_in)
             A_sq = cp.zeros_like(A, dtype=A.real.dtype)
             A[:] = cp.asarray(E_in)
+        elif self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
+            A = cla.zeros(self._backend.queue, E_in.shape, E_in.dtype)
+            A_sq = cla.zeros(self._backend.queue, E_in.shape, E_in.real.dtype)
+            A[:] = cla.to_device(self._backend.queue, E_in)
         else:
             A = pyfftw.zeros_aligned(E_in.shape, dtype=E_in.dtype)
             A_sq = np.empty_like(A, dtype=A.real.dtype)
@@ -270,7 +279,7 @@ class DDGPE(CNLSE):
         Returns:
             None
         """
-        if self.backend == "GPU" and self.__CUPY_AVAILABLE__:
+        if self.backend == "CUPY" and self.__CUPY_AVAILABLE__:
             # on GPU, only one plan for both FFT directions
             plan_fft = plans[0]
         else:
@@ -335,7 +344,7 @@ class DDGPE(CNLSE):
                     self.I_sat,
                     self.I_sat2,
                 )
-        if self.backend == "GPU" and self.__CUPY_AVAILABLE__:
+        if self.backend == "CUPY" and self.__CUPY_AVAILABLE__:
             plan_fft.fft(A, A)
             # linear step in Fourier domain (shifted)
             cp.multiply(A, propagator, out=A)

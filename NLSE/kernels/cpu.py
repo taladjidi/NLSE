@@ -92,6 +92,7 @@ def nl_prop_c(
     A1 = A1.ravel()
     A_sq_1 = A_sq_1.ravel()
     A_sq_2 = A_sq_2.ravel()
+    V = V.ravel()
     for i in numba.prange(A1.size):
         # Saturation parameter
         sat = 1 / (1 + A_sq_1[i] * 1 / Isat1 + A_sq_2[i] * 1 / Isat2)

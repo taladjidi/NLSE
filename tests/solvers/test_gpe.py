@@ -35,17 +35,19 @@ def test_build_propagator() -> None:
             NY=N,
             backend=backend,
         )
-        prop = simu_gpe._build_propagator()
+        prop = simu_gpe._build_propagator(precision="single")
+        expected = np.exp(
+            -1j
+            * 0.5
+            * hbar
+            * (simu_gpe.Kxx**2 + simu_gpe.Kyy**2)
+            / simu_gpe.m
+            * simu_gpe.delta_t,
+            dtype=np.complex64
+        )
         assert np.allclose(
             prop,
-            np.exp(
-                -1j
-                * 0.5
-                * hbar
-                * (simu_gpe.Kxx**2 + simu_gpe.Kyy**2)
-                / simu_gpe.m
-                * simu_gpe.delta_t
-            ),
+            expected,
         ), f"Propagator is wrong. (Backend {backend})"
 
 

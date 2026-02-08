@@ -176,13 +176,17 @@ class NLSE:
             precision (str): Type of propagator to generate. For split step schemes
             the step is inside the propagator, for RK4 it is not.
         """
+        # Use appropriate dtype based on precision
+        dtype = np.complex128 if precision == "double" else np.complex64
+
         match precision:
             case "single" | "double":
                 propagator = np.exp(
-                    -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k * self.delta_z
+                    -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k * self.delta_z,
+                    dtype=dtype,
                 )
             case "RK4":
-                propagator = -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k
+                propagator = (-1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k).astype(dtype)
         return propagator
 
     def _build_fft_plan(self, A: np.ndarray) -> list:

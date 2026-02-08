@@ -107,23 +107,23 @@ class CNLSE(NLSE):
             A_sq (np.ndarray): Output field modulus squared array
         """
         puiss_arr = np.array([self.power, self.power2], dtype=E.dtype)
-        if self.backend == "GPU" and self.__CUPY_AVAILABLE__:
+        if self.backend == "CUPY" and self.__CUPY_AVAILABLE__:
             A = cp.zeros_like(E)
             A_sq = cp.zeros_like(A, dtype=A.real.dtype)
             E = cp.asarray(E)
             puiss_arr = cp.array(puiss_arr)
         elif self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
-            A = cla.zeros(self._cl_queue, E.shape, E.dtype)
-            A_sq = cla.zeros(self._cl_queue, E.shape, E.real.dtype)
-            # E = cla.to_device(self._cl_queue, E)
-            # puiss_arr = cla.to_device(self._cl_queue, puiss_arr)
+            A = cla.zeros(self._backend.queue, E.shape, E.dtype)
+            A_sq = cla.zeros(self._backend.queue, E.shape, E.real.dtype)
+            # E = cla.to_device(self._backend.queue, E)
+            # puiss_arr = cla.to_device(self._backend.queue, puiss_arr)
         else:
             A = pyfftw.zeros_aligned(E.shape, dtype=E.dtype, n=pyfftw.simd_alignment)
             A_sq = np.zeros_like(A, dtype=A.real.dtype)
         if normalize:
             # normalization of the field
             match self.backend:
-                case "GPU" | "CPU":
+                case "CUPY" | "CPU":
                     integral = (
                         (E.real * E.real + E.imag * E.imag)
                         * self.delta_X
@@ -139,8 +139,8 @@ class CNLSE(NLSE):
                     ).sum(axis=self._last_axes)
                     integral = integral * c * epsilon_0 / 2
                     E_00 = (puiss_arr / integral) ** 0.5
-                    E_00 = cla.to_device(self._cl_queue, E_00.astype(E.dtype))
-                    E = cla.to_device(self._cl_queue, E.astype(E.dtype))
+                    E_00 = cla.to_device(self._backend.queue, E_00.astype(E.dtype))
+                    E = cla.to_device(self._backend.queue, E.astype(E.dtype))
             A[0] = E_00[0] * E[0]
             A[1] = E_00[1] * E[1]
         else:
@@ -183,14 +183,16 @@ class CNLSE(NLSE):
             propagator1 (np.ndarray): The propagator for the first component.
             propagator2 (np.ndarray): The propagator for the second component.
         """
+        dtype = np.complex128 if precision == "double" else np.complex64
         propagator1 = super()._build_propagator(precision=precision)
         match precision:
             case "single" | "double":
                 propagator2 = np.exp(
-                    -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k * self.delta_z
-                ).astype(np.complex64)
+                    -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k2 * self.delta_z,
+                    dtype=dtype
+                )
             case "RK4":
-                propagator2 = -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k
+                propagator2 = (-1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k2).astype(dtype)
         return np.array([propagator1, propagator2])
 
     def _take_components(self, A: np.ndarray) -> tuple:
@@ -230,14 +232,14 @@ class CNLSE(NLSE):
         # prepare output array, this kills performance but we need it
         A_prop = A.copy()
         A_sq = A.real * A.real + A.imag * A.imag
-        if (self.backend == "GPU" and self.__CUPY_AVAILABLE__) or (
+        if (self.backend == "CUPY" and self.__CUPY_AVAILABLE__) or (
             self.backend == "CL" and self.__PYOPENCL_AVAILABLE__
         ):
             # on GPU, only one plan for both FFT directions
             plan_fft = plans[0]
         else:
             plan_fft, plan_ifft = plans
-        if (self.backend == "GPU" and self.__CUPY_AVAILABLE__) or (
+        if (self.backend == "CUPY" and self.__CUPY_AVAILABLE__) or (
             self.backend == "CL" and self.__PYOPENCL_AVAILABLE__
         ):
             plan_fft.fft(A_prop, A_prop)
@@ -303,7 +305,7 @@ class CNLSE(NLSE):
             None
         """
         if (
-            self.backend == "GPU"
+            self.backend == "CUPY"
             and self.__CUPY_AVAILABLE__
             or self.backend == "CL"
             and self.__PYOPENCL_AVAILABLE__
@@ -373,7 +375,7 @@ class CNLSE(NLSE):
                     2 * self.I_sat / (epsilon_0 * c),
                 )
         if (
-            self.backend == "GPU"
+            self.backend == "CUPY"
             and self.__CUPY_AVAILABLE__
             or self.backend == "CL"
             and self.__PYOPENCL_AVAILABLE__

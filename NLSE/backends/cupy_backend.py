@@ -7,17 +7,17 @@ import numpy as np
 from ..utils import __CUPY_AVAILABLE__
 from .backend import Backend
 
-if __CUPY_AVAILABLE__:
-    import cupy as cp
-    from pyvkfft.cuda import VkFFTApp
+if not __CUPY_AVAILABLE__:
+    raise ImportError("CuPy is not available - cannot import CUPYBackend")
+
+import cupy as cp
+from pyvkfft.cuda import VkFFTApp
 
 
 class CUPYBackend(Backend):
     """CUPY backend using CuPy and VkFFT."""
 
     def __init__(self):
-        if not __CUPY_AVAILABLE__:
-            raise ImportError("CuPy is not available")
         self._vkfft_apps = {}
 
     @property
