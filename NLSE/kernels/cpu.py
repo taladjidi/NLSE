@@ -195,7 +195,6 @@ def square_mod(A: np.ndarray, A_sq: np.ndarray) -> None:
     Returns:
         None
     """
-    A = A.ravel()
-    A_sq = A_sq.ravel()
-    for i in numba.prange(A.size):
-        A_sq[i] = A[i].real * A[i].real + A[i].imag * A[i].imag
+    # Use conjugate multiplication to avoid potential stride issues
+    # and for consistency across backends
+    A_sq[:] = (A * A.conj()).real

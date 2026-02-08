@@ -317,6 +317,227 @@ class DDGPE(CNLSE):
         """
         A1, A2 = self._take_components(A)
         if precision == "double":
+            # Use fused kernels when available and no convolution needed
+            use_fused = (
+                self.nl_length == 0
+                and hasattr(self._kernels, "nl_prop_c_fused")
+                and hasattr(self._kernels, "nl_prop_without_V_c_fused")
+            )
+
+            if use_fused:
+                # Fused path: compute |A1|² and |A2|² inline within nl_prop_c
+                if V is None:
+                    self._kernels.nl_prop_without_V_c_fused(
+                        A1,
+                        A2,
+                        self.delta_z / 2,
+                        self.gamma / 2,
+                        self.g,
+                        self.g12,
+                        self.I_sat,
+                        self.I_sat2,
+                    )
+                    self._kernels.nl_prop_without_V_c_fused(
+                        A2,
+                        A1,
+                        self.delta_z / 2,
+                        self.gamma2 / 2,
+                        self.g,
+                        self.g12,
+                        self.I_sat,
+                        self.I_sat2,
+                    )
+                else:
+                    self._kernels.nl_prop_c_fused(
+                        A1,
+                        A2,
+                        self.delta_z / 2,
+                        self.gamma / 2,
+                        V,
+                        self.g,
+                        self.g12,
+                        self.I_sat,
+                        self.I_sat2,
+                    )
+                    self._kernels.nl_prop_c_fused(
+                        A2,
+                        A1,
+                        self.delta_z / 2,
+                        self.gamma2 / 2,
+                        V,
+                        self.g2,
+                        self.g12,
+                        self.I_sat,
+                        self.I_sat2,
+                    )
+            else:
+                # Non-fused path: compute |A|² separately
+                self._kernels.square_mod(A, A_sq)
+                A_sq_1, A_sq_2 = self._take_components(A_sq)
+                if self.nl_length > 0:
+                    A_sq_1 = self._backend.convolution(
+                        A_sq_1, self.nl_profile, mode="same", axes=self._last_axes
+                    )
+                    A_sq_2 = self._backend.convolution(
+                        A_sq_2, self.nl_profile, mode="same", axes=self._last_axes
+                    )
+
+                if V is None:
+                    self._kernels.nl_prop_without_V_c(
+                        A1,
+                        A_sq_1,
+                        A_sq_2,
+                        self.delta_z / 2,
+                        self.gamma / 2,
+                        self.g,
+                        self.g12,
+                        self.I_sat,
+                        self.I_sat2,
+                    )
+                    self._kernels.nl_prop_without_V_c(
+                        A2,
+                        A_sq_2,
+                        A_sq_1,
+                        self.delta_z / 2,
+                        self.gamma2 / 2,
+                        self.g,
+                        self.g12,
+                        self.I_sat,
+                        self.I_sat2,
+                    )
+                else:
+                    self._kernels.nl_prop_c(
+                        A1,
+                        A_sq_1,
+                        A_sq_2,
+                        self.delta_z,
+                        self.gamma / 2,
+                        V,
+                        self.g,
+                        self.g12,
+                        self.I_sat,
+                        self.I_sat2,
+                    )
+                    self._kernels.nl_prop_c(
+                        A2,
+                        A_sq_2,
+                        A_sq_1,
+                        self.delta_z,
+                        self.gamma2 / 2,
+                        V,
+                        self.g2,
+                        self.g12,
+                        self.I_sat,
+                        self.I_sat2,
+                    )
+            self._put_components(A, A1, A2)
+        self._linear_step(A, propagator)
+        A1, A2 = self._take_components(A)
+
+        # Use fused kernels when available and no convolution needed
+        use_fused = (
+            self.nl_length == 0
+            and hasattr(self._kernels, "nl_prop_c_fused")
+            and hasattr(self._kernels, "nl_prop_without_V_c_fused")
+        )
+
+        if use_fused:
+            # Fused path: compute |A1|² and |A2|² inline within nl_prop_c
+            if precision == "double":
+                if V is None:
+                    self._kernels.nl_prop_without_V_c_fused(
+                        A1,
+                        A2,
+                        self.delta_z / 2,
+                        self.gamma / 2,
+                        self.g,
+                        self.g12,
+                        self.I_sat,
+                        self.I_sat2,
+                    )
+                    self._kernels.nl_prop_without_V_c_fused(
+                        A2,
+                        A1,
+                        self.delta_z / 2,
+                        self.gamma2 / 2,
+                        self.g,
+                        self.g12,
+                        self.I_sat,
+                        self.I_sat2,
+                    )
+                else:
+                    self._kernels.nl_prop_c_fused(
+                        A1,
+                        A2,
+                        self.delta_z / 2,
+                        self.gamma / 2,
+                        V,
+                        self.g,
+                        self.g12,
+                        self.I_sat,
+                        self.I_sat2,
+                    )
+                    self._kernels.nl_prop_c_fused(
+                        A2,
+                        A1,
+                        self.delta_z / 2,
+                        self.gamma2 / 2,
+                        V,
+                        self.g2,
+                        self.g12,
+                        self.I_sat,
+                        self.I_sat2,
+                    )
+            else:
+                if V is None:
+                    self._kernels.nl_prop_without_V_c_fused(
+                        A1,
+                        A2,
+                        self.delta_z,
+                        self.gamma / 2,
+                        self.g,
+                        self.g12,
+                        self.I_sat,
+                        self.I_sat2,
+                    )
+                    self._kernels.nl_prop_without_V_c_fused(
+                        A2,
+                        A1,
+                        self.delta_z,
+                        self.gamma2 / 2,
+                        self.g2,
+                        self.g12,
+                        self.I_sat,
+                        self.I_sat2,
+                    )
+                else:
+                    self._kernels.nl_prop_c_fused(
+                        A1,
+                        A2,
+                        self.delta_z,
+                        self.gamma / 2,
+                        V,
+                        self.g,
+                        self.g12,
+                        self.I_sat,
+                        self.I_sat2,
+                    )
+                    self._kernels.nl_prop_c_fused(
+                        A2,
+                        A1,
+                        self.delta_z,
+                        self.gamma2 / 2,
+                        V,
+                        self.g2,
+                        self.g12,
+                        self.I_sat,
+                        self.I_sat2,
+                    )
+            if self.omega is not None:
+                self._kernels.rabi_coupling(A1, A2, self.delta_z, self.omega / 2)
+        else:
+            # Non-fused path: compute |A|² separately
+            # fft normalization
             self._kernels.square_mod(A, A_sq)
             A_sq_1, A_sq_2 = self._take_components(A_sq)
             if self.nl_length > 0:
@@ -326,168 +547,106 @@ class DDGPE(CNLSE):
                 A_sq_2 = self._backend.convolution(
                     A_sq_2, self.nl_profile, mode="same", axes=self._last_axes
                 )
-
-            if V is None:
-                self._kernels.nl_prop_without_V_c(
-                    A1,
-                    A_sq_1,
-                    A_sq_2,
-                    self.delta_z / 2,
-                    self.gamma / 2,
-                    self.g,
-                    self.g12,
-                    self.I_sat,
-                    self.I_sat2,
-                )
-                self._kernels.nl_prop_without_V_c(
-                    A2,
-                    A_sq_2,
-                    A_sq_1,
-                    self.delta_z / 2,
-                    self.gamma2 / 2,
-                    self.g,
-                    self.g12,
-                    self.I_sat,
-                    self.I_sat2,
-                )
+            if precision == "double":
+                if V is None:
+                    self._kernels.nl_prop_without_V_c(
+                        A1,
+                        A_sq_1,
+                        A_sq_2,
+                        self.delta_z / 2,
+                        self.gamma / 2,
+                        self.g,
+                        self.g12,
+                        self.I_sat,
+                        self.I_sat2,
+                    )
+                    self._kernels.nl_prop_without_V_c(
+                        A2,
+                        A_sq_2,
+                        A_sq_1,
+                        self.delta_z / 2,
+                        self.gamma2 / 2,
+                        self.g,
+                        self.g12,
+                        self.I_sat,
+                        self.I_sat2,
+                    )
+                else:
+                    self._kernels.nl_prop_c(
+                        A1,
+                        A_sq_1,
+                        A_sq_2,
+                        self.delta_z / 2,
+                        self.gamma / 2,
+                        V,
+                        self.g,
+                        self.g12,
+                        self.I_sat,
+                        self.I_sat2,
+                    )
+                    self._kernels.nl_prop_c(
+                        A2,
+                        A_sq_2,
+                        A_sq_1,
+                        self.delta_z / 2,
+                        self.gamma2 / 2,
+                        V,
+                        self.g2,
+                        self.g12,
+                        self.I_sat,
+                        self.I_sat2,
+                    )
             else:
-                self._kernels.nl_prop_c(
-                    A1,
-                    A_sq_1,
-                    A_sq_2,
-                    self.delta_z,
-                    self.gamma / 2,
-                    V,
-                    self.g,
-                    self.g12,
-                    self.I_sat,
-                    self.I_sat2,
-                )
-                self._kernels.nl_prop_c(
-                    A2,
-                    A_sq_2,
-                    A_sq_1,
-                    self.delta_z,
-                    self.gamma2 / 2,
-                    V,
-                    self.g2,
-                    self.g12,
-                    self.I_sat,
-                    self.I_sat2,
-                )
-            self._put_components(A, A1, A2)
-        self._linear_step(A, propagator)
-        A1, A2 = self._take_components(A)
-        # fft normalization
-        self._kernels.square_mod(A, A_sq)
-        A_sq_1, A_sq_2 = self._take_components(A_sq)
-        if self.nl_length > 0:
-            A_sq_1 = self._backend.convolution(
-                A_sq_1, self.nl_profile, mode="same", axes=self._last_axes
-            )
-            A_sq_2 = self._backend.convolution(
-                A_sq_2, self.nl_profile, mode="same", axes=self._last_axes
-            )
-        if precision == "double":
-            if V is None:
-                self._kernels.nl_prop_without_V_c(
-                    A1,
-                    A_sq_1,
-                    A_sq_2,
-                    self.delta_z / 2,
-                    self.gamma / 2,
-                    self.g,
-                    self.g12,
-                    self.I_sat,
-                    self.I_sat2,
-                )
-                self._kernels.nl_prop_without_V_c(
-                    A2,
-                    A_sq_2,
-                    A_sq_1,
-                    self.delta_z / 2,
-                    self.gamma2 / 2,
-                    self.g,
-                    self.g12,
-                    self.I_sat,
-                    self.I_sat2,
-                )
-            else:
-                self._kernels.nl_prop_c(
-                    A1,
-                    A_sq_1,
-                    A_sq_2,
-                    self.delta_z,
-                    self.gamma / 2,
-                    self.k / 2 * V,
-                    self.g,
-                    self.g12,
-                    self.I_sat,
-                    self.I_sat2,
-                )
-                self._kernels.nl_prop_c(
-                    A2,
-                    A_sq_2,
-                    A_sq_1,
-                    self.delta_z,
-                    self.gamma2 / 2,
-                    V,
-                    self.g2,
-                    self.g12,
-                    self.I_sat,
-                    self.I_sat2,
-                )
-        else:
-            if V is None:
-                self._kernels.nl_prop_without_V_c(
-                    A1,
-                    A_sq_1,
-                    A_sq_2,
-                    self.delta_z,
-                    self.alpha / 2,
-                    self.g,
-                    self.g12,
-                    self.I_sat,
-                    self.I_sat2,
-                )
-                self._kernels.nl_prop_without_V_c(
-                    A2,
-                    A_sq_2,
-                    A_sq_1,
-                    self.delta_z,
-                    self.gamma2 / 2,
-                    self.g2,
-                    self.g12,
-                    self.I_sat,
-                    self.I_sat2,
-                )
-            else:
-                self._kernels.nl_prop_c(
-                    A1,
-                    A_sq_1,
-                    A_sq_2,
-                    self.delta_z,
-                    self.gamma / 2,
-                    V,
-                    self.g,
-                    self.g12,
-                    self.I_sat,
-                    self.I_sat2,
-                )
-                self._kernels.nl_prop_c(
-                    A2,
-                    A_sq_2,
-                    A_sq_1,
-                    self.delta_z,
-                    self.gamma2 / 2,
-                    V,
-                    self.g2,
-                    self.g12,
-                    self.I_sat,
-                    self.I_sat2,
-                )
-            if self.omega is not None:
-                self._kernels.rabi_coupling(A1, A2, self.delta_z, self.omega / 2)
+                if V is None:
+                    self._kernels.nl_prop_without_V_c(
+                        A1,
+                        A_sq_1,
+                        A_sq_2,
+                        self.delta_z,
+                        self.gamma / 2,
+                        self.g,
+                        self.g12,
+                        self.I_sat,
+                        self.I_sat2,
+                    )
+                    self._kernels.nl_prop_without_V_c(
+                        A2,
+                        A_sq_2,
+                        A_sq_1,
+                        self.delta_z,
+                        self.gamma2 / 2,
+                        self.g2,
+                        self.g12,
+                        self.I_sat,
+                        self.I_sat2,
+                    )
+                else:
+                    self._kernels.nl_prop_c(
+                        A1,
+                        A_sq_1,
+                        A_sq_2,
+                        self.delta_z,
+                        self.gamma / 2,
+                        V,
+                        self.g,
+                        self.g12,
+                        self.I_sat,
+                        self.I_sat2,
+                    )
+                    self._kernels.nl_prop_c(
+                        A2,
+                        A_sq_2,
+                        A_sq_1,
+                        self.delta_z,
+                        self.gamma2 / 2,
+                        V,
+                        self.g2,
+                        self.g12,
+                        self.I_sat,
+                        self.I_sat2,
+                    )
+                if self.omega is not None:
+                    self._kernels.rabi_coupling(A1, A2, self.delta_z, self.omega / 2)
         self._put_components(A, A1, A2)
 
     def plot_field(self, A_plot: np.ndarray, t: float) -> None:

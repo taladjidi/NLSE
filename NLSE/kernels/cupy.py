@@ -187,4 +187,6 @@ def square_mod(A: cp.ndarray, A_sq: cp.ndarray) -> None:
     Returns:
         None
     """
-    A_sq[:] = cp.abs(A) ** 2
+    # Use conjugate multiplication to avoid potential stride issues
+    # and for consistency across backends
+    A_sq[:] = (A * A.conj()).real

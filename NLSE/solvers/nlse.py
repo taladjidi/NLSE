@@ -320,14 +320,19 @@ class NLSE:
         self._gpu_initialized = True
 
     def _retrieve_arrays_from_gpu(self) -> None:
-        """Retrieve arrays from device memory."""
+        """Retrieve arrays from device memory.
+
+        Note: Propagator is intentionally kept on device for reuse between calls.
+        Only retrieves V, nl_profile, and broadcast parameters.
+        """
         if self.backend == "CPU":
             return
         if self.V is not None:
             self.V = self._backend.to_host(self.V)
         if self._backend.is_device_array(self.nl_profile):
             self.nl_profile = self._backend.to_host(self.nl_profile)
-        self.propagator = self._backend.to_host(self.propagator)
+        # Don't retrieve propagator - keep it on device for reuse
+        # self.propagator = self._backend.to_host(self.propagator)
         for attr in ("power", "n2", "alpha", "I_sat"):
             val = getattr(self, attr)
             if self._backend.is_device_array(val):
@@ -361,76 +366,152 @@ class NLSE:
             step. Defaults to ``"single"``.
         """
         if precision == "double":
+            # Use fused kernels when available and no convolution needed
+            use_fused = (
+                self.nl_length == 0
+                and hasattr(self._kernels, "nl_prop_fused")
+                and hasattr(self._kernels, "nl_prop_without_V_fused")
+            )
+
+            if use_fused:
+                # Fused path: compute |A|² inline within nl_prop
+                if V is None:
+                    self._kernels.nl_prop_without_V_fused(
+                        A,
+                        self.delta_z / 2,
+                        self.alpha / 2,
+                        self.k / 2 * self.n2 * c * epsilon_0,
+                        2 * self.I_sat / (epsilon_0 * c),
+                    )
+                else:
+                    self._kernels.nl_prop_fused(
+                        A,
+                        self.delta_z / 2,
+                        self.alpha / 2,
+                        self.k / 2 * V,
+                        self.k / 2 * self.n2 * c * epsilon_0,
+                        2 * self.I_sat / (epsilon_0 * c),
+                    )
+            else:
+                # Non-fused path: compute |A|² separately
+                self._kernels.square_mod(A, A_sq)
+                if self.nl_length > 0:
+                    A_sq[:] = self._backend.convolution(
+                        A_sq, self.nl_profile, mode="same", axes=self._last_axes
+                    )
+                if V is None:
+                    self._kernels.nl_prop_without_V(
+                        A,
+                        A_sq,
+                        self.delta_z / 2,
+                        self.alpha / 2,
+                        self.k / 2 * self.n2 * c * epsilon_0,
+                        2 * self.I_sat / (epsilon_0 * c),
+                    )
+                else:
+                    self._kernels.nl_prop(
+                        A,
+                        A_sq,
+                        self.delta_z / 2,
+                        self.alpha / 2,
+                        self.k / 2 * V,
+                        self.k / 2 * self.n2 * c * epsilon_0,
+                        2 * self.I_sat / (epsilon_0 * c),
+                    )
+        self._linear_step(A, propagator)
+
+        # Use fused kernels when available and no convolution needed
+        use_fused = (
+            self.nl_length == 0
+            and hasattr(self._kernels, "nl_prop_fused")
+            and hasattr(self._kernels, "nl_prop_without_V_fused")
+        )
+
+        if use_fused:
+            # Fused path: compute |A|² inline within nl_prop
+            if precision == "double":
+                if V is None:
+                    self._kernels.nl_prop_without_V_fused(
+                        A,
+                        self.delta_z / 2,
+                        self.alpha / 2,
+                        self.k / 2 * self.n2 * c * epsilon_0,
+                        2 * self.I_sat / (epsilon_0 * c),
+                    )
+                else:
+                    self._kernels.nl_prop_fused(
+                        A,
+                        self.delta_z / 2,
+                        self.alpha / 2,
+                        self.k / 2 * V,
+                        self.k / 2 * self.n2 * c * epsilon_0,
+                        2 * self.I_sat / (epsilon_0 * c),
+                    )
+            else:
+                if V is None:
+                    self._kernels.nl_prop_without_V_fused(
+                        A,
+                        self.delta_z,
+                        self.alpha / 2,
+                        self.k / 2 * self.n2 * c * epsilon_0,
+                        2 * self.I_sat / (epsilon_0 * c),
+                    )
+                else:
+                    self._kernels.nl_prop_fused(
+                        A,
+                        self.delta_z,
+                        self.alpha / 2,
+                        self.k / 2 * V,
+                        self.k / 2 * self.n2 * c * epsilon_0,
+                        2 * self.I_sat / (epsilon_0 * c),
+                    )
+        else:
+            # Non-fused path: compute |A|² separately
             self._kernels.square_mod(A, A_sq)
             if self.nl_length > 0:
                 A_sq[:] = self._backend.convolution(
                     A_sq, self.nl_profile, mode="same", axes=self._last_axes
                 )
-            if V is None:
-                self._kernels.nl_prop_without_V(
-                    A,
-                    A_sq,
-                    self.delta_z / 2,
-                    self.alpha / 2,
-                    self.k / 2 * self.n2 * c * epsilon_0,
-                    2 * self.I_sat / (epsilon_0 * c),
-                )
+            if precision == "double":
+                if V is None:
+                    self._kernels.nl_prop_without_V(
+                        A,
+                        A_sq,
+                        self.delta_z / 2,
+                        self.alpha / 2,
+                        self.k / 2 * self.n2 * c * epsilon_0,
+                        2 * self.I_sat / (epsilon_0 * c),
+                    )
+                else:
+                    self._kernels.nl_prop(
+                        A,
+                        A_sq,
+                        self.delta_z / 2,
+                        self.alpha / 2,
+                        self.k / 2 * V,
+                        self.k / 2 * self.n2 * c * epsilon_0,
+                        2 * self.I_sat / (epsilon_0 * c),
+                    )
             else:
-                self._kernels.nl_prop(
-                    A,
-                    A_sq,
-                    self.delta_z / 2,
-                    self.alpha / 2,
-                    self.k / 2 * V,
-                    self.k / 2 * self.n2 * c * epsilon_0,
-                    2 * self.I_sat / (epsilon_0 * c),
-                )
-        self._linear_step(A, propagator)
-        self._kernels.square_mod(A, A_sq)
-        if self.nl_length > 0:
-            A_sq[:] = self._backend.convolution(
-                A_sq, self.nl_profile, mode="same", axes=self._last_axes
-            )
-        if precision == "double":
-            if V is None:
-                self._kernels.nl_prop_without_V(
-                    A,
-                    A_sq,
-                    self.delta_z / 2,
-                    self.alpha / 2,
-                    self.k / 2 * self.n2 * c * epsilon_0,
-                    2 * self.I_sat / (epsilon_0 * c),
-                )
-            else:
-                self._kernels.nl_prop(
-                    A,
-                    A_sq,
-                    self.delta_z / 2,
-                    self.alpha / 2,
-                    self.k / 2 * V,
-                    self.k / 2 * self.n2 * c * epsilon_0,
-                    2 * self.I_sat / (epsilon_0 * c),
-                )
-        else:
-            if V is None:
-                self._kernels.nl_prop_without_V(
-                    A,
-                    A_sq,
-                    self.delta_z,
-                    self.alpha / 2,
-                    self.k / 2 * self.n2 * c * epsilon_0,
-                    2 * self.I_sat / (epsilon_0 * c),
-                )
-            else:
-                self._kernels.nl_prop(
-                    A,
-                    A_sq,
-                    self.delta_z,
-                    self.alpha / 2,
-                    self.k / 2 * V,
-                    self.k / 2 * self.n2 * c * epsilon_0,
-                    2 * self.I_sat / (epsilon_0 * c),
-                )
+                if V is None:
+                    self._kernels.nl_prop_without_V(
+                        A,
+                        A_sq,
+                        self.delta_z,
+                        self.alpha / 2,
+                        self.k / 2 * self.n2 * c * epsilon_0,
+                        2 * self.I_sat / (epsilon_0 * c),
+                    )
+                else:
+                    self._kernels.nl_prop(
+                        A,
+                        A_sq,
+                        self.delta_z,
+                        self.alpha / 2,
+                        self.k / 2 * V,
+                        self.k / 2 * self.n2 * c * epsilon_0,
+                        2 * self.I_sat / (epsilon_0 * c),
+                    )
 
     def _RK4_rhs_non_mutating(
         self,
