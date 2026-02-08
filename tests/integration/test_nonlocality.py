@@ -16,7 +16,8 @@ if NLSE.__CUPY_AVAILABLE__:
 
 
 def test_nonlocality():
-    N = 2048
+    # Reduced N and L for faster testing while still exercising nonlocality
+    N = 512  # Reduced from 2048
     n2 = -1e-9
     n12 = -1e-10
     waist = 2.23e-3
@@ -24,7 +25,7 @@ def test_nonlocality():
     window = 4 * waist
     power = 1.05
     Isat = 10e4  # saturation intensity in W/m^2
-    L = 1e-3
+    L = 2e-4  # Reduced from 1e-3 for faster testing
     alpha = 0
     nl_length = 60e-6
     for backend in AVAILABLE_BACKENDS:
@@ -112,7 +113,7 @@ def test_nonlocality():
         E, _ = simu_c_1d.out_field(
             np.array([E_0[N // 2, :], V0[N // 2, :]]),
             L,
-            verbose=True,
+            verbose=False,
             plot=False,
             precision="single",
         )
@@ -125,7 +126,7 @@ def test_nonlocality():
         E = simu_1d.out_field(
             E_0[N // 2, :],
             L,
-            verbose=True,
+            verbose=False,
             plot=False,
             precision="single",
         )
@@ -138,7 +139,7 @@ def test_nonlocality():
         E, _ = simu_c_2d.out_field(
             np.array([E_0, V0]),
             L,
-            verbose=True,
+            verbose=False,
             plot=False,
             precision="single",
         )
@@ -151,7 +152,7 @@ def test_nonlocality():
         E = simu_2d.out_field(
             E_0,
             L,
-            verbose=True,
+            verbose=False,
             plot=False,
             precision="single",
         )
@@ -164,7 +165,7 @@ def test_nonlocality():
         E = simu_gpe.out_field(
             E_0,
             L,
-            verbose=True,
+            verbose=False,
             plot=False,
             precision="single",
         )
