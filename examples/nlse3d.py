@@ -15,9 +15,7 @@ vg = 1e-1 * c
 waist = 2.23e-3
 duration = 2e-6
 waist2 = 70e-6
-window = np.array(
-    [4 * waist, 8 * duration]
-)  # 4*waist transverse, 10e-6 s temporal
+window = np.array([4 * waist, 8 * duration])  # 4*waist transverse, 10e-6 s temporal
 energy = 1.05 * duration
 Isat = 10e4  # saturation intensity in W/m^2
 L = 1e-2
@@ -41,9 +39,7 @@ def main():
         backend="GPU",
     )
     simu.delta_z = 0.25e-4
-    E_0 = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(
-        PRECISION_COMPLEX
-    )
+    E_0 = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(PRECISION_COMPLEX)
     E_0 *= np.exp(-(simu.TT**2) / duration**2)
     simu.V = -1e-4 * np.exp(-(simu.XX**2 + simu.YY**2) / waist2**2).astype(
         PRECISION_COMPLEX

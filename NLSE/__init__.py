@@ -12,12 +12,36 @@ __credits__ = "Laboratoire Kastler Brossel, Paris, France"
 __email__ = "tangui.aladjidi@lkb.upmc.fr"
 
 
-from . import utils
-from .callbacks import *
-from .cnlse import CNLSE
-from .cnlse_1d import CNLSE_1d
-from .ddgpe import DDGPE
-from .gpe import GPE
-from .nlse import NLSE
-from .nlse_1d import NLSE_1d
-from .nlse_3d import NLSE_3d
+# Backward-compatible submodule aliases so that
+# `from NLSE.kernels_cpu import ...` and `from NLSE.kernels_cl import ...` still work.
+import sys
+
+from . import utils as utils
+from .callbacks import adapt_delta_z as adapt_delta_z
+from .callbacks import evaluate_delta_n as evaluate_delta_n
+from .callbacks import norm as norm
+from .callbacks import sample as sample
+from .kernels import cpu as kernels_cpu
+from .solvers import CNLSE as CNLSE
+from .solvers import DDGPE as DDGPE
+from .solvers import GPE as GPE
+from .solvers import NLSE as NLSE
+from .solvers import CNLSE_1d as CNLSE_1d
+from .solvers import NLSE_1d as NLSE_1d
+from .solvers import NLSE_3d as NLSE_3d
+
+sys.modules[__name__ + ".kernels_cpu"] = kernels_cpu
+
+try:
+    from .kernels import cupy as kernels_gpu
+
+    sys.modules[__name__ + ".kernels_gpu"] = kernels_gpu
+except ImportError:
+    pass
+
+try:
+    from .kernels import cl as kernels_cl
+
+    sys.modules[__name__ + ".kernels_cl"] = kernels_cl
+except ImportError:
+    pass

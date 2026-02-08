@@ -31,9 +31,7 @@ def main():
         backend="GPU",
     )
     simu.delta_z = 0.5e-4
-    E_0 = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(
-        PRECISION_COMPLEX
-    )
+    E_0 = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(PRECISION_COMPLEX)
     simu.V = -1e-4 * np.exp(-(simu.XX**2 + simu.YY**2) / waist2**2).astype(
         PRECISION_COMPLEX
     )

@@ -84,9 +84,7 @@ def main():
     E0 = np.zeros((2, dd.NY, dd.NX), dtype=np.complex64)
 
     F_pump = 0
-    F_pump_r = F_pump * np.exp(-((dd.XX**2 + dd.YY**2) / waist**2)).astype(
-        np.complex64
-    )
+    F_pump_r = F_pump * np.exp(-((dd.XX**2 + dd.YY**2) / waist**2)).astype(np.complex64)
     F_pump_t = np.zeros(time.shape, dtype=np.complex64)
     F_probe = 0
     F_probe_r = F_probe * np.exp(-((dd.XX**2 + dd.YY**2) / waist**2)).astype(

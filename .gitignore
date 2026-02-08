@@ -1,7 +1,8 @@
-NLSE/__pycache__/*
-__pycache__/*
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
 .vscode/settings.json
-tests/__pycache__/*
 NLSE/fft.wisdom
 tex/benchmarks.pdf
 tex/output.png
@@ -29,3 +30,9 @@ examples/*.svg
 
 
 Archive.zip
+.git-session-note.txt
+benchmarks.pdf
+
+# Metal backend (work in progress, not included in main branch)
+NLSE/kernels/metal/
+NLSE/kernels/metal_native/
