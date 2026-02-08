@@ -672,7 +672,7 @@ class NLSE:
                 if isinstance(callback, Callable):
                     callback(self, A, z, i, *callback_args)
                 elif isinstance(callback, list) and isinstance(callback[0], Callable):
-                    for c, ca in zip(callback, callback_args):
+                    for c, ca in zip(callback, callback_args, strict=True):
                         c(self, A, z, i, *ca)
                 else:
                     raise ValueError(
