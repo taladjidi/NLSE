@@ -1,4 +1,6 @@
 
+from collections.abc import Callable
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pyfftw
@@ -519,11 +521,11 @@ class DDGPE(CNLSE):
         self,
         E_in: np.ndarray,
         t: float,
-        laser_excitation: callable | None,
+        laser_excitation: Callable | None,
         plot: bool = False,
         precision: str = "single",
         verbose: bool = True,
-        callback: list[callable] | callable = None,
+        callback: list[Callable] | Callable | None = None,
         callback_args: list[tuple] | tuple = None,
     ) -> np.ndarray:
         """Propagate a field to time T.

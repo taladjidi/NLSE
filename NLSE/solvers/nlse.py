@@ -5,6 +5,7 @@
 import multiprocessing
 import pickle
 import time
+import types
 from collections.abc import Callable
 from typing import Any
 
@@ -20,7 +21,7 @@ from ..utils import __BACKEND__, __CUPY_AVAILABLE__, __PYOPENCL_AVAILABLE__
 
 if __CUPY_AVAILABLE__:
     import cupy as cp
-    import cupyx.scipy.signal as signal_cp
+    import cupyx.scipy.signal as signal_cp  # type: ignore[import-not-found]
     from pyvkfft.cuda import VkFFTApp as VkFFTApp_cuda
 
     from ..kernels import cupy as kernels_gpu
@@ -169,7 +170,7 @@ class NLSE:
                 if not self.__CUPY_AVAILABLE__:
                     raise ImportError("Cupy is not available.")
                 self.__backend = "GPU"
-                self._kernels = kernels_gpu
+                self._kernels: types.ModuleType = kernels_gpu
                 self._convolution = signal_cp.oaconvolve
             case "CL":
                 if not self.__PYOPENCL_AVAILABLE__:
@@ -586,7 +587,7 @@ class NLSE:
         precision: str = "single",
         verbose: bool = True,
         normalize: bool = True,
-        callback: list[callable] | callable = None,
+        callback: list[Callable] | Callable | None = None,
         callback_args: list[tuple] | tuple = (),
     ) -> np.ndarray:
         """Propagate the field at a distance z.
