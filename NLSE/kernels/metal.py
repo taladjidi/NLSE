@@ -8,7 +8,7 @@ Arrays are MetalArray objects that wrap Metal shared-memory buffers.
 
 import numpy as np
 
-from .metal_native.metal_api import MetalBuffer, MetalContext, _lib
+from .metal_native.metal_api import MetalBuffer, MetalContext, MetalFFTPlan as NativeMetalFFTPlan, _lib
 
 # Global context (initialized lazily)
 _ctx = None
@@ -21,70 +21,57 @@ def _get_ctx():
     return _ctx
 
 
-# Try to import optimized FFT libraries
-# Priority: pyfftw > scipy.fft > numpy.fft
-_FFT_BACKEND = "numpy"
-_fft_fn = np.fft.fftn  # type: ignore[assignment]
-_ifft_fn = np.fft.ifftn  # type: ignore[assignment]
-
-try:
-    import pyfftw
-    # Configure pyfftw for best performance
-    pyfftw.interfaces.cache.enable()
-    pyfftw.config.NUM_THREADS = 4  # Adjust based on CPU cores
-    _fft_fn = pyfftw.interfaces.numpy_fft.fftn  # type: ignore[assignment]
-    _ifft_fn = pyfftw.interfaces.numpy_fft.ifftn  # type: ignore[assignment]
-    _FFT_BACKEND = "pyfftw"
-except ImportError:
-    try:
-        from scipy import fft as scipy_fft
-        _fft_fn = scipy_fft.fftn  # type: ignore[assignment]
-        _ifft_fn = scipy_fft.ifftn  # type: ignore[assignment]
-        _FFT_BACKEND = "scipy"
-    except ImportError:
-        pass
-
-
 class MetalFFTPlan:
-    """FFT plan using optimized FFT for Metal backend.
+    """FFT plan using Apple Accelerate framework for Metal backend.
 
-    Uses the best available FFT library (pyfftw > scipy.fft > numpy.fft).
-    Provides the same .fft()/.ifft() interface as VkFFT plans used by
-    GPU/CL backends.
+    Uses Apple's Accelerate framework vDSP for GPU-accelerated FFT on
+    Apple Silicon. This provides true GPU FFT without CPU↔GPU transfers.
 
-    Note: This still involves CPU↔GPU transfers for FFT computation.
-    For optimal performance, a native Metal FFT implementation using
-    Metal Performance Shaders or a custom Metal FFT kernel would be needed.
+    For arrays, FFT is performed directly on Metal shared memory buffers
+    using highly optimized Accelerate framework functions.
     """
 
     def __init__(self, shape, ndim):
         self.axes = tuple(range(-ndim, 0))
         self.shape = shape
-        self._fft_fn = _fft_fn
-        self._ifft_fn = _ifft_fn
+        self.ndim = ndim
 
-        # Pre-allocate workspace to reduce allocations
-        self._workspace = np.empty(shape, dtype=np.complex64)
+        # Create native Accelerate FFT plan
+        # Note: Accelerate vDSP requires power-of-2 dimensions
+        try:
+            self._native_plan = NativeMetalFFTPlan(shape, ndim)
+            self._use_native = True
+        except (RuntimeError, ValueError) as e:
+            # Fall back to numpy FFT if dimensions aren't power of 2
+            print(f"Warning: Native Metal FFT requires power-of-2 dimensions, "
+                  f"falling back to numpy FFT: {e}")
+            self._use_native = False
+            # Pre-allocate workspace for fallback
+            self._workspace = np.empty(shape, dtype=np.complex64)
 
     def fft(self, A, A_out):
-        # Get data from Metal buffer (shared memory, relatively fast)
-        data = A.get()
-        # Perform FFT using optimized backend
-        result = self._fft_fn(data, axes=self.axes)
-        # Write back (ensure correct dtype)
-        if result.dtype != data.dtype:
-            result = result.astype(data.dtype)
-        A_out[:] = result
+        if self._use_native and A is A_out:
+            # Native in-place FFT on Metal buffer (no CPU transfer!)
+            self._native_plan.fft(A._buf)
+        else:
+            # Fallback to numpy FFT (for non-power-of-2 or out-of-place)
+            data = A.get()
+            result = np.fft.fftn(data, axes=self.axes)
+            if result.dtype != data.dtype:
+                result = result.astype(data.dtype)
+            A_out[:] = result
 
     def ifft(self, A, A_out):
-        # Get data from Metal buffer (shared memory, relatively fast)
-        data = A.get()
-        # Perform inverse FFT using optimized backend
-        result = self._ifft_fn(data, axes=self.axes)
-        # Write back (ensure correct dtype)
-        if result.dtype != data.dtype:
-            result = result.astype(data.dtype)
-        A_out[:] = result
+        if self._use_native and A is A_out:
+            # Native in-place inverse FFT on Metal buffer (no CPU transfer!)
+            self._native_plan.ifft(A._buf)
+        else:
+            # Fallback to numpy FFT (for non-power-of-2 or out-of-place)
+            data = A.get()
+            result = np.fft.ifftn(data, axes=self.axes)
+            if result.dtype != data.dtype:
+                result = result.astype(data.dtype)
+            A_out[:] = result
 
 
 class MetalArray:

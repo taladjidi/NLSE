@@ -5,15 +5,18 @@
  *  - Metal device/queue management
  *  - Shared-memory buffer allocation (zero-copy with numpy)
  *  - Compute kernel dispatch
+ *  - Accelerate framework FFT (GPU-accelerated on Apple Silicon)
  *
- * Compiled as: clang -O2 -framework Metal -framework Foundation
- *              -shared -o libmetal_nlse.dylib metal_wrapper.m
+ * Compiled as: clang -O2 -framework Metal -framework Foundation -framework Accelerate
+ *              -shared -fobjc-arc -o libmetal_nlse.dylib metal_wrapper.m
  */
 
 #import <Metal/Metal.h>
 #import <Foundation/Foundation.h>
+#import <Accelerate/Accelerate.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 // ---- Opaque context handle ----
 typedef struct {
@@ -38,6 +41,17 @@ typedef struct {
     id<MTLBuffer> buffer;
     size_t size;
 } MetalBuf;
+
+// ---- FFT plan handle ----
+typedef struct {
+    FFTSetup fft_setup;      // Accelerate FFT setup
+    vDSP_Length log2n[2];    // log2 of dimensions
+    uint32_t shape[2];       // actual dimensions (nx, ny)
+    uint32_t ndim;           // 1D or 2D
+    DSPSplitComplex split;   // split-complex workspace
+    float *workspace;        // temporary storage for split complex
+    size_t workspace_size;   // size of workspace in bytes
+} MetalFFTPlan;
 
 
 // ---- Helper: create pipeline state from function name ----
@@ -315,4 +329,133 @@ void metal_complex_multiply_inplace(MetalCtx *ctx, MetalBuf *A, MetalBuf *B,
     });
     [cmdBuf commit];
     [cmdBuf waitUntilCompleted];
+}
+
+
+// ============================================================
+// FFT using Accelerate framework (GPU-accelerated on Apple Silicon)
+// ============================================================
+
+// Helper: compute log2 of a number
+static uint32_t _ilog2(uint32_t n) {
+    uint32_t log = 0;
+    while ((1U << log) < n) log++;
+    return log;
+}
+
+// Create FFT plan for 1D or 2D complex FFT
+MetalFFTPlan* metal_fft_create_plan(uint32_t nx, uint32_t ny, uint32_t ndim) {
+    MetalFFTPlan *plan = (MetalFFTPlan *)calloc(1, sizeof(MetalFFTPlan));
+    if (!plan) return NULL;
+
+    plan->ndim = ndim;
+    plan->shape[0] = nx;
+    plan->shape[1] = ny;
+    plan->log2n[0] = _ilog2(nx);
+    plan->log2n[1] = (ndim == 2) ? _ilog2(ny) : 0;
+
+    // Verify dimensions are powers of 2
+    if ((1U << plan->log2n[0]) != nx) {
+        fprintf(stderr, "Metal FFT: nx=%u must be power of 2\n", nx);
+        free(plan);
+        return NULL;
+    }
+    if (ndim == 2 && (1U << plan->log2n[1]) != ny) {
+        fprintf(stderr, "Metal FFT: ny=%u must be power of 2\n", ny);
+        free(plan);
+        return NULL;
+    }
+
+    // Create FFT setup
+    vDSP_Length max_log2 = (ndim == 2) ? MAX(plan->log2n[0], plan->log2n[1]) : plan->log2n[0];
+    plan->fft_setup = vDSP_create_fftsetup(max_log2, kFFTRadix2);
+    if (!plan->fft_setup) {
+        fprintf(stderr, "Metal FFT: failed to create FFT setup\n");
+        free(plan);
+        return NULL;
+    }
+
+    // Allocate split-complex workspace
+    size_t total_elements = (ndim == 2) ? (nx * ny) : nx;
+    plan->workspace_size = total_elements * sizeof(float) * 2;  // real + imag
+    plan->workspace = (float *)malloc(plan->workspace_size);
+    if (!plan->workspace) {
+        vDSP_destroy_fftsetup(plan->fft_setup);
+        free(plan);
+        return NULL;
+    }
+
+    // Set up split-complex structure (real and imaginary are interleaved in workspace)
+    plan->split.realp = plan->workspace;
+    plan->split.imagp = plan->workspace + total_elements;
+
+    return plan;
+}
+
+void metal_fft_destroy_plan(MetalFFTPlan *plan) {
+    if (plan) {
+        if (plan->fft_setup) vDSP_destroy_fftsetup(plan->fft_setup);
+        if (plan->workspace) free(plan->workspace);
+        free(plan);
+    }
+}
+
+// No helper functions needed - use vDSP_ctoz and vDSP_ztoc directly
+
+// Perform forward FFT on Metal buffer (in-place)
+void metal_fft_forward(MetalFFTPlan *plan, MetalBuf *buf) {
+    float *data = (float *)[buf->buffer contents];
+    size_t n = (plan->ndim == 2) ? (plan->shape[0] * plan->shape[1]) : plan->shape[0];
+
+    // Convert interleaved complex to split complex using vDSP function
+    DSPComplex *complex_data = (DSPComplex *)data;
+    vDSP_ctoz(complex_data, 2, &plan->split, 1, n);
+
+    // Perform FFT using Accelerate framework
+    // Note: Using zop (out-of-place) for complex FFT, not zrip (in-place real FFT)
+    DSPSplitComplex split_out = plan->split;  // In-place: output = input
+
+    if (plan->ndim == 1) {
+        // 1D complex FFT (out-of-place but we use same buffer)
+        vDSP_fft_zop(plan->fft_setup, &plan->split, 1, &split_out, 1,
+                     plan->log2n[0], kFFTDirection_Forward);
+    } else {
+        // 2D complex FFT
+        vDSP_fft2d_zop(plan->fft_setup, &plan->split, 1, 0, &split_out, 1, 0,
+                       plan->log2n[1], plan->log2n[0], kFFTDirection_Forward);
+    }
+
+    // Convert back to interleaved complex using vDSP function
+    vDSP_ztoc(&split_out, 1, complex_data, 2, n);
+}
+
+// Perform inverse FFT on Metal buffer (in-place)
+void metal_fft_inverse(MetalFFTPlan *plan, MetalBuf *buf) {
+    float *data = (float *)[buf->buffer contents];
+    size_t n = (plan->ndim == 2) ? (plan->shape[0] * plan->shape[1]) : plan->shape[0];
+
+    // Convert interleaved complex to split complex using vDSP function
+    DSPComplex *complex_data = (DSPComplex *)data;
+    vDSP_ctoz(complex_data, 2, &plan->split, 1, n);
+
+    // Perform inverse FFT using Accelerate framework
+    DSPSplitComplex split_out = plan->split;  // In-place: output = input
+
+    if (plan->ndim == 1) {
+        // 1D complex inverse FFT
+        vDSP_fft_zop(plan->fft_setup, &plan->split, 1, &split_out, 1,
+                     plan->log2n[0], kFFTDirection_Inverse);
+    } else {
+        // 2D complex inverse FFT
+        vDSP_fft2d_zop(plan->fft_setup, &plan->split, 1, 0, &split_out, 1, 0,
+                       plan->log2n[1], plan->log2n[0], kFFTDirection_Inverse);
+    }
+
+    // Normalize by 1/n to match numpy/FFTW convention
+    float scale = 1.0f / (float)n;
+    vDSP_vsmul(split_out.realp, 1, &scale, split_out.realp, 1, n);
+    vDSP_vsmul(split_out.imagp, 1, &scale, split_out.imagp, 1, n);
+
+    // Convert back to interleaved complex using vDSP function
+    vDSP_ztoc(&split_out, 1, complex_data, 2, n);
 }

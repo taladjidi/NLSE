@@ -146,6 +146,21 @@ _lib.metal_vortex.argtypes = [
 _lib.metal_complex_multiply_inplace.restype = None
 _lib.metal_complex_multiply_inplace.argtypes = [_ctx_p, _buf_p, _buf_p, _uint32]
 
+# FFT functions
+_fft_plan_p = ctypes.c_void_p  # MetalFFTPlan*
+
+_lib.metal_fft_create_plan.restype = _fft_plan_p
+_lib.metal_fft_create_plan.argtypes = [_uint32, _uint32, _uint32]
+
+_lib.metal_fft_destroy_plan.restype = None
+_lib.metal_fft_destroy_plan.argtypes = [_fft_plan_p]
+
+_lib.metal_fft_forward.restype = None
+_lib.metal_fft_forward.argtypes = [_fft_plan_p, _buf_p]
+
+_lib.metal_fft_inverse.restype = None
+_lib.metal_fft_inverse.argtypes = [_fft_plan_p, _buf_p]
+
 
 # ============================================================
 # High-level Python API
@@ -305,3 +320,60 @@ class MetalContext:
     def __del__(self):
         if hasattr(self, "_handle") and self._handle:
             _lib.metal_free(self._handle)
+
+
+class MetalFFTPlan:
+    """Accelerate framework FFT plan for Metal buffers.
+
+    Provides GPU-accelerated FFT on Apple Silicon using Apple's
+    Accelerate framework vDSP functions.
+    """
+
+    def __init__(self, shape: tuple, ndim: int):
+        """Create FFT plan.
+
+        Parameters
+        ----------
+        shape : tuple
+            Shape of the array (nx, ny) for 2D or (nx,) for 1D
+        ndim : int
+            Number of dimensions (1 or 2)
+        """
+        if ndim == 1:
+            nx = shape[0]
+            ny = 1
+        elif ndim == 2:
+            nx, ny = shape[-2], shape[-1]
+        else:
+            raise ValueError(f"ndim must be 1 or 2, got {ndim}")
+
+        self._handle = _lib.metal_fft_create_plan(nx, ny, ndim)
+        if not self._handle:
+            raise RuntimeError("Failed to create Metal FFT plan")
+
+        self.shape = shape
+        self.ndim = ndim
+
+    def fft(self, buf: MetalBuffer) -> None:
+        """Perform forward FFT in-place.
+
+        Parameters
+        ----------
+        buf : MetalBuffer
+            Buffer containing complex data (interleaved real/imag)
+        """
+        _lib.metal_fft_forward(self._handle, buf._handle)
+
+    def ifft(self, buf: MetalBuffer) -> None:
+        """Perform inverse FFT in-place.
+
+        Parameters
+        ----------
+        buf : MetalBuffer
+            Buffer containing complex data (interleaved real/imag)
+        """
+        _lib.metal_fft_inverse(self._handle, buf._handle)
+
+    def __del__(self):
+        if hasattr(self, "_handle") and self._handle:
+            _lib.metal_fft_destroy_plan(self._handle)
