@@ -24,10 +24,10 @@ jobs:
           pip install ruff black
 
       - name: Run ruff
-        run: ruff check NLSE/ tests/
+        run: ruff check NLSE/ tests/ examples/
 
       - name: Check code formatting with black
-        run: black --check NLSE/ tests/
+        run: black --check NLSE/ tests/ examples/
 
   type-check:
     name: Type Checking
