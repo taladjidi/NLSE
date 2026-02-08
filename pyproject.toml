@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "NLSE"
+version = "2.3.0"
+description = """A package for solving the Nonlinear Schrödinger Equation \
+(NLSE) using the Split-Step Fourier method."""
+readme = "README.md"
+license = "GPL-3.0-only"
+requires-python = ">=3.10"
+authors = [
+    { name = "Tangui Aladjidi", email = "tangui.aladjidi@lkb.upmc.fr" },
+]
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Intended Audience :: Science/Research",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Environment :: GPU",
+    "Environment :: GPU :: NVIDIA CUDA :: 10",
+    "Environment :: GPU :: NVIDIA CUDA :: 11",
+    "Environment :: GPU :: NVIDIA CUDA :: 12",
+]
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "tqdm",
+    "pyfftw",
+    "numba",
+]
+
+[project.optional-dependencies]
+cuda = ["cupy"]
+opencl = ["pyopencl", "pyvkfft"]
+
+[project.urls]
+Homepage = "https://github.com/Quantum-Optics-LKB/NLSE"
+Repository = "https://github.com/Quantum-Optics-LKB/NLSE"
+
+[tool.setuptools.packages.find]
+include = ["NLSE*"]
+
+[tool.setuptools.package-data]
+"NLSE.kernels.metal_native" = ["*.metal", "*.dylib"]
+
+[tool.pytest.ini_options]
+markers = [
+    "benchmark: performance benchmark tests",
+]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true

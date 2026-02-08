@@ -5,9 +5,9 @@ Split-step Fourier solver for Nonlinear Schrodinger / Gross-Pitaevskii equations
 Published in JOSS (DOI: 10.21105/joss.06607). GPLv3 licensed. Version 2.3.0.
 
 ## Architecture
-- **Language:** Python 3.8+
+- **Language:** Python 3.10+
 - **Package:** `NLSE/` (source), `tests/` (pytest), `examples/`
-- **Build:** `setup.py` (setuptools), no pyproject.toml yet
+- **Build:** `pyproject.toml` (setuptools)
 - **Backends:** CPU (pyfftw + numba), CUPY (cupy + pyvkfft), OpenCL (pyopencl + pyvkfft), Metal (Apple Silicon)
 
 ### Class Hierarchy
