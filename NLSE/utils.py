@@ -25,6 +25,7 @@ try:
     # Check for double precision support
     try:
         import pyopencl as cl
+
         ctx = cl.create_some_context(interactive=False)
         device = ctx.devices[0]
         __PYOPENCL_DOUBLE_SUPPORT__ = bool(device.double_fp_config)

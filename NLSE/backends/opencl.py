@@ -75,6 +75,7 @@ class OpenCLBackend(Backend):
     def kernels(self) -> Any:
         """Return OpenCL kernels module."""
         from ..kernels import cl as kernels_cl
+
         return kernels_cl
 
     def supports_double_precision(self) -> bool:

@@ -62,6 +62,7 @@ class CUPYBackend(Backend):
     def kernels(self) -> Any:
         """Return CUPY kernels module."""
         from ..kernels import cupy as kernels_cupy
+
         return kernels_cupy
 
     def supports_double_precision(self) -> bool:

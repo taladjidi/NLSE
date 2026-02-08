@@ -246,8 +246,11 @@ def test_split_step() -> None:
         # Skip OpenCL if double precision is not supported
         if backend == "CL":
             from NLSE.utils import __PYOPENCL_DOUBLE_SUPPORT__
+
             if not __PYOPENCL_DOUBLE_SUPPORT__:
-                pytest.skip("OpenCL backend does not support double precision on this device")
+                pytest.skip(
+                    "OpenCL backend does not support double precision on this device"
+                )
 
         simu = NLSE(
             alpha,
@@ -297,8 +300,11 @@ def test_out_field() -> None:
         # Skip OpenCL if double precision is not supported
         if backend == "CL":
             from NLSE.utils import __PYOPENCL_DOUBLE_SUPPORT__
+
             if not __PYOPENCL_DOUBLE_SUPPORT__:
-                pytest.skip("OpenCL backend does not support double precision on this device")
+                pytest.skip(
+                    "OpenCL backend does not support double precision on this device"
+                )
 
         simu = NLSE(
             0,

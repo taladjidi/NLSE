@@ -8,6 +8,7 @@ __all__ = ["Backend", "CPUBackend", "get_backend", "list_available_backends"]
 # Conditional imports
 try:
     from .cupy_backend import CUPYBackend
+
     __all__.append("CUPYBackend")
     _CUPY_AVAILABLE = True
 except ImportError:
@@ -15,6 +16,7 @@ except ImportError:
 
 try:
     from .opencl import OpenCLBackend
+
     __all__.append("OpenCLBackend")
     _OPENCL_AVAILABLE = True
 except ImportError:

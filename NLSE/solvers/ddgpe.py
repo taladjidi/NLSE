@@ -1,4 +1,3 @@
-
 from collections.abc import Callable
 
 import matplotlib.pyplot as plt
@@ -455,7 +454,9 @@ class DDGPE(CNLSE):
                     self.I_sat2,
                 )
             if self.omega is not None:
-                self._backend.kernels.rabi_coupling(A1, A2, self.delta_z, self.omega / 2)
+                self._backend.kernels.rabi_coupling(
+                    A1, A2, self.delta_z, self.omega / 2
+                )
 
     def plot_field(self, A_plot: np.ndarray, t: float) -> None:
         """Plot the field for monitoring.
