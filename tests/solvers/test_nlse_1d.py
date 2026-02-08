@@ -9,7 +9,7 @@ PRECISION_COMPLEX = np.complex64
 PRECISION_REAL = np.float32
 AVAILABLE_BACKENDS = ["CPU"]
 if NLSE_1d.__CUPY_AVAILABLE__:
-    AVAILABLE_BACKENDS.append("GPU")
+    AVAILABLE_BACKENDS.append("CUPY")
 # TODO
 # if NLSE_1d.__PYOPENCL_AVAILABLE__:
 #     AVAILABLE_BACKENDS.append("CL")
@@ -51,7 +51,7 @@ def test_prepare_output_array() -> None:
         )
         if backend == "CPU":
             A = np.ones(N, dtype=PRECISION_COMPLEX)
-        elif backend == "GPU" and NLSE_1d.__CUPY_AVAILABLE__:
+        elif backend == "CUPY" and NLSE_1d.__CUPY_AVAILABLE__:
             A = cp.ones(N, dtype=PRECISION_COMPLEX)
         out, out_sq = simu._prepare_output_array(A, normalize=True)
         assert out.flags.c_contiguous, (
@@ -82,7 +82,7 @@ def test_prepare_output_array() -> None:
             assert np.allclose(out, A), (
                 f"Output array does not match input array. (Backend {backend})"
             )
-        elif backend == "GPU" and NLSE_1d.__CUPY_AVAILABLE__:
+        elif backend == "CUPY" and NLSE_1d.__CUPY_AVAILABLE__:
             assert isinstance(out, cp.ndarray), (
                 f"Output array type does not match backend. (Backend {backend})"
             )
@@ -104,7 +104,7 @@ def test_split_step() -> None:
         A, A_sq = simu._prepare_output_array(E, normalize=False)
         simu.plans = simu._build_fft_plan(A)
         simu.propagator = simu._build_propagator()
-        if backend == "GPU" and NLSE_1d.__CUPY_AVAILABLE__:
+        if backend == "CUPY" and NLSE_1d.__CUPY_AVAILABLE__:
             E = cp.asarray(E)
             simu._send_arrays_to_gpu()
         simu.split_step(
@@ -114,7 +114,7 @@ def test_split_step() -> None:
             assert np.allclose(E, np.ones((N,), dtype=PRECISION_COMPLEX)), (
                 f"Split step is not unitary. (Backend {backend})"
             )
-        elif backend == "GPU" and NLSE_1d.__CUPY_AVAILABLE__:
+        elif backend == "CUPY" and NLSE_1d.__CUPY_AVAILABLE__:
             assert cp.allclose(E, cp.ones((N,), dtype=PRECISION_COMPLEX)), (
                 f"Split step is not unitary. (Backend {backend})"
             )

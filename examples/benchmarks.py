@@ -67,7 +67,7 @@ sizes = np.logspace(6, 14, 9, base=2, dtype=int)
 times = np.zeros((len(sizes), 3, N_avg))
 pbar = tqdm.tqdm(total=np.prod(times.shape), desc="Benchmarks")
 for i, size in enumerate(sizes):
-    for j, backend in enumerate(["GPU", "CPU"]):
+    for j, backend in enumerate(["CUPY", "CPU"]):
         simu0 = NLSE(
             alpha,
             puiss,
@@ -130,7 +130,7 @@ ax.errorbar(
     np.log2(sizes).astype(int),
     np.mean(times[:, 0, :], axis=-1),
     yerr=err_gpu,
-    label="GPU",
+    label="CUPY",
     marker="o",
     capsize=4,
 )

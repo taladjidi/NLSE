@@ -1,4 +1,6 @@
-__BACKEND__ = "GPU"
+import warnings
+
+__BACKEND__ = "CUPY"
 __PYOPENCL_DOUBLE_SUPPORT__ = False
 
 
@@ -8,7 +10,12 @@ try:
     __CUPY_AVAILABLE__ = True
 
 except ImportError:
-    print("CuPy not available, falling back to CPU BACKEND ...")
+    warnings.warn(
+        "CuPy not available, falling back to CPU backend. "
+        "Install cupy for GPU acceleration.",
+        ImportWarning,
+        stacklevel=2,
+    )
     __CUPY_AVAILABLE__ = False
     __BACKEND__ = "CPU"
 
@@ -33,6 +40,10 @@ try:
         __PYOPENCL_DOUBLE_SUPPORT__ = False
 
 except ImportError:
-    print("PyOpenCL not available, falling back to CPU BACKEND ...")
+    warnings.warn(
+        "PyOpenCL not available, OpenCL backend unavailable. "
+        "Install pyopencl for OpenCL support.",
+        ImportWarning,
+        stacklevel=2,
+    )
     __PYOPENCL_AVAILABLE__ = False
-    __BACKEND__ = "CPU"

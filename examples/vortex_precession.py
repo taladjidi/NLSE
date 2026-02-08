@@ -67,7 +67,7 @@ for i, n in enumerate(sizes):
         NX=n,
         NY=n,
         Isat=Isat,
-        backend="GPU",
+        backend="CUPY",
     )
     simu.delta_z = z_nl / 6
     # Add a vortex phase

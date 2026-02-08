@@ -29,7 +29,7 @@ def main() -> None:
         NX=N,
         Isat=Isat,
         omega=1,
-        backend="GPU",
+        backend="CUPY",
     )
     simu_c.delta_z = 1e-5
     simu_c.puiss2 = 10e-3

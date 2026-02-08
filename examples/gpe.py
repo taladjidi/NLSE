@@ -24,7 +24,7 @@ def main():
         m=m,
         NX=N,
         NY=N,
-        backend="GPU",
+        backend="CUPY",
     )
     simu_gpe.delta_t = 1e-8
     psi_0 = np.exp(-(simu_gpe.XX**2 + simu_gpe.YY**2) / waist**2).astype(

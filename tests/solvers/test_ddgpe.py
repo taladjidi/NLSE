@@ -9,7 +9,7 @@ PRECISION_COMPLEX = np.complex64
 PRECISION_REAL = np.float32
 AVAILABLE_BACKENDS = ["CPU"]
 if DDGPE.__CUPY_AVAILABLE__:
-    AVAILABLE_BACKENDS.append("GPU")
+    AVAILABLE_BACKENDS.append("CUPY")
 # TODO: Write OpenCL tests
 # if CNLSE.__PYOPENCL_AVAILABLE__:
 #     AVAILABLE_BACKENDS.append("CL")
@@ -48,7 +48,7 @@ def test_prepare_output_array() -> None:
         )
         if backend == "CPU":
             A = np.ones((2, N, N), dtype=PRECISION_COMPLEX)
-        elif backend == "GPU" and DDGPE.__CUPY_AVAILABLE__:
+        elif backend == "CUPY" and DDGPE.__CUPY_AVAILABLE__:
             A = cp.ones((2, N, N), dtype=PRECISION_COMPLEX)
         out, out_sq = simu._prepare_output_array(A, normalize=False)
         assert out.flags.c_contiguous, (
@@ -71,7 +71,7 @@ def test_prepare_output_array() -> None:
             assert np.allclose(out, A), (
                 f"Output array does not match input array. (Backend {backend})"
             )
-        elif backend == "GPU" and DDGPE.__CUPY_AVAILABLE__:
+        elif backend == "CUPY" and DDGPE.__CUPY_AVAILABLE__:
             assert isinstance(out, cp.ndarray), (
                 f"Ouptut array type does not match backend. (Backend {backend})"
             )
@@ -116,7 +116,7 @@ def test_send_arrays_to_gpu() -> None:
             V=V,
             NX=N,
             NY=N,
-            backend="GPU",
+            backend="CUPY",
         )
         simu.propagator = simu._build_propagator()
         simu._send_arrays_to_gpu()
@@ -175,7 +175,7 @@ def test_retrieve_arrays_from_gpu() -> None:
             V=V,
             NX=N,
             NY=N,
-            backend="GPU",
+            backend="CUPY",
         )
         simu.propagator = simu._build_propagator()
         simu._send_arrays_to_gpu()
@@ -356,7 +356,7 @@ def test_out_field() -> None:
                 ],
                 [save_every, sample1, sample2, sample3],
             ]
-        if backend == "GPU" and DDGPE.__CUPY_AVAILABLE__:
+        if backend == "CUPY" and DDGPE.__CUPY_AVAILABLE__:
             callback_args = [
                 [
                     cp.asarray(F_pump_r),

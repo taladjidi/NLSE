@@ -39,7 +39,7 @@ def get_backend(name: str) -> Backend:
 
     if name == "CPU":
         return CPUBackend()
-    elif name in ("CUPY", "GPU"):
+    elif name == "CUPY":
         if not _CUPY_AVAILABLE:
             raise ValueError("CUPY backend not available - install cupy")
         return CUPYBackend()
