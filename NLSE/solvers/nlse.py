@@ -408,7 +408,7 @@ class NLSE:
         """
         # prepare output array, this kills performance but we need it
         A_prop = A.copy()
-        A_sq = A.real * A.real + A.imag * A.imag
+        A_sq = (A * A.conj()).real
 
         # Linear propagation step in Fourier domain
         self._backend.fft(A_prop, plans)

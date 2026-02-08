@@ -231,7 +231,7 @@ class CNLSE(NLSE):
         """
         # prepare output array, this kills performance but we need it
         A_prop = A.copy()
-        A_sq = A.real * A.real + A.imag * A.imag
+        A_sq = (A * A.conj()).real
         if (self.backend == "CUPY" and self.__CUPY_AVAILABLE__) or (
             self.backend == "CL" and self.__PYOPENCL_AVAILABLE__
         ):

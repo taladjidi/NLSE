@@ -182,4 +182,4 @@ def square_mod(A: cla.Array, A_sq: cla.Array) -> None:
     Returns:
         None
     """
-    A_sq[:] = A.real * A.real + A.imag * A.imag
+    A_sq[:] = (A * A.conj()).real

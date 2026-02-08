@@ -187,4 +187,4 @@ def square_mod(A: cp.ndarray, A_sq: cp.ndarray) -> None:
     Returns:
         None
     """
-    A_sq[:] = cp.abs(A) ** 2
+    A_sq[:] = (A * A.conj()).real
