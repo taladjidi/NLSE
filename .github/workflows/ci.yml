@@ -102,11 +102,27 @@ jobs:
         run: |
           pytest tests/ -m benchmark --benchmark-only --benchmark-json=benchmark.json
 
+      - name: Download previous benchmark data
+        uses: actions/cache@v4
+        with:
+          path: ./cache
+          key: ${{ runner.os }}-benchmark
+
       - name: Store benchmark results
         uses: benchmark-action/github-action-benchmark@v1
-        if: github.ref == 'refs/heads/main'
         with:
           tool: 'pytest'
           output-file-path: benchmark.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          auto-push: true
+          # Push and deploy GitHub pages for main branch
+          auto-push: ${{ github.ref == 'refs/heads/main' }}
+          # Alert if performance degrades by 200%
+          alert-threshold: '200%'
+          # Comment on PRs with benchmark comparison
+          comment-on-alert: true
+          fail-on-alert: false
+          # Store results in gh-pages branch
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: benchmarks
+          # Save cache between runs
+          external-data-json-path: ./cache/benchmark-data.json
