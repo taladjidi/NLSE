@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import pyfftw
 from scipy.constants import c, epsilon_0
 
@@ -242,6 +243,12 @@ def test_retrieve_arrays_from_gpu() -> None:
 
 def test_split_step() -> None:
     for backend in AVAILABLE_BACKENDS:
+        # Skip OpenCL if double precision is not supported
+        if backend == "CL":
+            from NLSE.utils import __PYOPENCL_DOUBLE_SUPPORT__
+            if not __PYOPENCL_DOUBLE_SUPPORT__:
+                pytest.skip("OpenCL backend does not support double precision on this device")
+
         simu = NLSE(
             alpha,
             power,
@@ -287,6 +294,12 @@ def test_split_step() -> None:
 def test_out_field() -> None:
     E = np.ones((N, N), dtype=PRECISION_COMPLEX)
     for backend in AVAILABLE_BACKENDS:
+        # Skip OpenCL if double precision is not supported
+        if backend == "CL":
+            from NLSE.utils import __PYOPENCL_DOUBLE_SUPPORT__
+            if not __PYOPENCL_DOUBLE_SUPPORT__:
+                pytest.skip("OpenCL backend does not support double precision on this device")
+
         simu = NLSE(
             0,
             power,
