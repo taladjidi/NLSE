@@ -1,7 +1,7 @@
 """CPU backend implementation."""
 
-from typing import Any
 import platform
+from typing import Any
 
 import numpy as np
 import pyfftw

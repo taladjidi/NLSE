@@ -43,7 +43,7 @@ def test_build_propagator() -> None:
             * (simu_gpe.Kxx**2 + simu_gpe.Kyy**2)
             / simu_gpe.m
             * simu_gpe.delta_t,
-            dtype=np.complex64
+            dtype=np.complex64,
         )
         assert np.allclose(
             prop,

@@ -97,7 +97,7 @@ class GPE(NLSE):
         dtype = np.complex128 if precision == "double" else np.complex64
         propagator = np.exp(
             -1j * 0.5 * hbar * (self.Kxx**2 + self.Kyy**2) / self.m * self.delta_t,
-            dtype=dtype
+            dtype=dtype,
         )
 
         # Cache for future use
@@ -131,7 +131,9 @@ class GPE(NLSE):
                 E_in_cl = cla.to_device(self._backend.queue, E_in)
                 arr = (E_in_cl * E_in_cl.conj()).real
                 arr = arr * self._norm_grid_factor
-                integral = cla.sum(arr, dtype=arr.dtype, queue=self._backend.queue).get()
+                integral = cla.sum(
+                    arr, dtype=arr.dtype, queue=self._backend.queue
+                ).get()
                 E_00 = (self.N / integral) ** 0.5
                 A[:] = E_00 * E_in_cl
             else:

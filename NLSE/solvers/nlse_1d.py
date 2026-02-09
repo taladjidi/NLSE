@@ -96,7 +96,9 @@ class NLSE_1d(NLSE):
                 E_in_cl = cla.to_device(self._backend.queue, E_in)
                 arr = (E_in_cl * E_in_cl.conj()).real
                 arr = arr * self._norm_grid_factor
-                integral = cla.sum(arr, dtype=arr.dtype, queue=self._backend.queue).get()
+                integral = cla.sum(
+                    arr, dtype=arr.dtype, queue=self._backend.queue
+                ).get()
                 integral *= self._norm_constant
                 E_00 = (self.power / integral) ** 0.5
                 A[:] = E_00 * E_in_cl
@@ -129,7 +131,9 @@ class NLSE_1d(NLSE):
             return self._propagator_cache[cache_key]
 
         dtype = np.complex128 if precision == "double" else np.complex64
-        propagator = np.exp(-1j * 0.5 * (self.Kx**2) / self.k * self.delta_z, dtype=dtype)
+        propagator = np.exp(
+            -1j * 0.5 * (self.Kx**2) / self.k * self.delta_z, dtype=dtype
+        )
 
         # Cache for future use
         self._propagator_cache[cache_key] = propagator

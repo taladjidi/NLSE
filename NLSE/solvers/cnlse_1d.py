@@ -107,7 +107,9 @@ class CNLSE_1d(CNLSE):
                 E_cl = cla.to_device(self._backend.queue, E)
                 arr = (E_cl * E_cl.conj()).real
                 arr = arr * self._norm_grid_factor
-                integral = cla.sum(arr, dtype=arr.dtype, queue=self._backend.queue).get()
+                integral = cla.sum(
+                    arr, dtype=arr.dtype, queue=self._backend.queue
+                ).get()
                 integral *= self._norm_constant
                 E_00 = (puiss_arr / integral) ** 0.5
                 E_00_cl = cla.to_device(self._backend.queue, E_00.astype(E.dtype))
@@ -152,15 +154,25 @@ class CNLSE_1d(CNLSE):
             propagator (np.ndarray): the propagator matrix
         """
         # Create cache key (1D version, includes k2 for second component)
-        cache_key = (self.NX, float(self.delta_z), precision, float(self.k), float(self.k2))
+        cache_key = (
+            self.NX,
+            float(self.delta_z),
+            precision,
+            float(self.k),
+            float(self.k2),
+        )
 
         # Return cached propagator if available
         if cache_key in self._propagator_cache:
             return self._propagator_cache[cache_key]
 
         dtype = np.complex128 if precision == "double" else np.complex64
-        propagator1 = np.exp(-1j * 0.5 * (self.Kx**2) / self.k * self.delta_z, dtype=dtype)
-        propagator2 = np.exp(-1j * 0.5 * (self.Kx**2) / self.k2 * self.delta_z, dtype=dtype)
+        propagator1 = np.exp(
+            -1j * 0.5 * (self.Kx**2) / self.k * self.delta_z, dtype=dtype
+        )
+        propagator2 = np.exp(
+            -1j * 0.5 * (self.Kx**2) / self.k2 * self.delta_z, dtype=dtype
+        )
         propagator = np.array([propagator1, propagator2])
 
         # Cache for future use

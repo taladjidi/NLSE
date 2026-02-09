@@ -233,7 +233,7 @@ class DDGPE(CNLSE):
             -1j
             * (self.omega_exc * (1 + 0 * self.Kxx**2) - self.omega_pump)
             * self.delta_z,
-            dtype=dtype
+            dtype=dtype,
         )
         propagator2 = np.exp(
             -1j
@@ -242,7 +242,7 @@ class DDGPE(CNLSE):
                 - self.omega_pump
             )
             * self.delta_z,
-            dtype=dtype
+            dtype=dtype,
         )
         propagator = np.array([propagator1, propagator2])
 

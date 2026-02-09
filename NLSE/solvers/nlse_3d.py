@@ -169,7 +169,9 @@ class NLSE_3d(NLSE):
                 E_in_cl = cla.to_device(self._backend.queue, E_in)
                 arr = (E_in_cl * E_in_cl.conj()).real
                 arr = arr * self._norm_grid_factor
-                integral = cla.sum(arr, dtype=arr.dtype, queue=self._backend.queue).get()
+                integral = cla.sum(
+                    arr, dtype=arr.dtype, queue=self._backend.queue
+                ).get()
                 integral *= self._norm_constant
                 E_00 = (self.energy / integral) ** 0.5
                 A[:] = E_00 * E_in_cl

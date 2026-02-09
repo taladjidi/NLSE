@@ -197,10 +197,12 @@ class CNLSE(NLSE):
             case "single" | "double":
                 propagator2 = np.exp(
                     -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k2 * self.delta_z,
-                    dtype=dtype
+                    dtype=dtype,
                 )
             case "RK4":
-                propagator2 = (-1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k2).astype(dtype)
+                propagator2 = (
+                    -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k2
+                ).astype(dtype)
 
         propagator = np.array([propagator1, propagator2])
 
