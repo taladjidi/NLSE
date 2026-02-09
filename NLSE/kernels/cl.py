@@ -169,7 +169,13 @@ def vortex_cp(
     Returns:
         None
     """
-    im += clmath.atan(((ii - i) + 1j * (jj - j)) ** ll)
+    # Compute complex argument raised to power ll
+    # This fixes bug: was using atan() which is incorrect - should use atan2
+    arg = ((ii - i) + 1j * (jj - j)) ** ll
+    # Extract phase angle: atan2(imaginary_part, real_part)
+    import pyopencl.clmath as clm
+
+    im += clm.atan2(arg.imag, arg.real)
 
 
 def square_mod(A: cla.Array, A_sq: cla.Array) -> None:
