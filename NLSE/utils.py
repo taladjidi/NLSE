@@ -1,4 +1,6 @@
+import os
 import warnings
+from pathlib import Path
 
 __BACKEND__ = "CUPY"
 __PYOPENCL_DOUBLE_SUPPORT__ = False
@@ -47,3 +49,25 @@ except ImportError:
         stacklevel=2,
     )
     __PYOPENCL_AVAILABLE__ = False
+
+
+def get_cache_dir() -> Path:
+    """Get NLSE cache directory (XDG Base Directory compliant).
+
+    Returns:
+        Path: ~/.cache/nlse/ on Linux/macOS
+              %LOCALAPPDATA%/nlse/cache on Windows
+    """
+    if os.name == "nt":  # Windows
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    else:  # Linux/macOS (XDG compliant)
+        base = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+
+    cache_dir = base / "nlse"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
+
+
+def get_benchmark_cache_path() -> Path:
+    """Get path to FFT benchmark cache file."""
+    return get_cache_dir() / "fft_benchmark.json"

@@ -76,11 +76,12 @@ class NLSE:
                 to model a diffusive non-locality stored in the nl_profile
                 attribute.
             wvl (float): Wavelength in m
-            backend (str, optional): Will run using the "GPU" or "CPU".
+            backend (str, optional): Backend name ("CPU", "CUPY", "CL", or "auto").
+                When "auto", automatically selects the fastest backend for your hardware.
                 Defaults to __BACKEND__.
         """
         # list of physical parameters
-        self._backend: Backend = get_backend(backend)
+        self._backend: Backend = get_backend(backend, grid_size=(NX, NY))
         # Setup backend-specific convolution
         if self._backend.name == "CUPY":
             self._convolution = signal_cp.oaconvolve
@@ -167,7 +168,7 @@ class NLSE:
     @backend.setter
     def backend(self, value: str) -> None:
         """Set the backend for the simulation."""
-        self._backend = get_backend(value)
+        self._backend = get_backend(value, grid_size=(self.NX, self.NY))
         # Setup backend-specific convolution
         if self._backend.name == "CUPY":
             self._convolution = signal_cp.oaconvolve
@@ -202,7 +203,9 @@ class NLSE:
                     dtype=dtype,
                 )
             case "RK4":
-                propagator = (-1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k).astype(dtype)
+                propagator = (-1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k).astype(
+                    dtype
+                )
 
         # Cache for future use
         self._propagator_cache[cache_key] = propagator
