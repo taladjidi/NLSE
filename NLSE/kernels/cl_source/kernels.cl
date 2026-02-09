@@ -114,3 +114,81 @@ __kernel void square_mod_fused(
     {{FP2_TYPE}} A_val = A[idx];
     A_sq[idx] = A_val.x * A_val.x + A_val.y * A_val.y;
 }
+
+// PERFORMANCE OPTIMIZATIONS: Fused kernels to reduce kernel launch overhead
+
+// Fused: square_mod + nl_prop_without_V
+// Eliminates one kernel launch and one memory pass
+__kernel void square_mod_nl_prop_fused(
+    __global {{FP2_TYPE}}* A,
+    const {{FP_TYPE}} dz,
+    const {{FP_TYPE}} alpha,
+    const {{FP_TYPE}} g,
+    const {{FP_TYPE}} Isat
+) {
+    int idx = get_global_id(0);
+
+    // Compute square modulus inline
+    {{FP2_TYPE}} A_val = A[idx];
+    {{FP_TYPE}} A_sq_val = A_val.x * A_val.x + A_val.y * A_val.y;
+
+    // Apply nonlinear propagation immediately
+    {{FP_TYPE}} sat = 1.0{{FP_SUFFIX}} / (1.0{{FP_SUFFIX}} + A_sq_val / Isat);
+    {{FP_TYPE}} arg_real = -alpha * sat * dz;
+    {{FP_TYPE}} arg_imag = g * A_sq_val * sat * dz;
+    {{FP_TYPE}} exp_real_part = exp(arg_real);
+    {{FP_TYPE}} cos_imag, sin_imag;
+    sin_imag = sincos(arg_imag, &cos_imag);
+    {{FP2_TYPE}} exp_arg = ({{FP2_TYPE}})(exp_real_part * cos_imag, exp_real_part * sin_imag);
+
+    A[idx] = ({{FP2_TYPE}})(
+        A_val.x * exp_arg.x - A_val.y * exp_arg.y,
+        A_val.x * exp_arg.y + A_val.y * exp_arg.x
+    );
+}
+
+// Fused: square_mod + nl_prop (with potential)
+__kernel void square_mod_nl_prop_v_fused(
+    __global {{FP2_TYPE}}* A,
+    __global const {{FP_TYPE}}* V,
+    const {{FP_TYPE}} dz,
+    const {{FP_TYPE}} alpha,
+    const {{FP_TYPE}} g,
+    const {{FP_TYPE}} Isat
+) {
+    int idx = get_global_id(0);
+
+    // Compute square modulus inline
+    {{FP2_TYPE}} A_val = A[idx];
+    {{FP_TYPE}} A_sq_val = A_val.x * A_val.x + A_val.y * A_val.y;
+
+    // Apply nonlinear propagation immediately
+    {{FP_TYPE}} sat = 1.0{{FP_SUFFIX}} / (1.0{{FP_SUFFIX}} + A_sq_val / Isat);
+    {{FP_TYPE}} arg_real = -alpha * sat * dz;
+    {{FP_TYPE}} arg_imag = (g * A_sq_val * sat + V[idx]) * dz;
+    {{FP_TYPE}} exp_real_part = exp(arg_real);
+    {{FP_TYPE}} cos_imag, sin_imag;
+    sin_imag = sincos(arg_imag, &cos_imag);
+    {{FP2_TYPE}} exp_arg = ({{FP2_TYPE}})(exp_real_part * cos_imag, exp_real_part * sin_imag);
+
+    A[idx] = ({{FP2_TYPE}})(
+        A_val.x * exp_arg.x - A_val.y * exp_arg.y,
+        A_val.x * exp_arg.y + A_val.y * exp_arg.x
+    );
+}
+
+// Propagator multiplication (replaces slow PyOpenCL array expression)
+__kernel void apply_propagator(
+    __global {{FP2_TYPE}}* A,
+    __global const {{FP2_TYPE}}* propagator
+) {
+    int idx = get_global_id(0);
+    {{FP2_TYPE}} A_val = A[idx];
+    {{FP2_TYPE}} prop_val = propagator[idx];
+
+    // Complex multiplication: A *= propagator
+    A[idx] = ({{FP2_TYPE}})(
+        A_val.x * prop_val.x - A_val.y * prop_val.y,
+        A_val.x * prop_val.y + A_val.y * prop_val.x
+    );
+}

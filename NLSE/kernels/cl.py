@@ -179,6 +179,10 @@ class OpenCLKernels:
                 "nl_prop_c": cl.Kernel(program, "nl_prop_c_fused"),
                 "nl_prop_c_without_v": cl.Kernel(program, "nl_prop_c_without_v_fused"),
                 "square_mod": cl.Kernel(program, "square_mod_fused"),
+                # Optimized fused kernels
+                "square_mod_nl_prop": cl.Kernel(program, "square_mod_nl_prop_fused"),
+                "square_mod_nl_prop_v": cl.Kernel(program, "square_mod_nl_prop_v_fused"),
+                "apply_propagator": cl.Kernel(program, "apply_propagator"),
             }
 
         return self._kernels[precision]
@@ -378,6 +382,112 @@ class OpenCLKernels:
         kernels = self._get_kernels(A.dtype)
         global_size = (int(A.size),)
         kernels["square_mod"](self.queue, global_size, None, A.data, A_sq.data)
+
+    def square_mod_nl_prop(
+        self,
+        A: cla.Array,
+        dz: float,
+        alpha: float,
+        g: float,
+        Isat: float,
+    ) -> None:
+        """Fused square_mod + nl_prop_without_V (eliminates kernel launch overhead).
+
+        Args:
+            A: Complex field array (complex64 or complex128)
+            dz: Propagation step
+            alpha: Loss coefficient
+            g: Nonlinear interaction strength
+            Isat: Saturation intensity
+        """
+        kernels = self._get_kernels(A.dtype)
+        global_size = (int(A.size),)
+
+        if A.dtype == np.complex64:
+            dz_cast, alpha_cast, g_cast, Isat_cast = (
+                np.float32(dz),
+                np.float32(alpha),
+                np.float32(g),
+                np.float32(Isat),
+            )
+        else:
+            dz_cast, alpha_cast, g_cast, Isat_cast = (
+                np.float64(dz),
+                np.float64(alpha),
+                np.float64(g),
+                np.float64(Isat),
+            )
+
+        kernels["square_mod_nl_prop"](
+            self.queue,
+            global_size,
+            None,
+            A.data,
+            dz_cast,
+            alpha_cast,
+            g_cast,
+            Isat_cast,
+        )
+
+    def square_mod_nl_prop_v(
+        self,
+        A: cla.Array,
+        V: cla.Array,
+        dz: float,
+        alpha: float,
+        g: float,
+        Isat: float,
+    ) -> None:
+        """Fused square_mod + nl_prop (with potential, eliminates kernel launch overhead).
+
+        Args:
+            A: Complex field array (complex64 or complex128)
+            V: Potential array
+            dz: Propagation step
+            alpha: Loss coefficient
+            g: Nonlinear interaction strength
+            Isat: Saturation intensity
+        """
+        kernels = self._get_kernels(A.dtype)
+        global_size = (int(A.size),)
+
+        if A.dtype == np.complex64:
+            dz_cast, alpha_cast, g_cast, Isat_cast = (
+                np.float32(dz),
+                np.float32(alpha),
+                np.float32(g),
+                np.float32(Isat),
+            )
+        else:
+            dz_cast, alpha_cast, g_cast, Isat_cast = (
+                np.float64(dz),
+                np.float64(alpha),
+                np.float64(g),
+                np.float64(Isat),
+            )
+
+        kernels["square_mod_nl_prop_v"](
+            self.queue,
+            global_size,
+            None,
+            A.data,
+            V.data,
+            dz_cast,
+            alpha_cast,
+            g_cast,
+            Isat_cast,
+        )
+
+    def apply_propagator(self, A: cla.Array, propagator: cla.Array) -> None:
+        """Apply linear propagator (replaces slow PyOpenCL array expression).
+
+        Args:
+            A: Complex field array (complex64 or complex128)
+            propagator: Pre-computed propagator array
+        """
+        kernels = self._get_kernels(A.dtype)
+        global_size = (int(A.size),)
+        kernels["apply_propagator"](self.queue, global_size, None, A.data, propagator.data)
 
     def rabi_coupling(self, A: cla.Array, dz: float, omega: float) -> None:
         """Apply Rabi coupling term using PyOpenCL array expressions.
