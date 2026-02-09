@@ -154,20 +154,24 @@ All optimized kernels validated against original implementation:
 
 ## Usage
 
-### Using Optimized Kernels
+### Optimized Kernels (Automatic)
+
+Optimized kernels are now used automatically when using the OpenCL backend:
 
 ```python
-from NLSE.backends.opencl import OpenCLBackend
-from NLSE.kernels.cl_optimized import OptimizedKernels
+from NLSE import NLSE
 
-backend = OpenCLBackend()
-opt_kernels = OptimizedKernels(backend.context, backend.queue)
+# Optimized kernels used automatically
+simu = NLSE(
+    alpha=20, power=1, window=1e-3, n2=1e-20,
+    V=None, L=1e-2, NX=1024, NY=1024,
+    backend='CL'  # Uses optimized OpenCL C kernels
+)
 
-# Use optimized kernels (same API as original)
-opt_kernels.nl_prop(A, A_sq, dz, alpha, V, g, Isat)
-opt_kernels.square_mod(A, A_sq)
-opt_kernels.nl_prop_c(A1, A_sq_1, A_sq_2, dz, alpha, V, g11, g12, Isat1, Isat2)
+# 3-5× faster than previous PyOpenCL array expressions!
 ```
+
+No code changes required - existing OpenCL simulations automatically benefit from optimization.
 
 ### Running Benchmarks
 
@@ -184,46 +188,28 @@ pytest tests/test_opencl_optimized.py -v
 
 ## Integration Strategy
 
-**Current status:** Optimized kernels are separate module (`cl_optimized.py`)
+**Status: ✅ INTEGRATED (as of commit 931a034)**
 
-**Options for integration:**
+Optimized kernels are now the default implementation for OpenCL backend:
 
-### Option A: Replace Default (Recommended)
-Replace default OpenCL kernels with optimized versions:
 ```python
-# In backends/opencl.py
+# NLSE/backends/opencl.py
 @property
 def kernels(self):
     from ..kernels.cl_optimized import OptimizedKernels
     return OptimizedKernels(self._context, self._queue)
 ```
 
-**Pros:** Automatic speedup for all users
-**Cons:** Requires thorough testing
+**Implementation:**
+- Direct import of `OptimizedKernels` class (no fallback complexity)
+- Automatic speedup for all OpenCL users
+- Non-optimized functions (rabi_coupling, vortex_cp) delegated to `cl.py`
+- Old slow implementations removed from `cl.py`
 
-### Option B: Opt-In Flag
-Allow users to choose:
-```python
-backend = OpenCLBackend(use_optimized=True)
-```
-
-**Pros:** Safe rollout, easy A/B testing
-**Cons:** Users must know about optimization
-
-### Option C: Auto-Detection
-Use optimized kernels by default, fall back on error:
-```python
-try:
-    return OptimizedKernels(...)
-except Exception:
-    logger.warning("Optimized kernels failed, using fallback")
-    return cl_kernels
-```
-
-**Pros:** Best of both worlds
-**Cons:** Silent failures could hide issues
-
-**Recommendation:** Start with Option B for testing, move to Option A after validation.
+**Validation:**
+- ✅ All correctness tests pass (vs CPU reference)
+- ✅ Integration tests confirm optimized kernels used by default
+- ✅ Performance benchmarks show expected 3-5× speedup
 
 ## Future Optimizations
 
