@@ -5,11 +5,11 @@ Supports both single (float32/complex64) and double (float64/complex128) precisi
 on devices that support double precision.
 """
 
-import pyopencl as cl
-from pyopencl import array as cla
-import numpy as np
 from pathlib import Path
 
+import numpy as np
+import pyopencl as cl
+from pyopencl import array as cla
 
 # Module-level cache for compiled programs
 # Key: (context_hash, precision) -> Value: compiled cl.Program
@@ -41,7 +41,7 @@ def _load_kernel_template():
     return template_path.read_text()
 
 
-def _get_kernel_source(precision='single'):
+def _get_kernel_source(precision="single"):
     """Generate OpenCL C kernel source for specified precision.
 
     Args:
@@ -50,29 +50,29 @@ def _get_kernel_source(precision='single'):
     Returns:
         String containing all kernel source code
     """
-    if precision == 'single':
-        fp_type = 'float'
-        fp2_type = 'float2'
-        fp_suffix = 'f'
-        pragma = ''
-    elif precision == 'double':
-        fp_type = 'double'
-        fp2_type = 'double2'
-        fp_suffix = ''
-        pragma = '#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n\n'
+    if precision == "single":
+        fp_type = "float"
+        fp2_type = "float2"
+        fp_suffix = "f"
+        pragma = ""
+    elif precision == "double":
+        fp_type = "double"
+        fp2_type = "double2"
+        fp_suffix = ""
+        pragma = "#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n\n"
     else:
         raise ValueError(f"precision must be 'single' or 'double', got {precision}")
 
     # Load template and substitute placeholders
     template = _load_kernel_template()
-    source = template.replace('{{FP_TYPE}}', fp_type)
-    source = source.replace('{{FP2_TYPE}}', fp2_type)
-    source = source.replace('{{FP_SUFFIX}}', fp_suffix)
+    source = template.replace("{{FP_TYPE}}", fp_type)
+    source = source.replace("{{FP2_TYPE}}", fp2_type)
+    source = source.replace("{{FP_SUFFIX}}", fp_suffix)
 
     return pragma + source
 
 
-def _compile_kernels(context, precision='single'):
+def _compile_kernels(context, precision="single"):
     """Compile OpenCL kernels for specified precision.
 
     Uses module-level cache to compile only once per (context, precision).
@@ -88,7 +88,7 @@ def _compile_kernels(context, precision='single'):
         RuntimeError: If double precision requested but not supported
     """
     # Check double precision support
-    if precision == 'double' and not _check_double_support(context):
+    if precision == "double" and not _check_double_support(context):
         raise RuntimeError(
             "Double precision (complex128) requested but not supported by OpenCL device. "
             "Use complex64 (single precision) instead."
@@ -106,7 +106,7 @@ def _compile_kernels(context, precision='single'):
     source = _get_kernel_source(precision)
     build_options = [
         "-cl-fast-relaxed-math",  # All fast math optimizations
-        "-cl-mad-enable",          # Allow fused multiply-add
+        "-cl-mad-enable",  # Allow fused multiply-add
     ]
 
     program = cl.Program(context, source).build(options=" ".join(build_options))
@@ -152,16 +152,18 @@ class OpenCLKernels:
         """
         # Detect precision from dtype
         if dtype == np.complex64:
-            precision = 'single'
+            precision = "single"
         elif dtype == np.complex128:
-            precision = 'double'
+            precision = "double"
             if not self._double_supported:
                 raise RuntimeError(
                     f"Double precision (complex128) not supported on this OpenCL device "
                     f"({self.context.devices[0].name}). Use complex64 instead."
                 )
         else:
-            raise ValueError(f"Unsupported dtype: {dtype}. Use complex64 or complex128.")
+            raise ValueError(
+                f"Unsupported dtype: {dtype}. Use complex64 or complex128."
+            )
 
         # Get or compile program and cache kernel objects
         if precision not in self._kernels:
@@ -172,11 +174,11 @@ class OpenCLKernels:
 
             # Cache kernel objects to avoid repeated retrieval
             self._kernels[precision] = {
-                'nl_prop': cl.Kernel(program, 'nl_prop_fused'),
-                'nl_prop_without_v': cl.Kernel(program, 'nl_prop_without_v_fused'),
-                'nl_prop_c': cl.Kernel(program, 'nl_prop_c_fused'),
-                'nl_prop_c_without_v': cl.Kernel(program, 'nl_prop_c_without_v_fused'),
-                'square_mod': cl.Kernel(program, 'square_mod_fused'),
+                "nl_prop": cl.Kernel(program, "nl_prop_fused"),
+                "nl_prop_without_v": cl.Kernel(program, "nl_prop_without_v_fused"),
+                "nl_prop_c": cl.Kernel(program, "nl_prop_c_fused"),
+                "nl_prop_c_without_v": cl.Kernel(program, "nl_prop_c_without_v_fused"),
+                "square_mod": cl.Kernel(program, "square_mod_fused"),
             }
 
         return self._kernels[precision]
@@ -208,17 +210,30 @@ class OpenCLKernels:
         # Cast parameters to appropriate precision
         if A.dtype == np.complex64:
             dz_cast, alpha_cast, g_cast, Isat_cast = (
-                np.float32(dz), np.float32(alpha), np.float32(g), np.float32(Isat)
+                np.float32(dz),
+                np.float32(alpha),
+                np.float32(g),
+                np.float32(Isat),
             )
         else:
             dz_cast, alpha_cast, g_cast, Isat_cast = (
-                np.float64(dz), np.float64(alpha), np.float64(g), np.float64(Isat)
+                np.float64(dz),
+                np.float64(alpha),
+                np.float64(g),
+                np.float64(Isat),
             )
 
-        kernels['nl_prop'](
-            self.queue, global_size, None,
-            A.data, A_sq.data, V.data,
-            dz_cast, alpha_cast, g_cast, Isat_cast
+        kernels["nl_prop"](
+            self.queue,
+            global_size,
+            None,
+            A.data,
+            A_sq.data,
+            V.data,
+            dz_cast,
+            alpha_cast,
+            g_cast,
+            Isat_cast,
         )
 
     def nl_prop_without_V(
@@ -245,17 +260,29 @@ class OpenCLKernels:
 
         if A.dtype == np.complex64:
             dz_cast, alpha_cast, g_cast, Isat_cast = (
-                np.float32(dz), np.float32(alpha), np.float32(g), np.float32(Isat)
+                np.float32(dz),
+                np.float32(alpha),
+                np.float32(g),
+                np.float32(Isat),
             )
         else:
             dz_cast, alpha_cast, g_cast, Isat_cast = (
-                np.float64(dz), np.float64(alpha), np.float64(g), np.float64(Isat)
+                np.float64(dz),
+                np.float64(alpha),
+                np.float64(g),
+                np.float64(Isat),
             )
 
-        kernels['nl_prop_without_v'](
-            self.queue, global_size, None,
-            A.data, A_sq.data,
-            dz_cast, alpha_cast, g_cast, Isat_cast
+        kernels["nl_prop_without_v"](
+            self.queue,
+            global_size,
+            None,
+            A.data,
+            A_sq.data,
+            dz_cast,
+            alpha_cast,
+            g_cast,
+            Isat_cast,
         )
 
     def nl_prop_c(
@@ -293,10 +320,15 @@ class OpenCLKernels:
         else:
             params = [np.float64(x) for x in [dz, alpha, g11, g12, Isat1, Isat2]]
 
-        kernels['nl_prop_c'](
-            self.queue, global_size, None,
-            A1.data, A_sq_1.data, A_sq_2.data, V.data,
-            *params
+        kernels["nl_prop_c"](
+            self.queue,
+            global_size,
+            None,
+            A1.data,
+            A_sq_1.data,
+            A_sq_2.data,
+            V.data,
+            *params,
         )
 
     def nl_prop_without_V_c(
@@ -332,10 +364,8 @@ class OpenCLKernels:
         else:
             params = [np.float64(x) for x in [dz, alpha, g11, g12, Isat1, Isat2]]
 
-        kernels['nl_prop_c_without_v'](
-            self.queue, global_size, None,
-            A1.data, A_sq_1.data, A_sq_2.data,
-            *params
+        kernels["nl_prop_c_without_v"](
+            self.queue, global_size, None, A1.data, A_sq_1.data, A_sq_2.data, *params
         )
 
     def square_mod(self, A: cla.Array, A_sq: cla.Array) -> None:
@@ -347,10 +377,7 @@ class OpenCLKernels:
         """
         kernels = self._get_kernels(A.dtype)
         global_size = (int(A.size),)
-        kernels['square_mod'](
-            self.queue, global_size, None,
-            A.data, A_sq.data
-        )
+        kernels["square_mod"](self.queue, global_size, None, A.data, A_sq.data)
 
     def rabi_coupling(self, A: cla.Array, dz: float, omega: float) -> None:
         """Apply Rabi coupling term using PyOpenCL array expressions.
