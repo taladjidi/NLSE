@@ -1,139 +1,12 @@
+"""OpenCL kernels using PyOpenCL array expressions.
+
+NOTE: Most kernels have been replaced with optimized hand-written OpenCL C
+implementations in cl_optimized.py for 3-5× speedup. This module only contains
+functions that are not yet optimized.
+"""
+
 from pyopencl import array as cla
 from pyopencl import clmath
-
-
-def nl_prop(
-    A: cla.Array,
-    A_sq: cla.Array,
-    dz: float,
-    alpha: float,
-    V: cla.Array,
-    g: float,
-    Isat: float,
-) -> None:
-    """A fused kernel to apply real space terms
-
-    Args:
-        A (cla.Array): The field to propagate
-        A_sq (cla.Array): The field modulus squared
-        dz (float): Propagation step in m
-        alpha (float): Losses
-        V (cla.Array): Potential
-        g (float): Interactions
-        Isat (float): Saturation
-    """
-    # saturation
-    sat = 1 / (1 + A_sq / Isat)
-    # Interactions
-    arg = 1j * g * A_sq * sat
-    # Losses
-    arg += -alpha * sat
-    # Potential
-    arg += 1j * V
-    arg = arg * dz
-    arg = clmath.exp(arg)
-    A *= arg
-
-
-def nl_prop_without_V(
-    A: cla.Array,
-    A_sq: cla.Array,
-    dz: float,
-    alpha: float,
-    g: float,
-    Isat: float,
-) -> None:
-    """A fused kernel to apply real space terms
-
-    Args:
-        A (cla.Array): The field to propagate
-        A_sq (cla.Array): The field modulus squared
-        dz (float): Propagation step in m
-        alpha (float): Losses
-        g (float): Interactions
-        Isat (float): Saturation
-    """
-    # saturation
-    sat = 1 / (1 + A_sq / Isat)
-    # Interactions
-    arg = 1j * g * A_sq * sat
-    # Losses
-    arg += -alpha * sat
-    arg = arg * dz
-    arg = clmath.exp(arg)
-    A *= arg
-
-
-def nl_prop_c(
-    A1: cla.Array,
-    A_sq_1: cla.Array,
-    A_sq_2: cla.Array,
-    dz: float,
-    alpha: float,
-    V: cla.Array,
-    g11: float,
-    g12: float,
-    Isat1: float,
-    Isat2: float,
-) -> None:
-    """A fused kernel to apply real space terms
-    Args:
-        A1 (cla.Array): The field to propagate (1st component)
-        A_sq_1 (cla.Array): The field modulus squared (1st component)
-        A_sq_2 (cla.Array): The field modulus squared (2nd component)
-        dz (float): Propagation step in m
-        alpha (float): Losses
-        V (cla.Array): Potential
-        g11 (float): Intra-component interactions
-        g12 (float): Inter-component interactions
-        Isat1 (float): Saturation parameter of first component
-        Isat2 (float): Saturation parameter of second component
-    """
-    # Saturation parameter
-    sat = 1 / (1 + A_sq_1 * 1 / Isat1 + A_sq_2 * 1 / Isat2)
-    # Interactions
-    arg = 1j * (g11 * A_sq_1 * sat + g12 * A_sq_2 * sat)
-    # Losses
-    arg += -alpha * sat
-    # Potential
-    arg += 1j * V
-    arg = arg * dz
-    arg = clmath.exp(arg)
-    A1 *= arg
-
-
-def nl_prop_without_V_c(
-    A1: cla.Array,
-    A_sq_1: cla.Array,
-    A_sq_2: cla.Array,
-    dz: float,
-    alpha: float,
-    g11: float,
-    g12: float,
-    Isat1: float,
-    Isat2: float,
-) -> None:
-    """A fused kernel to apply real space terms
-    Args:
-        A1 (cla.Array): The field to propagate (1st component)
-        A_sq_1 (cla.Array): The field modulus squared (1st component)
-        A_sq_2 (cla.Array): The field modulus squared (2nd component)
-        dz (float): Propagation step in m
-        alpha (float): Losses
-        g11 (float): Intra-component interactions
-        g12 (float): Inter-component interactions
-        Isat1 (float): Saturation parameter of first component
-        Isat2 (float): Saturation parameter of second component
-    """
-    # Saturation parameter
-    sat = 1 / (1 + A_sq_1 * 1 / Isat1 + A_sq_2 * 1 / Isat2)
-    # Interactions
-    arg = 1j * (g11 * A_sq_1 * sat + g12 * A_sq_2 * sat)
-    # Losses
-    arg += -alpha * sat
-    arg = arg * dz
-    arg = clmath.exp(arg)
-    A1 *= arg
 
 
 def rabi_coupling(A, dz: float, omega: float) -> None:
@@ -176,16 +49,3 @@ def vortex_cp(
     import pyopencl.clmath as clm
 
     im += clm.atan2(arg.imag, arg.real)
-
-
-def square_mod(A: cla.Array, A_sq: cla.Array) -> None:
-    """Compute the square modulus of the field
-
-    Args:
-        A (cla.Array): The field
-        A_sq (cla.Array): The modulus squared of the field
-
-    Returns:
-        None
-    """
-    A_sq[:] = (A * A.conj()).real

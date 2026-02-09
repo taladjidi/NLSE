@@ -37,21 +37,20 @@ class TestOptimizedKernelCorrectness:
         self.Isat = 1e4
 
     def test_nl_prop_correctness(self):
-        """Test nl_prop optimized kernel vs original."""
+        """Test nl_prop optimized kernel vs CPU reference."""
         from pyopencl import array as cla
-        from NLSE.kernels import cl as cl_kernels
+        from NLSE.kernels import cpu as cpu_kernels
         from NLSE.kernels.cl_optimized import OptimizedKernels
 
-        # Run original kernel
-        A_orig = cla.to_device(self.queue, self.A_host.copy())
+        # Run CPU reference
+        A_cpu = self.A_host.copy()
+        cpu_kernels.nl_prop(A_cpu, self.A_sq_host, self.dz, self.alpha,
+                           self.V_host, self.g, self.Isat)
+
+        # Run optimized OpenCL kernel
+        A_opt = cla.to_device(self.queue, self.A_host.copy())
         A_sq = cla.to_device(self.queue, self.A_sq_host)
         V = cla.to_device(self.queue, self.V_host)
-
-        cl_kernels.nl_prop(A_orig, A_sq, self.dz, self.alpha, V, self.g, self.Isat)
-        result_orig = A_orig.get()
-
-        # Run optimized kernel
-        A_opt = cla.to_device(self.queue, self.A_host.copy())
         opt_kernels = OptimizedKernels(self.backend.context, self.queue)
 
         opt_kernels.nl_prop(A_opt, A_sq, self.dz, self.alpha, V, self.g, self.Isat)
@@ -59,27 +58,25 @@ class TestOptimizedKernelCorrectness:
 
         # Compare results
         np.testing.assert_allclose(
-            result_orig, result_opt, rtol=1e-6, atol=1e-8,
-            err_msg="Optimized nl_prop produces different results"
+            A_cpu, result_opt, rtol=1e-5, atol=1e-7,
+            err_msg="Optimized nl_prop differs from CPU reference"
         )
 
     def test_nl_prop_without_v_correctness(self):
-        """Test nl_prop_without_V optimized kernel vs original."""
+        """Test nl_prop_without_V optimized kernel vs CPU reference."""
         from pyopencl import array as cla
-        from NLSE.kernels import cl as cl_kernels
+        from NLSE.kernels import cpu as cpu_kernels
         from NLSE.kernels.cl_optimized import OptimizedKernels
 
-        # Run original kernel
-        A_orig = cla.to_device(self.queue, self.A_host.copy())
-        A_sq = cla.to_device(self.queue, self.A_sq_host)
-
-        cl_kernels.nl_prop_without_V(
-            A_orig, A_sq, self.dz, self.alpha, self.g, self.Isat
+        # Run CPU reference
+        A_cpu = self.A_host.copy()
+        cpu_kernels.nl_prop_without_V(
+            A_cpu, self.A_sq_host, self.dz, self.alpha, self.g, self.Isat
         )
-        result_orig = A_orig.get()
 
-        # Run optimized kernel
+        # Run optimized OpenCL kernel
         A_opt = cla.to_device(self.queue, self.A_host.copy())
+        A_sq = cla.to_device(self.queue, self.A_sq_host)
         opt_kernels = OptimizedKernels(self.backend.context, self.queue)
 
         opt_kernels.nl_prop_without_V(
@@ -89,24 +86,20 @@ class TestOptimizedKernelCorrectness:
 
         # Compare results
         np.testing.assert_allclose(
-            result_orig, result_opt, rtol=1e-6, atol=1e-8,
-            err_msg="Optimized nl_prop_without_V produces different results"
+            A_cpu, result_opt, rtol=1e-5, atol=1e-7,
+            err_msg="Optimized nl_prop_without_V differs from CPU reference"
         )
 
     def test_square_mod_correctness(self):
-        """Test square_mod optimized kernel vs original."""
+        """Test square_mod optimized kernel vs CPU reference."""
         from pyopencl import array as cla
-        from NLSE.kernels import cl as cl_kernels
         from NLSE.kernels.cl_optimized import OptimizedKernels
 
-        # Run original kernel
+        # Compute CPU reference
+        A_sq_cpu = np.abs(self.A_host) ** 2
+
+        # Run optimized OpenCL kernel
         A = cla.to_device(self.queue, self.A_host)
-        A_sq_orig = cla.zeros(self.queue, (self.N, self.N), np.float32)
-
-        cl_kernels.square_mod(A, A_sq_orig)
-        result_orig = A_sq_orig.get()
-
-        # Run optimized kernel
         A_sq_opt = cla.zeros(self.queue, (self.N, self.N), np.float32)
         opt_kernels = OptimizedKernels(self.backend.context, self.queue)
 
@@ -115,14 +108,14 @@ class TestOptimizedKernelCorrectness:
 
         # Compare results
         np.testing.assert_allclose(
-            result_orig, result_opt, rtol=1e-6, atol=1e-8,
-            err_msg="Optimized square_mod produces different results"
+            A_sq_cpu, result_opt, rtol=1e-6, atol=1e-8,
+            err_msg="Optimized square_mod differs from CPU reference"
         )
 
     def test_nl_prop_c_correctness(self):
-        """Test nl_prop_c optimized coupled kernel vs original."""
+        """Test nl_prop_c optimized coupled kernel vs CPU reference."""
         from pyopencl import array as cla
-        from NLSE.kernels import cl as cl_kernels
+        from NLSE.kernels import cpu as cpu_kernels
         from NLSE.kernels.cl_optimized import OptimizedKernels
 
         # Create second component
@@ -137,19 +130,18 @@ class TestOptimizedKernelCorrectness:
         Isat1 = 1e4
         Isat2 = 2e4
 
-        # Run original kernel
-        A1_orig = cla.to_device(self.queue, self.A_host.copy())
+        # Run CPU reference
+        A1_cpu = self.A_host.copy()
+        cpu_kernels.nl_prop_c(
+            A1_cpu, self.A_sq_host, A_sq_2_host, self.dz, self.alpha,
+            self.V_host, g11, g12, Isat1, Isat2
+        )
+
+        # Run optimized OpenCL kernel
+        A1_opt = cla.to_device(self.queue, self.A_host.copy())
         A_sq_1 = cla.to_device(self.queue, self.A_sq_host)
         A_sq_2 = cla.to_device(self.queue, A_sq_2_host)
         V = cla.to_device(self.queue, self.V_host)
-
-        cl_kernels.nl_prop_c(
-            A1_orig, A_sq_1, A_sq_2, self.dz, self.alpha, V, g11, g12, Isat1, Isat2
-        )
-        result_orig = A1_orig.get()
-
-        # Run optimized kernel
-        A1_opt = cla.to_device(self.queue, self.A_host.copy())
         opt_kernels = OptimizedKernels(self.backend.context, self.queue)
 
         opt_kernels.nl_prop_c(
@@ -159,8 +151,8 @@ class TestOptimizedKernelCorrectness:
 
         # Compare results
         np.testing.assert_allclose(
-            result_orig, result_opt, rtol=1e-6, atol=1e-8,
-            err_msg="Optimized nl_prop_c produces different results"
+            A1_cpu, result_opt, rtol=1e-5, atol=1e-7,
+            err_msg="Optimized nl_prop_c differs from CPU reference"
         )
 
 

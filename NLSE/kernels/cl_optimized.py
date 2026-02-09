@@ -368,3 +368,32 @@ class OptimizedKernels:
             A.data,
             A_sq.data,
         )
+
+    def rabi_coupling(self, A: cla.Array, dz: float, omega: float) -> None:
+        """Apply Rabi coupling term (not yet optimized).
+
+        Args:
+            A: Field array (two-component)
+            dz: Solver step
+            omega: Rabi coupling strength
+        """
+        from . import cl as cl_kernels
+
+        cl_kernels.rabi_coupling(A, dz, omega)
+
+    def vortex_cp(
+        self, im: cla.Array, i: int, j: int, ii: cla.Array, jj: cla.Array, ll: int
+    ) -> None:
+        """Generate vortex of charge ll at position (i, j) (not yet optimized).
+
+        Args:
+            im: Image array
+            i: Vortex row position
+            j: Vortex column position
+            ii: Row coordinate meshgrid
+            jj: Column coordinate meshgrid
+            ll: Vortex charge
+        """
+        from . import cl as cl_kernels
+
+        cl_kernels.vortex_cp(im, i, j, ii, jj, ll)

@@ -22,6 +22,7 @@ class OpenCLBackend(Backend):
         self._context = cl.create_some_context(interactive=False)
         self._queue = cl.CommandQueue(self._context)
         self._vkfft_apps = {}
+        self._kernels = None
 
     @property
     def name(self) -> str:
@@ -73,10 +74,12 @@ class OpenCLBackend(Backend):
 
     @property
     def kernels(self) -> Any:
-        """Return OpenCL kernels module."""
-        from ..kernels import cl as kernels_cl
+        """Return optimized OpenCL kernels."""
+        if self._kernels is None:
+            from ..kernels.cl_optimized import OptimizedKernels
 
-        return kernels_cl
+            self._kernels = OptimizedKernels(self._context, self._queue)
+        return self._kernels
 
     def supports_double_precision(self) -> bool:
         """Check OpenCL device double precision support."""
