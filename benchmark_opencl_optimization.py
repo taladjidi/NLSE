@@ -6,7 +6,7 @@ import numpy as np
 from pyopencl import array as cla
 from NLSE.backends.opencl import OpenCLBackend
 from NLSE.kernels import cl as cl_kernels
-from NLSE.kernels.cl_optimized import OptimizedKernels
+from NLSE.kernels.cl import OpenCLKernels
 
 print("=" * 70)
 print("OpenCL Kernel Optimization Benchmark")
@@ -33,8 +33,8 @@ alpha = 20.0
 g = 1e-3
 Isat = 1e4
 
-# Initialize optimized kernels
-opt_kernels = OptimizedKernels(backend.context, backend.queue)
+# Initialize OpenCL kernels
+opt_kernels = OpenCLKernels(backend.context, backend.queue)
 
 print("\n1. nl_prop (with potential)")
 print("-" * 70)

@@ -40,7 +40,7 @@ class TestOptimizedKernelCorrectness:
         """Test nl_prop optimized kernel vs CPU reference."""
         from pyopencl import array as cla
         from NLSE.kernels import cpu as cpu_kernels
-        from NLSE.kernels.cl_optimized import OptimizedKernels
+        from NLSE.kernels.cl import OpenCLKernels
 
         # Run CPU reference
         A_cpu = self.A_host.copy()
@@ -51,7 +51,7 @@ class TestOptimizedKernelCorrectness:
         A_opt = cla.to_device(self.queue, self.A_host.copy())
         A_sq = cla.to_device(self.queue, self.A_sq_host)
         V = cla.to_device(self.queue, self.V_host)
-        opt_kernels = OptimizedKernels(self.backend.context, self.queue)
+        opt_kernels = OpenCLKernels(self.backend.context, self.queue)
 
         opt_kernels.nl_prop(A_opt, A_sq, self.dz, self.alpha, V, self.g, self.Isat)
         result_opt = A_opt.get()
@@ -66,7 +66,7 @@ class TestOptimizedKernelCorrectness:
         """Test nl_prop_without_V optimized kernel vs CPU reference."""
         from pyopencl import array as cla
         from NLSE.kernels import cpu as cpu_kernels
-        from NLSE.kernels.cl_optimized import OptimizedKernels
+        from NLSE.kernels.cl import OpenCLKernels
 
         # Run CPU reference
         A_cpu = self.A_host.copy()
@@ -77,7 +77,7 @@ class TestOptimizedKernelCorrectness:
         # Run optimized OpenCL kernel
         A_opt = cla.to_device(self.queue, self.A_host.copy())
         A_sq = cla.to_device(self.queue, self.A_sq_host)
-        opt_kernels = OptimizedKernels(self.backend.context, self.queue)
+        opt_kernels = OpenCLKernels(self.backend.context, self.queue)
 
         opt_kernels.nl_prop_without_V(
             A_opt, A_sq, self.dz, self.alpha, self.g, self.Isat
@@ -93,7 +93,7 @@ class TestOptimizedKernelCorrectness:
     def test_square_mod_correctness(self):
         """Test square_mod optimized kernel vs CPU reference."""
         from pyopencl import array as cla
-        from NLSE.kernels.cl_optimized import OptimizedKernels
+        from NLSE.kernels.cl import OpenCLKernels
 
         # Compute CPU reference
         A_sq_cpu = np.abs(self.A_host) ** 2
@@ -101,7 +101,7 @@ class TestOptimizedKernelCorrectness:
         # Run optimized OpenCL kernel
         A = cla.to_device(self.queue, self.A_host)
         A_sq_opt = cla.zeros(self.queue, (self.N, self.N), np.float32)
-        opt_kernels = OptimizedKernels(self.backend.context, self.queue)
+        opt_kernels = OpenCLKernels(self.backend.context, self.queue)
 
         opt_kernels.square_mod(A, A_sq_opt)
         result_opt = A_sq_opt.get()
@@ -116,7 +116,7 @@ class TestOptimizedKernelCorrectness:
         """Test nl_prop_c optimized coupled kernel vs CPU reference."""
         from pyopencl import array as cla
         from NLSE.kernels import cpu as cpu_kernels
-        from NLSE.kernels.cl_optimized import OptimizedKernels
+        from NLSE.kernels.cl import OpenCLKernels
 
         # Create second component
         rng = np.random.RandomState(43)
@@ -142,7 +142,7 @@ class TestOptimizedKernelCorrectness:
         A_sq_1 = cla.to_device(self.queue, self.A_sq_host)
         A_sq_2 = cla.to_device(self.queue, A_sq_2_host)
         V = cla.to_device(self.queue, self.V_host)
-        opt_kernels = OptimizedKernels(self.backend.context, self.queue)
+        opt_kernels = OpenCLKernels(self.backend.context, self.queue)
 
         opt_kernels.nl_prop_c(
             A1_opt, A_sq_1, A_sq_2, self.dz, self.alpha, V, g11, g12, Isat1, Isat2
@@ -163,7 +163,6 @@ class TestVortexBugFix:
         """Verify vortex_cp now uses atan2 instead of atan."""
         from NLSE.backends.opencl import OpenCLBackend
         from pyopencl import array as cla
-        from NLSE.kernels import cl as cl_kernels
         import numpy as np
 
         backend = OpenCLBackend()
@@ -180,7 +179,7 @@ class TestVortexBugFix:
         ii_gpu = cla.to_device(backend.queue, ii)
         jj_gpu = cla.to_device(backend.queue, jj)
 
-        cl_kernels.vortex_cp(im, 0, 0, ii_gpu, jj_gpu, 1)
+        backend.kernels.vortex_cp(im, 0, 0, ii_gpu, jj_gpu, 1)
         phase = im.get()
 
         # Verify phase winding
@@ -203,7 +202,7 @@ class TestOptimizedKernelPerformance:
         """Measure nl_prop speedup with optimized kernel."""
         from NLSE.backends.opencl import OpenCLBackend
         from pyopencl import array as cla
-        from NLSE.kernels.cl_optimized import OptimizedKernels
+        from NLSE.kernels.cl import OpenCLKernels
         import numpy as np
 
         backend = OpenCLBackend()
@@ -216,7 +215,7 @@ class TestOptimizedKernelPerformance:
         A_sq = cla.to_device(backend.queue, (np.abs(A_host) ** 2).astype(np.float32))
         V = cla.to_device(backend.queue, rng.randn(N, N).astype(np.float32))
 
-        opt_kernels = OptimizedKernels(backend.context, backend.queue)
+        opt_kernels = OpenCLKernels(backend.context, backend.queue)
 
         def run_optimized():
             opt_kernels.nl_prop(A, A_sq, 1e-4, 20.0, V, 1e-3, 1e4)

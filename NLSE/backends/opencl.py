@@ -74,11 +74,11 @@ class OpenCLBackend(Backend):
 
     @property
     def kernels(self) -> Any:
-        """Return optimized OpenCL kernels."""
+        """Return OpenCL kernels."""
         if self._kernels is None:
-            from ..kernels.cl_optimized import OptimizedKernels
+            from ..kernels.cl import OpenCLKernels
 
-            self._kernels = OptimizedKernels(self._context, self._queue)
+            self._kernels = OpenCLKernels(self._context, self._queue)
         return self._kernels
 
     def supports_double_precision(self) -> bool:

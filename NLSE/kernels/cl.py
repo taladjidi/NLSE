@@ -1,11 +1,6 @@
-"""Optimized OpenCL kernels using native OpenCL C code.
+"""OpenCL kernels using native OpenCL C code.
 
-This module provides hand-written OpenCL C kernels that are 3-5x faster
-than PyOpenCL array expression versions by:
-1. Fusing operations into single kernels
-2. Eliminating temporary arrays
-3. Minimizing kernel launch overhead
-4. Optimizing memory access patterns
+Hand-written OpenCL C kernels with fused operations for maximum performance.
 """
 
 import pyopencl as cl
@@ -171,8 +166,8 @@ __kernel void square_mod_fused(
 """
 
 
-class OptimizedKernels:
-    """Compiled OpenCL C kernels for maximum performance."""
+class OpenCLKernels:
+    """OpenCL C kernels for NLSE operations."""
 
     def __init__(self, context, queue):
         """Compile all kernels.
@@ -370,21 +365,19 @@ class OptimizedKernels:
         )
 
     def rabi_coupling(self, A: cla.Array, dz: float, omega: float) -> None:
-        """Apply Rabi coupling term (not yet optimized).
+        """Apply Rabi coupling term using PyOpenCL array expressions.
 
         Args:
             A: Field array (two-component)
             dz: Solver step
             omega: Rabi coupling strength
         """
-        from . import cl as cl_kernels
-
-        cl_kernels.rabi_coupling(A, dz, omega)
+        _rabi_coupling_impl(A, dz, omega)
 
     def vortex_cp(
         self, im: cla.Array, i: int, j: int, ii: cla.Array, jj: cla.Array, ll: int
     ) -> None:
-        """Generate vortex of charge ll at position (i, j) (not yet optimized).
+        """Generate vortex of charge ll at position (i, j) using PyOpenCL.
 
         Args:
             im: Image array
@@ -394,6 +387,46 @@ class OptimizedKernels:
             jj: Column coordinate meshgrid
             ll: Vortex charge
         """
-        from . import cl as cl_kernels
+        _vortex_cp_impl(im, i, j, ii, jj, ll)
 
-        cl_kernels.vortex_cp(im, i, j, ii, jj, ll)
+
+# Helper functions using PyOpenCL array expressions (not yet optimized with OpenCL C)
+
+
+def _rabi_coupling_impl(A, dz: float, omega: float) -> None:
+    """Apply a Rabi coupling term using PyOpenCL array expressions.
+
+    Args:
+        A (cla.Array): First field / component
+        dz (float): Solver step
+        omega (float): Rabi coupling strength
+    """
+    from pyopencl import clmath
+
+    A1 = A[..., 0, :, :]
+    A2 = A[..., 1, :, :]
+    A1_old = A1.copy()
+    A1[:] = clmath.cos(omega * dz) * A1 - 1j * clmath.sin(omega * dz) * A2
+    A2[:] = clmath.cos(omega * dz) * A2 - 1j * clmath.sin(omega * dz) * A1_old
+
+
+def _vortex_cp_impl(
+    im: cla.Array, i: int, j: int, ii: cla.Array, jj: cla.Array, ll: int
+) -> None:
+    """Generate a vortex of charge ll at position (i,j) using PyOpenCL.
+
+    Args:
+        im (cla.Array): Image
+        i (int): position row of the vortex
+        j (int): position column of the vortex
+        ii (cla.Array): meshgrid position row (coordinates of the image)
+        jj (cla.Array): meshgrid position column (coordinates of the image)
+        ll (int): vortex charge
+    """
+    import pyopencl.clmath as clm
+
+    # Compute complex argument raised to power ll
+    # Use atan2 for correct phase angle in all quadrants
+    arg = ((ii - i) + 1j * (jj - j)) ** ll
+    # Extract phase angle: atan2(imaginary_part, real_part)
+    im += clm.atan2(arg.imag, arg.real)
