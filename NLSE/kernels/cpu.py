@@ -199,3 +199,7 @@ def square_mod(A: np.ndarray, A_sq: np.ndarray) -> None:
     A_sq = A_sq.ravel()
     for i in numba.prange(A.size):
         A_sq[i] = A[i].real * A[i].real + A[i].imag * A[i].imag
+
+# Note: CPU backend does NOT have fused kernels
+# The solver will call square_mod() + nl_prop() separately with pre-allocated A_sq
+# This is more efficient than Python-level "fusion" which would allocate on every call

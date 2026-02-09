@@ -56,7 +56,9 @@ class CUPYBackend(Backend):
         """Transfer from CPU to GPU."""
         return cp.asarray(array, dtype=array.dtype)
 
-    def build_fft(self, shape: tuple, axes: tuple, dtype: np.dtype) -> list:
+    def build_fft(
+        self, shape: tuple, axes: tuple, dtype: np.dtype, array: np.ndarray | None = None
+    ) -> list:
         """Build VkFFT app for CUDA.
 
         Returns:

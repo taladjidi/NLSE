@@ -188,3 +188,17 @@ def square_mod(A: cp.ndarray, A_sq: cp.ndarray) -> None:
         None
     """
     A_sq[:] = (A * A.conj()).real
+
+# Fused kernels (call separate operations for CUPY backend)
+@cp.fuse(kernel_name="square_mod_nl_prop")
+def square_mod_nl_prop(A, dz, alpha, g, Isat):
+    """Fused square_mod + nl_prop_without_V."""
+    A_sq = (A * A.conj()).real
+    nl_prop_without_V(A, A_sq, dz, alpha, g, Isat)
+
+
+@cp.fuse(kernel_name="square_mod_nl_prop_v")
+def square_mod_nl_prop_v(A, V, dz, alpha, g, Isat):
+    """Fused square_mod + nl_prop."""
+    A_sq = (A * A.conj()).real
+    nl_prop(A, A_sq, dz, alpha, V, g, Isat)

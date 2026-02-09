@@ -1,5 +1,6 @@
 """CPU backend implementation."""
 
+import os
 import platform
 from typing import Any
 
@@ -8,6 +9,10 @@ import pyfftw
 
 from ..kernels import cpu as kernels_cpu
 from .backend import Backend
+
+# Configure pyFFTW for optimal performance
+pyfftw.config.NUM_THREADS = os.cpu_count() or 1  # Use all available cores
+pyfftw.interfaces.cache.enable()  # Enable plan caching for faster repeated FFTs
 
 # Platform detection for FFT optimization
 _CPU_VENDOR = platform.processor().lower()
@@ -50,25 +55,46 @@ class CPUBackend(Backend):
         """Convert to contiguous array."""
         return np.ascontiguousarray(array)
 
-    def build_fft(self, shape: tuple, axes: tuple, dtype: np.dtype) -> list:
+    def build_fft(
+        self, shape: tuple, axes: tuple, dtype: np.dtype, array: np.ndarray | None = None
+    ) -> list:
         """Build pyFFTW plans.
 
-        Uses FFTW_PATIENT for better SIMD optimization (5-15% faster runtime).
-        Planning takes longer but is cached via wisdom, so only happens once.
+        IMPORTANT: Plans should be built with the actual array that will be used
+        during propagation for optimal performance. If no array is provided,
+        creates a temporary aligned array (slower).
 
         Platform-specific optimization notes:
         - Intel CPUs: Consider Intel MKL (10-30% faster)
         - Apple Silicon: Consider Accelerate/vDSP (2-3x faster)
         - AMD CPUs: FFTW is optimal (already using best option)
 
+        Args:
+            shape: Array shape
+            axes: FFT axes
+            dtype: Array dtype
+            array: The actual array to transform (for in-place optimization)
+
         Returns:
             List of [forward_plan, inverse_plan]
         """
-        A = pyfftw.zeros_aligned(shape, dtype=dtype, n=pyfftw.simd_alignment)
+        import pickle
 
-        # FFTW_PATIENT: Slower planning, better SIMD selection (5-15% faster runtime)
-        # The planning cost is amortized via wisdom caching
-        planning_mode = "FFTW_PATIENT"
+        # Load FFTW wisdom for faster planning
+        try:
+            with open("fft.wisdom", "rb") as file:
+                wisdom = pickle.load(file)
+                pyfftw.import_wisdom(wisdom)
+        except FileNotFoundError:
+            pass  # Wisdom will be saved after planning
+
+        # Use provided array or create temporary aligned array
+        A = array if array is not None else pyfftw.zeros_aligned(
+            shape, dtype=dtype, n=pyfftw.simd_alignment
+        )
+
+        # FFTW_MEASURE: Fast planning with good performance
+        planning_mode = "FFTW_MEASURE"
 
         # Platform detection (for future optimization)
         if _IS_APPLE:
@@ -95,6 +121,12 @@ class CPUBackend(Backend):
             flags=(planning_mode,),
             threads=pyfftw.config.NUM_THREADS,
         )
+
+        # Save FFTW wisdom for future use
+        with open("fft.wisdom", "wb") as file:
+            wisdom = pyfftw.export_wisdom()
+            pickle.dump(wisdom, file)
+
         return [fft_forward, fft_backward]
 
     def fft(self, array: np.ndarray, plan: list) -> np.ndarray:

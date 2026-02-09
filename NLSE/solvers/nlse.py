@@ -219,23 +219,9 @@ class NLSE:
         Returns:
             list: List of FFT plan objects from the backend
         """
-        # Load FFTW wisdom for CPU backend
-        if self._backend.name == "CPU":
-            try:
-                with open("fft.wisdom", "rb") as file:
-                    wisdom = pickle.load(file)
-                    pyfftw.import_wisdom(wisdom)
-            except FileNotFoundError:
-                print("No FFT wisdom found, starting over ...")
-
-        plan = self._backend.build_fft(A.shape, self._last_axes, A.dtype)
-
-        # Save FFTW wisdom for CPU backend
-        if self._backend.name == "CPU":
-            with open("fft.wisdom", "wb") as file:
-                wisdom = pyfftw.export_wisdom()
-                pickle.dump(wisdom, file)
-
+        # Pass the actual array for in-place FFT optimization
+        # CPU backend will handle wisdom loading/saving internally
+        plan = self._backend.build_fft(A.shape, self._last_axes, A.dtype, array=A)
         return plan
 
     def _prepare_output_array(
@@ -335,6 +321,8 @@ class NLSE:
                 the nonlinear propagation step. Defaults to "single".
         """
         kernels = self._backend.kernels
+
+        # First half-step (only for precision == "double")
         if precision == "double":
             kernels.square_mod(A, A_sq)
             if self.nl_length > 0:
@@ -343,73 +331,78 @@ class NLSE:
                 )
             if V is None:
                 kernels.nl_prop_without_V(
-                    A,
-                    A_sq,
-                    self.delta_z / 2,
-                    self.alpha / 2,
+                    A, A_sq, self.delta_z / 2, self.alpha / 2,
                     self.k / 2 * self.n2 * c * epsilon_0,
                     2 * self.I_sat / (epsilon_0 * c),
                 )
             else:
                 kernels.nl_prop(
-                    A,
-                    A_sq,
-                    self.delta_z / 2,
-                    self.alpha / 2,
-                    self.k / 2 * V,
+                    A, A_sq, self.delta_z / 2, self.alpha / 2, self.k / 2 * V,
                     self.k / 2 * self.n2 * c * epsilon_0,
                     2 * self.I_sat / (epsilon_0 * c),
                 )
-        # Linear propagation step in Fourier domain
+
+        # Linear propagation in Fourier domain
         self._backend.fft(A, plans)
-        A *= propagator
+        # Use optimized propagator kernel if available (OpenCL), else array expression
+        if hasattr(kernels, 'apply_propagator'):
+            kernels.apply_propagator(A, propagator)
+        else:
+            A *= propagator
         self._backend.ifft(A, plans)
 
-        kernels.square_mod(A, A_sq)
+        # Second half-step (always executed)
+        # Determine step size based on precision mode
+        dz_step = self.delta_z / 2 if precision == "double" else self.delta_z
+
         if self.nl_length > 0:
+            # Can't use fused kernel with convolution
+            kernels.square_mod(A, A_sq)
             A_sq[:] = self._convolution(
                 A_sq, self.nl_profile, mode="same", axes=self._last_axes
             )
-        if precision == "double":
             if V is None:
                 kernels.nl_prop_without_V(
-                    A,
-                    A_sq,
-                    self.delta_z / 2,
-                    self.alpha / 2,
+                    A, A_sq, dz_step, self.alpha / 2,
                     self.k / 2 * self.n2 * c * epsilon_0,
                     2 * self.I_sat / (epsilon_0 * c),
                 )
             else:
                 kernels.nl_prop(
-                    A,
-                    A_sq,
-                    self.delta_z / 2,
-                    self.alpha / 2,
-                    self.k / 2 * V,
+                    A, A_sq, dz_step, self.alpha / 2, self.k / 2 * V,
                     self.k / 2 * self.n2 * c * epsilon_0,
                     2 * self.I_sat / (epsilon_0 * c),
                 )
         else:
-            if V is None:
-                kernels.nl_prop_without_V(
-                    A,
-                    A_sq,
-                    self.delta_z,
-                    self.alpha / 2,
-                    self.k / 2 * self.n2 * c * epsilon_0,
-                    2 * self.I_sat / (epsilon_0 * c),
-                )
+            # Use fused kernel if available (OpenCL, CUPY), else separate calls
+            if hasattr(kernels, 'square_mod_nl_prop'):
+                if V is None:
+                    kernels.square_mod_nl_prop(
+                        A, dz_step, self.alpha / 2,
+                        self.k / 2 * self.n2 * c * epsilon_0,
+                        2 * self.I_sat / (epsilon_0 * c),
+                    )
+                else:
+                    kernels.square_mod_nl_prop_v(
+                        A, self.k / 2 * V, dz_step, self.alpha / 2,
+                        self.k / 2 * self.n2 * c * epsilon_0,
+                        2 * self.I_sat / (epsilon_0 * c),
+                    )
             else:
-                kernels.nl_prop(
-                    A,
-                    A_sq,
-                    self.delta_z,
-                    self.alpha / 2,
-                    self.k / 2 * V,
-                    self.k / 2 * self.n2 * c * epsilon_0,
-                    2 * self.I_sat / (epsilon_0 * c),
-                )
+                # CPU backend: use separate optimized calls
+                kernels.square_mod(A, A_sq)
+                if V is None:
+                    kernels.nl_prop_without_V(
+                        A, A_sq, dz_step, self.alpha / 2,
+                        self.k / 2 * self.n2 * c * epsilon_0,
+                        2 * self.I_sat / (epsilon_0 * c),
+                    )
+                else:
+                    kernels.nl_prop(
+                        A, A_sq, dz_step, self.alpha / 2, self.k / 2 * V,
+                        self.k / 2 * self.n2 * c * epsilon_0,
+                        2 * self.I_sat / (epsilon_0 * c),
+                    )
 
     def _RK4_rhs_non_mutating(
         self,

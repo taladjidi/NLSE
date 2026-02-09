@@ -66,7 +66,9 @@ class Backend(ABC):
         pass
 
     @abstractmethod
-    def build_fft(self, shape: tuple, axes: tuple, dtype: np.dtype) -> Any:
+    def build_fft(
+        self, shape: tuple, axes: tuple, dtype: np.dtype, array: np.ndarray | None = None
+    ) -> Any:
         """Build FFT plan for this backend.
 
         Args:
