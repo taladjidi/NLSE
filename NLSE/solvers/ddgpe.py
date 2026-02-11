@@ -160,49 +160,32 @@ class DDGPE(CNLSE):
 
     def _send_arrays_to_gpu(self) -> None:
         """
-        Send arrays to GPU.
+        Send arrays to device.
         """
         super()._send_arrays_to_gpu()
         # for broadcasting of parameters in case they are
-        # not already on the GPU
-        if isinstance(self.gamma, np.ndarray):
-            self.gamma = cp.asarray(self.gamma)
-        if isinstance(self.g, np.ndarray):
-            self.g = cp.asarray(self.g)
-        if isinstance(self.omega, np.ndarray):
-            self.omega = cp.asarray(self.omega)
-        if isinstance(self.k_z, np.ndarray):
-            self.k_z = cp.asarray(self.k_z)
-        if isinstance(self.omega_exc, np.ndarray):
-            self.omega_exc = cp.asarray(self.omega_exc)
-        if isinstance(self.omega_cav, np.ndarray):
-            self.omega_cav = cp.asarray(self.omega_cav)
-        if isinstance(self.detuning, np.ndarray):
-            self.detuning = cp.asarray(self.detuning)
-        if isinstance(self.omega_pump, np.ndarray):
-            self.omega_pump = cp.asarray(self.omega_pump)
+        # not already on the device
+        if self._backend.name in ["CUPY", "CL"]:
+            for attr in (
+                "gamma", "g", "omega", "k_z",
+                "omega_exc", "omega_cav", "detuning", "omega_pump",
+            ):
+                val = getattr(self, attr)
+                if isinstance(val, np.ndarray):
+                    setattr(self, attr, self._backend.from_numpy(val))
 
     def _retrieve_arrays_from_gpu(self) -> None:
         """
-        Retrieve arrays from GPU.
+        Retrieve arrays from device.
         """
         super()._retrieve_arrays_from_gpu()
-        if isinstance(self.gamma, cp.ndarray):
-            self.gamma = self.gamma.get()
-        if isinstance(self.g, cp.ndarray):
-            self.g = self.g.get()
-        if isinstance(self.omega, cp.ndarray):
-            self.omega = self.omega.get()
-        if isinstance(self.k_z, cp.ndarray):
-            self.k_z = self.k_z.get()
-        if isinstance(self.omega_exc, cp.ndarray):
-            self.omega_exc = self.omega_exc.get()
-        if isinstance(self.omega_cav, cp.ndarray):
-            self.omega_cav = self.omega_cav.get()
-        if isinstance(self.detuning, cp.ndarray):
-            self.detuning = self.detuning.get()
-        if isinstance(self.omega_pump, cp.ndarray):
-            self.omega_pump = self.omega_pump.get()
+        for attr in (
+            "gamma", "g", "omega", "k_z",
+            "omega_exc", "omega_cav", "detuning", "omega_pump",
+        ):
+            val = getattr(self, attr)
+            if hasattr(val, "get"):
+                setattr(self, attr, val.get())
 
     def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Build the propagators.
@@ -259,18 +242,10 @@ class DDGPE(CNLSE):
         Returns:
             np.ndarray: Output array
         """
-        if self.backend == "CUPY" and self.__CUPY_AVAILABLE__:
-            A = cp.zeros_like(E_in)
-            A_sq = cp.zeros_like(A, dtype=A.real.dtype)
-            A[:] = cp.asarray(E_in)
-        elif self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
-            A = cla.zeros(self._backend.queue, E_in.shape, E_in.dtype)
-            A_sq = cla.zeros(self._backend.queue, E_in.shape, E_in.real.dtype)
-            A[:] = cla.to_device(self._backend.queue, E_in)
-        else:
-            A = pyfftw.zeros_aligned(E_in.shape, dtype=E_in.dtype)
-            A_sq = np.empty_like(A, dtype=A.real.dtype)
-            A[:] = E_in
+        A = self._backend.allocate_field(E_in.shape, E_in.dtype)
+        A_sq = self._backend.allocate_real_field(E_in.shape, E_in.real.dtype)
+        E_in = self._backend.from_numpy(E_in)
+        A[:] = E_in
         if normalize:
             pass
         return A, A_sq
@@ -301,13 +276,6 @@ class DDGPE(CNLSE):
         Returns:
             None
         """
-        if (self.backend == "CUPY" and self.__CUPY_AVAILABLE__) or (
-            self.backend == "CL" and self.__PYOPENCL_AVAILABLE__
-        ):
-            # on GPU/CL, only one plan for both FFT directions
-            plan_fft = plans[0]
-        else:
-            plan_fft, plan_ifft = plans
         A1, A2 = self._take_components(A)
         if precision == "double":
             self._backend.kernels.square_mod(A, A_sq)
@@ -348,7 +316,7 @@ class DDGPE(CNLSE):
                     A1,
                     A_sq_1,
                     A_sq_2,
-                    self.delta_z,
+                    self.delta_z / 2,
                     self.gamma / 2,
                     V,
                     self.g,
@@ -360,7 +328,7 @@ class DDGPE(CNLSE):
                     A2,
                     A_sq_2,
                     A_sq_1,
-                    self.delta_z,
+                    self.delta_z / 2,
                     self.gamma2 / 2,
                     V,
                     self.g2,
@@ -368,22 +336,16 @@ class DDGPE(CNLSE):
                     self.I_sat,
                     self.I_sat2,
                 )
-        if (self.backend == "CUPY" and self.__CUPY_AVAILABLE__) or (
-            self.backend == "CL" and self.__PYOPENCL_AVAILABLE__
-        ):
-            plan_fft.fft(A, A)
-            # linear step in Fourier domain (shifted)
-            if self.backend == "CUPY":
-                cp.multiply(A, propagator, out=A)
-            else:
-                A *= propagator
-            plan_fft.ifft(A, A)
-        else:
-            plan_fft, plan_ifft = plans
-            plan_fft(input_array=A, output_array=A)
-            np.multiply(A, propagator, out=A)
-            plan_ifft(input_array=A, output_array=A, normalise_idft=True)
-        # fft normalization
+        # For GPU backends with double precision, write back modified
+        # components before FFT (A1/A2 are copies, not views)
+        if precision == "double" and self._backend.name in ["CL", "CUPY"]:
+            A[0] = A1
+            A[1] = A2
+        self._backend.fft(A, plans)
+        A *= propagator
+        self._backend.ifft(A, plans)
+        # Re-extract components after FFT/IFFT (CL/CUPY copies are now stale)
+        A1, A2 = self._take_components(A)
         self._backend.kernels.square_mod(A, A_sq)
         A_sq_1, A_sq_2 = self._take_components(A_sq)
         if self.nl_length > 0:
@@ -422,7 +384,7 @@ class DDGPE(CNLSE):
                     A1,
                     A_sq_1,
                     A_sq_2,
-                    self.delta_z,
+                    self.delta_z / 2,
                     self.gamma / 2,
                     self.k / 2 * V,
                     self.g,
@@ -434,7 +396,7 @@ class DDGPE(CNLSE):
                     A2,
                     A_sq_2,
                     A_sq_1,
-                    self.delta_z,
+                    self.delta_z / 2,
                     self.gamma2 / 2,
                     V,
                     self.g2,
@@ -495,6 +457,11 @@ class DDGPE(CNLSE):
                 self._backend.kernels.rabi_coupling(
                     A1, A2, self.delta_z, self.omega / 2
                 )
+
+        # For GPU backends, copy modified components back to original array
+        if self._backend.name in ["CL", "CUPY"]:
+            A[0] = A1
+            A[1] = A2
 
     def plot_field(self, A_plot: np.ndarray, t: float) -> None:
         """Plot the field for monitoring.

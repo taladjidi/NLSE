@@ -57,10 +57,6 @@ class CNLSE(NLSE):
         Returns:
             object: CNLSE class instance
         """
-        # if backend == "CL":
-        #     raise NotImplementedError(
-        #         "OpenCL backend is not yet supported for CNLSE."
-        #     )
         super().__init__(
             alpha=alpha,
             power=power,
@@ -107,19 +103,11 @@ class CNLSE(NLSE):
             A_sq (np.ndarray): Output field modulus squared array
         """
         puiss_arr = np.array([self.power, self.power2], dtype=E.dtype)
+        A = self._backend.allocate_field(E.shape, E.dtype)
+        A_sq = self._backend.allocate_real_field(E.shape, E.real.dtype)
         if self.backend == "CUPY" and self.__CUPY_AVAILABLE__:
-            A = cp.zeros_like(E)
-            A_sq = cp.zeros_like(A, dtype=A.real.dtype)
             E = cp.asarray(E)
             puiss_arr = cp.array(puiss_arr)
-        elif self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
-            A = cla.zeros(self._backend.queue, E.shape, E.dtype)
-            A_sq = cla.zeros(self._backend.queue, E.shape, E.real.dtype)
-            # E = cla.to_device(self._backend.queue, E)
-            # puiss_arr = cla.to_device(self._backend.queue, puiss_arr)
-        else:
-            A = pyfftw.zeros_aligned(E.shape, dtype=E.dtype, n=pyfftw.simd_alignment)
-            A_sq = np.zeros_like(A, dtype=A.real.dtype)
         if normalize:
             # normalization of the field (use contiguous formula)
             match self.backend:
@@ -257,24 +245,9 @@ class CNLSE(NLSE):
         # prepare output array, this kills performance but we need it
         A_prop = A.copy()
         A_sq = (A * A.conj()).real
-        if (self.backend == "CUPY" and self.__CUPY_AVAILABLE__) or (
-            self.backend == "CL" and self.__PYOPENCL_AVAILABLE__
-        ):
-            # on GPU, only one plan for both FFT directions
-            plan_fft = plans[0]
-        else:
-            plan_fft, plan_ifft = plans
-        if (self.backend == "CUPY" and self.__CUPY_AVAILABLE__) or (
-            self.backend == "CL" and self.__PYOPENCL_AVAILABLE__
-        ):
-            plan_fft.fft(A_prop, A_prop)
-            # linear step in Fourier domain (shifted)
-            A_prop *= propagator
-            plan_fft.ifft(A_prop, A_prop)
-        else:
-            plan_fft(input_array=A_prop, output_array=A_prop)
-            np.multiply(A_prop, propagator, out=A_prop)
-            plan_ifft(input_array=A_prop, output_array=A_prop, normalise_idft=True)
+        self._backend.fft(A_prop, plans)
+        A_prop *= propagator
+        self._backend.ifft(A_prop, plans)
         if self.nl_length > 0:
             A_sq[:] = self._convolution(
                 A_sq, self.nl_profile, mode="same", axes=self._last_axes
@@ -300,7 +273,7 @@ class CNLSE(NLSE):
         arg[0] -= self.alpha / 2 * sat * A[0]
         arg[1] -= self.alpha2 / 2 * sat * A[1]
         if V is not None:
-            V_ = 1j * V_scaled * A
+            V_ = 1j * self.k / 2 * V * A
             arg += V_
         return arg
 
@@ -336,16 +309,6 @@ class CNLSE(NLSE):
         else:
             V_scaled = V2_scaled = None
 
-        if (
-            self.backend == "CUPY"
-            and self.__CUPY_AVAILABLE__
-            or self.backend == "CL"
-            and self.__PYOPENCL_AVAILABLE__
-        ):
-            # on GPU, only one plan for both FFT directions
-            plan_fft = plans[0]
-        else:
-            plan_fft, plan_ifft = plans
         A1, A2 = self._take_components(A)
         if precision == "double":
             self._backend.kernels.square_mod(A, A_sq)
@@ -411,21 +374,9 @@ class CNLSE(NLSE):
         if precision == "double" and self._backend.name in ["CL", "CUPY"]:
             A[0] = A1
             A[1] = A2
-        if (
-            self.backend == "CUPY"
-            and self.__CUPY_AVAILABLE__
-            or self.backend == "CL"
-            and self.__PYOPENCL_AVAILABLE__
-        ):
-            plan_fft.fft(A, A)
-            # linear step in Fourier domain (shifted)
-            A *= propagator
-            plan_fft.ifft(A, A)
-        else:
-            plan_fft, plan_ifft = plans
-            plan_fft(input_array=A, output_array=A)
-            np.multiply(A, propagator, out=A)
-            plan_ifft(input_array=A, output_array=A, normalise_idft=True)
+        self._backend.fft(A, plans)
+        A *= propagator
+        self._backend.ifft(A, plans)
         # Re-extract components after FFT/IFFT (CL/CUPY copies are now stale)
         A1, A2 = self._take_components(A)
         self._backend.kernels.square_mod(A, A_sq)
