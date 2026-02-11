@@ -17,18 +17,22 @@ __email__ = "tangui.aladjidi@lkb.upmc.fr"
 import sys
 
 from . import utils as utils
-from .callbacks import adapt_delta_z as adapt_delta_z
-from .callbacks import evaluate_delta_n as evaluate_delta_n
-from .callbacks import norm as norm
-from .callbacks import sample as sample
+from .callbacks import (
+    adapt_delta_z as adapt_delta_z,
+    evaluate_delta_n as evaluate_delta_n,
+    norm as norm,
+    sample as sample,
+)
 from .kernels import cpu as kernels_cpu
-from .solvers import CNLSE as CNLSE
-from .solvers import DDGPE as DDGPE
-from .solvers import GPE as GPE
-from .solvers import NLSE as NLSE
-from .solvers import CNLSE_1d as CNLSE_1d
-from .solvers import NLSE_1d as NLSE_1d
-from .solvers import NLSE_3d as NLSE_3d
+from .solvers import (
+    CNLSE as CNLSE,
+    DDGPE as DDGPE,
+    GPE as GPE,
+    NLSE as NLSE,
+    CNLSE_1d as CNLSE_1d,
+    NLSE_1d as NLSE_1d,
+    NLSE_3d as NLSE_3d,
+)
 
 sys.modules[__name__ + ".kernels_cpu"] = kernels_cpu
 

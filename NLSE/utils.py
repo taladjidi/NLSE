@@ -54,9 +54,11 @@ except ImportError:
 def get_cache_dir() -> Path:
     """Get NLSE cache directory (XDG Base Directory compliant).
 
-    Returns:
-        Path: ~/.cache/nlse/ on Linux/macOS
-              %LOCALAPPDATA%/nlse/cache on Windows
+    Returns
+    -------
+    Path
+        ~/.cache/nlse/ on Linux/macOS
+        %LOCALAPPDATA%/nlse/cache on Windows
     """
     if os.name == "nt":  # Windows
         base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))

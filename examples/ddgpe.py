@@ -1,7 +1,6 @@
 import cupy as cp
 import matplotlib.pyplot as plt
 import numpy as np
-
 from NLSE import DDGPE
 
 
@@ -10,15 +9,19 @@ def turn_on(
     time: np.ndarray,
     t_up=10,
 ):
-    """A function to turn on the pump more or less adiabatically
+    """Turn on the pump more or less adiabatically.
 
-    Args:
-        F_laser_t (np.ndarray): self.F_pump_t as defined in class ggpe,
-          cp.ones((int(self.t_max//self.dt)), dtype=cp.complex64)
-        time (np.ndarray):  array with the value of the time at each discretized
-          step
-        t_up (int, optional): time taken to reach the maximum intensity (=F).
-          Defaults to 200.
+    Parameters
+    ----------
+    F_laser_t : np.ndarray
+        self.F_pump_t as defined in class ggpe,
+        cp.ones((int(self.t_max//self.dt)), dtype=cp.complex64)
+    time : np.ndarray
+        array with the value of the time at each discretized
+        step
+    t_up : int, optional
+        time taken to reach the maximum intensity (=F).
+        Defaults to 200.
     """
     F_laser_t[time < t_up] = np.exp(
         -1 * (time[time < t_up] - t_up) ** 2 / (t_up / 2) ** 2

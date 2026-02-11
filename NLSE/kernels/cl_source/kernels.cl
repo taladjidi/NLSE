@@ -78,8 +78,8 @@ __kernel void apply_propagator(
     );
 }
 
-// LEGACY KERNELS (for nl_length > 0 case with convolution)
-// These are kept for backward compatibility when convolution is needed between square_mod and nl_prop
+// SEPARATE KERNELS (required when nl_length > 0 or for coupled solvers)
+// Convolution between square_mod and nl_prop requires separate kernel calls
 
 // Square modulus computation
 __kernel void square_mod_fused(
@@ -193,4 +193,21 @@ __kernel void nl_prop_c_without_v_fused(
         A1_val.x * exp_arg.x - A1_val.y * exp_arg.y,
         A1_val.x * exp_arg.y + A1_val.y * exp_arg.x
     );
+}
+
+// Rabi coupling: 2x2 rotation of (A1, A2) pair
+__kernel void rabi_coupling(
+    __global {{FP2_TYPE}}* A1,
+    __global {{FP2_TYPE}}* A2,
+    const {{FP_TYPE}} cos_val,
+    const {{FP_TYPE}} sin_val
+) {
+    int idx = get_global_id(0);
+    {{FP2_TYPE}} a1 = A1[idx];
+    {{FP2_TYPE}} a2 = A2[idx];
+    // -1j * (x + iy) = (y, -x)
+    A1[idx] = ({{FP2_TYPE}})(cos_val * a1.x + sin_val * a2.y,
+                              cos_val * a1.y - sin_val * a2.x);
+    A2[idx] = ({{FP2_TYPE}})(cos_val * a2.x + sin_val * a1.y,
+                              cos_val * a2.y - sin_val * a1.x);
 }

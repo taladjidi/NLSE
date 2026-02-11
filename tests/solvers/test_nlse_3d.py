@@ -1,8 +1,7 @@
 import numpy as np
 import pyfftw
-from scipy.constants import c, epsilon_0
-
 from NLSE import NLSE_3d
+from scipy.constants import c, epsilon_0
 
 if NLSE_3d.__CUPY_AVAILABLE__:
     import cupy as cp
@@ -76,14 +75,13 @@ def test_build_fft_plan() -> None:
             backend=backend,
         )
         if backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
-            A = cp.random.random((N, N, NZ)).astype(PRECISION_REAL) + 1j * cp.random.random(
-                (N, N, NZ)
-            ).astype(PRECISION_REAL)
+            A = cp.random.random((N, N, NZ)).astype(
+                PRECISION_REAL
+            ) + 1j * cp.random.random((N, N, NZ)).astype(PRECISION_REAL)
         else:
-            A = (
-                np.random.random((N, N, NZ)).astype(PRECISION_REAL)
-                + 1j * np.random.random((N, N, NZ)).astype(PRECISION_REAL)
-            )
+            A = np.random.random((N, N, NZ)).astype(
+                PRECISION_REAL
+            ) + 1j * np.random.random((N, N, NZ)).astype(PRECISION_REAL)
         plans = simu._build_fft_plan(A)
         if backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
             assert len(plans) == 1, f"Number of plans is wrong. (Backend {backend})"
@@ -125,14 +123,13 @@ def test_prepare_output_array() -> None:
             backend=backend,
         )
         if backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
-            A = cp.random.random((N, N, NZ)).astype(PRECISION_REAL) + 1j * cp.random.random(
-                (N, N, NZ)
-            ).astype(PRECISION_REAL)
+            A = cp.random.random((N, N, NZ)).astype(
+                PRECISION_REAL
+            ) + 1j * cp.random.random((N, N, NZ)).astype(PRECISION_REAL)
         else:
-            A = (
-                np.random.random((N, N, NZ)).astype(PRECISION_REAL)
-                + 1j * np.random.random((N, N, NZ)).astype(PRECISION_REAL)
-            )
+            A = np.random.random((N, N, NZ)).astype(
+                PRECISION_REAL
+            ) + 1j * np.random.random((N, N, NZ)).astype(PRECISION_REAL)
         out, out_sq = simu._prepare_output_array(A, normalize=True)
         # Convert CL arrays to numpy for assertions
         if backend == "CL":

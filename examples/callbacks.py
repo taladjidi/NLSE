@@ -1,5 +1,4 @@
 import numpy as np
-
 from NLSE import NLSE, callbacks
 
 PRECISION_COMPLEX = np.complex64

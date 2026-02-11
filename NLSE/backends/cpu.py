@@ -47,14 +47,22 @@ class CPUBackend(Backend):
     ) -> list:
         """Build pyFFTW plans with the actual propagation array.
 
-        Args:
-            shape: Array shape
-            axes: FFT axes
-            dtype: Array dtype
-            array: The actual array to transform (required for optimal performance)
+        Parameters
+        ----------
+        shape : tuple
+            Array shape
+        axes : tuple
+            FFT axes
+        dtype : np.dtype
+            Array dtype
+        array : np.ndarray or None
+            The actual array to transform (required for optimal performance)
 
-        Returns:
+        Returns
+        -------
+        list
             List of [forward_plan, inverse_plan]
+
         """
         # Use provided array or create temporary aligned array
         A = (

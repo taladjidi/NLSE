@@ -1,9 +1,8 @@
 import numpy as np
 import pyfftw
 import pytest
-from scipy.constants import c, epsilon_0
-
 from NLSE import NLSE
+from scipy.constants import c, epsilon_0
 
 if NLSE.__CUPY_AVAILABLE__:
     import cupy as cp
@@ -133,7 +132,9 @@ def test_prepare_output_array() -> None:
             assert out_sq.flags.aligned, (
                 f"Output array is not aligned. (Backend {backend})"
             )
-        if simu.backend == "CUPY" and NLSE.__CUPY_AVAILABLE__ or simu.backend == "CPU":
+        if (
+            simu.backend == "CUPY" and NLSE.__CUPY_AVAILABLE__
+        ) or simu.backend == "CPU":
             integral = (
                 (out.real * out.real + out.imag * out.imag)
                 * simu.delta_X
@@ -272,11 +273,8 @@ def test_split_step() -> None:
         simu.propagator = simu._build_propagator()
         if backend == "CUPY" and NLSE.__CUPY_AVAILABLE__:
             E = cp.asarray(E)
-        if (
-            backend == "CUPY"
-            and NLSE.__CUPY_AVAILABLE__
-            or backend == "CL"
-            and NLSE.__PYOPENCL_AVAILABLE__
+        if (backend == "CUPY" and NLSE.__CUPY_AVAILABLE__) or (
+            backend == "CL" and NLSE.__PYOPENCL_AVAILABLE__
         ):
             simu._send_arrays_to_gpu()
         simu.split_step(

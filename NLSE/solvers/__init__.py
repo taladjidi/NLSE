@@ -9,11 +9,11 @@ from .nlse_1d import NLSE_1d as NLSE_1d
 from .nlse_3d import NLSE_3d as NLSE_3d
 
 __all__ = [
+    "CNLSE",
+    "DDGPE",
+    "GPE",
     "NLSE",
+    "CNLSE_1d",
     "NLSE_1d",
     "NLSE_3d",
-    "GPE",
-    "CNLSE",
-    "CNLSE_1d",
-    "DDGPE",
 ]

@@ -1,6 +1,5 @@
 import matplotlib.pyplot as plt
 import numpy as np
-import pyfftw
 from scipy.constants import c, epsilon_0
 
 from ..utils import __BACKEND__, __CUPY_AVAILABLE__, __PYOPENCL_AVAILABLE__
@@ -14,7 +13,7 @@ if __PYOPENCL_AVAILABLE__:
 
 
 class CNLSE(NLSE):
-    """A class to solve the coupled NLSE"""
+    """A class to solve the coupled NLSE."""
 
     def __init__(
         self,
@@ -30,32 +29,50 @@ class CNLSE(NLSE):
         Isat: float = np.inf,
         nl_length: float = 0,
         wvl: float = 780e-9,
-        omega: float = None,
+        omega: float | None = None,
         backend: str = __BACKEND__,
     ) -> None:
-        """Instantiates the class with all the relevant physical parameters
+        """Instantiate the class with all the relevant physical parameters.
 
-        Args:
-            alpha (float): alpha through the cell
-            power (float): Optical power in W
-            window (float): Computational window in m
-            n2 (float): Non linear index of the 1 st component in m^2/W
-            n12 (float): Inter component interaction parameter
-            V (np.ndarray): Potential landscape in a.u
-            L (float): Length of the cell in m
-            NX (int, optional): Number of points along x. Defaults to 1024.
-            NY (int, optional): Number of points along y. Defaults to 1024.
-            Isat (float, optional): Saturation intensity, assumed to be the same
-                for both components. Defaults to infinity.
-            nl_length (float): Non local length in m.
-                The non-local kernel is the instantiated as a Bessel function
-                to model a diffusive non-locality stored in the nl_profile
-                attribute.
-            wvl (float, optional): Wavelength in m. Defaults to 780 nm.
-            omega (float, optional): Rabi coupling. Defaults to None.
-            backend (str, optional): "GPU" or "CPU". Defaults to __BACKEND__.
-        Returns:
-            object: CNLSE class instance
+        Parameters
+        ----------
+        alpha : float
+            Alpha through the cell.
+        power : float
+            Optical power in W.
+        window : float
+            Computational window in m.
+        n2 : float
+            Non linear index of the 1st component in m^2/W.
+        n12 : float
+            Inter component interaction parameter.
+        V : np.ndarray
+            Potential landscape in a.u.
+        L : float
+            Length of the cell in m.
+        NX : int, optional
+            Number of points along x. Defaults to 1024.
+        NY : int, optional
+            Number of points along y. Defaults to 1024.
+        Isat : float, optional
+            Saturation intensity, assumed to be the same
+            for both components. Defaults to infinity.
+        nl_length : float
+            Non local length in m.
+            The non-local kernel is the instantiated as a Bessel function
+            to model a diffusive non-locality stored in the nl_profile
+            attribute.
+        wvl : float, optional
+            Wavelength in m. Defaults to 780 nm.
+        omega : float, optional
+            Rabi coupling. Defaults to None.
+        backend : str, optional
+            "GPU" or "CPU". Defaults to __BACKEND__.
+
+        Returns
+        -------
+        object
+            CNLSE class instance.
         """
         super().__init__(
             alpha=alpha,
@@ -95,12 +112,20 @@ class CNLSE(NLSE):
         """Prepare the output arrays depending on __BACKEND__.
 
         Prepares the A and A_sq arrays to store the field and its modulus.
-        Args:
-            E_in (np.ndarray): Input array
-            normalize (bool): Normalize the field to the total power.
-        Returns:
-            A (np.ndarray): Output field array
-            A_sq (np.ndarray): Output field modulus squared array
+
+        Parameters
+        ----------
+        E_in : np.ndarray
+            Input array.
+        normalize : bool
+            Normalize the field to the total power.
+
+        Returns
+        -------
+        A : np.ndarray
+            Output field array.
+        A_sq : np.ndarray
+            Output field modulus squared array.
         """
         puiss_arr = np.array([self.power, self.power2], dtype=E.dtype)
         A = self._backend.allocate_field(E.shape, E.dtype)
@@ -130,9 +155,7 @@ class CNLSE(NLSE):
         return A, A_sq
 
     def _send_arrays_to_gpu(self) -> None:
-        """
-        Send arrays to GPU.
-        """
+        """Send arrays to GPU."""
         super()._send_arrays_to_gpu()
         # for broadcasting of parameters in case they are
         # not already on the device
@@ -143,9 +166,7 @@ class CNLSE(NLSE):
                 self.n12 = self._backend.from_numpy(self.n12)
 
     def _retrieve_arrays_from_gpu(self) -> None:
-        """
-        Retrieve arrays from GPU.
-        """
+        """Retrieve arrays from GPU."""
         super()._retrieve_arrays_from_gpu()
         match self.backend:
             case "CUPY":
@@ -162,9 +183,15 @@ class CNLSE(NLSE):
     def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Build the propagators.
 
-        Returns:
-            propagator1 (np.ndarray): The propagator for the first component.
-            propagator2 (np.ndarray): The propagator for the second component.
+        Parameters
+        ----------
+        precision : str, optional
+            "single" or "double" precision. Defaults to "single".
+
+        Returns
+        -------
+        np.ndarray
+            Array containing propagators for both components.
         """
         # Create cache key (includes k2 for second component)
         cache_key = (
@@ -202,10 +229,15 @@ class CNLSE(NLSE):
     def _take_components(self, A: np.ndarray) -> tuple:
         """Take the components of the field.
 
-        Args:
-            A (np.ndarray): Field to retrieve the components of
-        Returns:
-            tuple: Tuple of the two components
+        Parameters
+        ----------
+        A : np.ndarray
+            Field to retrieve the components of.
+
+        Returns
+        -------
+        tuple
+            Tuple of the two components.
         """
         A1 = A[..., 0, :, :]
         A2 = A[..., 1, :, :]
@@ -214,7 +246,7 @@ class CNLSE(NLSE):
         if self._backend.name in ["CL", "CUPY"]:
             # For GPU backends, we need contiguous arrays (no offset)
             # This creates copies but ensures kernel compatibility
-            if hasattr(A1, 'copy'):  # GPU array
+            if hasattr(A1, "copy"):  # GPU array
                 A1 = A1.copy()
                 A2 = A2.copy()
 
@@ -231,16 +263,23 @@ class CNLSE(NLSE):
 
         Split step function for one propagation step using a 4th order Runge-Kutta method (RK4).
 
-        Args:
-            A (np.ndarray): Field to propagate
-            A_sq (np.ndarray): Field modulus squared.
-            V (np.ndarray): Potential field (can be None).
-            propagator (np.ndarray): Propagator matrix.
-            plans (list): List of FFT plan objects.
-                Either a single FFT plan for both directions (GPU case)
-                or distinct FFT and IFFT plans for FFTW.
-            precision (str, optional): Single or double application of
-                the nonlinear propagation step. Defaults to "single".
+        Parameters
+        ----------
+        A : np.ndarray
+            Field to propagate.
+        A_sq : np.ndarray
+            Field modulus squared.
+        V : np.ndarray
+            Potential field (can be None).
+        propagator : np.ndarray
+            Propagator matrix.
+        plans : list
+            List of FFT plan objects.
+            Either a single FFT plan for both directions (GPU case)
+            or distinct FFT and IFFT plans for FFTW.
+        precision : str, optional
+            Single or double application of
+            the nonlinear propagation step. Defaults to "single".
         """
         # prepare output array, this kills performance but we need it
         A_prop = A.copy()
@@ -286,21 +325,30 @@ class CNLSE(NLSE):
         plans: list,
         precision: str = "single",
     ) -> None:
-        """Split step function for one propagation step
+        """Split step function for one propagation step.
 
-        Args:
-            A (np.ndarray): Fields to propagate of shape (2, NY, NX)
-            A_sq (np.ndarray): Intensity of the fields.
-            V (np.ndarray): Potential field (can be None).
-            propagator (np.ndarray): Propagator matrix for both fields
-                [propagator1, propagator2].
-            plans (list): List of FFT plan objects. Either a single FFT plan for
-                both directions (GPU case) or distinct FFT and IFFT plans for
-                FFTW.
-            precision (str, optional): Single or double application of the
-                nonlinear propagation step. Defaults to "single".
-        Returns:
-            None
+        Parameters
+        ----------
+        A : np.ndarray
+            Fields to propagate of shape (2, NY, NX).
+        A_sq : np.ndarray
+            Intensity of the fields.
+        V : np.ndarray
+            Potential field (can be None).
+        propagator : np.ndarray
+            Propagator matrix for both fields
+            [propagator1, propagator2].
+        plans : list
+            List of FFT plan objects. Either a single FFT plan for
+            both directions (GPU case) or distinct FFT and IFFT plans for
+            FFTW.
+        precision : str, optional
+            Single or double application of the
+            nonlinear propagation step. Defaults to "single".
+
+        Returns
+        -------
+        None
         """
         # Precompute scaled potentials with correct dtype
         if V is not None:
@@ -375,7 +423,11 @@ class CNLSE(NLSE):
             A[0] = A1
             A[1] = A2
         self._backend.fft(A, plans)
-        A *= propagator
+        kernels = self._backend.kernels
+        if hasattr(kernels, "apply_propagator"):
+            kernels.apply_propagator(A, propagator)
+        else:
+            A *= propagator
         self._backend.ifft(A, plans)
         # Re-extract components after FFT/IFFT (CL/CUPY copies are now stale)
         A1, A2 = self._take_components(A)
@@ -499,9 +551,12 @@ class CNLSE(NLSE):
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot the field.
 
-        Args:
-            A_plot (np.ndarray): The field to plot
-            z (float): Propagation distance in m.
+        Parameters
+        ----------
+        A_plot : np.ndarray
+            The field to plot.
+        z : float
+            Propagation distance in m.
         """
         # if array is multi-dimensional, drop dims until the shape is 2D
         if A_plot.ndim > 3:

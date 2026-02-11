@@ -57,12 +57,19 @@ class CUPYBackend(Backend):
         return cp.asarray(array, dtype=array.dtype)
 
     def build_fft(
-        self, shape: tuple, axes: tuple, dtype: np.dtype, array: np.ndarray | None = None
+        self,
+        shape: tuple,
+        axes: tuple,
+        dtype: np.dtype,
+        array: np.ndarray | None = None,
     ) -> list:
         """Build VkFFT app for CUDA.
 
-        Returns:
+        Returns
+        -------
+        list
             List containing VkFFTApp instance (for consistency with CPU backend)
+
         """
         A = cp.zeros(shape, dtype=dtype)
         app = VkFFTApp(A.shape, A.dtype, axes=axes, ndim=len(axes))

@@ -9,8 +9,8 @@ __all__ = [
     "Backend",
     "CPUBackend",
     "get_backend",
-    "list_available_backends",
     "get_optimal_backend",
+    "list_available_backends",
 ]
 
 # Conditional imports
@@ -61,12 +61,18 @@ def get_optimal_backend(
     Automatically benchmarks all available backends and returns
     the fastest one. Results are cached for future calls.
 
-    Args:
-        grid_size: Typical grid size for benchmarking
-        force_benchmark: Force re-benchmark even if cache exists
+    Parameters
+    ----------
+    grid_size : tuple
+        Typical grid size for benchmarking
+    force_benchmark : bool
+        Force re-benchmark even if cache exists
 
-    Returns:
+    Returns
+    -------
+    str
         Name of fastest backend ("CPU", "CUPY", or "CL")
+
     """
     from .benchmark import get_fastest_backend
 
@@ -76,15 +82,23 @@ def get_optimal_backend(
 def get_backend(name: str, grid_size: tuple = (2048, 2048)) -> Backend:
     """Get backend instance by name.
 
-    Args:
-        name: Backend name ("CPU", "CUPY", "CL", or "auto")
-        grid_size: Grid size for auto-benchmarking (only used if name="auto")
+    Parameters
+    ----------
+    name : str
+        Backend name ("CPU", "CUPY", "CL", or "auto")
+    grid_size : tuple
+        Grid size for auto-benchmarking (only used if name="auto")
 
-    Returns:
+    Returns
+    -------
+    Backend
         Backend instance
 
-    Raises:
-        ValueError: If backend not available
+    Raises
+    ------
+    ValueError
+        If backend not available
+
     """
     # Override from environment variable
     if _ENV_BACKEND and _ENV_BACKEND != "AUTO":
@@ -115,8 +129,11 @@ def get_backend(name: str, grid_size: tuple = (2048, 2048)) -> Backend:
 def list_available_backends() -> list[str]:
     """List available backend names.
 
-    Returns:
+    Returns
+    -------
+    list[str]
         List of available backend names
+
     """
     backends = ["CPU"]
     if _CUPY_AVAILABLE:

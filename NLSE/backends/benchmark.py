@@ -44,9 +44,12 @@ class BenchmarkResults(TypedDict):
 def _synchronize_backend(backend: Any, array: Any) -> None:
     """Ensure GPU operations complete before timing.
 
-    Args:
-        backend: Backend instance
-        array: Array to synchronize
+    Parameters
+    ----------
+    backend : Any
+        Backend instance
+    array : Any
+        Array to synchronize
     """
     # backend parameter currently unused but kept for API consistency
     _ = backend
@@ -61,13 +64,20 @@ def benchmark_backend(
 ) -> float | None:
     """Benchmark FFT performance for a single backend.
 
-    Args:
-        backend_name: Name of backend to test ("CPU", "CUPY", or "CL")
-        grid_size: Grid dimensions (NX, NY) for testing
-        num_trials: Number of timing trials to run
+    Parameters
+    ----------
+    backend_name : str
+        Name of backend to test ("CPU", "CUPY", or "CL")
+    grid_size : tuple[int, int]
+        Grid dimensions (NX, NY) for testing
+    num_trials : int
+        Number of timing trials to run
 
-    Returns:
+    Returns
+    -------
+    float or None
         Median FFT time in milliseconds, or None if backend fails
+
     """
     try:
         # Import here to avoid circular dependency
@@ -111,11 +121,16 @@ def benchmark_all_backends(
 ) -> BenchmarkResults:
     """Benchmark all available FFT backends.
 
-    Args:
-        grid_size: Grid dimensions for testing (default: 2048x2048)
+    Parameters
+    ----------
+    grid_size : tuple[int, int]
+        Grid dimensions for testing (default: 2048x2048)
 
-    Returns:
+    Returns
+    -------
+    BenchmarkResults
         Dictionary with benchmark results for each backend
+
     """
     from . import list_available_backends
 
@@ -179,8 +194,11 @@ def benchmark_all_backends(
 def load_benchmark_cache() -> BenchmarkResults | None:
     """Load cached benchmark results from disk.
 
-    Returns:
+    Returns
+    -------
+    BenchmarkResults or None
         Dictionary with cached results, or None if cache invalid/missing
+
     """
     from ..utils import get_benchmark_cache_path
 
@@ -213,8 +231,10 @@ def load_benchmark_cache() -> BenchmarkResults | None:
 def save_benchmark_cache(results: BenchmarkResults) -> None:
     """Save benchmark results to cache file.
 
-    Args:
-        results: Dictionary with benchmark results
+    Parameters
+    ----------
+    results : BenchmarkResults
+        Dictionary with benchmark results
     """
     from ..utils import get_benchmark_cache_path
 
@@ -249,12 +269,18 @@ def get_fastest_backend(
     Automatically benchmarks all available backends and returns
     the fastest one. Results are cached for future calls.
 
-    Args:
-        grid_size: Typical grid size for benchmarking
-        force_benchmark: Force re-benchmark even if cache exists
+    Parameters
+    ----------
+    grid_size : tuple[int, int]
+        Typical grid size for benchmarking
+    force_benchmark : bool
+        Force re-benchmark even if cache exists
 
-    Returns:
+    Returns
+    -------
+    str
         Name of fastest backend ("CPU", "CUPY", or "CL")
+
     """
     # Check cache first (unless forced)
     if not force_benchmark:

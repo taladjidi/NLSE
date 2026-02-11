@@ -14,7 +14,7 @@ if __PYOPENCL_AVAILABLE__:
 
 
 class NLSE_1d(NLSE):
-    """A class to solve NLSE in 1d"""
+    """A class to solve NLSE in 1d."""
 
     def __init__(
         self,
@@ -35,19 +35,29 @@ class NLSE_1d(NLSE):
         Solves an equation : d/dz psi = -1/2k0(d2/dx2) psi + k0 dn psi +
           k0 n2 psi**2 psi
 
-        Args:
-            alpha (float): Transmission coeff
-            power (float): Power in W
-            n2 (float): Non linear coeff in m^2/W
-            V (np.ndarray) : Potential
-            L (float): Length of the medium.
-            Isat (float): Saturation intensity in W/m^2
-            nl_length (float): Non local length in m.
-                The non-local kernel is the instantiated as a Bessel function
-                to model a diffusive non-locality stored in the nl_profile
-                attribute.
-            wvl (float, optional): Wavelength in m. Defaults to 780 nm.
-            backend (str, optional): "GPU" or "CPU". Defaults to __BACKEND__.
+        Parameters
+        ----------
+        alpha : float
+            Transmission coeff.
+        power : float
+            Power in W.
+        n2 : float
+            Non linear coeff in m^2/W.
+        V : np.ndarray
+            Potential.
+        L : float
+            Length of the medium.
+        Isat : float
+            Saturation intensity in W/m^2.
+        nl_length : float
+            Non local length in m.
+            The non-local kernel is the instantiated as a Bessel function
+            to model a diffusive non-locality stored in the nl_profile
+            attribute.
+        wvl : float, optional
+            Wavelength in m. Defaults to 780 nm.
+        backend : str, optional
+            "GPU" or "CPU". Defaults to __BACKEND__.
         """
         super().__init__(
             alpha=alpha,
@@ -72,11 +82,17 @@ class NLSE_1d(NLSE):
     def _prepare_output_array(self, E_in: np.ndarray, normalize: bool) -> np.ndarray:
         """Prepare the output array depending on __BACKEND__.
 
-        Args:
-            E_in (np.ndarray): Input array
-            normalize (bool): Normalize the field to the total power.
-        Returns:
-            np.ndarray: Output array
+        Parameters
+        ----------
+        E_in : np.ndarray
+            Input array.
+        normalize : bool
+            Normalize the field to the total power.
+
+        Returns
+        -------
+        np.ndarray
+            Output array.
         """
         if self.backend == "CUPY" and self.__CUPY_AVAILABLE__:
             A = cp.zeros_like(E_in)
@@ -120,8 +136,15 @@ class NLSE_1d(NLSE):
 
         Uses caching to avoid recomputing propagators with identical parameters.
 
-        Returns:
-            propagator (np.ndarray): the propagator matrix
+        Parameters
+        ----------
+        precision : str, optional
+            "single" or "double" precision. Defaults to "single".
+
+        Returns
+        -------
+        np.ndarray
+            The propagator matrix.
         """
         # Create cache key (1D version)
         cache_key = (self.NX, float(self.delta_z), precision, float(self.k))
@@ -142,9 +165,12 @@ class NLSE_1d(NLSE):
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot a field for monitoring.
 
-        Args:
-            A_plot (np.ndarray): Field to plot
-            z (float): Propagation distance in m.
+        Parameters
+        ----------
+        A_plot : np.ndarray
+            Field to plot.
+        z : float
+            Propagation distance in m.
         """
         fig, ax = plt.subplots(1, 2, layout="constrained", figsize=(10, 5))
         fig.suptitle(rf"Field at $z$ = {z:.2e} m")

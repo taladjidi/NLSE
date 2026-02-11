@@ -3,7 +3,6 @@
 """NLSE Main module."""
 
 import multiprocessing
-import pickle
 import time
 from collections.abc import Callable
 from typing import Any
@@ -31,7 +30,7 @@ pyfftw.interfaces.cache.enable()
 
 
 class NLSE:
-    """A class to solve NLSE"""
+    """A class to solve NLSE."""
 
     __CUPY_AVAILABLE__ = __CUPY_AVAILABLE__
     __PYOPENCL_AVAILABLE__ = __PYOPENCL_AVAILABLE__
@@ -56,28 +55,41 @@ class NLSE:
         Solves an equation : d/dz psi = -1/2k0(d2/dx2 + d2/dy2) psi +
           k0 dn psi + k0 n2 psi**2 psi
 
-        Args:
-            alpha (float): alpha
-            power (float): Power in W
-            window (float, list or tuple): Computational window in the
-                transverse plane in m.
-                Can be different in x and y.
-            n2 (float): Non linear coeff in m^2/W
-            V (np.ndarray): Potential.
-            L (float): Length in m of the nonlinear medium
-            NX (int, optional): Number of points in the x direction.
-                Defaults to 1024.
-            NY (int, optional): Number of points in the y direction.
-                Defaults to 1024.
-            Isat (float): Saturation intensity in W/m^2
-            nl_length (float): Non local length in m.
-                The non-local kernel is the instantiated as a Bessel function
-                to model a diffusive non-locality stored in the nl_profile
-                attribute.
-            wvl (float): Wavelength in m
-            backend (str, optional): Backend name ("CPU", "CUPY", "CL", or "auto").
-                When "auto", automatically selects the fastest backend for your hardware.
-                Defaults to __BACKEND__.
+        Parameters
+        ----------
+        alpha : float
+            alpha
+        power : float
+            Power in W
+        window : float, list or tuple
+            Computational window in the
+            transverse plane in m.
+            Can be different in x and y.
+        n2 : float
+            Non linear coeff in m^2/W
+        V : np.ndarray
+            Potential.
+        L : float
+            Length in m of the nonlinear medium
+        NX : int, optional
+            Number of points in the x direction.
+            Defaults to 1024.
+        NY : int, optional
+            Number of points in the y direction.
+            Defaults to 1024.
+        Isat : float
+            Saturation intensity in W/m^2
+        nl_length : float
+            Non local length in m.
+            The non-local kernel is the instantiated as a Bessel function
+            to model a diffusive non-locality stored in the nl_profile
+            attribute.
+        wvl : float
+            Wavelength in m
+        backend : str, optional
+            Backend name ("CPU", "CUPY", "CL", or "auto").
+            When "auto", automatically selects the fastest backend for your hardware.
+            Defaults to __BACKEND__.
         """
         # list of physical parameters
         self._backend: Backend = get_backend(backend, grid_size=(NX, NY))
@@ -185,10 +197,16 @@ class NLSE:
 
         Uses caching to avoid recomputing propagators with identical parameters.
 
-        Returns:
-            propagator (np.ndarray): the propagator matrix
-            precision (str): Type of propagator to generate. For split step schemes
+        Parameters
+        ----------
+        precision : str
+            Type of propagator to generate. For split step schemes
             the step is inside the propagator, for RK4 it is not.
+
+        Returns
+        -------
+        np.ndarray
+            The propagator matrix.
         """
         # Create cache key from parameters that affect propagator
         cache_key = (self.NX, self.NY, float(self.delta_z), precision, float(self.k))
@@ -218,10 +236,15 @@ class NLSE:
     def _build_fft_plan(self, A: np.ndarray) -> list:
         """Build the FFT plan objects for propagation.
 
-        Args:
-            A (np.ndarray): Array to transform.
-        Returns:
-            list: List of FFT plan objects from the backend
+        Parameters
+        ----------
+        A : np.ndarray
+            Array to transform.
+
+        Returns
+        -------
+        list
+            List of FFT plan objects from the backend.
         """
         # Pass the actual array for in-place FFT optimization
         # CPU backend will handle wisdom loading/saving internally
@@ -235,12 +258,19 @@ class NLSE:
 
         Prepares the A and A_sq arrays to store the field and its modulus.
 
-        Args:
-            E_in (np.ndarray): Input array
-            normalize (bool): Normalize the field to the total power.
-        Returns:
-            A (np.ndarray): Output field array
-            A_sq (np.ndarray): Output field modulus squared array
+        Parameters
+        ----------
+        E_in : np.ndarray
+            Input array.
+        normalize : bool
+            Normalize the field to the total power.
+
+        Returns
+        -------
+        A : np.ndarray
+            Output field array.
+        A_sq : np.ndarray
+            Output field modulus squared array.
         """
         # Allocate arrays on the backend
         A = self._backend.allocate_field(E_in.shape, E_in.dtype)
@@ -276,7 +306,9 @@ class NLSE:
         if self._backend.name in ["CUPY", "CL"]:
             if self.V is not None:
                 # Ensure float32 dtype for GPU backends
-                self.V = self._backend.from_numpy(np.ascontiguousarray(self.V, dtype=np.float32))
+                self.V = self._backend.from_numpy(
+                    np.ascontiguousarray(self.V, dtype=np.float32)
+                )
             self.nl_profile = self._backend.from_numpy(self.nl_profile)
             self.propagator = self._backend.from_numpy(self.propagator)
             # for broadcasting of parameters in case they are
@@ -318,43 +350,99 @@ class NLSE:
     ) -> None:
         """Split step function for one propagation step.
 
-        Args:
-            A (np.ndarray): Field to propagate
-            A_sq (np.ndarray): Field modulus squared.
-            V (np.ndarray): Potential field (can be None).
-            propagator (np.ndarray): Propagator matrix.
-            plans (list): List of FFT plan objects from backend.
-            precision (str, optional): Single or double application of
-                the nonlinear propagation step. Defaults to "single".
+        Parameters
+        ----------
+        A : np.ndarray
+            Field to propagate.
+        A_sq : np.ndarray
+            Field modulus squared.
+        V : np.ndarray
+            Potential field (can be None).
+        propagator : np.ndarray
+            Propagator matrix.
+        plans : list
+            List of FFT plan objects from backend.
+        precision : str, optional
+            Single or double application of
+            the nonlinear propagation step. Defaults to "single".
         """
         kernels = self._backend.kernels
 
         # First half-step (only for precision == "double")
         if precision == "double":
-            kernels.square_mod(A, A_sq)
             if self.nl_length > 0:
+                # Need A_sq for convolution — must keep separate
+                kernels.square_mod(A, A_sq)
                 A_sq[:] = self._convolution(
                     A_sq, self.nl_profile, mode="same", axes=self._last_axes
                 )
-            if V is None:
-                kernels.nl_prop_without_V(
-                    A, A_sq, self.delta_z / 2, self.alpha / 2,
-                    self.k / 2 * self.n2 * c * epsilon_0,
-                    2 * self.I_sat / (epsilon_0 * c),
-                )
+                if V is None:
+                    kernels.nl_prop_without_V(
+                        A,
+                        A_sq,
+                        self.delta_z / 2,
+                        self.alpha / 2,
+                        self.k / 2 * self.n2 * c * epsilon_0,
+                        2 * self.I_sat / (epsilon_0 * c),
+                    )
+                else:
+                    # Scale V with correct dtype
+                    V_scaled = V * np.float32(self.k / 2)
+                    kernels.nl_prop(
+                        A,
+                        A_sq,
+                        self.delta_z / 2,
+                        self.alpha / 2,
+                        V_scaled,
+                        self.k / 2 * self.n2 * c * epsilon_0,
+                        2 * self.I_sat / (epsilon_0 * c),
+                    )
+            elif hasattr(kernels, "square_mod_nl_prop"):
+                if V is None:
+                    kernels.square_mod_nl_prop(
+                        A,
+                        self.delta_z / 2,
+                        self.alpha / 2,
+                        self.k / 2 * self.n2 * c * epsilon_0,
+                        2 * self.I_sat / (epsilon_0 * c),
+                    )
+                else:
+                    V_scaled = V * np.float32(self.k / 2)
+                    kernels.square_mod_nl_prop_v(
+                        A,
+                        V_scaled,
+                        self.delta_z / 2,
+                        self.alpha / 2,
+                        self.k / 2 * self.n2 * c * epsilon_0,
+                        2 * self.I_sat / (epsilon_0 * c),
+                    )
             else:
-                # Scale V with correct dtype
-                V_scaled = V * np.float32(self.k / 2)
-                kernels.nl_prop(
-                    A, A_sq, self.delta_z / 2, self.alpha / 2, V_scaled,
-                    self.k / 2 * self.n2 * c * epsilon_0,
-                    2 * self.I_sat / (epsilon_0 * c),
-                )
+                kernels.square_mod(A, A_sq)
+                if V is None:
+                    kernels.nl_prop_without_V(
+                        A,
+                        A_sq,
+                        self.delta_z / 2,
+                        self.alpha / 2,
+                        self.k / 2 * self.n2 * c * epsilon_0,
+                        2 * self.I_sat / (epsilon_0 * c),
+                    )
+                else:
+                    V_scaled = V * np.float32(self.k / 2)
+                    kernels.nl_prop(
+                        A,
+                        A_sq,
+                        self.delta_z / 2,
+                        self.alpha / 2,
+                        V_scaled,
+                        self.k / 2 * self.n2 * c * epsilon_0,
+                        2 * self.I_sat / (epsilon_0 * c),
+                    )
 
         # Linear propagation in Fourier domain
         self._backend.fft(A, plans)
         # Use optimized propagator kernel if available (OpenCL), else array expression
-        if hasattr(kernels, 'apply_propagator'):
+        if hasattr(kernels, "apply_propagator"):
             kernels.apply_propagator(A, propagator)
         else:
             A *= propagator
@@ -372,22 +460,31 @@ class NLSE:
             )
             if V is None:
                 kernels.nl_prop_without_V(
-                    A, A_sq, dz_step, self.alpha / 2,
+                    A,
+                    A_sq,
+                    dz_step,
+                    self.alpha / 2,
                     self.k / 2 * self.n2 * c * epsilon_0,
                     2 * self.I_sat / (epsilon_0 * c),
                 )
             else:
                 kernels.nl_prop(
-                    A, A_sq, dz_step, self.alpha / 2, self.k / 2 * V,
+                    A,
+                    A_sq,
+                    dz_step,
+                    self.alpha / 2,
+                    self.k / 2 * V,
                     self.k / 2 * self.n2 * c * epsilon_0,
                     2 * self.I_sat / (epsilon_0 * c),
                 )
         else:
             # Use fused kernel if available (OpenCL, CUPY), else separate calls
-            if hasattr(kernels, 'square_mod_nl_prop'):
+            if hasattr(kernels, "square_mod_nl_prop"):
                 if V is None:
                     kernels.square_mod_nl_prop(
-                        A, dz_step, self.alpha / 2,
+                        A,
+                        dz_step,
+                        self.alpha / 2,
                         self.k / 2 * self.n2 * c * epsilon_0,
                         2 * self.I_sat / (epsilon_0 * c),
                     )
@@ -395,7 +492,10 @@ class NLSE:
                     # Scale V with correct dtype
                     V_scaled = V * np.float32(self.k / 2)
                     kernels.square_mod_nl_prop_v(
-                        A, V_scaled, dz_step, self.alpha / 2,
+                        A,
+                        V_scaled,
+                        dz_step,
+                        self.alpha / 2,
                         self.k / 2 * self.n2 * c * epsilon_0,
                         2 * self.I_sat / (epsilon_0 * c),
                     )
@@ -404,7 +504,10 @@ class NLSE:
                 kernels.square_mod(A, A_sq)
                 if V is None:
                     kernels.nl_prop_without_V(
-                        A, A_sq, dz_step, self.alpha / 2,
+                        A,
+                        A_sq,
+                        dz_step,
+                        self.alpha / 2,
                         self.k / 2 * self.n2 * c * epsilon_0,
                         2 * self.I_sat / (epsilon_0 * c),
                     )
@@ -412,7 +515,11 @@ class NLSE:
                     # Scale V with correct dtype
                     V_scaled = V * np.float32(self.k / 2)
                     kernels.nl_prop(
-                        A, A_sq, dz_step, self.alpha / 2, V_scaled,
+                        A,
+                        A_sq,
+                        dz_step,
+                        self.alpha / 2,
+                        V_scaled,
                         self.k / 2 * self.n2 * c * epsilon_0,
                         2 * self.I_sat / (epsilon_0 * c),
                     )
@@ -428,11 +535,16 @@ class NLSE:
 
         Split step function for one propagation step using a 4th order Runge-Kutta method (RK4).
 
-        Args:
-            A (np.ndarray): Field to propagate
-            V (np.ndarray): Potential field (can be None).
-            propagator (np.ndarray): Propagator matrix.
-            plans (list): List of FFT plan objects from backend.
+        Parameters
+        ----------
+        A : np.ndarray
+            Field to propagate.
+        V : np.ndarray
+            Potential field (can be None).
+        propagator : np.ndarray
+            Propagator matrix.
+        plans : list
+            List of FFT plan objects from backend.
         """
         # prepare output array, this kills performance but we need it
         A_prop = A.copy()
@@ -475,11 +587,16 @@ class NLSE:
         k_3 = rhs(A+k_2/2)
         k_4 = rhs(A+k_3)
 
-        Args:
-            A (np.ndarray): Field to propagate
-            V (np.ndarray): Potential field (can be None).
-            propagator (np.ndarray): Propagator matrix.
-            plans (list): List of FFT plan objects from backend.
+        Parameters
+        ----------
+        A : np.ndarray
+            Field to propagate.
+        V : np.ndarray
+            Potential field (can be None).
+        propagator : np.ndarray
+            Propagator matrix.
+        plans : list
+            List of FFT plan objects from backend.
         """
         k_1 = self._RK4_rhs_non_mutating(A, V, propagator, plans)
         k_2 = self._RK4_rhs_non_mutating(
@@ -492,6 +609,16 @@ class NLSE:
             A + (k_1 - k_2 + k_3) * self.delta_z, V, propagator, plans
         )
         A += self.delta_z / 8 * (k_1 + 3 * k_2 + 3 * k_3 + k_4)
+
+    def _run_callbacks(self, callback, callback_args, A, z, i):
+        """Dispatch user callbacks at each solver step."""
+        if isinstance(callback, Callable):
+            callback(self, A, z, i, *callback_args)
+        elif isinstance(callback, list) and isinstance(callback[0], Callable):
+            for c, ca in zip(callback, callback_args, strict=True):
+                c(self, A, z, i, *ca)
+        else:
+            raise ValueError("callbacks should be a callable or a list of callables")
 
     def out_field(
         self,
@@ -514,23 +641,35 @@ class NLSE:
         This allows to find the ground state of the system.
         Warning: this is still experimental !
 
-        Args:
-            E_in (np.ndarray): Normalized input field (between 0 and 1).
-            z (float): propagation distance in m.
-            plot (bool, optional): Plots the results. Defaults to False.
-            precision (str, optional): Does a "double" or a "single" application
-                of the nonlinear term. This leads to a dz (single) or dz^3
-                (double)precision. Defaults to "single".
-            verbose (bool, optional): Prints progress and time.
-                Defaults to True.
-            normalize (bool, optional): Normalize the field to the total power.
-                Defaults to True.
-            callback (callable, optional): Callback function.
-                Defaults to None.
-            callback_args (tuple, optional): Additional arguments for the
-                callback function.
-        Returns:
-            np.ndarray: Propagated field in proper units V/m
+        Parameters
+        ----------
+        E_in : np.ndarray
+            Normalized input field (between 0 and 1).
+        z : float
+            Propagation distance in m.
+        plot : bool, optional
+            Plots the results. Defaults to False.
+        precision : str, optional
+            Does a "double" or a "single" application
+            of the nonlinear term. This leads to a dz (single) or dz^3
+            (double)precision. Defaults to "single".
+        verbose : bool, optional
+            Prints progress and time.
+            Defaults to True.
+        normalize : bool, optional
+            Normalize the field to the total power.
+            Defaults to True.
+        callback : callable, optional
+            Callback function.
+            Defaults to None.
+        callback_args : tuple, optional
+            Additional arguments for the
+            callback function.
+
+        Returns
+        -------
+        np.ndarray
+            Propagated field in proper units V/m.
         """
         assert (
             E_in.shape[self._last_axes[0] :] == self.XX.shape[self._last_axes[0] :]
@@ -579,15 +718,7 @@ class NLSE:
                 self.split_step(A, A_sq, V, self.propagator, self.plans, precision)
 
             if callback is not None:
-                if isinstance(callback, Callable):
-                    callback(self, A, z, i, *callback_args)
-                elif isinstance(callback, list) and isinstance(callback[0], Callable):
-                    for c, ca in zip(callback, callback_args, strict=True):
-                        c(self, A, z, i, *ca)
-                else:
-                    raise ValueError(
-                        "callbacks should be a callable or a list of callables"
-                    )
+                self._run_callbacks(callback, callback_args, A, z, i)
             z_prop += self.delta_z
             i += 1
             if verbose:
@@ -623,9 +754,12 @@ class NLSE:
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot a field for monitoring.
 
-        Args:
-            A_plot (np.ndarray): Field to plot.
-            z (float): Propagation distance.
+        Parameters
+        ----------
+        A_plot : np.ndarray
+            Field to plot.
+        z : float
+            Propagation distance.
         """
         # if array is multi-dimensional, drop dims until the shape is 2D
         if A_plot.ndim > 2:

@@ -19,11 +19,16 @@ _COMPILED_PROGRAMS = {}
 def _check_double_support(context):
     """Check if context devices support double precision.
 
-    Args:
-        context: PyOpenCL context
+    Parameters
+    ----------
+    context : PyOpenCL context
+        PyOpenCL context
 
-    Returns:
-        bool: True if all devices support double precision
+    Returns
+    -------
+    bool
+        True if all devices support double precision
+
     """
     for device in context.devices:
         if device.double_fp_config == 0:
@@ -34,8 +39,11 @@ def _check_double_support(context):
 def _load_kernel_template():
     """Load OpenCL kernel template from file.
 
-    Returns:
+    Returns
+    -------
+    str
         String containing kernel template with {{placeholders}}
+
     """
     template_path = Path(__file__).parent / "cl_source" / "kernels.cl"
     return template_path.read_text()
@@ -44,11 +52,16 @@ def _load_kernel_template():
 def _get_kernel_source(precision="single"):
     """Generate OpenCL C kernel source for specified precision.
 
-    Args:
-        precision: 'single' for float32 or 'double' for float64
+    Parameters
+    ----------
+    precision : str
+        'single' for float32 or 'double' for float64
 
-    Returns:
+    Returns
+    -------
+    str
         String containing all kernel source code
+
     """
     if precision == "single":
         fp_type = "float"
@@ -77,15 +90,23 @@ def _compile_kernels(context, precision="single"):
 
     Uses module-level cache to compile only once per (context, precision).
 
-    Args:
-        context: PyOpenCL context
-        precision: 'single' or 'double'
+    Parameters
+    ----------
+    context : PyOpenCL context
+        PyOpenCL context
+    precision : str
+        'single' or 'double'
 
-    Returns:
+    Returns
+    -------
+    cl.Program
         Compiled cl.Program
 
-    Raises:
-        RuntimeError: If double precision requested but not supported
+    Raises
+    ------
+    RuntimeError
+        If double precision requested but not supported
+
     """
     # Check double precision support
     if precision == "double" and not _check_double_support(context):
@@ -127,9 +148,12 @@ class OpenCLKernels:
     def __init__(self, context, queue):
         """Initialize kernel wrapper (compilation happens lazily).
 
-        Args:
-            context: OpenCL context
-            queue: OpenCL command queue
+        Parameters
+        ----------
+        context : OpenCL context
+            OpenCL context
+        queue : OpenCL command queue
+            OpenCL command queue
         """
         self.context = context
         self.queue = queue
@@ -144,11 +168,16 @@ class OpenCLKernels:
     def _get_kernels(self, dtype):
         """Get compiled kernels for given dtype, compiling if needed.
 
-        Args:
-            dtype: numpy dtype (complex64 or complex128)
+        Parameters
+        ----------
+        dtype : numpy.dtype
+            numpy dtype (complex64 or complex128)
 
-        Returns:
+        Returns
+        -------
+        dict
             Dictionary of compiled kernel objects
+
         """
         # Detect precision from dtype
         if dtype == np.complex64:
@@ -181,8 +210,11 @@ class OpenCLKernels:
                 "square_mod": cl.Kernel(program, "square_mod_fused"),
                 # Optimized fused kernels
                 "square_mod_nl_prop": cl.Kernel(program, "square_mod_nl_prop_fused"),
-                "square_mod_nl_prop_v": cl.Kernel(program, "square_mod_nl_prop_v_fused"),
+                "square_mod_nl_prop_v": cl.Kernel(
+                    program, "square_mod_nl_prop_v_fused"
+                ),
                 "apply_propagator": cl.Kernel(program, "apply_propagator"),
+                "rabi_coupling": cl.Kernel(program, "rabi_coupling"),
             }
 
         return self._kernels[precision]
@@ -199,14 +231,22 @@ class OpenCLKernels:
     ) -> None:
         """Fused nonlinear propagation kernel (with potential).
 
-        Args:
-            A: Complex field array (complex64 or complex128)
-            A_sq: Intensity array (|A|^2)
-            dz: Propagation step
-            alpha: Loss coefficient
-            V: Potential array
-            g: Nonlinear interaction strength
-            Isat: Saturation intensity
+        Parameters
+        ----------
+        A : cla.Array
+            Complex field array (complex64 or complex128)
+        A_sq : cla.Array
+            Intensity array (|A|^2)
+        dz : float
+            Propagation step
+        alpha : float
+            Loss coefficient
+        V : cla.Array
+            Potential array
+        g : float
+            Nonlinear interaction strength
+        Isat : float
+            Saturation intensity
         """
         kernels = self._get_kernels(A.dtype)
         global_size = (int(A.size),)
@@ -251,13 +291,20 @@ class OpenCLKernels:
     ) -> None:
         """Fused nonlinear propagation kernel (without potential).
 
-        Args:
-            A: Complex field array (complex64 or complex128)
-            A_sq: Intensity array (|A|^2)
-            dz: Propagation step
-            alpha: Loss coefficient
-            g: Nonlinear interaction strength
-            Isat: Saturation intensity
+        Parameters
+        ----------
+        A : cla.Array
+            Complex field array (complex64 or complex128)
+        A_sq : cla.Array
+            Intensity array (|A|^2)
+        dz : float
+            Propagation step
+        alpha : float
+            Loss coefficient
+        g : float
+            Nonlinear interaction strength
+        Isat : float
+            Saturation intensity
         """
         kernels = self._get_kernels(A.dtype)
         global_size = (int(A.size),)
@@ -304,17 +351,28 @@ class OpenCLKernels:
     ) -> None:
         """Fused coupled nonlinear propagation (with potential).
 
-        Args:
-            A1: Complex field (component 1)
-            A_sq_1: Intensity of component 1
-            A_sq_2: Intensity of component 2
-            dz: Propagation step
-            alpha: Loss coefficient
-            V: Potential array
-            g11: Self-interaction strength
-            g12: Cross-interaction strength
-            Isat1: Saturation intensity (component 1)
-            Isat2: Saturation intensity (component 2)
+        Parameters
+        ----------
+        A1 : cla.Array
+            Complex field (component 1)
+        A_sq_1 : cla.Array
+            Intensity of component 1
+        A_sq_2 : cla.Array
+            Intensity of component 2
+        dz : float
+            Propagation step
+        alpha : float
+            Loss coefficient
+        V : cla.Array
+            Potential array
+        g11 : float
+            Self-interaction strength
+        g12 : float
+            Cross-interaction strength
+        Isat1 : float
+            Saturation intensity (component 1)
+        Isat2 : float
+            Saturation intensity (component 2)
         """
         kernels = self._get_kernels(A1.dtype)
         global_size = (int(A1.size),)
@@ -349,16 +407,26 @@ class OpenCLKernels:
     ) -> None:
         """Fused coupled nonlinear propagation (without potential).
 
-        Args:
-            A1: Complex field (component 1)
-            A_sq_1: Intensity of component 1
-            A_sq_2: Intensity of component 2
-            dz: Propagation step
-            alpha: Loss coefficient
-            g11: Self-interaction strength
-            g12: Cross-interaction strength
-            Isat1: Saturation intensity (component 1)
-            Isat2: Saturation intensity (component 2)
+        Parameters
+        ----------
+        A1 : cla.Array
+            Complex field (component 1)
+        A_sq_1 : cla.Array
+            Intensity of component 1
+        A_sq_2 : cla.Array
+            Intensity of component 2
+        dz : float
+            Propagation step
+        alpha : float
+            Loss coefficient
+        g11 : float
+            Self-interaction strength
+        g12 : float
+            Cross-interaction strength
+        Isat1 : float
+            Saturation intensity (component 1)
+        Isat2 : float
+            Saturation intensity (component 2)
         """
         kernels = self._get_kernels(A1.dtype)
         global_size = (int(A1.size),)
@@ -375,9 +443,12 @@ class OpenCLKernels:
     def square_mod(self, A: cla.Array, A_sq: cla.Array) -> None:
         """Compute square modulus (intensity).
 
-        Args:
-            A: Complex field array (complex64 or complex128)
-            A_sq: Output intensity array
+        Parameters
+        ----------
+        A : cla.Array
+            Complex field array (complex64 or complex128)
+        A_sq : cla.Array
+            Output intensity array
         """
         kernels = self._get_kernels(A.dtype)
         global_size = (int(A.size),)
@@ -393,12 +464,18 @@ class OpenCLKernels:
     ) -> None:
         """Fused square_mod + nl_prop_without_V (eliminates kernel launch overhead).
 
-        Args:
-            A: Complex field array (complex64 or complex128)
-            dz: Propagation step
-            alpha: Loss coefficient
-            g: Nonlinear interaction strength
-            Isat: Saturation intensity
+        Parameters
+        ----------
+        A : cla.Array
+            Complex field array (complex64 or complex128)
+        dz : float
+            Propagation step
+        alpha : float
+            Loss coefficient
+        g : float
+            Nonlinear interaction strength
+        Isat : float
+            Saturation intensity
         """
         kernels = self._get_kernels(A.dtype)
         global_size = (int(A.size),)
@@ -440,13 +517,20 @@ class OpenCLKernels:
     ) -> None:
         """Fused square_mod + nl_prop (with potential, eliminates kernel launch overhead).
 
-        Args:
-            A: Complex field array (complex64 or complex128)
-            V: Potential array
-            dz: Propagation step
-            alpha: Loss coefficient
-            g: Nonlinear interaction strength
-            Isat: Saturation intensity
+        Parameters
+        ----------
+        A : cla.Array
+            Complex field array (complex64 or complex128)
+        V : cla.Array
+            Potential array
+        dz : float
+            Propagation step
+        alpha : float
+            Loss coefficient
+        g : float
+            Nonlinear interaction strength
+        Isat : float
+            Saturation intensity
         """
         kernels = self._get_kernels(A.dtype)
         global_size = (int(A.size),)
@@ -481,39 +565,69 @@ class OpenCLKernels:
     def apply_propagator(self, A: cla.Array, propagator: cla.Array) -> None:
         """Apply linear propagator (replaces slow PyOpenCL array expression).
 
-        Args:
-            A: Complex field array (complex64 or complex128)
-            propagator: Pre-computed propagator array
+        Parameters
+        ----------
+        A : cla.Array
+            Complex field array (complex64 or complex128)
+        propagator : cla.Array
+            Pre-computed propagator array
         """
         kernels = self._get_kernels(A.dtype)
         global_size = (int(A.size),)
-        kernels["apply_propagator"](self.queue, global_size, None, A.data, propagator.data)
+        kernels["apply_propagator"](
+            self.queue, global_size, None, A.data, propagator.data
+        )
 
     def rabi_coupling(
         self, A1: cla.Array, A2: cla.Array, dz: float, omega: float
     ) -> None:
-        """Apply Rabi coupling term using PyOpenCL array expressions.
+        """Apply Rabi coupling term using native OpenCL C kernel.
 
-        Args:
-            A1: First field component
-            A2: Second field component
-            dz: Solver step
-            omega: Rabi coupling strength
+        Parameters
+        ----------
+        A1 : cla.Array
+            First field component
+        A2 : cla.Array
+            Second field component
+        dz : float
+            Solver step
+        omega : float
+            Rabi coupling strength
         """
-        _rabi_coupling_impl(A1, A2, dz, omega)
+        kernels = self._get_kernels(A1.dtype)
+        global_size = (int(A1.size),)
+
+        cos_val = np.cos(omega * dz)
+        sin_val = np.sin(omega * dz)
+
+        if A1.dtype == np.complex64:
+            cos_cast, sin_cast = np.float32(cos_val), np.float32(sin_val)
+        else:
+            cos_cast, sin_cast = np.float64(cos_val), np.float64(sin_val)
+
+        kernels["rabi_coupling"](
+            self.queue, global_size, None, A1.data, A2.data, cos_cast, sin_cast
+        )
 
     def vortex_cp(
         self, im: cla.Array, i: int, j: int, ii: cla.Array, jj: cla.Array, ll: int
     ) -> None:
         """Generate vortex of charge ll at position (i, j) using PyOpenCL.
 
-        Args:
-            im: Image array
-            i: Vortex row position
-            j: Vortex column position
-            ii: Row coordinate meshgrid
-            jj: Column coordinate meshgrid
-            ll: Vortex charge
+        Parameters
+        ----------
+        im : cla.Array
+            Image array
+        i : int
+            Vortex row position
+        j : int
+            Vortex column position
+        ii : cla.Array
+            Row coordinate meshgrid
+        jj : cla.Array
+            Column coordinate meshgrid
+        ll : int
+            Vortex charge
         """
         _vortex_cp_impl(im, i, j, ii, jj, ll)
 
@@ -521,36 +635,25 @@ class OpenCLKernels:
 # Helper functions using PyOpenCL array expressions (not yet optimized with OpenCL C)
 
 
-def _rabi_coupling_impl(
-    A1: cla.Array, A2: cla.Array, dz: float, omega: float
-) -> None:
-    """Apply a Rabi coupling term using PyOpenCL array expressions.
-
-    Args:
-        A1 (cla.Array): First field component
-        A2 (cla.Array): Second field component
-        dz (float): Solver step
-        omega (float): Rabi coupling strength
-    """
-    cos_val = np.cos(omega * dz)
-    sin_val = np.sin(omega * dz)
-    A1_old = A1.copy()
-    A1[:] = cos_val * A1 - 1j * sin_val * A2
-    A2[:] = cos_val * A2 - 1j * sin_val * A1_old
-
-
 def _vortex_cp_impl(
     im: cla.Array, i: int, j: int, ii: cla.Array, jj: cla.Array, ll: int
 ) -> None:
     """Generate a vortex of charge ll at position (i,j) using PyOpenCL.
 
-    Args:
-        im (cla.Array): Image
-        i (int): position row of the vortex
-        j (int): position column of the vortex
-        ii (cla.Array): meshgrid position row (coordinates of the image)
-        jj (cla.Array): meshgrid position column (coordinates of the image)
-        ll (int): vortex charge
+    Parameters
+    ----------
+    im : cla.Array
+        Image
+    i : int
+        position row of the vortex
+    j : int
+        position column of the vortex
+    ii : cla.Array
+        meshgrid position row (coordinates of the image)
+    jj : cla.Array
+        meshgrid position column (coordinates of the image)
+    ll : int
+        vortex charge
     """
     import pyopencl.clmath as clm
 

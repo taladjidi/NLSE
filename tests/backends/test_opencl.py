@@ -2,7 +2,6 @@
 
 import numpy as np
 import pytest
-
 from NLSE.backends import list_available_backends
 
 pytestmark = pytest.mark.skipif(
@@ -14,8 +13,7 @@ class TestOptimizedKernelCorrectness:
     """Verify optimized kernels produce identical results to original."""
 
     def setup_method(self):
-        """Setup OpenCL backend and test arrays."""
-
+        """Set up OpenCL backend and test arrays."""
         from NLSE.backends.opencl import OpenCLBackend
 
         self.backend = OpenCLBackend()
@@ -38,10 +36,9 @@ class TestOptimizedKernelCorrectness:
 
     def test_nl_prop_correctness(self):
         """Test nl_prop optimized kernel vs CPU reference."""
-        from pyopencl import array as cla
-
         from NLSE.kernels import cpu as cpu_kernels
         from NLSE.kernels.cl import OpenCLKernels
+        from pyopencl import array as cla
 
         # Run CPU reference
         A_cpu = self.A_host.copy()
@@ -69,10 +66,9 @@ class TestOptimizedKernelCorrectness:
 
     def test_nl_prop_without_v_correctness(self):
         """Test nl_prop_without_V optimized kernel vs CPU reference."""
-        from pyopencl import array as cla
-
         from NLSE.kernels import cpu as cpu_kernels
         from NLSE.kernels.cl import OpenCLKernels
+        from pyopencl import array as cla
 
         # Run CPU reference
         A_cpu = self.A_host.copy()
@@ -101,9 +97,8 @@ class TestOptimizedKernelCorrectness:
 
     def test_square_mod_correctness(self):
         """Test square_mod optimized kernel vs CPU reference."""
-        from pyopencl import array as cla
-
         from NLSE.kernels.cl import OpenCLKernels
+        from pyopencl import array as cla
 
         # Compute CPU reference
         A_sq_cpu = np.abs(self.A_host) ** 2
@@ -127,10 +122,9 @@ class TestOptimizedKernelCorrectness:
 
     def test_nl_prop_c_correctness(self):
         """Test nl_prop_c optimized coupled kernel vs CPU reference."""
-        from pyopencl import array as cla
-
         from NLSE.kernels import cpu as cpu_kernels
         from NLSE.kernels.cl import OpenCLKernels
+        from pyopencl import array as cla
 
         # Create second component
         rng = np.random.RandomState(43)
@@ -180,6 +174,49 @@ class TestOptimizedKernelCorrectness:
             err_msg="Optimized nl_prop_c differs from CPU reference",
         )
 
+    def test_rabi_coupling_correctness(self):
+        """Test native CL rabi_coupling kernel vs CPU reference."""
+        from NLSE.kernels import cpu as cpu_kernels
+        from NLSE.kernels.cl import OpenCLKernels
+        from pyopencl import array as cla
+
+        # Create second component
+        rng = np.random.RandomState(43)
+        A2_host = (rng.randn(self.N, self.N) + 1j * rng.randn(self.N, self.N)).astype(
+            np.complex64
+        )
+
+        dz = 1e-3
+        omega = 5.0
+
+        # Run CPU reference
+        A1_cpu = self.A_host.copy()
+        A2_cpu = A2_host.copy()
+        cpu_kernels.rabi_coupling(A1_cpu, A2_cpu, dz, omega)
+
+        # Run native OpenCL kernel
+        A1_cl = cla.to_device(self.queue, self.A_host.copy())
+        A2_cl = cla.to_device(self.queue, A2_host.copy())
+        opt_kernels = OpenCLKernels(self.backend.context, self.queue)
+
+        opt_kernels.rabi_coupling(A1_cl, A2_cl, dz, omega)
+
+        # Compare results
+        np.testing.assert_allclose(
+            A1_cpu,
+            A1_cl.get(),
+            rtol=1e-5,
+            atol=1e-7,
+            err_msg="Native CL rabi_coupling A1 differs from CPU reference",
+        )
+        np.testing.assert_allclose(
+            A2_cpu,
+            A2_cl.get(),
+            rtol=1e-5,
+            atol=1e-7,
+            err_msg="Native CL rabi_coupling A2 differs from CPU reference",
+        )
+
 
 class TestVortexBugFix:
     """Test that vortex_cp bug fix is correct."""
@@ -187,9 +224,8 @@ class TestVortexBugFix:
     def test_vortex_cp_uses_atan2(self):
         """Verify vortex_cp now uses atan2 instead of atan."""
         import numpy as np
-        from pyopencl import array as cla
-
         from NLSE.backends.opencl import OpenCLBackend
+        from pyopencl import array as cla
 
         backend = OpenCLBackend()
         N = 128
@@ -229,10 +265,9 @@ class TestOptimizedKernelPerformance:
     def test_nl_prop_speedup(self, benchmark):
         """Measure nl_prop speedup with optimized kernel."""
         import numpy as np
-        from pyopencl import array as cla
-
         from NLSE.backends.opencl import OpenCLBackend
         from NLSE.kernels.cl import OpenCLKernels
+        from pyopencl import array as cla
 
         backend = OpenCLBackend()
         N = 1024

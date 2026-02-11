@@ -1,5 +1,4 @@
 import numpy as np
-
 from NLSE import CNLSE
 
 PRECISION_COMPLEX = np.complex64
@@ -31,7 +30,7 @@ def main():
         NY=N,
         Isat=Isat,
         omega=None,
-        backend="CUPY",
+        backend="CL",
     )
     simu_c.delta_z = 0.5e-4
     simu_c.puiss2 = 10e-3

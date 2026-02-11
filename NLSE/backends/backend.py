@@ -19,12 +19,18 @@ class Backend(ABC):
     def allocate_field(self, shape: tuple, dtype: np.dtype) -> Any:
         """Allocate a field array on this backend.
 
-        Args:
-            shape: Shape of the array
-            dtype: Data type
+        Parameters
+        ----------
+        shape : tuple
+            Shape of the array
+        dtype : np.dtype
+            Data type
 
-        Returns:
+        Returns
+        -------
+        Any
             Array allocated on the appropriate device
+
         """
         pass
 
@@ -32,12 +38,18 @@ class Backend(ABC):
     def allocate_real_field(self, shape: tuple, dtype: np.dtype) -> Any:
         """Allocate a real-valued field array.
 
-        Args:
-            shape: Shape of the array
-            dtype: Data type (should be real)
+        Parameters
+        ----------
+        shape : tuple
+            Shape of the array
+        dtype : np.dtype
+            Data type (should be real)
 
-        Returns:
+        Returns
+        -------
+        Any
             Array allocated on the appropriate device
+
         """
         pass
 
@@ -45,11 +57,16 @@ class Backend(ABC):
     def to_numpy(self, array: Any) -> np.ndarray:
         """Convert array to numpy on CPU.
 
-        Args:
-            array: Array on device
+        Parameters
+        ----------
+        array : Any
+            Array on device
 
-        Returns:
+        Returns
+        -------
+        np.ndarray
             Numpy array on CPU
+
         """
         pass
 
@@ -57,27 +74,43 @@ class Backend(ABC):
     def from_numpy(self, array: np.ndarray) -> Any:
         """Convert numpy array to device array.
 
-        Args:
-            array: Numpy array
+        Parameters
+        ----------
+        array : np.ndarray
+            Numpy array
 
-        Returns:
+        Returns
+        -------
+        Any
             Array on device
+
         """
         pass
 
     @abstractmethod
     def build_fft(
-        self, shape: tuple, axes: tuple, dtype: np.dtype, array: np.ndarray | None = None
+        self,
+        shape: tuple,
+        axes: tuple,
+        dtype: np.dtype,
+        array: np.ndarray | None = None,
     ) -> Any:
         """Build FFT plan for this backend.
 
-        Args:
-            shape: Array shape
-            axes: Axes to transform
-            dtype: Data type
+        Parameters
+        ----------
+        shape : tuple
+            Array shape
+        axes : tuple
+            Axes to transform
+        dtype : np.dtype
+            Data type
 
-        Returns:
+        Returns
+        -------
+        Any
             FFT plan object
+
         """
         pass
 
@@ -85,12 +118,18 @@ class Backend(ABC):
     def fft(self, array: Any, plan: Any) -> Any:
         """Perform forward FFT.
 
-        Args:
-            array: Input array
-            plan: FFT plan
+        Parameters
+        ----------
+        array : Any
+            Input array
+        plan : Any
+            FFT plan
 
-        Returns:
+        Returns
+        -------
+        Any
             Transformed array
+
         """
         pass
 
@@ -98,12 +137,18 @@ class Backend(ABC):
     def ifft(self, array: Any, plan: Any) -> Any:
         """Perform inverse FFT.
 
-        Args:
-            array: Input array
-            plan: FFT plan
+        Parameters
+        ----------
+        array : Any
+            Input array
+        plan : Any
+            FFT plan
 
-        Returns:
+        Returns
+        -------
+        Any
             Transformed array
+
         """
         pass
 
@@ -117,7 +162,10 @@ class Backend(ABC):
     def supports_double_precision(self) -> bool:
         """Check if backend supports double precision.
 
-        Returns:
+        Returns
+        -------
+        bool
             True if double precision is supported
+
         """
         pass

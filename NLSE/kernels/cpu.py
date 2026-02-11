@@ -12,16 +12,24 @@ def nl_prop(
     g: float,
     Isat: float,
 ) -> None:
-    """A compiled parallel implementation to apply real space terms
+    """Apply real space terms with compiled parallel implementation.
 
-    Args:
-        A (np.ndarray): The field to propagate
-        A_sq (np.ndarray): The field modulus squared
-        dz (float): Propagation step in m
-        alpha (float): Losses
-        V (np.ndarray): Potential
-        g (float): Interactions
-        Isat (float): Saturation
+    Parameters
+    ----------
+    A : np.ndarray
+        The field to propagate
+    A_sq : np.ndarray
+        The field modulus squared
+    dz : float
+        Propagation step in m
+    alpha : float
+        Losses
+    V : np.ndarray
+        Potential
+    g : float
+        Interactions
+    Isat : float
+        Saturation
     """
     A = A.ravel()
     A_sq = A_sq.ravel()
@@ -43,15 +51,22 @@ def nl_prop_without_V(
     g: float,
     Isat: float,
 ) -> None:
-    """A fused kernel to apply real space terms
+    """Apply real space terms without potential.
 
-    Args:
-        A (cp.ndarray): The field to propagate
-        A_sq (cp.ndarray): The field modulus squared
-        dz (float): Propagation step in m
-        alpha (float): Losses
-        g (float): Interactions
-        Isat (float): Saturation
+    Parameters
+    ----------
+    A : cp.ndarray
+        The field to propagate
+    A_sq : cp.ndarray
+        The field modulus squared
+    dz : float
+        Propagation step in m
+    alpha : float
+        Losses
+    g : float
+        Interactions
+    Isat : float
+        Saturation
     """
     A = A.ravel()
     A_sq = A_sq.ravel()
@@ -76,18 +91,30 @@ def nl_prop_c(
     Isat1: float,
     Isat2: float,
 ) -> None:
-    """A fused kernel to apply real space terms
-    Args:
-        A1 (cp.ndarray): The field to propagate (1st component)
-        A_sq_1 (cp.ndarray): The field modulus squared (1st component)
-        A_sq_2 (cp.ndarray): The field modulus squared (2nd component)
-        dz (float): Propagation step in m
-        alpha (float): Losses
-        V (cp.ndarray): Potential
-        g11 (float): Intra-component interactions
-        g12 (float): Inter-component interactions
-        Isat1 (float): Saturation parameter of first component
-        Isat2 (float): Saturation parameter of second component
+    """Apply coupled real space terms with potential.
+
+    Parameters
+    ----------
+    A1 : cp.ndarray
+        The field to propagate (1st component)
+    A_sq_1 : cp.ndarray
+        The field modulus squared (1st component)
+    A_sq_2 : cp.ndarray
+        The field modulus squared (2nd component)
+    dz : float
+        Propagation step in m
+    alpha : float
+        Losses
+    V : cp.ndarray
+        Potential
+    g11 : float
+        Intra-component interactions
+    g12 : float
+        Inter-component interactions
+    Isat1 : float
+        Saturation parameter of first component
+    Isat2 : float
+        Saturation parameter of second component.
     """
     A1 = A1.ravel()
     A_sq_1 = A_sq_1.ravel()
@@ -117,17 +144,28 @@ def nl_prop_without_V_c(
     Isat1: float,
     Isat2: float,
 ) -> None:
-    """A fused kernel to apply real space terms
-    Args:
-        A1 (cp.ndarray): The field to propagate (1st component)
-        A_sq_1 (cp.ndarray): The field modulus squared (1st component)
-        A_sq_2 (cp.ndarray): The field modulus squared (2nd component)
-        dz (float): Propagation step in m
-        alpha (float): Losses
-        g11 (float): Intra-component interactions
-        g12 (float): Inter-component interactions
-        Isat1 (float): Saturation parameter of first component
-        Isat2 (float): Saturation parameter of second component
+    """Apply coupled real space terms without potential.
+
+    Parameters
+    ----------
+    A1 : cp.ndarray
+        The field to propagate (1st component)
+    A_sq_1 : cp.ndarray
+        The field modulus squared (1st component)
+    A_sq_2 : cp.ndarray
+        The field modulus squared (2nd component)
+    dz : float
+        Propagation step in m
+    alpha : float
+        Losses
+    g11 : float
+        Intra-component interactions
+    g12 : float
+        Inter-component interactions
+    Isat1 : float
+        Saturation parameter of first component
+    Isat2 : float
+        Saturation parameter of second component.
     """
     A1 = A1.ravel()
     A_sq_1 = A_sq_1.ravel()
@@ -144,40 +182,56 @@ def nl_prop_without_V_c(
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
 def rabi_coupling(A1: np.ndarray, A2: np.ndarray, dz: float, omega: float) -> None:
-    """Apply a Rabi coupling term.
-    This function implements the Rabi hopping term.
-    It exchanges density between the two components.
+    """Apply Rabi coupling term.
 
-    Args:
-        A1 (np.ndarray): First field / component
-        A2 (np.ndarray): Second field / component
-        dz (float): Solver step
-        omega (float): Rabi coupling strength
+    Implement the Rabi hopping term, exchanging density between components.
+
+    Parameters
+    ----------
+    A1 : np.ndarray
+        First field / component
+    A2 : np.ndarray
+        Second field / component
+    dz : float
+        Solver step
+    omega : float
+        Rabi coupling strength
     """
     A1 = A1.ravel()
     A2 = A2.ravel()
-    A1_old = A1.copy()
+    cos_val = np.cos(omega * dz)
+    sin_val = np.sin(omega * dz)
     for i in numba.prange(A1.size):
-        A1[i] = np.cos(omega * dz) * A1[i] - 1j * np.sin(omega * dz) * A2[i]
-        A2[i] = np.cos(omega * dz) * A2[i] - 1j * np.sin(omega * dz) * A1_old[i]
+        a1 = A1[i]
+        A1[i] = cos_val * a1 - 1j * sin_val * A2[i]
+        A2[i] = cos_val * A2[i] - 1j * sin_val * a1
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
 def vortex(
     im: np.ndarray, i: int, j: int, ii: np.ndarray, jj: np.ndarray, ll: int
 ) -> None:
-    """Generates a vortex of charge l at a position (i,j) on the image im.
+    """Generate a vortex of charge l at position (i,j) on the image im.
 
-    Args:
-        im (np.ndarray): Image
-        i (int): position row of the vortex
-        j (int): position column of the vortex
-        ii (int): meshgrid position row (coordinates of the image)
-        jj (int): meshgrid position column (coordinates of the image)
-        ll (int): vortex charge
+    Parameters
+    ----------
+    im : np.ndarray
+        Image
+    i : int
+        position row of the vortex
+    j : int
+        position column of the vortex
+    ii : int
+        meshgrid position row (coordinates of the image)
+    jj : int
+        meshgrid position column (coordinates of the image)
+    ll : int
+        vortex charge
 
-    Returns:
-        None
+    Returns
+    -------
+    None
+
     """
     for i in numba.prange(im.shape[0]):
         for j in numba.prange(im.shape[1]):
@@ -186,20 +240,108 @@ def vortex(
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
 def square_mod(A: np.ndarray, A_sq: np.ndarray) -> None:
-    """Compute the square modulus of the field
+    """Compute the square modulus of the field.
 
-    Args:
-        A (np.ndarray): The field
-        A_sq (np.ndarray): The modulus squared of the field
+    Parameters
+    ----------
+    A : np.ndarray
+        The field
+    A_sq : np.ndarray
+        The modulus squared of the field
 
-    Returns:
-        None
+    Returns
+    -------
+    None
+
     """
     A = A.ravel()
     A_sq = A_sq.ravel()
     for i in numba.prange(A.size):
         A_sq[i] = A[i].real * A[i].real + A[i].imag * A[i].imag
 
-# Note: CPU backend does NOT have fused kernels
-# The solver will call square_mod() + nl_prop() separately with pre-allocated A_sq
-# This is more efficient than Python-level "fusion" which would allocate on every call
+
+@numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
+def square_mod_nl_prop(
+    A: np.ndarray,
+    dz: float,
+    alpha: float,
+    g: float,
+    Isat: float,
+) -> None:
+    """Compute |A|^2 inline and apply nonlinear propagation in a single pass.
+
+    Parameters
+    ----------
+    A : np.ndarray
+        The field to propagate (modified in-place)
+    dz : float
+        Propagation step in m
+    alpha : float
+        Losses
+    g : float
+        Interactions
+    Isat : float
+        Saturation
+    """
+    A = A.ravel()
+    for i in numba.prange(A.size):
+        A_sq_val = A[i].real * A[i].real + A[i].imag * A[i].imag
+        sat = 1 / (1 + A_sq_val / Isat)
+        arg = -alpha * sat + 1j * g * A_sq_val * sat
+        A[i] *= np.exp(dz * arg)
+
+
+@numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
+def square_mod_nl_prop_v(
+    A: np.ndarray,
+    V: np.ndarray,
+    dz: float,
+    alpha: float,
+    g: float,
+    Isat: float,
+) -> None:
+    """Compute |A|^2 inline and apply nonlinear propagation with potential.
+
+    Parameters
+    ----------
+    A : np.ndarray
+        The field to propagate (modified in-place)
+    V : np.ndarray
+        Potential
+    dz : float
+        Propagation step in m
+    alpha : float
+        Losses
+    g : float
+        Interactions
+    Isat : float
+        Saturation
+    """
+    A = A.ravel()
+    V = V.ravel()
+    for i in numba.prange(A.size):
+        A_sq_val = A[i].real * A[i].real + A[i].imag * A[i].imag
+        sat = 1 / (1 + A_sq_val / Isat)
+        arg = -alpha * sat + 1j * g * A_sq_val * sat + 1j * V[i]
+        A[i] *= np.exp(dz * arg)
+
+
+@numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
+def apply_propagator(A: np.ndarray, propagator: np.ndarray) -> None:
+    """Multiply A by propagator in-place, avoiding numpy temporaries.
+
+    Parameters
+    ----------
+    A : np.ndarray
+        The field array (modified in-place)
+    propagator : np.ndarray
+        The propagator array
+    """
+    A = A.ravel()
+    propagator = propagator.ravel()
+    for i in numba.prange(A.size):
+        a = A[i]
+        p = propagator[i]
+        A[i] = (a.real * p.real - a.imag * p.imag) + 1j * (
+            a.real * p.imag + a.imag * p.real
+        )

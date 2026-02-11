@@ -1,7 +1,6 @@
 import numpy as np
-from scipy.constants import c, epsilon_0
-
 from NLSE import NLSE_1d
+from scipy.constants import c, epsilon_0
 
 if NLSE_1d.__CUPY_AVAILABLE__:
     import cupy as cp

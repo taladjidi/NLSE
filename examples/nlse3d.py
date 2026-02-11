@@ -1,7 +1,6 @@
 import numpy as np
-from scipy.constants import c
-
 from NLSE import NLSE_3d
+from scipy.constants import c
 
 PRECISION_COMPLEX = np.complex64
 PRECISION_REAL = np.float32

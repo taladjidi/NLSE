@@ -55,12 +55,19 @@ class OpenCLBackend(Backend):
         return cla.to_device(self._queue, array)
 
     def build_fft(
-        self, shape: tuple, axes: tuple, dtype: np.dtype, array: np.ndarray | None = None
+        self,
+        shape: tuple,
+        axes: tuple,
+        dtype: np.dtype,
+        array: np.ndarray | None = None,
     ) -> list:
         """Build VkFFT app for OpenCL.
 
-        Returns:
+        Returns
+        -------
+        list
             List containing VkFFTApp instance (for consistency with CPU backend)
+
         """
         A = cla.zeros(self._queue, shape, dtype)
         app = VkFFTApp(A.shape, A.dtype, queue=self._queue, axes=axes, ndim=len(axes))

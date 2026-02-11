@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import tqdm
 from cycler import cycler
-
 from NLSE import NLSE
 
 # for plots

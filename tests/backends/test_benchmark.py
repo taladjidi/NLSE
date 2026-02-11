@@ -4,7 +4,6 @@ import json
 import time
 
 import pytest
-
 from NLSE.backends import benchmark, list_available_backends
 from NLSE.utils import get_benchmark_cache_path
 

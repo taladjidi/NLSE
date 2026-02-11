@@ -31,9 +31,9 @@ N_avg = 2
 
 BACKENDS = list_available_backends()
 # Add numpy naive as a special "backend"
-ALL_LABELS = BACKENDS + ["Numpy"]
+ALL_LABELS = [*BACKENDS, "Numpy"]
 
-sizes = np.logspace(6, 12, 7, base=2, dtype=int)
+sizes = np.logspace(6, 13, 8, base=2, dtype=int)
 times = np.zeros((len(sizes), len(ALL_LABELS), N_avg))
 
 MARKERS = ["o", "s", "^", "D", "v", "p", "*", "h"]

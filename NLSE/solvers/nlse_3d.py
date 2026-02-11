@@ -14,8 +14,9 @@ if __PYOPENCL_AVAILABLE__:
 
 
 class NLSE_3d(NLSE):
-    """A class to solve the 3D NLSE i.e propagation of pulses
-    of light in nonlinear media.
+    """A class to solve the 3D NLSE.
+
+    Propagation of pulses of light in nonlinear media.
     """
 
     def __init__(
@@ -42,31 +43,47 @@ class NLSE_3d(NLSE):
           D0/2 (d2/dt2) psi + k0 dn psi +
           k0 n2 psi**2 psi
 
-        Args:
-            alpha (float): alpha
-            energy (float): Total energy in J
-            window (np.ndarray): Computanional window in the transverse plane
-                (index 0) in m and longitudinal direction (index 1) in s.
-                Can also be window = [window_x, window_y, window_t]
-            n2 (float): Non linear coeff in m^2/W.
-            D0 (float): Dispersion in s^2/m.
-            vg (float): Group velocity in m/s.
-            V (np.ndarray): Potential.
-            L (float): Length in m of the nonlinear medium
-            NX (int, optional): Number of points in the x direction.
-                Defaults to 1024.
-            NY (int, optional): Number of points in the y direction.
-                Defaults to 1024.
-            NZ (int, optional): Number of points in the t direction.
-                Defaults to 1024.
-            Isat (float): Saturation intensity in W/m^2
-            nl_length (float): Non local length in m.
-                The non-local kernel is the instantiated as a Bessel function
-                to model a diffusive non-locality stored in the nl_profile
-                attribute.
-            wvl (float): Wavelength in m
-            backend (str, optional): "GPU" or "CPU".
-                Defaults to __BACKEND__.
+        Parameters
+        ----------
+        alpha : float
+            alpha.
+        energy : float
+            Total energy in J.
+        window : np.ndarray
+            Computational window in the transverse plane
+            (index 0) in m and longitudinal direction (index 1) in s.
+            Can also be window = [window_x, window_y, window_t].
+        n2 : float
+            Non linear coeff in m^2/W.
+        D0 : float
+            Dispersion in s^2/m.
+        vg : float
+            Group velocity in m/s.
+        V : np.ndarray
+            Potential.
+        L : float
+            Length in m of the nonlinear medium.
+        NX : int, optional
+            Number of points in the x direction.
+            Defaults to 1024.
+        NY : int, optional
+            Number of points in the y direction.
+            Defaults to 1024.
+        NZ : int, optional
+            Number of points in the t direction.
+            Defaults to 1024.
+        Isat : float
+            Saturation intensity in W/m^2.
+        nl_length : float
+            Non local length in m.
+            The non-local kernel is the instantiated as a Bessel function
+            to model a diffusive non-locality stored in the nl_profile
+            attribute.
+        wvl : float
+            Wavelength in m.
+        backend : str, optional
+            "GPU" or "CPU".
+            Defaults to __BACKEND__.
         """
         if len(window) == 2:
             window = [window[0], window[0], window[-1]]
@@ -111,8 +128,15 @@ class NLSE_3d(NLSE):
 
         Uses caching to avoid recomputing propagators with identical parameters.
 
-        Returns:
-            np.ndarray: The propagator
+        Parameters
+        ----------
+        precision : str, optional
+            "single" or "double" precision. Defaults to "single".
+
+        Returns
+        -------
+        np.ndarray
+            The propagator.
         """
         # Create cache key (3D version includes D0 and NZ)
         cache_key = (
@@ -144,12 +168,19 @@ class NLSE_3d(NLSE):
 
         Prepares the A and A_sq arrays to store the field and its modulus.
 
-        Args:
-            E_in (np.ndarray): Input array
-            normalize (bool): Normalize the field to the total power.
-        Returns:
-            A (np.ndarray): Output field array
-            A_sq (np.ndarray): Output field modulus squared array
+        Parameters
+        ----------
+        E_in : np.ndarray
+            Input array.
+        normalize : bool
+            Normalize the field to the total power.
+
+        Returns
+        -------
+        A : np.ndarray
+            Output field array.
+        A_sq : np.ndarray
+            Output field modulus squared array.
         """
         if self.backend == "CUPY" and self.__CUPY_AVAILABLE__:
             A = cp.zeros_like(E_in)
@@ -191,9 +222,12 @@ class NLSE_3d(NLSE):
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot a field for monitoring.
 
-        Args:
-            A_plot (np.ndarray): Field to plot
-            z (float): Propagation distance in m.
+        Parameters
+        ----------
+        A_plot : np.ndarray
+            Field to plot.
+        z : float
+            Propagation distance in m.
         """
         # if array is multi-dimensional, drop dims until the shape is 2D
         if A_plot.ndim > 3:

@@ -1,7 +1,6 @@
 import numpy as np
-from scipy.constants import atomic_mass
-
 from NLSE import GPE
+from scipy.constants import atomic_mass
 
 PRECISION_COMPLEX = np.complex64
 PRECISION_REAL = np.float32

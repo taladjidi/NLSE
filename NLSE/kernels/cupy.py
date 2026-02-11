@@ -11,16 +11,24 @@ def nl_prop(
     g: float,
     Isat: float,
 ) -> None:
-    """A fused kernel to apply real space terms
+    """Apply real space terms with potential.
 
-    Args:
-        A (cp.ndarray): The field to propagate
-        A_sq (cp.ndarray): The field modulus squared
-        dz (float): Propagation step in m
-        alpha (float): Losses
-        V (cp.ndarray): Potential
-        g (float): Interactions
-        Isat (float): Saturation
+    Parameters
+    ----------
+    A : cp.ndarray
+        The field to propagate
+    A_sq : cp.ndarray
+        The field modulus squared
+    dz : float
+        Propagation step in m
+    alpha : float
+        Losses
+    V : cp.ndarray
+        Potential
+    g : float
+        Interactions
+    Isat : float
+        Saturation
     """
     # saturation
     sat = 1 / (1 + A_sq / Isat)
@@ -44,15 +52,22 @@ def nl_prop_without_V(
     g: float,
     Isat: float,
 ) -> None:
-    """A fused kernel to apply real space terms
+    """Apply real space terms without potential.
 
-    Args:
-        A (cp.ndarray): The field to propagate
-        A_sq (cp.ndarray): The field modulus squared
-        dz (float): Propagation step in m
-        alpha (float): Losses
-        g (float): Interactions
-        Isat (float): Saturation
+    Parameters
+    ----------
+    A : cp.ndarray
+        The field to propagate
+    A_sq : cp.ndarray
+        The field modulus squared
+    dz : float
+        Propagation step in m
+    alpha : float
+        Losses
+    g : float
+        Interactions
+    Isat : float
+        Saturation
     """
     # saturation
     sat = 1 / (1 + A_sq / Isat)
@@ -78,18 +93,30 @@ def nl_prop_c(
     Isat1: float,
     Isat2: float,
 ) -> None:
-    """A fused kernel to apply real space terms
-    Args:
-        A1 (cp.ndarray): The field to propagate (1st component)
-        A_sq_1 (cp.ndarray): The field modulus squared (1st component)
-        A_sq_2 (cp.ndarray): The field modulus squared (2nd component)
-        dz (float): Propagation step in m
-        alpha (float): Losses
-        V (cp.ndarray): Potential
-        g11 (float): Intra-component interactions
-        g12 (float): Inter-component interactions
-        Isat1 (float): Saturation parameter of first component
-        Isat2 (float): Saturation parameter of second component
+    """Apply coupled real space terms with potential.
+
+    Parameters
+    ----------
+    A1 : cp.ndarray
+        The field to propagate (1st component)
+    A_sq_1 : cp.ndarray
+        The field modulus squared (1st component)
+    A_sq_2 : cp.ndarray
+        The field modulus squared (2nd component)
+    dz : float
+        Propagation step in m
+    alpha : float
+        Losses
+    V : cp.ndarray
+        Potential
+    g11 : float
+        Intra-component interactions
+    g12 : float
+        Inter-component interactions
+    Isat1 : float
+        Saturation parameter of first component
+    Isat2 : float
+        Saturation parameter of second component.
     """
     # Saturation parameter
     sat = 1 / (1 + A_sq_1 * 1 / Isat1 + A_sq_2 * 1 / Isat2)
@@ -116,17 +143,28 @@ def nl_prop_without_V_c(
     Isat1: float,
     Isat2: float,
 ) -> None:
-    """A fused kernel to apply real space terms
-    Args:
-        A1 (cp.ndarray): The field to propagate (1st component)
-        A_sq_1 (cp.ndarray): The field modulus squared (1st component)
-        A_sq_2 (cp.ndarray): The field modulus squared (2nd component)
-        dz (float): Propagation step in m
-        alpha (float): Losses
-        g11 (float): Intra-component interactions
-        g12 (float): Inter-component interactions
-        Isat1 (float): Saturation parameter of first component
-        Isat2 (float): Saturation parameter of second component
+    """Apply coupled real space terms without potential.
+
+    Parameters
+    ----------
+    A1 : cp.ndarray
+        The field to propagate (1st component)
+    A_sq_1 : cp.ndarray
+        The field modulus squared (1st component)
+    A_sq_2 : cp.ndarray
+        The field modulus squared (2nd component)
+    dz : float
+        Propagation step in m
+    alpha : float
+        Losses
+    g11 : float
+        Intra-component interactions
+    g12 : float
+        Inter-component interactions
+    Isat1 : float
+        Saturation parameter of first component
+    Isat2 : float
+        Saturation parameter of second component.
     """
     # Saturation parameter
     sat = 1 / (1 + A_sq_1 * 1 / Isat1 + A_sq_2 * 1 / Isat2)
@@ -141,15 +179,20 @@ def nl_prop_without_V_c(
 
 @cp.fuse(kernel_name="rabi_coupling")
 def rabi_coupling(A1: cp.array, A2: cp.array, dz: float, omega: float) -> None:
-    """Apply a Rabi coupling term.
-    This function implements the Rabi hopping term.
-    It exchanges density between the two components.
+    """Apply Rabi coupling term.
 
-    Args:
-        A1 (cp.ndarray): First field / component
-        A2 (cp.ndarray): Second field / component
-        dz (float): Solver step
-        omega (float): Rabi coupling strength
+    Implement the Rabi hopping term, exchanging density between components.
+
+    Parameters
+    ----------
+    A1 : cp.ndarray
+        First field / component
+    A2 : cp.ndarray
+        Second field / component
+    dz : float
+        Solver step
+    omega : float
+        Rabi coupling strength
     """
     A1_old = A1.copy()
     A1[:] = cp.cos(omega * dz) * A1 - 1j * cp.sin(omega * dz) * A2
@@ -160,34 +203,47 @@ def rabi_coupling(A1: cp.array, A2: cp.array, dz: float, omega: float) -> None:
 def vortex_cp(
     im: cp.ndarray, i: int, j: int, ii: cp.ndarray, jj: cp.ndarray, ll: int
 ) -> None:
-    """Generates a vortex of charge l at a position (i,j) on the image im.
+    """Generate a vortex of charge l at position (i,j) on the image im.
 
-    Args:
-        im (np.ndarray): Image
-        i (int): position row of the vortex
-        j (int): position column of the vortex
-        ii (int): meshgrid position row (coordinates of the image)
-        jj (int): meshgrid position column (coordinates of the image)
-        ll (int): vortex charge
+    Parameters
+    ----------
+    im : np.ndarray
+        Image
+    i : int
+        position row of the vortex
+    j : int
+        position column of the vortex
+    ii : int
+        meshgrid position row (coordinates of the image)
+    jj : int
+        meshgrid position column (coordinates of the image)
+    ll : int
+        vortex charge
 
-    Returns:
-        None
+    Returns
+    -------
+    None
     """
     im += cp.angle(((ii - i) + 1j * (jj - j)) ** ll)
 
 
 @cp.fuse(kernel_name="square_mod_cp")
 def square_mod(A: cp.ndarray, A_sq: cp.ndarray) -> None:
-    """Compute the square modulus of the field
+    """Compute the square modulus of the field.
 
-    Args:
-        A (cp.ndarray): The field
-        A_sq (cp.ndarray): The modulus squared of the field
+    Parameters
+    ----------
+    A : cp.ndarray
+        The field
+    A_sq : cp.ndarray
+        The modulus squared of the field
 
-    Returns:
-        None
+    Returns
+    -------
+    None
     """
     A_sq[:] = (A * A.conj()).real
+
 
 # Fused kernels (call separate operations for CUPY backend)
 @cp.fuse(kernel_name="square_mod_nl_prop")

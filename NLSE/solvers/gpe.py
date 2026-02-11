@@ -35,24 +35,36 @@ class GPE(NLSE):
         Solves an equation : d/dt psi = -1/2m(d2/dx2 + d2/dy2) psi + V psi +
           g psi**2 psi
 
-        Args:
-            gamma (float): Losses in Hz
-            N (float): Total number of atoms
-            window (float): Window size in m
-            g (float): Interaction energy in Hz*m^2
-            V (np.ndarray): Potential in Hz
-            m (float, optionnal): mass of one atom in kg.
-                Defaults to 87*atomic_mass for Rubidium 87.
-            NX (int, optional): Number of points in x.
-                Defaults to 1024.
-            NY (int, optional): Number of points in y.
-                Defaults to 1024.
-            sat (float): Saturation parameter in Hz/m^2.
-            nl_length (float): Non local length in m.
-                The non-local kernel is the instantiated as a Bessel function
-                to model a diffusive non-locality stored in the nl_profile
-                attribute.
-            backend (str, optional): "GPU" or "CPU". Defaults to __BACKEND__.
+        Parameters
+        ----------
+        gamma : float
+            Losses in Hz.
+        N : float
+            Total number of atoms.
+        window : float
+            Window size in m.
+        g : float
+            Interaction energy in Hz*m^2.
+        V : np.ndarray
+            Potential in Hz.
+        m : float, optional
+            Mass of one atom in kg.
+            Defaults to 87*atomic_mass for Rubidium 87.
+        NX : int, optional
+            Number of points in x.
+            Defaults to 1024.
+        NY : int, optional
+            Number of points in y.
+            Defaults to 1024.
+        sat : float
+            Saturation parameter in Hz/m^2.
+        nl_length : float
+            Non local length in m.
+            The non-local kernel is the instantiated as a Bessel function
+            to model a diffusive non-locality stored in the nl_profile
+            attribute.
+        backend : str, optional
+            "GPU" or "CPU". Defaults to __BACKEND__.
         """
         super().__init__(
             alpha=gamma,
@@ -84,8 +96,15 @@ class GPE(NLSE):
 
         Uses caching to avoid recomputing propagators with identical parameters.
 
-        Returns:
-            propagator (np.ndarray): the propagator matrix
+        Parameters
+        ----------
+        precision : str, optional
+            "single" or "double" precision. Defaults to "single".
+
+        Returns
+        -------
+        np.ndarray
+            The propagator matrix.
         """
         # Create cache key (GPE uses delta_t and m instead of delta_z and k)
         cache_key = (self.NX, self.NY, float(self.delta_t), precision, float(self.m))
@@ -107,11 +126,17 @@ class GPE(NLSE):
     def _prepare_output_array(self, E_in: np.ndarray, normalize: bool) -> np.ndarray:
         """Prepare the output array depending on __BACKEND__.
 
-        Args:
-            E_in (np.ndarray): Input array
-            normalize (bool): Normalize the field to the total power.
-        Returns:
-            np.ndarray: Output array
+        Parameters
+        ----------
+        E_in : np.ndarray
+            Input array.
+        normalize : bool
+            Normalize the field to the total power.
+
+        Returns
+        -------
+        np.ndarray
+            Output array.
         """
         if self.backend == "CUPY" and self.__CUPY_AVAILABLE__:
             A = cp.empty_like(E_in)
@@ -146,9 +171,12 @@ class GPE(NLSE):
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot a field for monitoring.
 
-        Args:
-            A_plot (np.ndarray): Field to plot
-            z (float): Propagation distance in m.
+        Parameters
+        ----------
+        A_plot : np.ndarray
+            Field to plot.
+        z : float
+            Propagation distance in m.
         """
         # if array is multi-dimensional, drop dims until the shape is 2D
         if A_plot.ndim > 2:

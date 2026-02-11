@@ -5,15 +5,15 @@ Also validates CPU backend internals (FFT plans, propagator, conservation laws).
 """
 
 import matplotlib
+
 matplotlib.use("Agg")  # non-interactive backend for plot tests
 
 import numpy as np
 import pyfftw
 import pytest
-from scipy.constants import c, epsilon_0
-
 from NLSE import CNLSE, NLSE
 from NLSE.backends import list_available_backends
+from scipy.constants import c, epsilon_0
 
 AVAILABLE_BACKENDS = list_available_backends()
 GPU_BACKENDS = [b for b in AVAILABLE_BACKENDS if b != "CPU"]
@@ -44,8 +44,16 @@ class TestCPUCorrectness:
     def test_build_fft_plan(self):
         """FFTW plans have correct type, shape, and count."""
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=N, NY=N, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=N,
+            NY=N,
+            Isat=Isat,
+            backend="CPU",
         )
         A = np.random.random((N, N)) + 1j * np.random.random((N, N))
         A = A.astype(PRECISION_COMPLEX)
@@ -59,8 +67,16 @@ class TestCPUCorrectness:
     def test_fft_roundtrip(self):
         """FFT then IFFT returns the original array."""
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=N, NY=N, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=N,
+            NY=N,
+            Isat=Isat,
+            backend="CPU",
         )
         A_orig = np.random.random((N, N)) + 1j * np.random.random((N, N))
         A_orig = A_orig.astype(PRECISION_COMPLEX)
@@ -73,7 +89,10 @@ class TestCPUCorrectness:
         simu._backend.ifft(A, plans)
 
         np.testing.assert_allclose(
-            A, A_saved, rtol=1e-5, atol=1e-6,
+            A,
+            A_saved,
+            rtol=1e-5,
+            atol=1e-6,
             err_msg="FFT roundtrip failed to recover original array",
         )
 
@@ -82,8 +101,16 @@ class TestCPUCorrectness:
         import time
 
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=N, NY=N, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=N,
+            NY=N,
+            Isat=Isat,
+            backend="CPU",
         )
         A = np.random.random((N, N)) + 1j * np.random.random((N, N))
         A = A.astype(PRECISION_COMPLEX)
@@ -103,15 +130,23 @@ class TestCPUCorrectness:
 
         # A 2048x2048 FFT+IFFT roundtrip should be well under 200ms
         assert t_per_roundtrip < 0.2, (
-            f"FFT roundtrip too slow: {t_per_roundtrip*1e3:.0f}ms "
+            f"FFT roundtrip too slow: {t_per_roundtrip * 1e3:.0f}ms "
             f"(stale wisdom file?)"
         )
 
     def test_split_step_unitarity(self):
         """Split step with delta_z=0 preserves the field."""
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=N, NY=N, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=N,
+            NY=N,
+            Isat=Isat,
+            backend="CPU",
         )
         simu.delta_z = 0
         simu.propagator = simu._build_propagator()
@@ -122,20 +157,35 @@ class TestCPUCorrectness:
         simu.propagator = simu._build_propagator()
 
         simu.split_step(
-            A, A_sq, simu.V, simu.propagator, simu.plans, precision="double",
+            A,
+            A_sq,
+            simu.V,
+            simu.propagator,
+            simu.plans,
+            precision="double",
         )
 
         np.testing.assert_allclose(
-            A, np.ones((N, N), dtype=PRECISION_COMPLEX),
-            rtol=1e-6, atol=1e-7,
+            A,
+            np.ones((N, N), dtype=PRECISION_COMPLEX),
+            rtol=1e-6,
+            atol=1e-7,
             err_msg="Split step is not unitary (delta_z=0 should preserve field)",
         )
 
     def test_propagator_correctness(self):
         """Propagator matches analytical formula."""
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=N, NY=N, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=N,
+            NY=N,
+            Isat=Isat,
+            backend="CPU",
         )
         prop = simu._build_propagator()
         expected = np.exp(
@@ -146,8 +196,16 @@ class TestCPUCorrectness:
     def test_prepare_output_array(self):
         """Output array is normalized, aligned, and contiguous."""
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=N, NY=N, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=N,
+            NY=N,
+            Isat=Isat,
+            backend="CPU",
         )
         A_in = np.random.random((N, N)) + 1j * np.random.random((N, N))
         A_in = A_in.astype(PRECISION_COMPLEX)
@@ -162,21 +220,29 @@ class TestCPUCorrectness:
 
         # Check normalization
         integral = (
-            (out.real * out.real + out.imag * out.imag)
-            * simu.delta_X
-            * simu.delta_Y
+            (out.real * out.real + out.imag * out.imag) * simu.delta_X * simu.delta_Y
         ).sum(axis=simu._last_axes)
         integral = integral * c * epsilon_0 / 2
         np.testing.assert_allclose(
-            integral, simu.power, rtol=1e-4,
+            integral,
+            simu.power,
+            rtol=1e-4,
             err_msg="Normalization failed",
         )
 
     def test_power_conservation(self):
         """Propagation with alpha=0 conserves the norm."""
         simu = NLSE(
-            0, power, window, n2, None, L,
-            NX=N, NY=N, Isat=Isat, backend="CPU",
+            0,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=N,
+            NY=N,
+            Isat=Isat,
+            backend="CPU",
         )
 
         E_in = np.ones((N, N), dtype=PRECISION_COMPLEX)
@@ -186,7 +252,9 @@ class TestCPUCorrectness:
         norm *= c * epsilon_0 / 2
 
         np.testing.assert_allclose(
-            norm, simu.power, rtol=1e-4,
+            norm,
+            simu.power,
+            rtol=1e-4,
             err_msg="Norm not conserved on CPU (alpha=0)",
         )
 
@@ -194,8 +262,16 @@ class TestCPUCorrectness:
         """Propagation with alpha>0 gives expected exponential power decay."""
         test_alpha = 10.0
         simu = NLSE(
-            test_alpha, power, window, 1e-10, None, L,
-            NX=64, NY=64, Isat=1e20, backend="CPU",
+            test_alpha,
+            power,
+            window,
+            1e-10,
+            None,
+            L,
+            NX=64,
+            NY=64,
+            Isat=1e20,
+            backend="CPU",
         )
 
         XX, YY = np.meshgrid(simu.X, simu.Y)
@@ -208,16 +284,22 @@ class TestCPUCorrectness:
         expected_ratio = np.exp(-test_alpha * L)
         actual_ratio = power_out / power_in
         rel_error = np.abs(actual_ratio - expected_ratio) / expected_ratio
-        assert rel_error < 0.01, (
-            f"Power decay incorrect on CPU: {rel_error:.2%} error"
-        )
+        assert rel_error < 0.01, f"Power decay incorrect on CPU: {rel_error:.2%} error"
 
     def test_propagation_with_potential(self):
         """CPU propagation with V produces a valid result."""
         NX = NY = 64
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=NX, NY=NY, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=NX,
+            NY=NY,
+            Isat=Isat,
+            backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
         simu.V = 1e4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2)
@@ -232,8 +314,17 @@ class TestCPUCorrectness:
         NX = NY = 64
         n12 = 0.5e-9
         simu = CNLSE(
-            alpha, power, window, n2, n12, None, L,
-            NX=NX, NY=NY, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            n12,
+            None,
+            L,
+            NX=NX,
+            NY=NY,
+            Isat=Isat,
+            backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
         E_in = np.zeros((2, NX, NY), dtype=PRECISION_COMPLEX)
@@ -257,12 +348,28 @@ class TestNLSEvsReference:
     def test_propagation_without_potential(self, backend):
         """Results without potential match CPU reference."""
         simu_ref = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=N, NY=N, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=N,
+            NY=N,
+            Isat=Isat,
+            backend="CPU",
         )
         simu_test = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=N, NY=N, Isat=Isat, backend=backend,
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=N,
+            NY=N,
+            Isat=Isat,
+            backend=backend,
         )
 
         XX, YY = np.meshgrid(simu_ref.X, simu_ref.Y)
@@ -272,7 +379,10 @@ class TestNLSEvsReference:
         E_test = simu_test.out_field(E_in.copy(), L, verbose=False, plot=False)
 
         np.testing.assert_allclose(
-            E_test, E_ref, rtol=1e-2, atol=1e-4,
+            E_test,
+            E_ref,
+            rtol=1e-2,
+            atol=1e-4,
             err_msg=f"{backend} does not match CPU reference (no potential)",
         )
 
@@ -285,12 +395,28 @@ class TestNLSEvsReference:
         V = 1e-4 * np.exp(-(XX_v**2 + YY_v**2) / (2e-3) ** 2)
 
         simu_ref = NLSE(
-            alpha, power, window, n2, V, L,
-            NX=N, NY=N, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            V,
+            L,
+            NX=N,
+            NY=N,
+            Isat=Isat,
+            backend="CPU",
         )
         simu_test = NLSE(
-            alpha, power, window, n2, V, L,
-            NX=N, NY=N, Isat=Isat, backend=backend,
+            alpha,
+            power,
+            window,
+            n2,
+            V,
+            L,
+            NX=N,
+            NY=N,
+            Isat=Isat,
+            backend=backend,
         )
 
         XX, YY = np.meshgrid(simu_ref.X, simu_ref.Y)
@@ -300,15 +426,26 @@ class TestNLSEvsReference:
         E_test = simu_test.out_field(E_in.copy(), L, verbose=False, plot=False)
 
         np.testing.assert_allclose(
-            E_test, E_ref, rtol=1e-2, atol=1e-4,
+            E_test,
+            E_ref,
+            rtol=1e-2,
+            atol=1e-4,
             err_msg=f"{backend} does not match CPU reference (with potential)",
         )
 
     def test_power_conservation(self, backend):
         """Power conservation (alpha=0) matches CPU reference."""
         simu = NLSE(
-            0, power, window, n2, None, L,
-            NX=N, NY=N, Isat=Isat, backend=backend,
+            0,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=N,
+            NY=N,
+            Isat=Isat,
+            backend=backend,
         )
 
         E_in = np.ones((N, N), dtype=PRECISION_COMPLEX)
@@ -318,23 +455,31 @@ class TestNLSEvsReference:
         norm *= c * epsilon_0 / 2
 
         np.testing.assert_allclose(
-            norm, simu.power, rtol=1e-4,
+            norm,
+            simu.power,
+            rtol=1e-4,
             err_msg=f"Norm not conserved on {backend} (alpha=0)",
         )
 
     def test_propagator_correctness(self, backend):
         """Propagator matches analytical formula on each backend."""
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=N, NY=N, Isat=Isat, backend=backend,
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=N,
+            NY=N,
+            Isat=Isat,
+            backend=backend,
         )
         prop = simu._build_propagator()
         expected = np.exp(
             -1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * simu.delta_z
         )
-        assert np.allclose(prop, expected), (
-            f"Propagator is wrong (Backend {backend})"
-        )
+        assert np.allclose(prop, expected), f"Propagator is wrong (Backend {backend})"
 
 
 @pytest.mark.parametrize("backend", GPU_BACKENDS)
@@ -347,12 +492,30 @@ class TestCNLSEvsReference:
         NX = NY = 64
 
         simu_ref = CNLSE(
-            alpha, power, window, n2, n12, None, L,
-            NX=NX, NY=NY, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            n12,
+            None,
+            L,
+            NX=NX,
+            NY=NY,
+            Isat=Isat,
+            backend="CPU",
         )
         simu_test = CNLSE(
-            alpha, power, window, n2, n12, None, L,
-            NX=NX, NY=NY, Isat=Isat, backend=backend,
+            alpha,
+            power,
+            window,
+            n2,
+            n12,
+            None,
+            L,
+            NX=NX,
+            NY=NY,
+            Isat=Isat,
+            backend=backend,
         )
 
         XX, YY = np.meshgrid(simu_ref.X, simu_ref.Y)
@@ -364,7 +527,10 @@ class TestCNLSEvsReference:
         E_test = simu_test.out_field(E_in.copy(), L, verbose=False, plot=False)
 
         np.testing.assert_allclose(
-            E_test, E_ref, rtol=1e-2, atol=1e-4,
+            E_test,
+            E_ref,
+            rtol=1e-2,
+            atol=1e-4,
             err_msg=f"CNLSE {backend} does not match CPU reference",
         )
 
@@ -425,8 +591,16 @@ class TestNLSEConstructor:
         """Window parameter accepts tuple for asymmetric grids."""
         win = (window, window * 1.5)
         simu = NLSE(
-            alpha, power, win, n2, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            win,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         assert simu.window[0] == win[0]
         assert simu.window[1] == win[1]
@@ -437,8 +611,16 @@ class TestNLSEConstructor:
         """Window parameter accepts list."""
         win = [window, window * 2]
         simu = NLSE(
-            alpha, power, win, n2, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            win,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         assert simu.window[0] == win[0]
         assert simu.window[1] == win[1]
@@ -446,16 +628,32 @@ class TestNLSEConstructor:
     def test_backend_property(self):
         """Backend property returns name string."""
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         assert simu.backend == "CPU"
 
     def test_backend_setter(self):
         """Backend can be changed via setter."""
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         assert simu.backend == "CPU"
         # Re-set to same backend (always available)
@@ -465,8 +663,17 @@ class TestNLSEConstructor:
     def test_nl_length_positive(self):
         """Positive nl_length creates Bessel non-local profile."""
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=S, NY=S, Isat=Isat, nl_length=1e-3, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            nl_length=1e-3,
+            backend="CPU",
         )
         assert simu.nl_length > 0
         # nl_profile should be a small kernel, not full grid
@@ -481,8 +688,16 @@ class TestNLSEPropagator:
     def test_propagator_caching(self):
         """Propagator is cached and reused."""
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         prop1 = simu._build_propagator()
         prop2 = simu._build_propagator()
@@ -491,8 +706,16 @@ class TestNLSEPropagator:
     def test_propagator_double_precision(self):
         """Double precision propagator has complex128 dtype."""
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         prop = simu._build_propagator(precision="double")
         assert prop.dtype == np.complex128
@@ -500,13 +723,23 @@ class TestNLSEPropagator:
     def test_propagator_rk4(self):
         """RK4 propagator does not include delta_z exponential."""
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         prop = simu._build_propagator(precision="RK4")
         expected = -1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k
         np.testing.assert_allclose(
-            prop, expected.astype(np.complex64), rtol=1e-5,
+            prop,
+            expected.astype(np.complex64),
+            rtol=1e-5,
             err_msg="RK4 propagator is wrong",
         )
 
@@ -517,8 +750,16 @@ class TestNLSESplitStep:
     def test_double_precision_without_V(self):
         """Double precision split step without potential."""
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
@@ -532,8 +773,16 @@ class TestNLSESplitStep:
     def test_double_precision_with_V(self):
         """Double precision split step with potential."""
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
         V = 1e4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
@@ -548,8 +797,16 @@ class TestNLSESplitStep:
     def test_single_precision_with_V(self):
         """Single precision split step with potential."""
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
         V = 1e4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
@@ -564,8 +821,17 @@ class TestNLSESplitStep:
     def test_nonlocal_propagation(self):
         """Split step with nl_length > 0 uses convolution."""
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=S, NY=S, Isat=Isat, nl_length=1e-3, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            nl_length=1e-3,
+            backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
@@ -580,8 +846,17 @@ class TestNLSESplitStep:
     def test_nonlocal_with_V(self):
         """Split step with nl_length > 0 and potential."""
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=S, NY=S, Isat=Isat, nl_length=1e-3, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            nl_length=1e-3,
+            backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
         V = 1e4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
@@ -596,8 +871,17 @@ class TestNLSESplitStep:
     def test_nonlocal_double_precision(self):
         """Double precision split step with nl_length > 0."""
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=S, NY=S, Isat=Isat, nl_length=1e-3, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            nl_length=1e-3,
+            backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
@@ -615,14 +899,26 @@ class TestNLSERK4:
     def test_rk4_propagation(self):
         """RK4 scheme produces valid output."""
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
 
         E_out = simu.out_field(
-            E_in, L, verbose=False, plot=False, precision="RK4",
+            E_in,
+            L,
+            verbose=False,
+            plot=False,
+            precision="RK4",
         )
         assert E_out.shape == (S, S)
         assert np.isfinite(E_out).all(), "RK4 output contains NaN/Inf"
@@ -630,13 +926,21 @@ class TestNLSERK4:
     def test_rk4_single_step_with_potential(self):
         """RK4 single step with potential exercises the V code path."""
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
         V = 1e2 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
-        A, A_sq = simu._prepare_output_array(E_in, normalize=True)
+        A, _A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
         prop = simu._build_propagator(precision="RK4")
 
@@ -649,14 +953,27 @@ class TestNLSERK4:
     def test_rk4_nonlocal(self):
         """RK4 scheme with nl_length > 0."""
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=S, NY=S, Isat=Isat, nl_length=1e-3, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            nl_length=1e-3,
+            backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
 
         E_out = simu.out_field(
-            E_in, L, verbose=False, plot=False, precision="RK4",
+            E_in,
+            L,
+            verbose=False,
+            plot=False,
+            precision="RK4",
         )
         assert np.isfinite(E_out).all()
 
@@ -667,8 +984,16 @@ class TestNLSEOutField:
     def test_verbose_output(self, capsys):
         """Verbose mode prints timing info."""
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
@@ -685,8 +1010,16 @@ class TestNLSEOutField:
             call_count[0] += 1
 
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
@@ -705,14 +1038,25 @@ class TestNLSEOutField:
             counts[idx] += 1
 
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
 
         simu.out_field(
-            E_in, L, verbose=False, plot=False,
+            E_in,
+            L,
+            verbose=False,
+            plot=False,
             callback=[cb1, cb2],
             callback_args=[(0,), (1,)],
         )
@@ -722,22 +1066,41 @@ class TestNLSEOutField:
     def test_callback_invalid_raises(self):
         """Invalid callback type raises ValueError."""
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         E_in = np.ones((S, S), dtype=PRECISION_COMPLEX)
 
         with pytest.raises(ValueError, match="callbacks should be a callable"):
             simu.out_field(
-                E_in, L, verbose=False, plot=False,
+                E_in,
+                L,
+                verbose=False,
+                plot=False,
                 callback="not_a_callable",
             )
 
     def test_normalize_false(self):
         """normalize=False skips power normalization."""
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
@@ -749,8 +1112,16 @@ class TestNLSEOutField:
     def test_double_precision_out_field(self):
         """Double precision propagation produces valid result."""
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
@@ -761,8 +1132,16 @@ class TestNLSEOutField:
     def test_double_precision_with_potential(self):
         """Double precision propagation with V."""
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
         simu.V = 1e4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
@@ -779,8 +1158,17 @@ class TestCNLSEExtended:
         """CNLSE propagator has two components."""
         n12_local = 0.5e-9
         simu = CNLSE(
-            alpha, power, window, n2, n12_local, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            n12_local,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         prop = simu._build_propagator()
         assert prop.shape == (2, S, S)
@@ -790,8 +1178,17 @@ class TestCNLSEExtended:
         """CNLSE propagator is cached."""
         n12_local = 0.5e-9
         simu = CNLSE(
-            alpha, power, window, n2, n12_local, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            n12_local,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         prop1 = simu._build_propagator()
         prop2 = simu._build_propagator()
@@ -801,8 +1198,17 @@ class TestCNLSEExtended:
         """CNLSE RK4 propagator."""
         n12_local = 0.5e-9
         simu = CNLSE(
-            alpha, power, window, n2, n12_local, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            n12_local,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         prop = simu._build_propagator(precision="RK4")
         assert prop.shape == (2, S, S)
@@ -813,8 +1219,17 @@ class TestCNLSEExtended:
         """_take_components returns views on CPU."""
         n12_local = 0.5e-9
         simu = CNLSE(
-            alpha, power, window, n2, n12_local, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            n12_local,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         A = np.ones((2, S, S), dtype=PRECISION_COMPLEX)
         A[0] *= 2.0
@@ -829,8 +1244,17 @@ class TestCNLSEExtended:
         """CNLSE double precision split step without V."""
         n12_local = 0.5e-9
         simu = CNLSE(
-            alpha, power, window, n2, n12_local, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            n12_local,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
         E_in = np.zeros((2, S, S), dtype=PRECISION_COMPLEX)
@@ -845,8 +1269,17 @@ class TestCNLSEExtended:
         """CNLSE single precision with potential."""
         n12_local = 0.5e-9
         simu = CNLSE(
-            alpha, power, window, n2, n12_local, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            n12_local,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
         simu.V = 1e4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
@@ -862,8 +1295,17 @@ class TestCNLSEExtended:
         """CNLSE double precision with potential."""
         n12_local = 0.5e-9
         simu = CNLSE(
-            alpha, power, window, n2, n12_local, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            n12_local,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
         simu.V = 1e4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
@@ -880,8 +1322,18 @@ class TestCNLSEExtended:
         n12_local = 0.5e-9
         omega = 1e3
         simu = CNLSE(
-            alpha, power, window, n2, n12_local, None, L,
-            NX=S, NY=S, Isat=Isat, omega=omega, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            n12_local,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            omega=omega,
+            backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
         E_in = np.zeros((2, S, S), dtype=PRECISION_COMPLEX)
@@ -901,8 +1353,17 @@ class TestCNLSEExtended:
         """CNLSE _prepare_output_array normalizes both components."""
         n12_local = 0.5e-9
         simu = CNLSE(
-            alpha, power, window, n2, n12_local, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            n12_local,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         E_in = np.ones((2, S, S), dtype=PRECISION_COMPLEX)
         out, out_sq = simu._prepare_output_array(E_in, normalize=True)
@@ -911,12 +1372,13 @@ class TestCNLSEExtended:
         assert out_sq.shape == (2, S, S)
         # Check normalization for each component
         integral = (
-            (out.real * out.real + out.imag * out.imag)
-            * simu.delta_X * simu.delta_Y
+            (out.real * out.real + out.imag * out.imag) * simu.delta_X * simu.delta_Y
         ).sum(axis=simu._last_axes)
         integral *= c * epsilon_0 / 2
         np.testing.assert_allclose(
-            integral, [simu.power, simu.power2], rtol=1e-4,
+            integral,
+            [simu.power, simu.power2],
+            rtol=1e-4,
             err_msg="CNLSE normalization failed",
         )
 
@@ -924,8 +1386,18 @@ class TestCNLSEExtended:
         """CNLSE with nl_length > 0."""
         n12_local = 0.5e-9
         simu = CNLSE(
-            alpha, power, window, n2, n12_local, None, L,
-            NX=S, NY=S, Isat=Isat, nl_length=1e-3, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            n12_local,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            nl_length=1e-3,
+            backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
         E_in = np.zeros((2, S, S), dtype=PRECISION_COMPLEX)
@@ -940,8 +1412,18 @@ class TestCNLSEExtended:
         """CNLSE with nl_length > 0 and double precision."""
         n12_local = 0.5e-9
         simu = CNLSE(
-            alpha, power, window, n2, n12_local, None, L,
-            NX=S, NY=S, Isat=Isat, nl_length=1e-3, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            n12_local,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            nl_length=1e-3,
+            backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
         E_in = np.zeros((2, S, S), dtype=PRECISION_COMPLEX)
@@ -956,8 +1438,18 @@ class TestCNLSEExtended:
         """CNLSE with nl_length > 0 and potential."""
         n12_local = 0.5e-9
         simu = CNLSE(
-            alpha, power, window, n2, n12_local, None, L,
-            NX=S, NY=S, Isat=Isat, nl_length=1e-3, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            n12_local,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            nl_length=1e-3,
+            backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
         simu.V = 1e4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
@@ -973,8 +1465,17 @@ class TestCNLSEExtended:
         """CNLSE with alpha=0 conserves total power."""
         n12_local = 0.5e-9
         simu = CNLSE(
-            0, power, window, n2, n12_local, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            0,
+            power,
+            window,
+            n2,
+            n12_local,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         E_in = np.ones((2, S, S), dtype=PRECISION_COMPLEX)
         E_out = simu.out_field(E_in, L, verbose=False, plot=False)
@@ -985,7 +1486,9 @@ class TestCNLSEExtended:
         )
         norm *= c * epsilon_0 / 2
         np.testing.assert_allclose(
-            norm, [simu.power, simu.power2], rtol=1e-4,
+            norm,
+            [simu.power, simu.power2],
+            rtol=1e-4,
             err_msg="CNLSE norm not conserved (alpha=0)",
         )
 
@@ -998,8 +1501,16 @@ class TestPlotField:
         import matplotlib.pyplot as plt
 
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         A = np.ones((S, S), dtype=PRECISION_COMPLEX)
         simu.plot_field(A, L)
@@ -1010,8 +1521,16 @@ class TestPlotField:
         import matplotlib.pyplot as plt
 
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         A = np.ones((3, S, S), dtype=PRECISION_COMPLEX)
         simu.plot_field(A, L)
@@ -1023,8 +1542,17 @@ class TestPlotField:
 
         n12_local = 0.5e-9
         simu = CNLSE(
-            alpha, power, window, n2, n12_local, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            n12_local,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         A = np.ones((2, S, S), dtype=PRECISION_COMPLEX)
         simu.plot_field(A, L)
@@ -1035,8 +1563,16 @@ class TestPlotField:
         import matplotlib.pyplot as plt
 
         simu = NLSE(
-            alpha, power, window, n2, None, L,
-            NX=S, NY=S, Isat=Isat, backend="CPU",
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)

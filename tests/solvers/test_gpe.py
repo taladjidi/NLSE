@@ -1,7 +1,6 @@
 import numpy as np
-from scipy.constants import atomic_mass, hbar
-
 from NLSE import GPE
+from scipy.constants import atomic_mass, hbar
 
 if GPE.__CUPY_AVAILABLE__:
     import cupy as cp
@@ -64,14 +63,13 @@ def test_prepare_output_array() -> None:
             backend=backend,
         )
         if backend == "CUPY" and GPE.__CUPY_AVAILABLE__:
-            E_in = cp.random.random((N, N)).astype(PRECISION_REAL) + 1j * cp.random.random(
-                (N, N)
-            ).astype(PRECISION_REAL)
+            E_in = cp.random.random((N, N)).astype(
+                PRECISION_REAL
+            ) + 1j * cp.random.random((N, N)).astype(PRECISION_REAL)
         else:
-            E_in = (
-                np.random.random((N, N)).astype(PRECISION_REAL)
-                + 1j * np.random.random((N, N)).astype(PRECISION_REAL)
-            )
+            E_in = np.random.random((N, N)).astype(
+                PRECISION_REAL
+            ) + 1j * np.random.random((N, N)).astype(PRECISION_REAL)
         A, A_sq = simu._prepare_output_array(E_in, normalize=True)
         # Convert CL arrays to numpy for assertions
         if backend == "CL":

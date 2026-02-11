@@ -8,8 +8,6 @@ Benchmarks:
 
 import numpy as np
 import pytest
-from scipy.constants import c
-
 from NLSE import CNLSE, DDGPE, GPE, NLSE, CNLSE_1d, NLSE_1d, NLSE_3d
 from NLSE.backends import list_available_backends
 from NLSE.kernels.cpu import (
@@ -21,6 +19,7 @@ from NLSE.kernels.cpu import (
     square_mod,
     vortex,
 )
+from scipy.constants import c
 
 # Test parameters
 N = 64
