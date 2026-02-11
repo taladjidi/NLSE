@@ -489,15 +489,18 @@ class OpenCLKernels:
         global_size = (int(A.size),)
         kernels["apply_propagator"](self.queue, global_size, None, A.data, propagator.data)
 
-    def rabi_coupling(self, A: cla.Array, dz: float, omega: float) -> None:
+    def rabi_coupling(
+        self, A1: cla.Array, A2: cla.Array, dz: float, omega: float
+    ) -> None:
         """Apply Rabi coupling term using PyOpenCL array expressions.
 
         Args:
-            A: Field array (two-component)
+            A1: First field component
+            A2: Second field component
             dz: Solver step
             omega: Rabi coupling strength
         """
-        _rabi_coupling_impl(A, dz, omega)
+        _rabi_coupling_impl(A1, A2, dz, omega)
 
     def vortex_cp(
         self, im: cla.Array, i: int, j: int, ii: cla.Array, jj: cla.Array, ll: int
@@ -518,21 +521,22 @@ class OpenCLKernels:
 # Helper functions using PyOpenCL array expressions (not yet optimized with OpenCL C)
 
 
-def _rabi_coupling_impl(A, dz: float, omega: float) -> None:
+def _rabi_coupling_impl(
+    A1: cla.Array, A2: cla.Array, dz: float, omega: float
+) -> None:
     """Apply a Rabi coupling term using PyOpenCL array expressions.
 
     Args:
-        A (cla.Array): First field / component
+        A1 (cla.Array): First field component
+        A2 (cla.Array): Second field component
         dz (float): Solver step
         omega (float): Rabi coupling strength
     """
-    from pyopencl import clmath
-
-    A1 = A[..., 0, :, :]
-    A2 = A[..., 1, :, :]
+    cos_val = np.cos(omega * dz)
+    sin_val = np.sin(omega * dz)
     A1_old = A1.copy()
-    A1[:] = clmath.cos(omega * dz) * A1 - 1j * clmath.sin(omega * dz) * A2
-    A2[:] = clmath.cos(omega * dz) * A2 - 1j * clmath.sin(omega * dz) * A1_old
+    A1[:] = cos_val * A1 - 1j * sin_val * A2
+    A2[:] = cos_val * A2 - 1j * sin_val * A1_old
 
 
 def _vortex_cp_impl(

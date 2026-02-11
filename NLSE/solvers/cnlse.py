@@ -535,8 +535,8 @@ class CNLSE(NLSE):
 
         # For GPU backends, copy modified components back to original array
         if self._backend.name in ["CL", "CUPY"]:
-            A[0, :, :] = A1
-            A[1, :, :] = A2
+            A[0] = A1
+            A[1] = A2
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot the field.

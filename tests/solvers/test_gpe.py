@@ -10,9 +10,8 @@ PRECISION_REAL = np.float32
 AVAILABLE_BACKENDS = ["CPU"]
 if GPE.__CUPY_AVAILABLE__:
     AVAILABLE_BACKENDS.append("CUPY")
-# TODO: Write OpenCL tests
-# if CNLSE.__PYOPENCL_AVAILABLE__:
-#     AVAILABLE_BACKENDS.append("CL")
+if GPE.__PYOPENCL_AVAILABLE__:
+    AVAILABLE_BACKENDS.append("CL")
 
 N = 2048
 N_at = 1e6
@@ -64,11 +63,20 @@ def test_prepare_output_array() -> None:
             NY=N,
             backend=backend,
         )
-        if backend == "CPU":
-            E_in = np.random.random((N, N)) + 1j * np.random.random((N, N))
-        elif backend == "CUPY" and GPE.__CUPY_AVAILABLE__:
-            E_in = cp.random.random((N, N)) + 1j * cp.random.random((N, N))
+        if backend == "CUPY" and GPE.__CUPY_AVAILABLE__:
+            E_in = cp.random.random((N, N)).astype(PRECISION_REAL) + 1j * cp.random.random(
+                (N, N)
+            ).astype(PRECISION_REAL)
+        else:
+            E_in = (
+                np.random.random((N, N)).astype(PRECISION_REAL)
+                + 1j * np.random.random((N, N)).astype(PRECISION_REAL)
+            )
         A, A_sq = simu._prepare_output_array(E_in, normalize=True)
+        # Convert CL arrays to numpy for assertions
+        if backend == "CL":
+            A = A.get()
+            A_sq = A_sq.get()
         assert A.flags.c_contiguous, (
             f"Output array is not C-contiguous. (Backend {backend})"
         )
@@ -86,22 +94,22 @@ def test_prepare_output_array() -> None:
         assert np.allclose(integral, simu.N), (
             f"Normalization failed. (Backend {backend})"
         )
-        if backend == "CPU":
-            assert isinstance(A, np.ndarray), (
-                f"Output array type does not match backend. (Backend {backend})"
-            )
-            A /= np.max(np.abs(A))
-            E_in /= np.max(np.abs(E_in))
-            assert np.allclose(E_in, A), (
-                f"Output array does not match input array. (Backend {backend})"
-            )
-        elif backend == "CUPY" and GPE.__CUPY_AVAILABLE__:
+        if backend == "CUPY" and GPE.__CUPY_AVAILABLE__:
             assert isinstance(A, cp.ndarray), (
                 f"Output array type does not match backend. (Backend {backend})"
             )
             A /= cp.max(cp.abs(A))
             E_in /= cp.max(cp.abs(E_in))
             assert cp.allclose(E_in, A), (
+                f"Output array does not match input array. (Backend {backend})"
+            )
+        else:
+            assert isinstance(A, np.ndarray), (
+                f"Output array type does not match backend. (Backend {backend})"
+            )
+            A /= np.max(np.abs(A))
+            E_in /= np.max(np.abs(E_in))
+            assert np.allclose(E_in, A), (
                 f"Output array does not match input array. (Backend {backend})"
             )
 

@@ -104,15 +104,16 @@ class CNLSE_1d(CNLSE):
         if normalize:
             # normalization of the field (use contiguous formula)
             if self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
-                E_cl = cla.to_device(self._backend.queue, E)
-                arr = (E_cl * E_cl.conj()).real
-                arr = arr * self._norm_grid_factor
-                integral = cla.sum(
-                    arr, dtype=arr.dtype, queue=self._backend.queue
-                ).get()
+                # Compute normalization on numpy (per-component sum)
+                arr = (E * E.conj()).real * self._norm_grid_factor
+                integral = arr.sum(axis=self._last_axes)
                 integral *= self._norm_constant
                 E_00 = (puiss_arr / integral) ** 0.5
-                E_00_cl = cla.to_device(self._backend.queue, E_00.astype(E.dtype))
+                # Convert to CL for assignment
+                E_00_cl = cla.to_device(
+                    self._backend.queue, E_00.astype(E.dtype)
+                )
+                E_cl = cla.to_device(self._backend.queue, E)
                 A[0] = E_00_cl[0] * E_cl[0]
                 A[1] = E_00_cl[1] * E_cl[1]
             else:
@@ -139,6 +140,13 @@ class CNLSE_1d(CNLSE):
         """
         A1 = A[..., 0, :]
         A2 = A[..., 1, :]
+
+        # OpenCL/CUPY backends don't support offset arrays - make contiguous copies
+        if self._backend.name in ["CL", "CUPY"]:
+            if hasattr(A1, 'copy'):
+                A1 = A1.copy()
+                A2 = A2.copy()
+
         return A1, A2
 
     def _build_propagator(self, precision: str = "single") -> np.ndarray:

@@ -12,9 +12,8 @@ PRECISION_REAL = np.float32
 AVAILABLE_BACKENDS = ["CPU"]
 if NLSE_3d.__CUPY_AVAILABLE__:
     AVAILABLE_BACKENDS.append("CUPY")
-# TODO
-# if NLSE_3d.__PYOPENCL_AVAILABLE__:
-#     AVAILABLE_BACKENDS.append("CL")
+if NLSE_3d.__PYOPENCL_AVAILABLE__:
+    AVAILABLE_BACKENDS.append("CL")
 
 N = 256
 NZ = 128
@@ -76,27 +75,32 @@ def test_build_fft_plan() -> None:
             Isat=Isat,
             backend=backend,
         )
-        if backend == "CPU":
-            A = np.random.random((N, N, NZ)) + 1j * np.random.random((N, N, NZ))
-        elif backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
-            A = cp.random.random((N, N, NZ)) + 1j * cp.random.random((N, N, NZ))
-        plans = simu._build_fft_plan(A)
-        if backend == "CPU":
-            assert len(plans) == 2, f"Number of plans is wrong. (Backend {backend})"
-            assert isinstance(plans[0], pyfftw.FFTW), (
-                f"Plan type is wrong. (Backend {backend})"
+        if backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
+            A = cp.random.random((N, N, NZ)).astype(PRECISION_REAL) + 1j * cp.random.random(
+                (N, N, NZ)
+            ).astype(PRECISION_REAL)
+        else:
+            A = (
+                np.random.random((N, N, NZ)).astype(PRECISION_REAL)
+                + 1j * np.random.random((N, N, NZ)).astype(PRECISION_REAL)
             )
-            assert plans[0].output_shape == (
-                N,
-                N,
-                NZ,
-            ), f"Plan shape is wrong. (Backend {backend})"
-        elif backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
+        plans = simu._build_fft_plan(A)
+        if backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
             assert len(plans) == 1, f"Number of plans is wrong. (Backend {backend})"
             assert isinstance(plans[0], VkFFTApp), (
                 f"Plan type is wrong. (Backend {backend})"
             )
             assert plans[0].shape0 == (
+                N,
+                N,
+                NZ,
+            ), f"Plan shape is wrong. (Backend {backend})"
+        elif backend == "CPU":
+            assert len(plans) == 2, f"Number of plans is wrong. (Backend {backend})"
+            assert isinstance(plans[0], pyfftw.FFTW), (
+                f"Plan type is wrong. (Backend {backend})"
+            )
+            assert plans[0].output_shape == (
                 N,
                 N,
                 NZ,
@@ -120,11 +124,20 @@ def test_prepare_output_array() -> None:
             Isat=Isat,
             backend=backend,
         )
-        if backend == "CPU":
-            A = np.random.random((N, N, NZ)) + 1j * np.random.random((N, N, NZ))
-        elif backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
-            A = cp.random.random((N, N, NZ)) + 1j * cp.random.random((N, N, NZ))
+        if backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
+            A = cp.random.random((N, N, NZ)).astype(PRECISION_REAL) + 1j * cp.random.random(
+                (N, N, NZ)
+            ).astype(PRECISION_REAL)
+        else:
+            A = (
+                np.random.random((N, N, NZ)).astype(PRECISION_REAL)
+                + 1j * np.random.random((N, N, NZ)).astype(PRECISION_REAL)
+            )
         out, out_sq = simu._prepare_output_array(A, normalize=True)
+        # Convert CL arrays to numpy for assertions
+        if backend == "CL":
+            out = out.get()
+            out_sq = out_sq.get()
         assert out.flags.c_contiguous, (
             f"Output array is not C-contiguous. (Backend {backend})"
         )
@@ -153,22 +166,22 @@ def test_prepare_output_array() -> None:
             N,
             NZ,
         ), f"Output array has wrong shape. (Backend {backend})"
-        if backend == "CPU":
-            assert isinstance(out, np.ndarray), (
-                f"Output array type does not match backend. (Backend {backend})"
-            )
-            out /= np.max(np.abs(out))
-            A /= np.max(np.abs(A))
-            assert np.allclose(out, A), (
-                f"Output array does not match input array. (Backend {backend})"
-            )
-        elif backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
+        if backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
             assert isinstance(out, cp.ndarray), (
                 f"Output array type does not match backend. (Backend {backend})"
             )
             out /= cp.max(cp.abs(out))
             A /= cp.max(cp.abs(A))
             assert cp.allclose(out, A), (
+                f"Output array does not match input array. (Backend {backend})"
+            )
+        else:
+            assert isinstance(out, np.ndarray), (
+                f"Output array type does not match backend. (Backend {backend})"
+            )
+            out /= np.max(np.abs(out))
+            A /= np.max(np.abs(A))
+            assert np.allclose(out, A), (
                 f"Output array does not match input array. (Backend {backend})"
             )
 
@@ -285,18 +298,19 @@ def test_split_step() -> None:
         A, A_sq = simu._prepare_output_array(E, normalize=False)
         simu.plans = simu._build_fft_plan(A)
         simu.propagator = simu._build_propagator()
-        if backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
-            E = cp.asarray(E)
+        if backend in ["CUPY", "CL"]:
             simu._send_arrays_to_gpu()
         simu.split_step(
-            E, A_sq, simu.V, simu.propagator, simu.plans, precision="double"
+            A, A_sq, simu.V, simu.propagator, simu.plans, precision="double"
         )
-        if backend == "CPU":
-            assert np.allclose(E, np.ones((N, N, NZ), dtype=PRECISION_COMPLEX)), (
+        if backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
+            assert cp.allclose(A, cp.ones((N, N, NZ), dtype=PRECISION_COMPLEX)), (
                 f"Split step is not unitary. (Backend {backend})"
             )
-        elif backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
-            assert cp.allclose(E, cp.ones((N, N, NZ), dtype=PRECISION_COMPLEX)), (
+        else:
+            if backend == "CL":
+                A = A.get()
+            assert np.allclose(A, np.ones((N, N, NZ), dtype=PRECISION_COMPLEX)), (
                 f"Split step is not unitary. (Backend {backend})"
             )
 

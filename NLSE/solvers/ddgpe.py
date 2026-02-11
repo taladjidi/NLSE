@@ -301,8 +301,10 @@ class DDGPE(CNLSE):
         Returns:
             None
         """
-        if self.backend == "CUPY" and self.__CUPY_AVAILABLE__:
-            # on GPU, only one plan for both FFT directions
+        if (self.backend == "CUPY" and self.__CUPY_AVAILABLE__) or (
+            self.backend == "CL" and self.__PYOPENCL_AVAILABLE__
+        ):
+            # on GPU/CL, only one plan for both FFT directions
             plan_fft = plans[0]
         else:
             plan_fft, plan_ifft = plans
@@ -366,10 +368,15 @@ class DDGPE(CNLSE):
                     self.I_sat,
                     self.I_sat2,
                 )
-        if self.backend == "CUPY" and self.__CUPY_AVAILABLE__:
+        if (self.backend == "CUPY" and self.__CUPY_AVAILABLE__) or (
+            self.backend == "CL" and self.__PYOPENCL_AVAILABLE__
+        ):
             plan_fft.fft(A, A)
             # linear step in Fourier domain (shifted)
-            cp.multiply(A, propagator, out=A)
+            if self.backend == "CUPY":
+                cp.multiply(A, propagator, out=A)
+            else:
+                A *= propagator
             plan_fft.ifft(A, A)
         else:
             plan_fft, plan_ifft = plans
