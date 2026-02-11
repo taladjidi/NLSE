@@ -227,6 +227,19 @@ def vortex_cp(
     im += cp.angle(((ii - i) + 1j * (jj - j)) ** ll)
 
 
+def apply_propagator(A: cp.ndarray, propagator: cp.ndarray) -> None:
+    """Apply the linear propagator in Fourier space.
+
+    Parameters
+    ----------
+    A : cp.ndarray
+        The field in Fourier space.
+    propagator : cp.ndarray
+        The propagator matrix.
+    """
+    A *= propagator
+
+
 @cp.fuse(kernel_name="square_mod_cp")
 def square_mod(A: cp.ndarray, A_sq: cp.ndarray) -> None:
     """Compute the square modulus of the field.

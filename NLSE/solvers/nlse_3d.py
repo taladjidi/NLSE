@@ -1,6 +1,5 @@
 import matplotlib.pyplot as plt
 import numpy as np
-import pyfftw
 from scipy.constants import c, epsilon_0
 
 from ..utils import __BACKEND__, __CUPY_AVAILABLE__, __PYOPENCL_AVAILABLE__
@@ -163,17 +162,20 @@ class NLSE_3d(NLSE):
         self._propagator_cache[cache_key] = propagator
         return propagator
 
-    def _prepare_output_array(self, E_in: np.ndarray, normalize: bool) -> np.ndarray:
-        """Prepare the output arrays depending on __BACKEND__.
+    def _prepare_output_array(
+        self, E_in: np.ndarray, normalize: bool
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Prepare the output arrays depending on backend.
 
         Prepares the A and A_sq arrays to store the field and its modulus.
+        Overrides base class to normalize to energy instead of power.
 
         Parameters
         ----------
         E_in : np.ndarray
             Input array.
         normalize : bool
-            Normalize the field to the total power.
+            Normalize the field to the total energy.
 
         Returns
         -------
@@ -182,41 +184,28 @@ class NLSE_3d(NLSE):
         A_sq : np.ndarray
             Output field modulus squared array.
         """
-        if self.backend == "CUPY" and self.__CUPY_AVAILABLE__:
-            A = cp.zeros_like(E_in)
-            A_sq = cp.zeros_like(A, dtype=A.real.dtype)
-            E_in = cp.asarray(E_in)
-        elif self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
-            A = cla.zeros(self._backend.queue, E_in.shape, E_in.dtype)
-            A_sq = cla.zeros(self._backend.queue, E_in.shape, E_in.real.dtype)
-        else:
-            A = pyfftw.zeros_aligned(
-                E_in.shape, dtype=E_in.dtype, n=pyfftw.simd_alignment
-            )
-            A_sq = np.zeros_like(A, dtype=A.real.dtype)
+        A = self._backend.allocate_field(E_in.shape, E_in.dtype)
+        A_sq = self._backend.allocate_real_field(E_in.shape, E_in.real.dtype)
+        E_in = self._backend.from_numpy(E_in)
+
         if normalize:
-            # normalization of the field (use contiguous formula)
-            if self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
-                E_in_cl = cla.to_device(self._backend.queue, E_in)
-                arr = (E_in_cl * E_in_cl.conj()).real
-                arr = arr * self._norm_grid_factor
-                integral = cla.sum(
-                    arr, dtype=arr.dtype, queue=self._backend.queue
-                ).get()
-                integral *= self._norm_constant
+            arr = (E_in * E_in.conj()).real
+            arr = arr * self._norm_grid_factor
+            if self._backend.name == "CL":
+                arr_np = arr.get()
+                E_in_np = E_in.get()
+                integral = np.sum(arr_np, axis=self._last_axes)
+                integral = integral * self._norm_constant
                 E_00 = (self.energy / integral) ** 0.5
-                A[:] = E_00 * E_in_cl
+                result = (E_00.T * E_in_np.T).T.astype(E_in.dtype)
+                A[:] = cla.to_device(self._backend.queue, result)
             else:
-                arr = (E_in * E_in.conj()).real * self._norm_grid_factor
-                integral = arr.sum(axis=self._last_axes)
-                integral *= self._norm_constant
+                integral = np.sum(arr, axis=self._last_axes)
+                integral = integral * self._norm_constant
                 E_00 = (self.energy / integral) ** 0.5
                 A[:] = (E_00.T * E_in.T).T
         else:
-            if self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
-                A[:] = cla.to_device(self._backend.queue, E_in)
-            else:
-                A[:] = E_in
+            A[:] = E_in
         return A, A_sq
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:

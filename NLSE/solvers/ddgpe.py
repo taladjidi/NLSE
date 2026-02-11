@@ -400,13 +400,7 @@ class DDGPE(CNLSE):
         if precision == "double" and self._backend.name in ["CL", "CUPY"]:
             A[0] = A1
             A[1] = A2
-        self._backend.fft(A, plans)
-        kernels = self._backend.kernels
-        if hasattr(kernels, "apply_propagator"):
-            kernels.apply_propagator(A, propagator)
-        else:
-            A *= propagator
-        self._backend.ifft(A, plans)
+        self._apply_linear_step(A, propagator, plans)
         # Re-extract components after FFT/IFFT (CL/CUPY copies are now stale)
         A1, A2 = self._take_components(A)
         self._backend.kernels.square_mod(A, A_sq)

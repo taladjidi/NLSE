@@ -339,6 +339,24 @@ class NLSE:
             if not isinstance(self.I_sat, (int, float)):
                 self.I_sat = self._backend.to_numpy(self.I_sat)
 
+    def _apply_linear_step(
+        self, A: np.ndarray, propagator: np.ndarray, plans: list
+    ) -> None:
+        """Apply linear propagation: FFT, propagator multiply, IFFT.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            Field to propagate (modified in-place).
+        propagator : np.ndarray
+            Propagator matrix.
+        plans : list
+            List of FFT plan objects from backend.
+        """
+        self._backend.fft(A, plans)
+        self._backend.kernels.apply_propagator(A, propagator)
+        self._backend.ifft(A, plans)
+
     def split_step(
         self,
         A: np.ndarray,
@@ -397,7 +415,7 @@ class NLSE:
                         self.k / 2 * self.n2 * c * epsilon_0,
                         2 * self.I_sat / (epsilon_0 * c),
                     )
-            elif hasattr(kernels, "square_mod_nl_prop"):
+            else:
                 if V is None:
                     kernels.square_mod_nl_prop(
                         A,
@@ -416,37 +434,9 @@ class NLSE:
                         self.k / 2 * self.n2 * c * epsilon_0,
                         2 * self.I_sat / (epsilon_0 * c),
                     )
-            else:
-                kernels.square_mod(A, A_sq)
-                if V is None:
-                    kernels.nl_prop_without_V(
-                        A,
-                        A_sq,
-                        self.delta_z / 2,
-                        self.alpha / 2,
-                        self.k / 2 * self.n2 * c * epsilon_0,
-                        2 * self.I_sat / (epsilon_0 * c),
-                    )
-                else:
-                    V_scaled = V * np.float32(self.k / 2)
-                    kernels.nl_prop(
-                        A,
-                        A_sq,
-                        self.delta_z / 2,
-                        self.alpha / 2,
-                        V_scaled,
-                        self.k / 2 * self.n2 * c * epsilon_0,
-                        2 * self.I_sat / (epsilon_0 * c),
-                    )
 
         # Linear propagation in Fourier domain
-        self._backend.fft(A, plans)
-        # Use optimized propagator kernel if available (OpenCL), else array expression
-        if hasattr(kernels, "apply_propagator"):
-            kernels.apply_propagator(A, propagator)
-        else:
-            A *= propagator
-        self._backend.ifft(A, plans)
+        self._apply_linear_step(A, propagator, plans)
 
         # Second half-step (always executed)
         # Determine step size based on precision mode
@@ -478,51 +468,25 @@ class NLSE:
                     2 * self.I_sat / (epsilon_0 * c),
                 )
         else:
-            # Use fused kernel if available (OpenCL, CUPY), else separate calls
-            if hasattr(kernels, "square_mod_nl_prop"):
-                if V is None:
-                    kernels.square_mod_nl_prop(
-                        A,
-                        dz_step,
-                        self.alpha / 2,
-                        self.k / 2 * self.n2 * c * epsilon_0,
-                        2 * self.I_sat / (epsilon_0 * c),
-                    )
-                else:
-                    # Scale V with correct dtype
-                    V_scaled = V * np.float32(self.k / 2)
-                    kernels.square_mod_nl_prop_v(
-                        A,
-                        V_scaled,
-                        dz_step,
-                        self.alpha / 2,
-                        self.k / 2 * self.n2 * c * epsilon_0,
-                        2 * self.I_sat / (epsilon_0 * c),
-                    )
+            if V is None:
+                kernels.square_mod_nl_prop(
+                    A,
+                    dz_step,
+                    self.alpha / 2,
+                    self.k / 2 * self.n2 * c * epsilon_0,
+                    2 * self.I_sat / (epsilon_0 * c),
+                )
             else:
-                # CPU backend: use separate optimized calls
-                kernels.square_mod(A, A_sq)
-                if V is None:
-                    kernels.nl_prop_without_V(
-                        A,
-                        A_sq,
-                        dz_step,
-                        self.alpha / 2,
-                        self.k / 2 * self.n2 * c * epsilon_0,
-                        2 * self.I_sat / (epsilon_0 * c),
-                    )
-                else:
-                    # Scale V with correct dtype
-                    V_scaled = V * np.float32(self.k / 2)
-                    kernels.nl_prop(
-                        A,
-                        A_sq,
-                        dz_step,
-                        self.alpha / 2,
-                        V_scaled,
-                        self.k / 2 * self.n2 * c * epsilon_0,
-                        2 * self.I_sat / (epsilon_0 * c),
-                    )
+                # Scale V with correct dtype
+                V_scaled = V * np.float32(self.k / 2)
+                kernels.square_mod_nl_prop_v(
+                    A,
+                    V_scaled,
+                    dz_step,
+                    self.alpha / 2,
+                    self.k / 2 * self.n2 * c * epsilon_0,
+                    2 * self.I_sat / (epsilon_0 * c),
+                )
 
     def _RK4_rhs_non_mutating(
         self,

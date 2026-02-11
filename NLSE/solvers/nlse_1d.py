@@ -1,16 +1,9 @@
 import matplotlib.pyplot as plt
 import numpy as np
-import pyfftw
 from scipy.constants import c, epsilon_0
 
-from ..utils import __BACKEND__, __CUPY_AVAILABLE__, __PYOPENCL_AVAILABLE__
+from ..utils import __BACKEND__
 from .nlse import NLSE
-
-if __CUPY_AVAILABLE__:
-    import cupy as cp
-
-if __PYOPENCL_AVAILABLE__:
-    from pyopencl import array as cla
 
 
 class NLSE_1d(NLSE):
@@ -78,58 +71,6 @@ class NLSE_1d(NLSE):
 
         # Override normalization factor for 1D (delta_X^2 instead of delta_X * delta_Y)
         self._norm_grid_factor = np.float32(self.delta_X**2)
-
-    def _prepare_output_array(self, E_in: np.ndarray, normalize: bool) -> np.ndarray:
-        """Prepare the output array depending on __BACKEND__.
-
-        Parameters
-        ----------
-        E_in : np.ndarray
-            Input array.
-        normalize : bool
-            Normalize the field to the total power.
-
-        Returns
-        -------
-        np.ndarray
-            Output array.
-        """
-        if self.backend == "CUPY" and self.__CUPY_AVAILABLE__:
-            A = cp.zeros_like(E_in)
-            A_sq = cp.zeros_like(A, dtype=A.real.dtype)
-            E_in = cp.asarray(E_in)
-        elif self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
-            A = cla.zeros(self._backend.queue, E_in.shape, E_in.dtype)
-            A_sq = cla.zeros(self._backend.queue, E_in.shape, E_in.real.dtype)
-        else:
-            A = pyfftw.zeros_aligned(
-                E_in.shape, dtype=E_in.dtype, n=pyfftw.simd_alignment
-            )
-            A_sq = np.zeros_like(A, dtype=A.real.dtype)
-        if normalize:
-            # normalization of the field (use contiguous formula)
-            if self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
-                E_in_cl = cla.to_device(self._backend.queue, E_in)
-                arr = (E_in_cl * E_in_cl.conj()).real
-                arr = arr * self._norm_grid_factor
-                integral = cla.sum(
-                    arr, dtype=arr.dtype, queue=self._backend.queue
-                ).get()
-                integral *= self._norm_constant
-                E_00 = (self.power / integral) ** 0.5
-                A[:] = E_00 * E_in_cl
-            else:
-                arr = (E_in * E_in.conj()).real * self._norm_grid_factor
-                integral = arr.sum(axis=self._last_axes)
-                integral *= self._norm_constant
-                E_00 = (self.power / integral) ** 0.5
-                A[:] = (E_00.T * E_in.T).T
-        else:
-            if self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
-                A[:] = cla.to_device(self._backend.queue, E_in)
-            else:
-                A[:] = E_in
-        return A, A_sq
 
     def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Build the linear propagation matrix.

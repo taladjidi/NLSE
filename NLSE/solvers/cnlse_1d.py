@@ -1,16 +1,12 @@
 import matplotlib.pyplot as plt
 import numpy as np
-import pyfftw
 from scipy.constants import c, epsilon_0
 
-from ..utils import __BACKEND__, __CUPY_AVAILABLE__, __PYOPENCL_AVAILABLE__
+from ..utils import __BACKEND__, __CUPY_AVAILABLE__
 from .cnlse import CNLSE
 
 if __CUPY_AVAILABLE__:
     import cupy as cp
-
-if __PYOPENCL_AVAILABLE__:
-    from pyopencl import array as cla
 
 
 class CNLSE_1d(CNLSE):
@@ -93,64 +89,6 @@ class CNLSE_1d(CNLSE):
 
         # Override normalization factor for 1D (delta_X^2 instead of delta_X * delta_Y)
         self._norm_grid_factor = np.float32(self.delta_X**2)
-
-    def _prepare_output_array(self, E: np.ndarray, normalize: bool) -> np.ndarray:
-        """Prepare the output arrays depending on __BACKEND__.
-
-        Prepares the A and A_sq arrays to store the field and its modulus.
-
-        Parameters
-        ----------
-        E_in : np.ndarray
-            Input array.
-        normalize : bool
-            Normalize the field to the total power.
-
-        Returns
-        -------
-        A : np.ndarray
-            Output field array.
-        A_sq : np.ndarray
-            Output field modulus squared array.
-        """
-        puiss_arr = np.array([self.power, self.power2], dtype=E.dtype)
-        if self.backend == "CUPY" and self.__CUPY_AVAILABLE__:
-            A = cp.empty_like(E)
-            A_sq = cp.empty_like(E, dtype=E.real.dtype)
-            E = cp.asarray(E)
-            puiss_arr = cp.array(puiss_arr)
-        elif self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
-            A = cla.zeros(self._backend.queue, E.shape, E.dtype)
-            A_sq = cla.zeros(self._backend.queue, E.shape, E.real.dtype)
-        else:
-            A = pyfftw.empty_aligned(E.shape, dtype=E.dtype)
-            A_sq = np.empty_like(E, dtype=E.real.dtype)
-        if normalize:
-            # normalization of the field (use contiguous formula)
-            if self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
-                # Compute normalization on numpy (per-component sum)
-                arr = (E * E.conj()).real * self._norm_grid_factor
-                integral = arr.sum(axis=self._last_axes)
-                integral *= self._norm_constant
-                E_00 = (puiss_arr / integral) ** 0.5
-                # Convert to CL for assignment
-                E_00_cl = cla.to_device(self._backend.queue, E_00.astype(E.dtype))
-                E_cl = cla.to_device(self._backend.queue, E)
-                A[0] = E_00_cl[0] * E_cl[0]
-                A[1] = E_00_cl[1] * E_cl[1]
-            else:
-                arr = (E * E.conj()).real * self._norm_grid_factor
-                integral = arr.sum(axis=self._last_axes)
-                integral *= self._norm_constant
-                E_00 = (puiss_arr / integral) ** 0.5
-                A[:] = (E_00.T * E.T).T
-        else:
-            if self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
-                E_cl = cla.to_device(self._backend.queue, E)
-                A[:] = E_cl
-            else:
-                A[:] = E
-        return A, A_sq
 
     def _take_components(self, A: np.ndarray) -> tuple:
         """Take the components of the field.

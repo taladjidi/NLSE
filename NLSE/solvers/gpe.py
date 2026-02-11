@@ -1,16 +1,12 @@
 import matplotlib.pyplot as plt
 import numpy as np
-import pyfftw
 from scipy.constants import atomic_mass, c, epsilon_0, hbar
 
-from ..utils import __BACKEND__, __CUPY_AVAILABLE__, __PYOPENCL_AVAILABLE__
+from ..utils import __BACKEND__, __CUPY_AVAILABLE__
 from .nlse import NLSE
 
 if __CUPY_AVAILABLE__:
     import cupy as cp
-
-if __PYOPENCL_AVAILABLE__:
-    from pyopencl import array as cla
 
 
 class GPE(NLSE):
@@ -90,6 +86,8 @@ class GPE(NLSE):
         self.delta_t = self.delta_z
         # do some conversion for the units
         self.I_sat *= epsilon_0 * c / 2
+        # GPE uses quantum units (Hz), not optical (W), so norm_constant is 1.0
+        self._norm_constant = np.float32(1.0)
 
     def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Build the linear propagation matrix.
@@ -122,51 +120,6 @@ class GPE(NLSE):
         # Cache for future use
         self._propagator_cache[cache_key] = propagator
         return propagator
-
-    def _prepare_output_array(self, E_in: np.ndarray, normalize: bool) -> np.ndarray:
-        """Prepare the output array depending on __BACKEND__.
-
-        Parameters
-        ----------
-        E_in : np.ndarray
-            Input array.
-        normalize : bool
-            Normalize the field to the total power.
-
-        Returns
-        -------
-        np.ndarray
-            Output array.
-        """
-        if self.backend == "CUPY" and self.__CUPY_AVAILABLE__:
-            A = cp.empty_like(E_in)
-            A_sq = cp.empty_like(A, dtype=A.real.dtype)
-            E_in = cp.asarray(E_in)
-        elif self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
-            A = cla.zeros(self._backend.queue, E_in.shape, E_in.dtype)
-            A_sq = cla.zeros(self._backend.queue, E_in.shape, E_in.real.dtype)
-        else:
-            A = pyfftw.empty_aligned(
-                E_in.shape, dtype=E_in.dtype, n=pyfftw.simd_alignment
-            )
-            A_sq = np.empty_like(A, dtype=A.real.dtype)
-        if normalize:
-            # normalization of the field (use contiguous formula)
-            if self.backend == "CL" and self.__PYOPENCL_AVAILABLE__:
-                E_in_cl = cla.to_device(self._backend.queue, E_in)
-                arr = (E_in_cl * E_in_cl.conj()).real
-                arr = arr * self._norm_grid_factor
-                integral = cla.sum(
-                    arr, dtype=arr.dtype, queue=self._backend.queue
-                ).get()
-                E_00 = (self.N / integral) ** 0.5
-                A[:] = E_00 * E_in_cl
-            else:
-                arr = (E_in * E_in.conj()).real * self._norm_grid_factor
-                integral = arr.sum(axis=self._last_axes)
-                E_00 = (self.N / integral) ** 0.5
-                A[:] = (E_00.T * E_in.T).T
-        return A, A_sq
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot a field for monitoring.
