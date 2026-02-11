@@ -24,7 +24,6 @@ if __CUPY_AVAILABLE__:
 
 if __PYOPENCL_AVAILABLE__:
     from pyopencl import array as cla
-    from pyopencl import clmath
 
 pyfftw.config.NUM_THREADS = multiprocessing.cpu_count()
 pyfftw.config.PLANNER_EFFORT = "FFTW_MEASURE"
@@ -139,6 +138,11 @@ class NLSE:
         self.propagator = None
         self.plans = None
         self.nl_length = nl_length
+        if self.nl_length > 0 and self._backend.name == "CL":
+            raise NotImplementedError(
+                "Non-local interaction (nl_length > 0) is not supported "
+                "with the CL backend. Use CPU or CUPY instead."
+            )
         if self.nl_length > 0:
             d = self.nl_length // self.delta_X
             x = np.arange(-3 * d, 3 * d + 1)
@@ -249,18 +253,20 @@ class NLSE:
             # Use pre-computed grid factor to avoid runtime upcasting
             arr = arr * self._norm_grid_factor
             if self._backend.name == "CL":
-                integral = cla.sum(
-                    arr,
-                    dtype=arr.dtype,
-                    queue=self._backend.queue,
-                )
+                # CL: cla.sum() sums ALL axes (returns scalar), but we need
+                # per-spatial sum. Compute normalization on numpy then convert.
+                arr_np = arr.get()
+                E_in_np = E_in.get()
+                integral = np.sum(arr_np, axis=self._last_axes)
                 integral = integral * self._norm_constant
-                E_00 = clmath.sqrt(self.power / integral)
+                E_00 = (self.power / integral) ** 0.5
+                result = (E_00.T * E_in_np.T).T.astype(E_in.dtype)
+                A[:] = cla.to_device(self._backend.queue, result)
             else:
                 integral = np.sum(arr, axis=self._last_axes)
                 integral = integral * self._norm_constant
                 E_00 = (self.power / integral) ** 0.5
-            A[:] = (E_00.T * E_in.T).T
+                A[:] = (E_00.T * E_in.T).T
         else:
             A[:] = E_in
         return A, A_sq

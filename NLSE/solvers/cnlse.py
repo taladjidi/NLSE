@@ -147,11 +147,12 @@ class CNLSE(NLSE):
         """
         super()._send_arrays_to_gpu()
         # for broadcasting of parameters in case they are
-        # not already on the GPU
-        if isinstance(self.n22, np.ndarray):
-            self.n22 = cp.asarray(self.n22)
-        if isinstance(self.n12, np.ndarray):
-            self.n12 = cp.asarray(self.n12)
+        # not already on the device
+        if self._backend.name in ["CUPY", "CL"]:
+            if isinstance(self.n22, np.ndarray):
+                self.n22 = self._backend.from_numpy(self.n22)
+            if isinstance(self.n12, np.ndarray):
+                self.n12 = self._backend.from_numpy(self.n12)
 
     def _retrieve_arrays_from_gpu(self) -> None:
         """
@@ -159,7 +160,7 @@ class CNLSE(NLSE):
         """
         super()._retrieve_arrays_from_gpu()
         match self.backend:
-            case "GPU":
+            case "CUPY":
                 if isinstance(self.n22, cp.ndarray):
                     self.n22 = self.n22.get()
                 if isinstance(self.n12, cp.ndarray):
@@ -405,6 +406,11 @@ class CNLSE(NLSE):
                     2 * self.I_sat2 / (epsilon_0 * c),
                     2 * self.I_sat / (epsilon_0 * c),
                 )
+        # For GPU backends with double precision, write back modified
+        # components before FFT (A1/A2 are copies, not views)
+        if precision == "double" and self._backend.name in ["CL", "CUPY"]:
+            A[0] = A1
+            A[1] = A2
         if (
             self.backend == "CUPY"
             and self.__CUPY_AVAILABLE__
@@ -420,7 +426,8 @@ class CNLSE(NLSE):
             plan_fft(input_array=A, output_array=A)
             np.multiply(A, propagator, out=A)
             plan_ifft(input_array=A, output_array=A, normalise_idft=True)
-        # fft normalization
+        # Re-extract components after FFT/IFFT (CL/CUPY copies are now stale)
+        A1, A2 = self._take_components(A)
         self._backend.kernels.square_mod(A, A_sq)
         A_sq_1, A_sq_2 = self._take_components(A_sq)
         if self.nl_length > 0:
