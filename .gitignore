@@ -36,3 +36,4 @@ benchmarks.pdf
 # Metal backend (work in progress, not included in main branch)
 NLSE/kernels/metal/
 NLSE/kernels/metal_native/
+.coverage

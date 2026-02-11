@@ -1,7 +1,7 @@
 """CPU backend implementation."""
 
-import os
-import platform
+import multiprocessing
+import pickle
 from typing import Any
 
 import numpy as np
@@ -10,26 +10,9 @@ import pyfftw
 from ..kernels import cpu as kernels_cpu
 from .backend import Backend
 
-# Configure pyFFTW for optimal performance
-pyfftw.config.NUM_THREADS = os.cpu_count() or 1  # Use all available cores
-pyfftw.interfaces.cache.enable()  # Enable plan caching for faster repeated FFTs
-
-# Platform detection for FFT optimization
-_CPU_VENDOR = platform.processor().lower()
-_IS_INTEL = "intel" in _CPU_VENDOR or "genuine" in _CPU_VENDOR
-_IS_APPLE = "apple" in _CPU_VENDOR or "arm" in _CPU_VENDOR
-_IS_AMD = "amd" in _CPU_VENDOR or "authent" in _CPU_VENDOR
-
-# TODO: Platform-specific FFT optimization
-# - Intel CPUs: Intel MKL FFT is 10-30% faster than FFTW
-#   Install: conda install mkl mkl-service
-#   Usage: import mkl_fft; mkl_fft.fftn(array)
-#
-# - Apple Silicon (M1/M2/M3): Accelerate framework is 2-3x faster than FFTW
-#   Already available on macOS via scipy.fft (automatically uses vDSP)
-#   Usage: from scipy import fft; fft.fftn(array)
-#
-# - AMD CPUs: FFTW is already optimal, PATIENT planning gives best SIMD selection
+pyfftw.config.NUM_THREADS = multiprocessing.cpu_count()
+pyfftw.config.PLANNER_EFFORT = "FFTW_PATIENT"
+pyfftw.interfaces.cache.enable()
 
 
 class CPUBackend(Backend):
@@ -56,78 +39,93 @@ class CPUBackend(Backend):
         return np.ascontiguousarray(array)
 
     def build_fft(
-        self, shape: tuple, axes: tuple, dtype: np.dtype, array: np.ndarray | None = None
+        self,
+        shape: tuple,
+        axes: tuple,
+        dtype: np.dtype,
+        array: np.ndarray | None = None,
     ) -> list:
-        """Build pyFFTW plans.
-
-        IMPORTANT: Plans should be built with the actual array that will be used
-        during propagation for optimal performance. If no array is provided,
-        creates a temporary aligned array (slower).
-
-        Platform-specific optimization notes:
-        - Intel CPUs: Consider Intel MKL (10-30% faster)
-        - Apple Silicon: Consider Accelerate/vDSP (2-3x faster)
-        - AMD CPUs: FFTW is optimal (already using best option)
+        """Build pyFFTW plans with the actual propagation array.
 
         Args:
             shape: Array shape
             axes: FFT axes
             dtype: Array dtype
-            array: The actual array to transform (for in-place optimization)
+            array: The actual array to transform (required for optimal performance)
 
         Returns:
             List of [forward_plan, inverse_plan]
         """
-        import pickle
+        # Use provided array or create temporary aligned array
+        A = (
+            array
+            if array is not None
+            else pyfftw.zeros_aligned(shape, dtype=dtype, n=pyfftw.simd_alignment)
+        )
 
-        # Load FFTW wisdom for faster planning
+        # Load FFTW wisdom if available
         try:
             with open("fft.wisdom", "rb") as file:
                 wisdom = pickle.load(file)
                 pyfftw.import_wisdom(wisdom)
-        except FileNotFoundError:
-            pass  # Wisdom will be saved after planning
-
-        # Use provided array or create temporary aligned array
-        A = array if array is not None else pyfftw.zeros_aligned(
-            shape, dtype=dtype, n=pyfftw.simd_alignment
-        )
-
-        # FFTW_MEASURE: Fast planning with good performance
-        planning_mode = "FFTW_MEASURE"
-
-        # Platform detection (for future optimization)
-        if _IS_APPLE:
-            # TODO: Switch to scipy.fft which uses vDSP on macOS (2-3x faster)
+        except (FileNotFoundError, Exception):
             pass
-        elif _IS_INTEL:
-            # TODO: Try Intel MKL if available (10-30% faster)
-            pass
-        # AMD and others: FFTW is already optimal
 
-        fft_forward = pyfftw.FFTW(
+        # Build FFT plans with actual array
+        plan_fft = pyfftw.FFTW(
             A,
             A,
-            axes=axes,
             direction="FFTW_FORWARD",
-            flags=(planning_mode,),
-            threads=pyfftw.config.NUM_THREADS,
-        )
-        fft_backward = pyfftw.FFTW(
-            A,
-            A,
+            threads=multiprocessing.cpu_count(),
             axes=axes,
+        )
+        plan_ifft = pyfftw.FFTW(
+            A,
+            A,
             direction="FFTW_BACKWARD",
-            flags=(planning_mode,),
-            threads=pyfftw.config.NUM_THREADS,
+            threads=multiprocessing.cpu_count(),
+            axes=axes,
         )
 
-        # Save FFTW wisdom for future use
+        # Validate plans: a 1024x1024 FFT should take <100ms.
+        # Stale wisdom can cause 100x slowdowns.
+        import time
+
+        plan_fft(A, A)
+        plan_ifft(A, A)
+        t0 = time.perf_counter()
+        plan_fft(A, A)
+        plan_ifft(A, A)
+        t_roundtrip = time.perf_counter() - t0
+
+        # Heuristic: >200ms for a roundtrip means bad wisdom
+        n_elements = 1
+        for s in shape:
+            n_elements *= s
+        expected_max = max(0.2, n_elements / 1024**2 * 0.1)
+        if t_roundtrip > expected_max:
+            pyfftw.forget_wisdom()
+            plan_fft = pyfftw.FFTW(
+                A,
+                A,
+                direction="FFTW_FORWARD",
+                threads=multiprocessing.cpu_count(),
+                axes=axes,
+            )
+            plan_ifft = pyfftw.FFTW(
+                A,
+                A,
+                direction="FFTW_BACKWARD",
+                threads=multiprocessing.cpu_count(),
+                axes=axes,
+            )
+
+        # Save FFTW wisdom
         with open("fft.wisdom", "wb") as file:
             wisdom = pyfftw.export_wisdom()
             pickle.dump(wisdom, file)
 
-        return [fft_forward, fft_backward]
+        return [plan_fft, plan_ifft]
 
     def fft(self, array: np.ndarray, plan: list) -> np.ndarray:
         """Perform forward FFT in-place."""

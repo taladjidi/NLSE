@@ -269,7 +269,8 @@ class NLSE:
         """Send arrays to device using backend."""
         if self._backend.name in ["CUPY", "CL"]:
             if self.V is not None:
-                self.V = self._backend.from_numpy(self.V)
+                # Ensure float32 dtype for GPU backends
+                self.V = self._backend.from_numpy(np.ascontiguousarray(self.V, dtype=np.float32))
             self.nl_profile = self._backend.from_numpy(self.nl_profile)
             self.propagator = self._backend.from_numpy(self.propagator)
             # for broadcasting of parameters in case they are
@@ -336,8 +337,10 @@ class NLSE:
                     2 * self.I_sat / (epsilon_0 * c),
                 )
             else:
+                # Scale V with correct dtype
+                V_scaled = V * np.float32(self.k / 2)
                 kernels.nl_prop(
-                    A, A_sq, self.delta_z / 2, self.alpha / 2, self.k / 2 * V,
+                    A, A_sq, self.delta_z / 2, self.alpha / 2, V_scaled,
                     self.k / 2 * self.n2 * c * epsilon_0,
                     2 * self.I_sat / (epsilon_0 * c),
                 )
@@ -383,8 +386,10 @@ class NLSE:
                         2 * self.I_sat / (epsilon_0 * c),
                     )
                 else:
+                    # Scale V with correct dtype
+                    V_scaled = V * np.float32(self.k / 2)
                     kernels.square_mod_nl_prop_v(
-                        A, self.k / 2 * V, dz_step, self.alpha / 2,
+                        A, V_scaled, dz_step, self.alpha / 2,
                         self.k / 2 * self.n2 * c * epsilon_0,
                         2 * self.I_sat / (epsilon_0 * c),
                     )
@@ -398,8 +403,10 @@ class NLSE:
                         2 * self.I_sat / (epsilon_0 * c),
                     )
                 else:
+                    # Scale V with correct dtype
+                    V_scaled = V * np.float32(self.k / 2)
                     kernels.nl_prop(
-                        A, A_sq, dz_step, self.alpha / 2, self.k / 2 * V,
+                        A, A_sq, dz_step, self.alpha / 2, V_scaled,
                         self.k / 2 * self.n2 * c * epsilon_0,
                         2 * self.I_sat / (epsilon_0 * c),
                     )
@@ -534,6 +541,7 @@ class NLSE:
         if self.V is None:
             V = self.V
         else:
+            # V was already sent to GPU in _send_arrays_to_gpu()
             V = self.V.copy()
         A, A_sq = self._prepare_output_array(E_in, normalize)
         self.plans = self._build_fft_plan(A)

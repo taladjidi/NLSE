@@ -220,6 +220,15 @@ class CNLSE(NLSE):
         """
         A1 = A[..., 0, :, :]
         A2 = A[..., 1, :, :]
+
+        # OpenCL/CUPY backends don't support offset arrays - make contiguous copies
+        if self._backend.name in ["CL", "CUPY"]:
+            # For GPU backends, we need contiguous arrays (no offset)
+            # This creates copies but ensures kernel compatibility
+            if hasattr(A1, 'copy'):  # GPU array
+                A1 = A1.copy()
+                A2 = A2.copy()
+
         return A1, A2
 
     def _RK4_rhs_non_mutating(
@@ -290,7 +299,7 @@ class CNLSE(NLSE):
         arg[0] -= self.alpha / 2 * sat * A[0]
         arg[1] -= self.alpha2 / 2 * sat * A[1]
         if V is not None:
-            V_ = 1j * self.k / 2 * V * A
+            V_ = 1j * V_scaled * A
             arg += V_
         return arg
 
@@ -319,6 +328,13 @@ class CNLSE(NLSE):
         Returns:
             None
         """
+        # Precompute scaled potentials with correct dtype
+        if V is not None:
+            V_scaled = V * np.float32(self.k / 2)
+            V2_scaled = V * np.float32(self.k2 / 2)
+        else:
+            V_scaled = V2_scaled = None
+
         if (
             self.backend == "CUPY"
             and self.__CUPY_AVAILABLE__
@@ -371,7 +387,7 @@ class CNLSE(NLSE):
                     A_sq_2,
                     self.delta_z / 2,
                     self.alpha / 2,
-                    self.k / 2 * V,
+                    V_scaled,
                     self.k / 2 * self.n2 * c * epsilon_0,
                     self.k / 2 * self.n12 * c * epsilon_0,
                     2 * self.I_sat / (epsilon_0 * c),
@@ -383,7 +399,7 @@ class CNLSE(NLSE):
                     A_sq_1,
                     self.delta_z / 2,
                     self.alpha2 / 2,
-                    self.k2 / 2 * V,
+                    V2_scaled,
                     self.k2 / 2 * self.n22 * c * epsilon_0,
                     self.k2 / 2 * self.n12 * c * epsilon_0,
                     2 * self.I_sat2 / (epsilon_0 * c),
@@ -445,7 +461,7 @@ class CNLSE(NLSE):
                     A_sq_2,
                     self.delta_z / 2,
                     self.alpha / 2,
-                    self.k / 2 * V,
+                    V_scaled,
                     self.k / 2 * self.n2 * c * epsilon_0,
                     self.k / 2 * self.n12 * c * epsilon_0,
                     2 * self.I_sat / (epsilon_0 * c),
@@ -457,7 +473,7 @@ class CNLSE(NLSE):
                     A_sq_1,
                     self.delta_z / 2,
                     self.alpha2 / 2,
-                    self.k2 / 2 * V,
+                    V2_scaled,
                     self.k2 / 2 * self.n22 * c * epsilon_0,
                     self.k2 / 2 * self.n12 * c * epsilon_0,
                     2 * self.I_sat2 / (epsilon_0 * c),
@@ -494,7 +510,7 @@ class CNLSE(NLSE):
                     A_sq_2,
                     self.delta_z,
                     self.alpha / 2,
-                    self.k / 2 * V,
+                    V_scaled,
                     self.k / 2 * self.n2 * c * epsilon_0,
                     self.k / 2 * self.n12 * c * epsilon_0,
                     2 * self.I_sat / (epsilon_0 * c),
@@ -506,7 +522,7 @@ class CNLSE(NLSE):
                     A_sq_1,
                     self.delta_z,
                     self.alpha2 / 2,
-                    self.k2 / 2 * V,
+                    V2_scaled,
                     self.k2 / 2 * self.n22 * c * epsilon_0,
                     self.k2 / 2 * self.n12 * c * epsilon_0,
                     2 * self.I_sat2 / (epsilon_0 * c),
@@ -516,6 +532,11 @@ class CNLSE(NLSE):
                 self._backend.kernels.rabi_coupling(
                     A1, A2, self.delta_z, self.omega / 2
                 )
+
+        # For GPU backends, copy modified components back to original array
+        if self._backend.name in ["CL", "CUPY"]:
+            A[0, :, :] = A1
+            A[1, :, :] = A2
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot the field.
