@@ -23,6 +23,16 @@ except ImportError:
 
 
 try:
+    import mlx.core
+
+    __MLX_AVAILABLE__ = True
+    if __BACKEND__ == "CPU":
+        __BACKEND__ = "MLX"
+except ImportError:
+    __MLX_AVAILABLE__ = False
+
+
+try:
     # for OpenCL backend you need to install OpenCL first
     # sudo apt install intel-opencl-icd opencl-headers ocl-icd-opencl-dev
     # or for AMD

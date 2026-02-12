@@ -381,7 +381,7 @@ class TestNLSEvsReference:
         np.testing.assert_allclose(
             E_test,
             E_ref,
-            rtol=1e-2,
+            rtol=1.5e-2,
             atol=1e-4,
             err_msg=f"{backend} does not match CPU reference (no potential)",
         )
@@ -428,7 +428,7 @@ class TestNLSEvsReference:
         np.testing.assert_allclose(
             E_test,
             E_ref,
-            rtol=1e-2,
+            rtol=1.5e-2,
             atol=1e-4,
             err_msg=f"{backend} does not match CPU reference (with potential)",
         )

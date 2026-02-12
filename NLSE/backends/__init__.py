@@ -30,22 +30,13 @@ try:
 except ImportError:
     _OPENCL_AVAILABLE = False
 
-# TODO: Metal Backend for Apple Silicon (M1/M2/M3)
-# Apple Silicon Macs have excellent GPU compute via Metal API
-# Recommended FFT: Accelerate framework (vDSP) - 2-3x faster than FFTW
-#
-# Implementation approach:
-# 1. Create backends/metal.py using pyobjc or metal-python
-# 2. FFT via Metal Performance Shaders (MPS) or Accelerate framework
-# 3. Kernels via Metal compute shaders (similar to OpenCL implementation)
-#
-# Alternative: Use scipy.fft which automatically uses vDSP on macOS
-# This would give 2-3x speedup on Apple Silicon without new backend
-#
-# Benchmark (Apple M2 Max, 2048x2048):
-#   Accelerate (vDSP):  ~7ms  (fastest option)
-#   FFTW:              ~14ms  (current CPU backend)
-#   Metal MPS:         ~8ms   (good alternative)
+try:
+    from .mlx_backend import MLXBackend
+
+    __all__.append("MLXBackend")
+    _MLX_AVAILABLE = True
+except ImportError:
+    _MLX_AVAILABLE = False
 
 # Environment variables for backend control
 _ENV_BACKEND = os.environ.get("NLSE_BACKEND", "").upper()
@@ -85,7 +76,7 @@ def get_backend(name: str, grid_size: tuple = (2048, 2048)) -> Backend:
     Parameters
     ----------
     name : str
-        Backend name ("CPU", "CUPY", "CL", or "auto")
+        Backend name ("CPU", "CUPY", "CL", "MLX", or "auto")
     grid_size : tuple
         Grid size for auto-benchmarking (only used if name="auto")
 
@@ -122,6 +113,10 @@ def get_backend(name: str, grid_size: tuple = (2048, 2048)) -> Backend:
         if not _OPENCL_AVAILABLE:
             raise ValueError("OpenCL backend not available - install pyopencl")
         return OpenCLBackend()
+    elif name == "MLX":
+        if not _MLX_AVAILABLE:
+            raise ValueError("MLX backend not available - install mlx")
+        return MLXBackend()
     else:
         raise ValueError(f"Unknown backend: {name}")
 
@@ -140,4 +135,6 @@ def list_available_backends() -> list[str]:
         backends.append("CUPY")
     if _OPENCL_AVAILABLE:
         backends.append("CL")
+    if _MLX_AVAILABLE:
+        backends.append("MLX")
     return backends

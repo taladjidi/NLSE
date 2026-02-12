@@ -193,7 +193,7 @@ class DDGPE(CNLSE):
         super()._send_arrays_to_gpu()
         # for broadcasting of parameters in case they are
         # not already on the device
-        if self._backend.name in ["CUPY", "CL"]:
+        if self._backend.name in ["CUPY", "CL", "MLX"]:
             for attr in (
                 "gamma",
                 "g",
@@ -224,6 +224,8 @@ class DDGPE(CNLSE):
             val = getattr(self, attr)
             if hasattr(val, "get"):
                 setattr(self, attr, val.get())
+            elif self._backend.name == "MLX" and not isinstance(val, (int, float)):
+                setattr(self, attr, self._backend.to_numpy(val))
 
     def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Build the propagators.
@@ -309,7 +311,7 @@ class DDGPE(CNLSE):
         propagator: np.ndarray,
         plans: list,
         precision: str = "single",
-    ) -> None:
+    ) -> np.ndarray:
         """Split step function for one propagation step.
 
         Parameters
@@ -333,7 +335,8 @@ class DDGPE(CNLSE):
 
         Returns
         -------
-        None
+        np.ndarray
+            The propagated field.
         """
         A1, A2 = self._take_components(A)
         if precision == "double":
@@ -397,11 +400,11 @@ class DDGPE(CNLSE):
                 )
         # For GPU backends with double precision, write back modified
         # components before FFT (A1/A2 are copies, not views)
-        if precision == "double" and self._backend.name in ["CL", "CUPY"]:
+        if precision == "double" and self._backend.name in ["CL", "CUPY", "MLX"]:
             A[0] = A1
             A[1] = A2
-        self._apply_linear_step(A, propagator, plans)
-        # Re-extract components after FFT/IFFT (CL/CUPY copies are now stale)
+        A = self._apply_linear_step(A, propagator, plans)
+        # Re-extract components after FFT/IFFT (copies are now stale)
         A1, A2 = self._take_components(A)
         self._backend.kernels.square_mod(A, A_sq)
         A_sq_1, A_sq_2 = self._take_components(A_sq)
@@ -516,9 +519,10 @@ class DDGPE(CNLSE):
                 )
 
         # For GPU backends, copy modified components back to original array
-        if self._backend.name in ["CL", "CUPY"]:
+        if self._backend.name in ["CL", "CUPY", "MLX"]:
             A[0] = A1
             A[1] = A2
+        return A
 
     def plot_field(self, A_plot: np.ndarray, t: float) -> None:
         """Plot the field for monitoring.

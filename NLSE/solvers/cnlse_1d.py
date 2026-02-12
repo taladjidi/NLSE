@@ -107,7 +107,7 @@ class CNLSE_1d(CNLSE):
         A2 = A[..., 1, :]
 
         # OpenCL/CUPY backends don't support offset arrays - make contiguous copies
-        if self._backend.name in ["CL", "CUPY"]:
+        if self._backend.name in ["CL", "CUPY", "MLX"]:
             if hasattr(A1, "copy"):
                 A1 = A1.copy()
                 A2 = A2.copy()

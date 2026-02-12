@@ -15,14 +15,15 @@ from scipy import signal, special
 from scipy.constants import c, epsilon_0
 
 from ..backends import Backend, get_backend
-from ..utils import __BACKEND__, __CUPY_AVAILABLE__, __PYOPENCL_AVAILABLE__
+from ..utils import (
+    __BACKEND__,
+    __CUPY_AVAILABLE__,
+    __PYOPENCL_AVAILABLE__,
+)
 
 if __CUPY_AVAILABLE__:
     import cupy as cp
     import cupyx.scipy.signal as signal_cp  # type: ignore[import-not-found]
-
-if __PYOPENCL_AVAILABLE__:
-    from pyopencl import array as cla
 
 pyfftw.config.NUM_THREADS = multiprocessing.cpu_count()
 pyfftw.config.PLANNER_EFFORT = "FFTW_MEASURE"
@@ -150,10 +151,10 @@ class NLSE:
         self.propagator = None
         self.plans = None
         self.nl_length = nl_length
-        if self.nl_length > 0 and self._backend.name == "CL":
+        if self.nl_length > 0 and self._backend.name in ["CL", "MLX"]:
             raise NotImplementedError(
-                "Non-local interaction (nl_length > 0) is not supported "
-                "with the CL backend. Use CPU or CUPY instead."
+                f"Non-local interaction (nl_length > 0) is not supported "
+                f"with the {self._backend.name} backend. Use CPU or CUPY instead."
             )
         if self.nl_length > 0:
             d = self.nl_length // self.delta_X
@@ -282,28 +283,30 @@ class NLSE:
             arr = (E_in * E_in.conj()).real
             # Use pre-computed grid factor to avoid runtime upcasting
             arr = arr * self._norm_grid_factor
-            if self._backend.name == "CL":
-                # CL: cla.sum() sums ALL axes (returns scalar), but we need
-                # per-spatial sum. Compute normalization on numpy then convert.
-                arr_np = arr.get()
-                E_in_np = E_in.get()
+            if self._backend.name in ["CL", "MLX"]:
+                # CL/MLX: compute normalization on numpy then convert back.
+                arr_np = self._backend.to_numpy(arr)
+                E_in_np = self._backend.to_numpy(E_in)
                 integral = np.sum(arr_np, axis=self._last_axes)
                 integral = integral * self._norm_constant
                 E_00 = (self.power / integral) ** 0.5
-                result = (E_00.T * E_in_np.T).T.astype(E_in.dtype)
-                A[:] = cla.to_device(self._backend.queue, result)
+                result = (E_00.T * E_in_np.T).T.astype(E_in_np.dtype)
+                A = self._backend.from_numpy(result)
             else:
                 integral = np.sum(arr, axis=self._last_axes)
                 integral = integral * self._norm_constant
                 E_00 = (self.power / integral) ** 0.5
                 A[:] = (E_00.T * E_in.T).T
         else:
-            A[:] = E_in
+            if self._backend.name == "MLX":
+                A = E_in
+            else:
+                A[:] = E_in
         return A, A_sq
 
     def _send_arrays_to_gpu(self) -> None:
         """Send arrays to device using backend."""
-        if self._backend.name in ["CUPY", "CL"]:
+        if self._backend.name in ["CUPY", "CL", "MLX"]:
             if self.V is not None:
                 # Ensure float32 dtype for GPU backends
                 self.V = self._backend.from_numpy(
@@ -324,7 +327,7 @@ class NLSE:
 
     def _retrieve_arrays_from_gpu(self) -> None:
         """Retrieve arrays from device using backend."""
-        if self._backend.name in ["CUPY", "CL"]:
+        if self._backend.name in ["CUPY", "CL", "MLX"]:
             if self.V is not None:
                 self.V = self._backend.to_numpy(self.V)
             self.nl_profile = self._backend.to_numpy(self.nl_profile)
@@ -341,7 +344,7 @@ class NLSE:
 
     def _apply_linear_step(
         self, A: np.ndarray, propagator: np.ndarray, plans: list
-    ) -> None:
+    ) -> np.ndarray:
         """Apply linear propagation: FFT, propagator multiply, IFFT.
 
         Parameters
@@ -352,10 +355,16 @@ class NLSE:
             Propagator matrix.
         plans : list
             List of FFT plan objects from backend.
+
+        Returns
+        -------
+        np.ndarray
+            The propagated field.
         """
-        self._backend.fft(A, plans)
+        A = self._backend.fft(A, plans)
         self._backend.kernels.apply_propagator(A, propagator)
-        self._backend.ifft(A, plans)
+        A = self._backend.ifft(A, plans)
+        return A
 
     def split_step(
         self,
@@ -365,7 +374,7 @@ class NLSE:
         propagator: np.ndarray,
         plans: list,
         precision: str = "single",
-    ) -> None:
+    ) -> np.ndarray:
         """Split step function for one propagation step.
 
         Parameters
@@ -383,6 +392,11 @@ class NLSE:
         precision : str, optional
             Single or double application of
             the nonlinear propagation step. Defaults to "single".
+
+        Returns
+        -------
+        np.ndarray
+            The propagated field.
         """
         kernels = self._backend.kernels
 
@@ -404,7 +418,6 @@ class NLSE:
                         2 * self.I_sat / (epsilon_0 * c),
                     )
                 else:
-                    # Scale V with correct dtype
                     V_scaled = V * np.float32(self.k / 2)
                     kernels.nl_prop(
                         A,
@@ -436,7 +449,7 @@ class NLSE:
                     )
 
         # Linear propagation in Fourier domain
-        self._apply_linear_step(A, propagator, plans)
+        A = self._apply_linear_step(A, propagator, plans)
 
         # Second half-step (always executed)
         # Determine step size based on precision mode
@@ -477,7 +490,6 @@ class NLSE:
                     2 * self.I_sat / (epsilon_0 * c),
                 )
             else:
-                # Scale V with correct dtype
                 V_scaled = V * np.float32(self.k / 2)
                 kernels.square_mod_nl_prop_v(
                     A,
@@ -487,6 +499,7 @@ class NLSE:
                     self.k / 2 * self.n2 * c * epsilon_0,
                     2 * self.I_sat / (epsilon_0 * c),
                 )
+        return A
 
     def _RK4_rhs_non_mutating(
         self,
@@ -511,13 +524,13 @@ class NLSE:
             List of FFT plan objects from backend.
         """
         # prepare output array, this kills performance but we need it
-        A_prop = A.copy()
+        A_prop = A * 1
         A_sq = (A * A.conj()).real
 
         # Linear propagation step in Fourier domain
-        self._backend.fft(A_prop, plans)
+        A_prop = self._backend.fft(A_prop, plans)
         A_prop *= propagator
-        self._backend.ifft(A_prop, plans)
+        A_prop = self._backend.ifft(A_prop, plans)
 
         if self.nl_length > 0:
             A_sq[:] = self._convolution(
@@ -542,7 +555,7 @@ class NLSE:
         V: np.ndarray | None,
         propagator: np.ndarray,
         plans: list,
-    ) -> None:
+    ) -> np.ndarray:
         """Split step function for one propagation step using RK4 scheme.
 
         y_n+1 = y_n + dz/6 * (k_1 + 2*k_2 + 2*k_3 + k_4)
@@ -561,6 +574,11 @@ class NLSE:
             Propagator matrix.
         plans : list
             List of FFT plan objects from backend.
+
+        Returns
+        -------
+        np.ndarray
+            The propagated field.
         """
         k_1 = self._RK4_rhs_non_mutating(A, V, propagator, plans)
         k_2 = self._RK4_rhs_non_mutating(
@@ -573,6 +591,7 @@ class NLSE:
             A + (k_1 - k_2 + k_3) * self.delta_z, V, propagator, plans
         )
         A += self.delta_z / 8 * (k_1 + 3 * k_2 + 3 * k_3 + k_4)
+        return A
 
     def _run_callbacks(self, callback, callback_args, A, z, i):
         """Dispatch user callbacks at each solver step."""
@@ -645,13 +664,13 @@ class NLSE:
         # define propagator if not already done
         if self.propagator is None:
             self.propagator = self._build_propagator(precision=precision)
-        if self._backend.name in ["CUPY", "CL"]:
+        if self._backend.name in ["CUPY", "CL", "MLX"]:
             self._send_arrays_to_gpu()
         if self.V is None:
             V = self.V
         else:
             # V was already sent to GPU in _send_arrays_to_gpu()
-            V = self.V.copy()
+            V = self.V
         A, A_sq = self._prepare_output_array(E_in, normalize)
         self.plans = self._build_fft_plan(A)
         if verbose:
@@ -677,9 +696,9 @@ class NLSE:
             if z > self.L:
                 self.n2 = 0
             if precision == "RK4":
-                self.split_step_RK4(A, V, self.propagator, self.plans)
+                A = self.split_step_RK4(A, V, self.propagator, self.plans)
             else:
-                self.split_step(A, A_sq, V, self.propagator, self.plans, precision)
+                A = self.split_step(A, A_sq, V, self.propagator, self.plans, precision)
 
             if callback is not None:
                 self._run_callbacks(callback, callback_args, A, z, i)
@@ -706,7 +725,7 @@ class NLSE:
                 print(f"\nTime spent to solve : {t_cpu} s (CPU)\n")
         self.n2 = n2_old
         return_np_array = isinstance(E_in, np.ndarray)
-        if self._backend.name in ["CUPY", "CL"]:
+        if self._backend.name in ["CUPY", "CL", "MLX"]:
             if return_np_array:
                 A = self._backend.to_numpy(A)
             self._retrieve_arrays_from_gpu()

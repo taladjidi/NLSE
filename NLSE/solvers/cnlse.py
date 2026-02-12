@@ -148,12 +148,25 @@ class CNLSE(NLSE):
                     E_00 = (puiss_arr / integral) ** 0.5
                     E_00 = cla.to_device(self._backend.queue, E_00.astype(E.dtype))
                     E = cla.to_device(self._backend.queue, E.astype(E.dtype))
+                case "MLX":
+                    E_np = E if isinstance(E, np.ndarray) else self._backend.to_numpy(E)
+                    arr = (E_np * E_np.conj()).real * self._norm_grid_factor
+                    integral = arr.sum(axis=self._last_axes)
+                    integral = integral * self._norm_constant
+                    E_00 = (puiss_arr / integral) ** 0.5
+                    result = np.zeros_like(E_np)
+                    result[0] = E_00[0] * E_np[0]
+                    result[1] = E_00[1] * E_np[1]
+                    return self._backend.from_numpy(result.astype(E_np.dtype)), A_sq
             A[0] = E_00[0] * E[0]
             A[1] = E_00[1] * E[1]
         else:
             if self._backend.name == "CL":
                 E = cla.to_device(self._backend.queue, E)
-            A[:] = E
+            if self._backend.name == "MLX":
+                A = self._backend.from_numpy(E)
+            else:
+                A[:] = E
         return A, A_sq
 
     def _send_arrays_to_gpu(self) -> None:
@@ -161,7 +174,7 @@ class CNLSE(NLSE):
         super()._send_arrays_to_gpu()
         # for broadcasting of parameters in case they are
         # not already on the device
-        if self._backend.name in ["CUPY", "CL"]:
+        if self._backend.name in ["CUPY", "CL", "MLX"]:
             if isinstance(self.n22, np.ndarray):
                 self.n22 = self._backend.from_numpy(self.n22)
             if isinstance(self.n12, np.ndarray):
@@ -181,6 +194,11 @@ class CNLSE(NLSE):
                     self.n22 = self.n22.get()
                 if isinstance(self.n12, cla.Array):
                     self.n12 = self.n12.get()
+            case "MLX":
+                if not isinstance(self.n22, (int, float)):
+                    self.n22 = self._backend.to_numpy(self.n22)
+                if not isinstance(self.n12, (int, float)):
+                    self.n12 = self._backend.to_numpy(self.n12)
 
     def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Build the propagators.
@@ -244,11 +262,9 @@ class CNLSE(NLSE):
         A1 = A[..., 0, :, :]
         A2 = A[..., 1, :, :]
 
-        # OpenCL/CUPY backends don't support offset arrays - make contiguous copies
-        if self._backend.name in ["CL", "CUPY"]:
-            # For GPU backends, we need contiguous arrays (no offset)
-            # This creates copies but ensures kernel compatibility
-            if hasattr(A1, "copy"):  # GPU array
+        # GPU backends don't support offset arrays - make contiguous copies
+        if self._backend.name in ["CL", "CUPY", "MLX"]:
+            if hasattr(A1, "copy"):
                 A1 = A1.copy()
                 A2 = A2.copy()
 
@@ -284,11 +300,11 @@ class CNLSE(NLSE):
             the nonlinear propagation step. Defaults to "single".
         """
         # prepare output array, this kills performance but we need it
-        A_prop = A.copy()
+        A_prop = A * 1
         A_sq = (A * A.conj()).real
-        self._backend.fft(A_prop, plans)
+        A_prop = self._backend.fft(A_prop, plans)
         A_prop *= propagator
-        self._backend.ifft(A_prop, plans)
+        A_prop = self._backend.ifft(A_prop, plans)
         if self.nl_length > 0:
             A_sq[:] = self._convolution(
                 A_sq, self.nl_profile, mode="same", axes=self._last_axes
@@ -326,7 +342,7 @@ class CNLSE(NLSE):
         propagator: np.ndarray,
         plans: list,
         precision: str = "single",
-    ) -> None:
+    ) -> np.ndarray:
         """Split step function for one propagation step.
 
         Parameters
@@ -350,7 +366,8 @@ class CNLSE(NLSE):
 
         Returns
         -------
-        None
+        np.ndarray
+            The propagated field.
         """
         # Precompute scaled potentials with correct dtype
         if V is not None:
@@ -421,11 +438,11 @@ class CNLSE(NLSE):
                 )
         # For GPU backends with double precision, write back modified
         # components before FFT (A1/A2 are copies, not views)
-        if precision == "double" and self._backend.name in ["CL", "CUPY"]:
+        if precision == "double" and self._backend.name in ["CL", "CUPY", "MLX"]:
             A[0] = A1
             A[1] = A2
-        self._apply_linear_step(A, propagator, plans)
-        # Re-extract components after FFT/IFFT (CL/CUPY copies are now stale)
+        A = self._apply_linear_step(A, propagator, plans)
+        # Re-extract components after FFT/IFFT (copies are now stale)
         A1, A2 = self._take_components(A)
         self._backend.kernels.square_mod(A, A_sq)
         A_sq_1, A_sq_2 = self._take_components(A_sq)
@@ -540,9 +557,10 @@ class CNLSE(NLSE):
                 )
 
         # For GPU backends, copy modified components back to original array
-        if self._backend.name in ["CL", "CUPY"]:
+        if self._backend.name in ["CL", "CUPY", "MLX"]:
             A[0] = A1
             A[1] = A2
+        return A
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot the field.

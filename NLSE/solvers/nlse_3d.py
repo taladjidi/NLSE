@@ -2,14 +2,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.constants import c, epsilon_0
 
-from ..utils import __BACKEND__, __CUPY_AVAILABLE__, __PYOPENCL_AVAILABLE__
+from ..utils import __BACKEND__, __CUPY_AVAILABLE__
 from .nlse import NLSE
 
 if __CUPY_AVAILABLE__:
     import cupy as cp
-
-if __PYOPENCL_AVAILABLE__:
-    from pyopencl import array as cla
 
 
 class NLSE_3d(NLSE):
@@ -191,21 +188,24 @@ class NLSE_3d(NLSE):
         if normalize:
             arr = (E_in * E_in.conj()).real
             arr = arr * self._norm_grid_factor
-            if self._backend.name == "CL":
-                arr_np = arr.get()
-                E_in_np = E_in.get()
+            if self._backend.name in ["CL", "MLX"]:
+                arr_np = self._backend.to_numpy(arr)
+                E_in_np = self._backend.to_numpy(E_in)
                 integral = np.sum(arr_np, axis=self._last_axes)
                 integral = integral * self._norm_constant
                 E_00 = (self.energy / integral) ** 0.5
-                result = (E_00.T * E_in_np.T).T.astype(E_in.dtype)
-                A[:] = cla.to_device(self._backend.queue, result)
+                result = (E_00.T * E_in_np.T).T.astype(E_in_np.dtype)
+                A = self._backend.from_numpy(result)
             else:
                 integral = np.sum(arr, axis=self._last_axes)
                 integral = integral * self._norm_constant
                 E_00 = (self.energy / integral) ** 0.5
                 A[:] = (E_00.T * E_in.T).T
         else:
-            A[:] = E_in
+            if self._backend.name == "MLX":
+                A = E_in
+            else:
+                A[:] = E_in
         return A, A_sq
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:

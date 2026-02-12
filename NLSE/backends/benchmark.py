@@ -51,9 +51,11 @@ def _synchronize_backend(backend: Any, array: Any) -> None:
     array : Any
         Array to synchronize
     """
-    # backend parameter currently unused but kept for API consistency
-    _ = backend
-    if hasattr(array, "get"):  # CuPy
+    if backend.name == "MLX":
+        import mlx.core as mx
+
+        mx.eval(array)
+    elif hasattr(array, "get"):  # CuPy
         array.get()
     elif hasattr(array, "queue"):  # OpenCL
         array.queue.finish()
