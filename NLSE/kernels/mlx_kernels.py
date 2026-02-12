@@ -7,12 +7,20 @@ them as proper inputs whose values can change between calls.
 
 import mlx.core as mx
 
+_SCALAR_CACHE: dict[float, mx.array] = {}
+
 
 def _to_mx(val):
     """Convert a Python scalar to a 0-dim mx.array for compiled functions."""
     if isinstance(val, mx.array):
         return val
-    return mx.array(float(val), dtype=mx.float32)
+    fval = float(val)
+    cached = _SCALAR_CACHE.get(fval)
+    if cached is not None:
+        return cached
+    arr = mx.array(fval, dtype=mx.float32)
+    _SCALAR_CACHE[fval] = arr
+    return arr
 
 
 # ── Pure implementations (no side effects, return new arrays) ───────────────
@@ -392,3 +400,163 @@ def rabi_coupling(
     cos_val = _to_mx(float(mx.cos(_to_mx(omega * dz))))
     sin_val = _to_mx(float(mx.sin(_to_mx(omega * dz))))
     return _c_rabi_coupling(A1, A2, cos_val, sin_val)
+
+
+# ── Fused linear step (FFT + propagator + IFFT) ──────────────────────────────
+
+
+def _make_linear_step(axes):
+    def _linear_step_pure(A, propagator):
+        A = mx.fft.fftn(A, axes=axes)
+        A = A * propagator
+        A = mx.fft.ifftn(A, axes=axes)
+        return A
+
+    return mx.compile(_linear_step_pure)
+
+
+_LINEAR_STEP_CACHE: dict[tuple, object] = {}
+
+
+def linear_step(A: mx.array, propagator: mx.array, axes: tuple) -> mx.array:
+    """Apply fused linear propagation step (FFT + propagator + IFFT).
+
+    Parameters
+    ----------
+    A : mx.array
+        The field to propagate.
+    propagator : mx.array
+        The propagator matrix.
+    axes : tuple
+        FFT axes.
+
+    Returns
+    -------
+    mx.array
+        The propagated field.
+    """
+    if axes not in _LINEAR_STEP_CACHE:
+        _LINEAR_STEP_CACHE[axes] = _make_linear_step(axes)
+    return _LINEAR_STEP_CACHE[axes](A, propagator)
+
+
+# ── Fused split step (nl_length == 0 only) ───────────────────────────────────
+
+
+def _make_split_step(precision, has_V, axes):
+    if precision == "single" and not has_V:
+
+        def _pure(A, propagator, dz, alpha, g, Isat):
+            A = mx.fft.fftn(A, axes=axes)
+            A = A * propagator
+            A = mx.fft.ifftn(A, axes=axes)
+            A_sq = (A * mx.conj(A)).real
+            sat = 1 / (1 + A_sq / Isat)
+            return A * mx.exp(dz * (1j * g * A_sq * sat - alpha * sat))
+
+    elif precision == "single" and has_V:
+
+        def _pure(A, propagator, V, dz, alpha, g, k_half, Isat):
+            A = mx.fft.fftn(A, axes=axes)
+            A = A * propagator
+            A = mx.fft.ifftn(A, axes=axes)
+            A_sq = (A * mx.conj(A)).real
+            sat = 1 / (1 + A_sq / Isat)
+            return A * mx.exp(
+                dz * (1j * g * A_sq * sat - alpha * sat + 1j * k_half * V)
+            )
+
+    elif precision == "double" and not has_V:
+
+        def _pure(A, propagator, dz_half, alpha, g, Isat):
+            A_sq = (A * mx.conj(A)).real
+            sat = 1 / (1 + A_sq / Isat)
+            A = A * mx.exp(dz_half * (1j * g * A_sq * sat - alpha * sat))
+            A = mx.fft.fftn(A, axes=axes)
+            A = A * propagator
+            A = mx.fft.ifftn(A, axes=axes)
+            A_sq = (A * mx.conj(A)).real
+            sat = 1 / (1 + A_sq / Isat)
+            return A * mx.exp(dz_half * (1j * g * A_sq * sat - alpha * sat))
+
+    else:  # double, has_V
+
+        def _pure(A, propagator, V, dz_half, alpha, g, k_half, Isat):
+            A_sq = (A * mx.conj(A)).real
+            sat = 1 / (1 + A_sq / Isat)
+            A = A * mx.exp(
+                dz_half * (1j * g * A_sq * sat - alpha * sat + 1j * k_half * V)
+            )
+            A = mx.fft.fftn(A, axes=axes)
+            A = A * propagator
+            A = mx.fft.ifftn(A, axes=axes)
+            A_sq = (A * mx.conj(A)).real
+            sat = 1 / (1 + A_sq / Isat)
+            return A * mx.exp(
+                dz_half * (1j * g * A_sq * sat - alpha * sat + 1j * k_half * V)
+            )
+
+    return mx.compile(_pure)
+
+
+_SPLIT_STEP_CACHE: dict[tuple, object] = {}
+
+
+def split_step(
+    A: mx.array,
+    propagator: mx.array,
+    V: mx.array | None,
+    dz: float,
+    alpha: float,
+    g: float,
+    k_half: float,
+    Isat: float,
+    precision: str,
+    axes: tuple,
+) -> mx.array:
+    """Execute fused split step for MLX (nl_length == 0 only).
+
+    Parameters
+    ----------
+    A : mx.array
+        The field to propagate.
+    propagator : mx.array
+        The propagator matrix.
+    V : mx.array or None
+        Potential field (unscaled).
+    dz : float
+        Propagation step (full for single, half for double precision).
+    alpha : float
+        Loss coefficient (half of total).
+    g : float
+        Nonlinear interaction strength.
+    k_half : float
+        Half the wavenumber (k/2) for V scaling.
+    Isat : float
+        Saturation intensity (converted units).
+    precision : str
+        "single" or "double" split step precision.
+    axes : tuple
+        FFT axes.
+
+    Returns
+    -------
+    mx.array
+        The propagated field.
+    """
+    key = (precision, V is not None, axes)
+    if key not in _SPLIT_STEP_CACHE:
+        _SPLIT_STEP_CACHE[key] = _make_split_step(precision, V is not None, axes)
+    fn = _SPLIT_STEP_CACHE[key]
+    if V is not None:
+        return fn(
+            A,
+            propagator,
+            V,
+            _to_mx(dz),
+            _to_mx(alpha),
+            _to_mx(g),
+            _to_mx(k_half),
+            _to_mx(Isat),
+        )
+    return fn(A, propagator, _to_mx(dz), _to_mx(alpha), _to_mx(g), _to_mx(Isat))

@@ -361,8 +361,11 @@ class NLSE:
         np.ndarray
             The propagated field.
         """
+        kernels = self._backend.kernels
+        if hasattr(kernels, "linear_step"):
+            return kernels.linear_step(A, propagator, plans[0])
         A = self._backend.fft(A, plans)
-        A = self._backend.kernels.apply_propagator(A, propagator)
+        A = kernels.apply_propagator(A, propagator)
         A = self._backend.ifft(A, plans)
         return A
 
@@ -399,6 +402,22 @@ class NLSE:
             The propagated field.
         """
         kernels = self._backend.kernels
+
+        # MLX fused fast path (nl_length == 0 only)
+        if hasattr(kernels, "split_step") and self.nl_length == 0:
+            dz = self.delta_z / 2 if precision == "double" else self.delta_z
+            return kernels.split_step(
+                A,
+                propagator,
+                V,
+                dz,
+                self.alpha / 2,
+                self.k / 2 * self.n2 * c * epsilon_0,
+                self.k / 2,
+                2 * self.I_sat / (epsilon_0 * c),
+                precision,
+                plans[0],
+            )
 
         # First half-step (only for precision == "double")
         if precision == "double":
