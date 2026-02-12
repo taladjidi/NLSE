@@ -228,7 +228,7 @@ class OpenCLKernels:
         V: cla.Array,
         g: float,
         Isat: float,
-    ) -> None:
+    ) -> cla.Array:
         """Fused nonlinear propagation kernel (with potential).
 
         Parameters
@@ -247,6 +247,11 @@ class OpenCLKernels:
             Nonlinear interaction strength
         Isat : float
             Saturation intensity
+
+        Returns
+        -------
+        cla.Array
+            The modified field array A.
         """
         kernels = self._get_kernels(A.dtype)
         global_size = (int(A.size),)
@@ -279,6 +284,7 @@ class OpenCLKernels:
             g_cast,
             Isat_cast,
         )
+        return A
 
     def nl_prop_without_V(
         self,
@@ -288,7 +294,7 @@ class OpenCLKernels:
         alpha: float,
         g: float,
         Isat: float,
-    ) -> None:
+    ) -> cla.Array:
         """Fused nonlinear propagation kernel (without potential).
 
         Parameters
@@ -305,6 +311,11 @@ class OpenCLKernels:
             Nonlinear interaction strength
         Isat : float
             Saturation intensity
+
+        Returns
+        -------
+        cla.Array
+            The modified field array A.
         """
         kernels = self._get_kernels(A.dtype)
         global_size = (int(A.size),)
@@ -335,6 +346,7 @@ class OpenCLKernels:
             g_cast,
             Isat_cast,
         )
+        return A
 
     def nl_prop_c(
         self,
@@ -348,7 +360,7 @@ class OpenCLKernels:
         g12: float,
         Isat1: float,
         Isat2: float,
-    ) -> None:
+    ) -> cla.Array:
         """Fused coupled nonlinear propagation (with potential).
 
         Parameters
@@ -373,6 +385,11 @@ class OpenCLKernels:
             Saturation intensity (component 1)
         Isat2 : float
             Saturation intensity (component 2)
+
+        Returns
+        -------
+        cla.Array
+            The modified field array A1.
         """
         kernels = self._get_kernels(A1.dtype)
         global_size = (int(A1.size),)
@@ -392,6 +409,7 @@ class OpenCLKernels:
             V.data,
             *params,
         )
+        return A1
 
     def nl_prop_without_V_c(
         self,
@@ -404,7 +422,7 @@ class OpenCLKernels:
         g12: float,
         Isat1: float,
         Isat2: float,
-    ) -> None:
+    ) -> cla.Array:
         """Fused coupled nonlinear propagation (without potential).
 
         Parameters
@@ -427,6 +445,11 @@ class OpenCLKernels:
             Saturation intensity (component 1)
         Isat2 : float
             Saturation intensity (component 2)
+
+        Returns
+        -------
+        cla.Array
+            The modified field array A1.
         """
         kernels = self._get_kernels(A1.dtype)
         global_size = (int(A1.size),)
@@ -439,8 +462,9 @@ class OpenCLKernels:
         kernels["nl_prop_c_without_v"](
             self.queue, global_size, None, A1.data, A_sq_1.data, A_sq_2.data, *params
         )
+        return A1
 
-    def square_mod(self, A: cla.Array, A_sq: cla.Array) -> None:
+    def square_mod(self, A: cla.Array, A_sq: cla.Array) -> cla.Array:
         """Compute square modulus (intensity).
 
         Parameters
@@ -449,10 +473,16 @@ class OpenCLKernels:
             Complex field array (complex64 or complex128)
         A_sq : cla.Array
             Output intensity array
+
+        Returns
+        -------
+        cla.Array
+            The modified intensity array A_sq.
         """
         kernels = self._get_kernels(A.dtype)
         global_size = (int(A.size),)
         kernels["square_mod"](self.queue, global_size, None, A.data, A_sq.data)
+        return A_sq
 
     def square_mod_nl_prop(
         self,
@@ -461,7 +491,7 @@ class OpenCLKernels:
         alpha: float,
         g: float,
         Isat: float,
-    ) -> None:
+    ) -> cla.Array:
         """Fused square_mod + nl_prop_without_V (eliminates kernel launch overhead).
 
         Parameters
@@ -476,6 +506,11 @@ class OpenCLKernels:
             Nonlinear interaction strength
         Isat : float
             Saturation intensity
+
+        Returns
+        -------
+        cla.Array
+            The modified field array A.
         """
         kernels = self._get_kernels(A.dtype)
         global_size = (int(A.size),)
@@ -505,6 +540,7 @@ class OpenCLKernels:
             g_cast,
             Isat_cast,
         )
+        return A
 
     def square_mod_nl_prop_v(
         self,
@@ -514,7 +550,7 @@ class OpenCLKernels:
         alpha: float,
         g: float,
         Isat: float,
-    ) -> None:
+    ) -> cla.Array:
         """Fused square_mod + nl_prop (with potential, eliminates kernel launch overhead).
 
         Parameters
@@ -531,6 +567,11 @@ class OpenCLKernels:
             Nonlinear interaction strength
         Isat : float
             Saturation intensity
+
+        Returns
+        -------
+        cla.Array
+            The modified field array A.
         """
         kernels = self._get_kernels(A.dtype)
         global_size = (int(A.size),)
@@ -561,8 +602,9 @@ class OpenCLKernels:
             g_cast,
             Isat_cast,
         )
+        return A
 
-    def apply_propagator(self, A: cla.Array, propagator: cla.Array) -> None:
+    def apply_propagator(self, A: cla.Array, propagator: cla.Array) -> cla.Array:
         """Apply linear propagator (replaces slow PyOpenCL array expression).
 
         Parameters
@@ -571,16 +613,22 @@ class OpenCLKernels:
             Complex field array (complex64 or complex128)
         propagator : cla.Array
             Pre-computed propagator array
+
+        Returns
+        -------
+        cla.Array
+            The modified field array A.
         """
         kernels = self._get_kernels(A.dtype)
         global_size = (int(A.size),)
         kernels["apply_propagator"](
             self.queue, global_size, None, A.data, propagator.data
         )
+        return A
 
     def rabi_coupling(
         self, A1: cla.Array, A2: cla.Array, dz: float, omega: float
-    ) -> None:
+    ) -> tuple[cla.Array, cla.Array]:
         """Apply Rabi coupling term using native OpenCL C kernel.
 
         Parameters
@@ -593,6 +641,11 @@ class OpenCLKernels:
             Solver step
         omega : float
             Rabi coupling strength
+
+        Returns
+        -------
+        tuple[cla.Array, cla.Array]
+            The modified field arrays (A1, A2).
         """
         kernels = self._get_kernels(A1.dtype)
         global_size = (int(A1.size),)
@@ -608,6 +661,7 @@ class OpenCLKernels:
         kernels["rabi_coupling"](
             self.queue, global_size, None, A1.data, A2.data, cos_cast, sin_cast
         )
+        return A1, A2
 
     def vortex_cp(
         self, im: cla.Array, i: int, j: int, ii: cla.Array, jj: cla.Array, ll: int

@@ -11,7 +11,7 @@ def nl_prop(
     V: np.ndarray,
     g: float,
     Isat: float,
-) -> None:
+) -> np.ndarray:
     """Apply real space terms with compiled parallel implementation.
 
     Parameters
@@ -31,15 +31,16 @@ def nl_prop(
     Isat : float
         Saturation
     """
-    A = A.ravel()
-    A_sq = A_sq.ravel()
-    V = V.ravel()
-    for i in numba.prange(A.size):
+    A_flat = A.ravel()
+    A_sq_flat = A_sq.ravel()
+    V_flat = V.ravel()
+    for i in numba.prange(A_flat.size):
         # saturation
-        sat = 1 / (1 + A_sq[i] / Isat)
+        sat = 1 / (1 + A_sq_flat[i] / Isat)
         # Losses and interactions
-        arg = -alpha * sat + 1j * g * A_sq[i] * sat + 1j * V[i]
-        A[i] *= np.exp(dz * arg)
+        arg = -alpha * sat + 1j * g * A_sq_flat[i] * sat + 1j * V_flat[i]
+        A_flat[i] *= np.exp(dz * arg)
+    return A
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
@@ -50,7 +51,7 @@ def nl_prop_without_V(
     alpha: float,
     g: float,
     Isat: float,
-) -> None:
+) -> np.ndarray:
     """Apply real space terms without potential.
 
     Parameters
@@ -68,14 +69,15 @@ def nl_prop_without_V(
     Isat : float
         Saturation
     """
-    A = A.ravel()
-    A_sq = A_sq.ravel()
-    for i in numba.prange(A.size):
+    A_flat = A.ravel()
+    A_sq_flat = A_sq.ravel()
+    for i in numba.prange(A_flat.size):
         # saturation
-        sat = 1 / (1 + A_sq[i] / Isat)
+        sat = 1 / (1 + A_sq_flat[i] / Isat)
         # Losses and interactions
-        arg = -alpha * sat + 1j * g * A_sq[i] * sat
-        A[i] *= np.exp(dz * arg)
+        arg = -alpha * sat + 1j * g * A_sq_flat[i] * sat
+        A_flat[i] *= np.exp(dz * arg)
+    return A
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
@@ -90,7 +92,7 @@ def nl_prop_c(
     g12: float,
     Isat1: float,
     Isat2: float,
-) -> None:
+) -> np.ndarray:
     """Apply coupled real space terms with potential.
 
     Parameters
@@ -116,20 +118,21 @@ def nl_prop_c(
     Isat2 : float
         Saturation parameter of second component.
     """
-    A1 = A1.ravel()
-    A_sq_1 = A_sq_1.ravel()
-    A_sq_2 = A_sq_2.ravel()
-    V = V.ravel()
-    for i in numba.prange(A1.size):
+    A1_flat = A1.ravel()
+    A_sq_1_flat = A_sq_1.ravel()
+    A_sq_2_flat = A_sq_2.ravel()
+    V_flat = V.ravel()
+    for i in numba.prange(A1_flat.size):
         # Saturation parameter
-        sat = 1 / (1 + A_sq_1[i] * 1 / Isat1 + A_sq_2[i] * 1 / Isat2)
+        sat = 1 / (1 + A_sq_1_flat[i] * 1 / Isat1 + A_sq_2_flat[i] * 1 / Isat2)
         # Losses
         arg = -alpha * sat
         # Interactions
-        arg += 1j * (g11 * A_sq_1[i] * sat + g12 * A_sq_2[i] * sat)
+        arg += 1j * (g11 * A_sq_1_flat[i] * sat + g12 * A_sq_2_flat[i] * sat)
         # Potential
-        arg += 1j * V[i]
-        A1[i] *= np.exp(dz * arg)
+        arg += 1j * V_flat[i]
+        A1_flat[i] *= np.exp(dz * arg)
+    return A1
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
@@ -143,7 +146,7 @@ def nl_prop_without_V_c(
     g12: float,
     Isat1: float,
     Isat2: float,
-) -> None:
+) -> np.ndarray:
     """Apply coupled real space terms without potential.
 
     Parameters
@@ -167,21 +170,22 @@ def nl_prop_without_V_c(
     Isat2 : float
         Saturation parameter of second component.
     """
-    A1 = A1.ravel()
-    A_sq_1 = A_sq_1.ravel()
-    A_sq_2 = A_sq_2.ravel()
-    for i in numba.prange(A1.size):
+    A1_flat = A1.ravel()
+    A_sq_1_flat = A_sq_1.ravel()
+    A_sq_2_flat = A_sq_2.ravel()
+    for i in numba.prange(A1_flat.size):
         # Saturation parameter
-        sat = 1 / (1 + A_sq_1[i] * 1 / Isat1 + A_sq_2[i] * 1 / Isat2)
+        sat = 1 / (1 + A_sq_1_flat[i] * 1 / Isat1 + A_sq_2_flat[i] * 1 / Isat2)
         # Losses
         arg = -alpha * sat
         # Interactions
-        arg += 1j * (g11 * A_sq_1[i] * sat + g12 * A_sq_2[i] * sat)
-        A1[i] *= np.exp(dz * arg)
+        arg += 1j * (g11 * A_sq_1_flat[i] * sat + g12 * A_sq_2_flat[i] * sat)
+        A1_flat[i] *= np.exp(dz * arg)
+    return A1
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
-def rabi_coupling(A1: np.ndarray, A2: np.ndarray, dz: float, omega: float) -> None:
+def rabi_coupling(A1: np.ndarray, A2: np.ndarray, dz: float, omega: float) -> tuple:
     """Apply Rabi coupling term.
 
     Implement the Rabi hopping term, exchanging density between components.
@@ -197,14 +201,15 @@ def rabi_coupling(A1: np.ndarray, A2: np.ndarray, dz: float, omega: float) -> No
     omega : float
         Rabi coupling strength
     """
-    A1 = A1.ravel()
-    A2 = A2.ravel()
+    A1_flat = A1.ravel()
+    A2_flat = A2.ravel()
     cos_val = np.cos(omega * dz)
     sin_val = np.sin(omega * dz)
-    for i in numba.prange(A1.size):
-        a1 = A1[i]
-        A1[i] = cos_val * a1 - 1j * sin_val * A2[i]
-        A2[i] = cos_val * A2[i] - 1j * sin_val * a1
+    for i in numba.prange(A1_flat.size):
+        a1 = A1_flat[i]
+        A1_flat[i] = cos_val * a1 - 1j * sin_val * A2_flat[i]
+        A2_flat[i] = cos_val * A2_flat[i] - 1j * sin_val * a1
+    return A1, A2
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
@@ -239,7 +244,7 @@ def vortex(
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
-def square_mod(A: np.ndarray, A_sq: np.ndarray) -> None:
+def square_mod(A: np.ndarray, A_sq: np.ndarray) -> np.ndarray:
     """Compute the square modulus of the field.
 
     Parameters
@@ -254,10 +259,11 @@ def square_mod(A: np.ndarray, A_sq: np.ndarray) -> None:
     None
 
     """
-    A = A.ravel()
-    A_sq = A_sq.ravel()
-    for i in numba.prange(A.size):
-        A_sq[i] = A[i].real * A[i].real + A[i].imag * A[i].imag
+    A_flat = A.ravel()
+    A_sq_flat = A_sq.ravel()
+    for i in numba.prange(A_flat.size):
+        A_sq_flat[i] = A_flat[i].real * A_flat[i].real + A_flat[i].imag * A_flat[i].imag
+    return A_sq
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
@@ -267,7 +273,7 @@ def square_mod_nl_prop(
     alpha: float,
     g: float,
     Isat: float,
-) -> None:
+) -> np.ndarray:
     """Compute |A|^2 inline and apply nonlinear propagation in a single pass.
 
     Parameters
@@ -283,12 +289,13 @@ def square_mod_nl_prop(
     Isat : float
         Saturation
     """
-    A = A.ravel()
-    for i in numba.prange(A.size):
-        A_sq_val = A[i].real * A[i].real + A[i].imag * A[i].imag
+    A_flat = A.ravel()
+    for i in numba.prange(A_flat.size):
+        A_sq_val = A_flat[i].real * A_flat[i].real + A_flat[i].imag * A_flat[i].imag
         sat = 1 / (1 + A_sq_val / Isat)
         arg = -alpha * sat + 1j * g * A_sq_val * sat
-        A[i] *= np.exp(dz * arg)
+        A_flat[i] *= np.exp(dz * arg)
+    return A
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
@@ -299,7 +306,7 @@ def square_mod_nl_prop_v(
     alpha: float,
     g: float,
     Isat: float,
-) -> None:
+) -> np.ndarray:
     """Compute |A|^2 inline and apply nonlinear propagation with potential.
 
     Parameters
@@ -317,17 +324,18 @@ def square_mod_nl_prop_v(
     Isat : float
         Saturation
     """
-    A = A.ravel()
-    V = V.ravel()
-    for i in numba.prange(A.size):
-        A_sq_val = A[i].real * A[i].real + A[i].imag * A[i].imag
+    A_flat = A.ravel()
+    V_flat = V.ravel()
+    for i in numba.prange(A_flat.size):
+        A_sq_val = A_flat[i].real * A_flat[i].real + A_flat[i].imag * A_flat[i].imag
         sat = 1 / (1 + A_sq_val / Isat)
-        arg = -alpha * sat + 1j * g * A_sq_val * sat + 1j * V[i]
-        A[i] *= np.exp(dz * arg)
+        arg = -alpha * sat + 1j * g * A_sq_val * sat + 1j * V_flat[i]
+        A_flat[i] *= np.exp(dz * arg)
+    return A
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
-def apply_propagator(A: np.ndarray, propagator: np.ndarray) -> None:
+def apply_propagator(A: np.ndarray, propagator: np.ndarray) -> np.ndarray:
     """Multiply A by propagator in-place, avoiding numpy temporaries.
 
     Parameters
@@ -337,11 +345,12 @@ def apply_propagator(A: np.ndarray, propagator: np.ndarray) -> None:
     propagator : np.ndarray
         The propagator array
     """
-    A = A.ravel()
-    propagator = propagator.ravel()
-    for i in numba.prange(A.size):
-        a = A[i]
-        p = propagator[i]
-        A[i] = (a.real * p.real - a.imag * p.imag) + 1j * (
+    A_flat = A.ravel()
+    prop_flat = propagator.ravel()
+    for i in numba.prange(A_flat.size):
+        a = A_flat[i]
+        p = prop_flat[i]
+        A_flat[i] = (a.real * p.real - a.imag * p.imag) + 1j * (
             a.real * p.imag + a.imag * p.real
         )
+    return A

@@ -378,7 +378,7 @@ class CNLSE(NLSE):
 
         A1, A2 = self._take_components(A)
         if precision == "double":
-            self._backend.kernels.square_mod(A, A_sq)
+            A_sq = self._backend.kernels.square_mod(A, A_sq)
             A_sq_1, A_sq_2 = self._take_components(A_sq)
             if self.nl_length > 0:
                 A_sq_1 = self._convolution(
@@ -389,7 +389,7 @@ class CNLSE(NLSE):
                 )
 
             if V is None:
-                self._backend.kernels.nl_prop_without_V_c(
+                A1 = self._backend.kernels.nl_prop_without_V_c(
                     A1,
                     A_sq_1,
                     A_sq_2,
@@ -400,7 +400,7 @@ class CNLSE(NLSE):
                     2 * self.I_sat / (epsilon_0 * c),
                     2 * self.I_sat2 / (epsilon_0 * c),
                 )
-                self._backend.kernels.nl_prop_without_V_c(
+                A2 = self._backend.kernels.nl_prop_without_V_c(
                     A2,
                     A_sq_2,
                     A_sq_1,
@@ -412,7 +412,7 @@ class CNLSE(NLSE):
                     2 * self.I_sat / (epsilon_0 * c),
                 )
             else:
-                self._backend.kernels.nl_prop_c(
+                A1 = self._backend.kernels.nl_prop_c(
                     A1,
                     A_sq_1,
                     A_sq_2,
@@ -424,7 +424,7 @@ class CNLSE(NLSE):
                     2 * self.I_sat / (epsilon_0 * c),
                     2 * self.I_sat2 / (epsilon_0 * c),
                 )
-                self._backend.kernels.nl_prop_c(
+                A2 = self._backend.kernels.nl_prop_c(
                     A2,
                     A_sq_2,
                     A_sq_1,
@@ -444,7 +444,7 @@ class CNLSE(NLSE):
         A = self._apply_linear_step(A, propagator, plans)
         # Re-extract components after FFT/IFFT (copies are now stale)
         A1, A2 = self._take_components(A)
-        self._backend.kernels.square_mod(A, A_sq)
+        A_sq = self._backend.kernels.square_mod(A, A_sq)
         A_sq_1, A_sq_2 = self._take_components(A_sq)
         if self.nl_length > 0:
             A_sq_1 = self._convolution(
@@ -455,7 +455,7 @@ class CNLSE(NLSE):
             )
         if precision == "double":
             if V is None:
-                self._backend.kernels.nl_prop_without_V_c(
+                A1 = self._backend.kernels.nl_prop_without_V_c(
                     A1,
                     A_sq_1,
                     A_sq_2,
@@ -466,7 +466,7 @@ class CNLSE(NLSE):
                     2 * self.I_sat / (epsilon_0 * c),
                     2 * self.I_sat2 / (epsilon_0 * c),
                 )
-                self._backend.kernels.nl_prop_without_V_c(
+                A2 = self._backend.kernels.nl_prop_without_V_c(
                     A2,
                     A_sq_2,
                     A_sq_1,
@@ -478,7 +478,7 @@ class CNLSE(NLSE):
                     2 * self.I_sat / (epsilon_0 * c),
                 )
             else:
-                self._backend.kernels.nl_prop_c(
+                A1 = self._backend.kernels.nl_prop_c(
                     A1,
                     A_sq_1,
                     A_sq_2,
@@ -490,7 +490,7 @@ class CNLSE(NLSE):
                     2 * self.I_sat / (epsilon_0 * c),
                     2 * self.I_sat2 / (epsilon_0 * c),
                 )
-                self._backend.kernels.nl_prop_c(
+                A2 = self._backend.kernels.nl_prop_c(
                     A2,
                     A_sq_2,
                     A_sq_1,
@@ -504,7 +504,7 @@ class CNLSE(NLSE):
                 )
         else:
             if V is None:
-                self._backend.kernels.nl_prop_without_V_c(
+                A1 = self._backend.kernels.nl_prop_without_V_c(
                     A1,
                     A_sq_1,
                     A_sq_2,
@@ -515,7 +515,7 @@ class CNLSE(NLSE):
                     2 * self.I_sat / (epsilon_0 * c),
                     2 * self.I_sat2 / (epsilon_0 * c),
                 )
-                self._backend.kernels.nl_prop_without_V_c(
+                A2 = self._backend.kernels.nl_prop_without_V_c(
                     A2,
                     A_sq_2,
                     A_sq_1,
@@ -527,7 +527,7 @@ class CNLSE(NLSE):
                     2 * self.I_sat / (epsilon_0 * c),
                 )
             else:
-                self._backend.kernels.nl_prop_c(
+                A1 = self._backend.kernels.nl_prop_c(
                     A1,
                     A_sq_1,
                     A_sq_2,
@@ -539,7 +539,7 @@ class CNLSE(NLSE):
                     2 * self.I_sat / (epsilon_0 * c),
                     2 * self.I_sat2 / (epsilon_0 * c),
                 )
-                self._backend.kernels.nl_prop_c(
+                A2 = self._backend.kernels.nl_prop_c(
                     A2,
                     A_sq_2,
                     A_sq_1,
@@ -552,7 +552,7 @@ class CNLSE(NLSE):
                     2 * self.I_sat / (epsilon_0 * c),
                 )
             if self.omega is not None:
-                self._backend.kernels.rabi_coupling(
+                A1, A2 = self._backend.kernels.rabi_coupling(
                     A1, A2, self.delta_z, self.omega / 2
                 )
 

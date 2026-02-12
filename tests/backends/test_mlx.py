@@ -119,13 +119,13 @@ class TestMLXKernels:
         A = backend.from_numpy(A_np)
         A_sq = backend.allocate_real_field(A.shape, np.float32)
 
-        mlx_kernels.square_mod(A, A_sq)
+        A_sq = mlx_kernels.square_mod(A, A_sq)
         result = backend.to_numpy(A_sq)
         expected = np.abs(A_np) ** 2
         np.testing.assert_allclose(result, expected, rtol=1e-5)
 
     def test_apply_propagator(self, backend):
-        """apply_propagator multiplies A by propagator in-place."""
+        """apply_propagator multiplies A by propagator."""
         from NLSE.kernels import mlx_kernels
 
         A_np = np.ones((4, 4), dtype=np.complex64) * (1 + 1j)
@@ -133,13 +133,13 @@ class TestMLXKernels:
         A = backend.from_numpy(A_np)
         prop = backend.from_numpy(prop_np)
 
-        mlx_kernels.apply_propagator(A, prop)
+        A = mlx_kernels.apply_propagator(A, prop)
         result = backend.to_numpy(A)
         expected = A_np * prop_np
         np.testing.assert_allclose(result, expected, rtol=1e-5)
 
     def test_nl_prop_without_V(self, backend):
-        """nl_prop_without_V modifies A in-place."""
+        """nl_prop_without_V modifies A."""
         from NLSE.kernels import mlx_kernels
 
         A_np = np.ones((4, 4), dtype=np.complex64)
@@ -147,14 +147,14 @@ class TestMLXKernels:
         A = backend.from_numpy(A_np)
         A_sq = backend.from_numpy(A_sq_np)
 
-        mlx_kernels.nl_prop_without_V(A, A_sq, 1e-5, 0.1, 1.0, 1e10)
+        A = mlx_kernels.nl_prop_without_V(A, A_sq, 1e-5, 0.1, 1.0, 1e10)
         result = backend.to_numpy(A)
         # Should be modified (not all ones anymore)
         assert not np.allclose(result, A_np), "A was not modified"
         assert np.isfinite(result).all(), "Result contains NaN/Inf"
 
     def test_nl_prop_with_V(self, backend):
-        """nl_prop with potential modifies A in-place."""
+        """nl_prop with potential modifies A."""
         from NLSE.kernels import mlx_kernels
 
         A_np = np.ones((4, 4), dtype=np.complex64)
@@ -164,7 +164,7 @@ class TestMLXKernels:
         A_sq = backend.from_numpy(A_sq_np)
         V = backend.from_numpy(V_np)
 
-        mlx_kernels.nl_prop(A, A_sq, 1e-5, 0.1, V, 1.0, 1e10)
+        A = mlx_kernels.nl_prop(A, A_sq, 1e-5, 0.1, V, 1.0, 1e10)
         result = backend.to_numpy(A)
         assert not np.allclose(result, A_np), "A was not modified"
         assert np.isfinite(result).all()
@@ -178,7 +178,7 @@ class TestMLXKernels:
         A1 = backend.from_numpy(A1_np)
         A2 = backend.from_numpy(A2_np)
 
-        mlx_kernels.rabi_coupling(A1, A2, 1e-3, 1e3)
+        A1, A2 = mlx_kernels.rabi_coupling(A1, A2, 1e-3, 1e3)
         r1 = backend.to_numpy(A1)
         r2 = backend.to_numpy(A2)
 
@@ -197,7 +197,7 @@ class TestMLXKernels:
         A_np = np.ones((4, 4), dtype=np.complex64) * (1 + 0.5j)
         A = backend.from_numpy(A_np)
 
-        mlx_kernels.square_mod_nl_prop(A, 1e-5, 0.1, 1.0, 1e10)
+        A = mlx_kernels.square_mod_nl_prop(A, 1e-5, 0.1, 1.0, 1e10)
         result = backend.to_numpy(A)
         assert not np.allclose(result, A_np)
         assert np.isfinite(result).all()
@@ -211,7 +211,7 @@ class TestMLXKernels:
         A = backend.from_numpy(A_np)
         V = backend.from_numpy(V_np)
 
-        mlx_kernels.square_mod_nl_prop_v(A, V, 1e-5, 0.1, 1.0, 1e10)
+        A = mlx_kernels.square_mod_nl_prop_v(A, V, 1e-5, 0.1, 1.0, 1e10)
         result = backend.to_numpy(A)
         assert not np.allclose(result, A_np)
         assert np.isfinite(result).all()
@@ -225,7 +225,9 @@ class TestMLXKernels:
         A_sq_2 = backend.from_numpy(np.ones((4, 4), dtype=np.float32) * 0.5)
         V = backend.from_numpy(np.ones((4, 4), dtype=np.float32) * 0.01)
 
-        mlx_kernels.nl_prop_c(A1, A_sq_1, A_sq_2, 1e-5, 0.1, V, 1.0, 0.5, 1e10, 1e10)
+        A1 = mlx_kernels.nl_prop_c(
+            A1, A_sq_1, A_sq_2, 1e-5, 0.1, V, 1.0, 0.5, 1e10, 1e10
+        )
         result = backend.to_numpy(A1)
         assert np.isfinite(result).all()
 
@@ -237,7 +239,7 @@ class TestMLXKernels:
         A_sq_1 = backend.from_numpy(np.ones((4, 4), dtype=np.float32))
         A_sq_2 = backend.from_numpy(np.ones((4, 4), dtype=np.float32) * 0.5)
 
-        mlx_kernels.nl_prop_without_V_c(
+        A1 = mlx_kernels.nl_prop_without_V_c(
             A1, A_sq_1, A_sq_2, 1e-5, 0.1, 1.0, 0.5, 1e10, 1e10
         )
         result = backend.to_numpy(A1)

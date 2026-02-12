@@ -362,7 +362,7 @@ class NLSE:
             The propagated field.
         """
         A = self._backend.fft(A, plans)
-        self._backend.kernels.apply_propagator(A, propagator)
+        A = self._backend.kernels.apply_propagator(A, propagator)
         A = self._backend.ifft(A, plans)
         return A
 
@@ -404,12 +404,12 @@ class NLSE:
         if precision == "double":
             if self.nl_length > 0:
                 # Need A_sq for convolution — must keep separate
-                kernels.square_mod(A, A_sq)
+                A_sq = kernels.square_mod(A, A_sq)
                 A_sq[:] = self._convolution(
                     A_sq, self.nl_profile, mode="same", axes=self._last_axes
                 )
                 if V is None:
-                    kernels.nl_prop_without_V(
+                    A = kernels.nl_prop_without_V(
                         A,
                         A_sq,
                         self.delta_z / 2,
@@ -419,7 +419,7 @@ class NLSE:
                     )
                 else:
                     V_scaled = V * np.float32(self.k / 2)
-                    kernels.nl_prop(
+                    A = kernels.nl_prop(
                         A,
                         A_sq,
                         self.delta_z / 2,
@@ -430,7 +430,7 @@ class NLSE:
                     )
             else:
                 if V is None:
-                    kernels.square_mod_nl_prop(
+                    A = kernels.square_mod_nl_prop(
                         A,
                         self.delta_z / 2,
                         self.alpha / 2,
@@ -439,7 +439,7 @@ class NLSE:
                     )
                 else:
                     V_scaled = V * np.float32(self.k / 2)
-                    kernels.square_mod_nl_prop_v(
+                    A = kernels.square_mod_nl_prop_v(
                         A,
                         V_scaled,
                         self.delta_z / 2,
@@ -457,12 +457,12 @@ class NLSE:
 
         if self.nl_length > 0:
             # Can't use fused kernel with convolution
-            kernels.square_mod(A, A_sq)
+            A_sq = kernels.square_mod(A, A_sq)
             A_sq[:] = self._convolution(
                 A_sq, self.nl_profile, mode="same", axes=self._last_axes
             )
             if V is None:
-                kernels.nl_prop_without_V(
+                A = kernels.nl_prop_without_V(
                     A,
                     A_sq,
                     dz_step,
@@ -471,7 +471,7 @@ class NLSE:
                     2 * self.I_sat / (epsilon_0 * c),
                 )
             else:
-                kernels.nl_prop(
+                A = kernels.nl_prop(
                     A,
                     A_sq,
                     dz_step,
@@ -482,7 +482,7 @@ class NLSE:
                 )
         else:
             if V is None:
-                kernels.square_mod_nl_prop(
+                A = kernels.square_mod_nl_prop(
                     A,
                     dz_step,
                     self.alpha / 2,
@@ -491,7 +491,7 @@ class NLSE:
                 )
             else:
                 V_scaled = V * np.float32(self.k / 2)
-                kernels.square_mod_nl_prop_v(
+                A = kernels.square_mod_nl_prop_v(
                     A,
                     V_scaled,
                     dz_step,
