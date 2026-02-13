@@ -280,39 +280,41 @@ class CNLSE(NLSE):
 
         return A1, A2
 
-    def _RK4_rhs_non_mutating(
+    def _RK4_rhs(
         self,
-        A: np.ndarray,
+        A_in: np.ndarray,
+        k: np.ndarray,
         V: np.ndarray | None,
         propagator: np.ndarray,
         plans: list,
     ) -> np.ndarray:
-        """Compute the RHS of NLSE in a non-mutating manner for RK4.
-
-        Split step function for one propagation step using a 4th order Runge-Kutta method (RK4).
+        """Compute coupled RK4 RHS into pre-allocated buffer k.
 
         Parameters
         ----------
-        A : np.ndarray
-            Field to propagate.
+        A_in : np.ndarray
+            Input field (not modified).
+        k : np.ndarray
+            Output buffer for RHS result (modified in-place for non-MLX).
         V : np.ndarray
             Potential field (can be None).
         propagator : np.ndarray
             Propagator matrix.
         plans : list
             List of FFT plan objects.
-            Either a single FFT plan for both directions (GPU case)
-            or distinct FFT and IFFT plans for FFTW.
         """
-        A_prop = A * 1
-        A_prop = self._apply_linear_step(A_prop, propagator, plans)
+        if self._backend.name == "MLX":
+            k = self._apply_linear_step(A_in, propagator, plans)
+        else:
+            k[:] = A_in
+            k = self._apply_linear_step(k, propagator, plans)
 
         kernels = self._backend.kernels
 
-        A1, A2 = self._take_components(A)
-        A_prop1, A_prop2 = self._take_components(A_prop)
+        A1, A2 = self._take_components(A_in)
+        k1, k2 = self._take_components(k)
 
-        A_sq = (A * A.conj()).real
+        A_sq = (A_in * A_in.conj()).real
         A_sq_1, A_sq_2 = self._take_components(A_sq)
 
         if self.nl_length > 0:
@@ -330,8 +332,8 @@ class CNLSE(NLSE):
         Isat2 = 2 * self.I_sat2 / (epsilon_0 * c)
 
         if V is None:
-            A_prop1 = kernels.rk4_nl_rhs_c(
-                A_prop1,
+            k1 = kernels.rk4_nl_rhs_c(
+                k1,
                 A1,
                 A_sq_1,
                 A_sq_2,
@@ -341,8 +343,8 @@ class CNLSE(NLSE):
                 Isat1,
                 Isat2,
             )
-            A_prop2 = kernels.rk4_nl_rhs_c(
-                A_prop2,
+            k2 = kernels.rk4_nl_rhs_c(
+                k2,
                 A2,
                 A_sq_2,
                 A_sq_1,
@@ -354,8 +356,8 @@ class CNLSE(NLSE):
             )
         else:
             V_scaled = V * np.float32(self.k / 2)
-            A_prop1 = kernels.rk4_nl_rhs_c_v(
-                A_prop1,
+            k1 = kernels.rk4_nl_rhs_c_v(
+                k1,
                 A1,
                 A_sq_1,
                 A_sq_2,
@@ -366,8 +368,8 @@ class CNLSE(NLSE):
                 Isat1,
                 Isat2,
             )
-            A_prop2 = kernels.rk4_nl_rhs_c_v(
-                A_prop2,
+            k2 = kernels.rk4_nl_rhs_c_v(
+                k2,
                 A2,
                 A_sq_2,
                 A_sq_1,
@@ -380,10 +382,10 @@ class CNLSE(NLSE):
             )
 
         if self._backend.name in ["CL", "CUPY", "MLX"]:
-            A_prop[0] = A_prop1
-            A_prop[1] = A_prop2
+            k[0] = k1
+            k[1] = k2
 
-        return A_prop
+        return k
 
     def split_step(
         self,

@@ -215,6 +215,9 @@ class OpenCLKernels:
                 ),
                 "apply_propagator": cl.Kernel(program, "apply_propagator"),
                 "rabi_coupling": cl.Kernel(program, "rabi_coupling"),
+                # RK4 utility kernels
+                "rk4_axpy": cl.Kernel(program, "rk4_axpy"),
+                "rk4_accumulate": cl.Kernel(program, "rk4_accumulate"),
                 # RK4 nonlinear RHS kernels
                 "rk4_nl_rhs": cl.Kernel(program, "rk4_nl_rhs_fused"),
                 "rk4_nl_rhs_v": cl.Kernel(program, "rk4_nl_rhs_v_fused"),
@@ -691,6 +694,67 @@ class OpenCLKernels:
         """
         fp = np.float32 if dtype == np.complex64 else np.float64
         return [fp(v) for v in values]
+
+    def rk4_axpy(
+        self,
+        out: cla.Array,
+        A: cla.Array,
+        c: float,
+        k: cla.Array,
+    ) -> cla.Array:
+        """Compute out = A + c * k element-wise for RK4 stage arguments.
+
+        Parameters
+        ----------
+        out : cla.Array
+            Output array (modified in-place)
+        A : cla.Array
+            Base field
+        c : float
+            Scalar coefficient
+        k : cla.Array
+            RK4 slope array
+
+        Returns
+        -------
+        cla.Array
+            The modified output array.
+        """
+        kernels = self._get_kernels(A.dtype)
+        c_cast = np.float32(c) if A.dtype == np.complex64 else np.float64(c)
+        kernels["rk4_axpy"](
+            self.queue, (int(A.size),), None, out.data, A.data, c_cast, k.data
+        )
+        return out
+
+    def rk4_accumulate(
+        self,
+        acc: cla.Array,
+        w: float,
+        k: cla.Array,
+    ) -> cla.Array:
+        """Compute acc += w * k element-wise for RK4 weighted accumulation.
+
+        Parameters
+        ----------
+        acc : cla.Array
+            Accumulator array (modified in-place)
+        w : float
+            Weight coefficient
+        k : cla.Array
+            RK4 slope array
+
+        Returns
+        -------
+        cla.Array
+            The modified accumulator array.
+        """
+        kernels = self._get_kernels(acc.dtype)
+        w_cast = np.float32(w) if acc.dtype == np.complex64 else np.float64(w)
+        kernels["rk4_accumulate"](
+            self.queue, (int(acc.size),), None, acc.data, w_cast, k.data
+        )
+        return acc
 
     def rk4_nl_rhs(
         self,

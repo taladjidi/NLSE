@@ -357,6 +357,58 @@ def apply_propagator(A: np.ndarray, propagator: np.ndarray) -> np.ndarray:
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
+def rk4_axpy(
+    out: np.ndarray,
+    A: np.ndarray,
+    c: float,
+    k: np.ndarray,
+) -> np.ndarray:
+    """Compute out = A + c * k element-wise for RK4 stage arguments.
+
+    Parameters
+    ----------
+    out : np.ndarray
+        Output array (modified in-place)
+    A : np.ndarray
+        Base field
+    c : float
+        Scalar coefficient
+    k : np.ndarray
+        RK4 slope array
+    """
+    out_flat = out.ravel()
+    A_flat = A.ravel()
+    k_flat = k.ravel()
+    for i in numba.prange(A_flat.size):
+        out_flat[i] = A_flat[i] + c * k_flat[i]
+    return out
+
+
+@numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
+def rk4_accumulate(
+    acc: np.ndarray,
+    w: float,
+    k: np.ndarray,
+) -> np.ndarray:
+    """Compute acc += w * k element-wise for RK4 weighted accumulation.
+
+    Parameters
+    ----------
+    acc : np.ndarray
+        Accumulator array (modified in-place)
+    w : float
+        Weight coefficient
+    k : np.ndarray
+        RK4 slope array
+    """
+    acc_flat = acc.ravel()
+    k_flat = k.ravel()
+    for i in numba.prange(acc_flat.size):
+        acc_flat[i] += w * k_flat[i]
+    return acc
+
+
+@numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
 def rk4_nl_rhs(
     A_prop: np.ndarray,
     A: np.ndarray,

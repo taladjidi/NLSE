@@ -195,6 +195,33 @@ __kernel void nl_prop_c_without_v_fused(
     );
 }
 
+// RK4 utility kernels (stage building and accumulation)
+
+// RK4 AXPY: out = A + c * k
+__kernel void rk4_axpy(
+    __global {{FP2_TYPE}}* out,
+    __global const {{FP2_TYPE}}* A,
+    const {{FP_TYPE}} c,
+    __global const {{FP2_TYPE}}* k
+) {
+    int idx = get_global_id(0);
+    {{FP2_TYPE}} A_val = A[idx];
+    {{FP2_TYPE}} k_val = k[idx];
+    out[idx] = ({{FP2_TYPE}})(A_val.x + c * k_val.x, A_val.y + c * k_val.y);
+}
+
+// RK4 Accumulate: acc += w * k
+__kernel void rk4_accumulate(
+    __global {{FP2_TYPE}}* acc,
+    const {{FP_TYPE}} w,
+    __global const {{FP2_TYPE}}* k
+) {
+    int idx = get_global_id(0);
+    {{FP2_TYPE}} acc_val = acc[idx];
+    {{FP2_TYPE}} k_val = k[idx];
+    acc[idx] = ({{FP2_TYPE}})(acc_val.x + w * k_val.x, acc_val.y + w * k_val.y);
+}
+
 // RK4 nonlinear RHS kernels (additive, no exp)
 // These accumulate onto A_prop: A_prop += (nonlinear terms) * A
 

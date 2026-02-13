@@ -529,21 +529,22 @@ class NLSE:
                 )
         return A
 
-    def _RK4_rhs_non_mutating(
+    def _RK4_rhs(
         self,
-        A: np.ndarray,
+        A_in: np.ndarray,
+        k: np.ndarray,
         V: np.ndarray | None,
         propagator: np.ndarray,
         plans: list,
     ) -> np.ndarray:
-        """Compute the RHS of NLSE in a non-mutating manner for RK4.
-
-        Split step function for one propagation step using a 4th order Runge-Kutta method (RK4).
+        """Compute the RHS of NLSE into pre-allocated buffer k.
 
         Parameters
         ----------
-        A : np.ndarray
-            Field to propagate.
+        A_in : np.ndarray
+            Input field (not modified).
+        k : np.ndarray
+            Output buffer for RHS result (modified in-place for non-MLX).
         V : np.ndarray
             Potential field (can be None).
         propagator : np.ndarray
@@ -551,8 +552,11 @@ class NLSE:
         plans : list
             List of FFT plan objects from backend.
         """
-        A_prop = A * 1
-        A_prop = self._apply_linear_step(A_prop, propagator, plans)
+        if self._backend.name == "MLX":
+            k = self._apply_linear_step(A_in, propagator, plans)
+        else:
+            k[:] = A_in
+            k = self._apply_linear_step(k, propagator, plans)
 
         kernels = self._backend.kernels
         g = self.k / 2 * self.n2 * c * epsilon_0
@@ -560,28 +564,26 @@ class NLSE:
         Isat_conv = 2 * self.I_sat / (epsilon_0 * c)
 
         if self.nl_length > 0:
-            A_sq = (A * A.conj()).real
+            A_sq = (A_in * A_in.conj()).real
             A_sq[:] = self._convolution(
                 A_sq, self.nl_profile, mode="same", axes=self._last_axes
             )
             if V is None:
-                A_prop = kernels.rk4_nl_rhs(A_prop, A, A_sq, alpha_half, g, Isat_conv)
+                k = kernels.rk4_nl_rhs(k, A_in, A_sq, alpha_half, g, Isat_conv)
             else:
                 V_scaled = V * np.float32(self.k / 2)
-                A_prop = kernels.rk4_nl_rhs_v(
-                    A_prop, A, A_sq, V_scaled, alpha_half, g, Isat_conv
+                k = kernels.rk4_nl_rhs_v(
+                    k, A_in, A_sq, V_scaled, alpha_half, g, Isat_conv
                 )
         else:
             if V is None:
-                A_prop = kernels.square_mod_rk4_nl_rhs(
-                    A_prop, A, alpha_half, g, Isat_conv
-                )
+                k = kernels.square_mod_rk4_nl_rhs(k, A_in, alpha_half, g, Isat_conv)
             else:
                 V_scaled = V * np.float32(self.k / 2)
-                A_prop = kernels.square_mod_rk4_nl_rhs_v(
-                    A_prop, A, V_scaled, alpha_half, g, Isat_conv
+                k = kernels.square_mod_rk4_nl_rhs_v(
+                    k, A_in, V_scaled, alpha_half, g, Isat_conv
                 )
-        return A_prop
+        return k
 
     def split_step_RK4(
         self,
@@ -590,13 +592,10 @@ class NLSE:
         propagator: np.ndarray,
         plans: list,
     ) -> np.ndarray:
-        """Split step function for one propagation step using RK4 scheme.
+        """Propagate one step using classic 4th-order Runge-Kutta.
 
-        y_n+1 = y_n + dz/6 * (k_1 + 2*k_2 + 2*k_3 + k_4)
-        k_1 = rhs(A)
-        k_2 = rhs(A+k_1/2)
-        k_3 = rhs(A+k_2/2)
-        k_4 = rhs(A+k_3)
+        Uses pre-allocated scratch buffers (k, A_tmp, acc) to avoid
+        per-step memory allocations.
 
         Parameters
         ----------
@@ -630,18 +629,47 @@ class NLSE:
                 plans[0],
             )
 
-        k_1 = self._RK4_rhs_non_mutating(A, V, propagator, plans)
-        k_2 = self._RK4_rhs_non_mutating(
-            A + k_1 * self.delta_z / 3, V, propagator, plans
-        )
-        k_3 = self._RK4_rhs_non_mutating(
-            A + (-k_1 / 3 + k_2) * self.delta_z, V, propagator, plans
-        )
-        k_4 = self._RK4_rhs_non_mutating(
-            A + (k_1 - k_2 + k_3) * self.delta_z, V, propagator, plans
-        )
-        A += self.delta_z / 8 * (k_1 + 3 * k_2 + 3 * k_3 + k_4)
+        if not hasattr(self, "_rk4_k"):
+            self._allocate_rk4_buffers(A, "RK4")
+        k = self._rk4_k
+        A_tmp = self._rk4_A_tmp
+        acc = self._rk4_acc
+        h = self.delta_z
+
+        # Stage 1: k1 = f(A)
+        k = self._RK4_rhs(A, k, V, propagator, plans)
+        acc = kernels.rk4_axpy(acc, k, 0.0, k)  # acc = k (copy via axpy)
+        A_tmp = kernels.rk4_axpy(A_tmp, A, h / 2, k)  # A_tmp = A + h/2*k1
+
+        # Stage 2: k2 = f(A + h/2*k1)
+        k = self._RK4_rhs(A_tmp, k, V, propagator, plans)
+        acc = kernels.rk4_accumulate(acc, 2.0, k)  # acc = k1 + 2*k2
+        A_tmp = kernels.rk4_axpy(A_tmp, A, h / 2, k)  # A_tmp = A + h/2*k2
+
+        # Stage 3: k3 = f(A + h/2*k2)
+        k = self._RK4_rhs(A_tmp, k, V, propagator, plans)
+        acc = kernels.rk4_accumulate(acc, 2.0, k)  # acc = k1 + 2*k2 + 2*k3
+        A_tmp = kernels.rk4_axpy(A_tmp, A, h, k)  # A_tmp = A + h*k3
+
+        # Stage 4: k4 = f(A + h*k3)
+        k = self._RK4_rhs(A_tmp, k, V, propagator, plans)
+        acc = kernels.rk4_accumulate(acc, 1.0, k)  # acc = k1+2*k2+2*k3+k4
+
+        # Final update: A += h/6 * acc
+        A = kernels.rk4_accumulate(A, h / 6, acc)
+
+        self._rk4_k = k
+        self._rk4_A_tmp = A_tmp
+        self._rk4_acc = acc
         return A
+
+    def _allocate_rk4_buffers(self, A: np.ndarray, method: str) -> None:
+        """Pre-allocate scratch buffers for the RK4 stepper."""
+        if method == "RK4":
+            dtype = np.complex64
+            self._rk4_k = self._backend.allocate_field(A.shape, dtype)
+            self._rk4_A_tmp = self._backend.allocate_field(A.shape, dtype)
+            self._rk4_acc = self._backend.allocate_field(A.shape, dtype)
 
     def _run_callbacks(self, callback, callback_args, A, z, i):
         """Dispatch user callbacks at each solver step."""
@@ -731,6 +759,7 @@ class NLSE:
         V = self.V
         A, A_sq = self._prepare_output_array(E_in, normalize)
         self.plans = self._build_fft_plan(A)
+        self._allocate_rk4_buffers(A, method)
         if verbose:
             pbar = tqdm.tqdm(
                 total=100,

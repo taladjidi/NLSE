@@ -429,6 +429,65 @@ def square_mod_nl_prop_v(A, V, dz, alpha, g, Isat):
     return A
 
 
+# RK4 utility kernels (stage building and accumulation)
+
+
+@cp.fuse(kernel_name="rk4_axpy")
+def _rk4_axpy_fused(out, A, c, k):
+    """Fused out = A + c * k."""
+    out[:] = A + c * k
+
+
+def rk4_axpy(out, A, c, k):
+    """Compute out = A + c * k element-wise for RK4 stage arguments.
+
+    Parameters
+    ----------
+    out : cp.ndarray
+        Output array (modified in-place)
+    A : cp.ndarray
+        Base field
+    c : float
+        Scalar coefficient
+    k : cp.ndarray
+        RK4 slope array
+
+    Returns
+    -------
+    cp.ndarray
+        The modified output array.
+    """
+    _rk4_axpy_fused(out, A, c, k)
+    return out
+
+
+@cp.fuse(kernel_name="rk4_accumulate")
+def _rk4_accumulate_fused(acc, w, k):
+    """Fused acc += w * k."""
+    acc += w * k
+
+
+def rk4_accumulate(acc, w, k):
+    """Compute acc += w * k element-wise for RK4 weighted accumulation.
+
+    Parameters
+    ----------
+    acc : cp.ndarray
+        Accumulator array (modified in-place)
+    w : float
+        Weight coefficient
+    k : cp.ndarray
+        RK4 slope array
+
+    Returns
+    -------
+    cp.ndarray
+        The modified accumulator array.
+    """
+    _rk4_accumulate_fused(acc, w, k)
+    return acc
+
+
 # RK4 nonlinear RHS kernels (additive, no exp)
 
 

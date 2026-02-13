@@ -562,6 +562,72 @@ def split_step(
     return fn(A, propagator, _to_mx(dz), _to_mx(alpha), _to_mx(g), _to_mx(Isat))
 
 
+# ── RK4 utility kernels (stage building and accumulation) ────────────────────
+
+
+def _rk4_axpy_pure(out, A, c, k):
+    return A + c * k
+
+
+def _rk4_accumulate_pure(acc, w, k):
+    return acc + w * k
+
+
+_c_rk4_axpy = mx.compile(_rk4_axpy_pure)
+_c_rk4_accumulate = mx.compile(_rk4_accumulate_pure)
+
+
+def rk4_axpy(
+    out: mx.array,
+    A: mx.array,
+    c: float,
+    k: mx.array,
+) -> mx.array:
+    """Compute out = A + c * k element-wise for RK4 stage arguments.
+
+    Parameters
+    ----------
+    out : mx.array
+        Output array (unused, kept for API compatibility)
+    A : mx.array
+        Base field
+    c : float
+        Scalar coefficient
+    k : mx.array
+        RK4 slope array
+
+    Returns
+    -------
+    mx.array
+        The result A + c * k.
+    """
+    return _c_rk4_axpy(out, A, _to_mx(c), k)
+
+
+def rk4_accumulate(
+    acc: mx.array,
+    w: float,
+    k: mx.array,
+) -> mx.array:
+    """Compute acc + w * k element-wise for RK4 weighted accumulation.
+
+    Parameters
+    ----------
+    acc : mx.array
+        Accumulator array
+    w : float
+        Weight coefficient
+    k : mx.array
+        RK4 slope array
+
+    Returns
+    -------
+    mx.array
+        The result acc + w * k.
+    """
+    return _c_rk4_accumulate(acc, _to_mx(w), k)
+
+
 # ── RK4 nonlinear RHS kernels ────────────────────────────────────────────────
 
 
@@ -869,10 +935,10 @@ def _make_split_step_rk4(has_V, axes):
                 return A_prop + (1j * g * A_sq * sat - alpha * sat) * A_in
 
             k1 = rhs(A)
-            k2 = rhs(A + k1 * dz / 3)
-            k3 = rhs(A + (-k1 / 3 + k2) * dz)
-            k4 = rhs(A + (k1 - k2 + k3) * dz)
-            return A + dz / 8 * (k1 + 3 * k2 + 3 * k3 + k4)
+            k2 = rhs(A + dz / 2 * k1)
+            k3 = rhs(A + dz / 2 * k2)
+            k4 = rhs(A + dz * k3)
+            return A + dz / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
     else:
 
@@ -889,10 +955,10 @@ def _make_split_step_rk4(has_V, axes):
                 )
 
             k1 = rhs(A)
-            k2 = rhs(A + k1 * dz / 3)
-            k3 = rhs(A + (-k1 / 3 + k2) * dz)
-            k4 = rhs(A + (k1 - k2 + k3) * dz)
-            return A + dz / 8 * (k1 + 3 * k2 + 3 * k3 + k4)
+            k2 = rhs(A + dz / 2 * k1)
+            k3 = rhs(A + dz / 2 * k2)
+            k4 = rhs(A + dz * k3)
+            return A + dz / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
     return mx.compile(_pure)
 
