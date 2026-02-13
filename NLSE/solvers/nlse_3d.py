@@ -159,6 +159,25 @@ class NLSE_3d(NLSE):
         self._propagator_cache[cache_key] = propagator
         return propagator
 
+    def _build_propagator_rk4(self) -> np.ndarray:
+        """Build raw 3D dispersion operator for RK4.
+
+        Adds spatial and temporal dispersion (no exp, no delta_z).
+
+        Returns
+        -------
+        np.ndarray
+            The raw dispersion operator.
+        """
+        cache_key = (self.NX, self.NY, self.NZ, "RK4", float(self.k), float(self.D0))
+        if cache_key in self._propagator_cache:
+            return self._propagator_cache[cache_key]
+        prop_spatial = super()._build_propagator_rk4()
+        prop_temporal = (-1j * self.D0 / 2 * self.Omega**2).astype(np.complex64)
+        propagator = prop_spatial + prop_temporal
+        self._propagator_cache[cache_key] = propagator
+        return propagator
+
     def _prepare_output_array(
         self, E_in: np.ndarray, normalize: bool
     ) -> tuple[np.ndarray, np.ndarray]:

@@ -560,3 +560,398 @@ def split_step(
             _to_mx(Isat),
         )
     return fn(A, propagator, _to_mx(dz), _to_mx(alpha), _to_mx(g), _to_mx(Isat))
+
+
+# ── RK4 nonlinear RHS kernels ────────────────────────────────────────────────
+
+
+def _rk4_nl_rhs_pure(A_prop, A, A_sq, alpha, g, Isat):
+    sat = 1 / (1 + A_sq / Isat)
+    return A_prop + (1j * g * A_sq * sat - alpha * sat) * A
+
+
+def _rk4_nl_rhs_v_pure(A_prop, A, A_sq, V, alpha, g, Isat):
+    sat = 1 / (1 + A_sq / Isat)
+    return A_prop + (1j * g * A_sq * sat - alpha * sat + 1j * V) * A
+
+
+def _square_mod_rk4_nl_rhs_pure(A_prop, A, alpha, g, Isat):
+    A_sq = (A * mx.conj(A)).real
+    sat = 1 / (1 + A_sq / Isat)
+    return A_prop + (1j * g * A_sq * sat - alpha * sat) * A
+
+
+def _square_mod_rk4_nl_rhs_v_pure(A_prop, A, V, alpha, g, Isat):
+    A_sq = (A * mx.conj(A)).real
+    sat = 1 / (1 + A_sq / Isat)
+    return A_prop + (1j * g * A_sq * sat - alpha * sat + 1j * V) * A
+
+
+def _rk4_nl_rhs_c_pure(A_prop, A_orig, A_sq_1, A_sq_2, alpha, g11, g12, Isat1, Isat2):
+    sat = 1 / (1 + A_sq_1 / Isat1 + A_sq_2 / Isat2)
+    return A_prop + 1j * (g11 * A_sq_1 + g12 * A_sq_2) * sat - alpha * sat * A_orig
+
+
+def _rk4_nl_rhs_c_v_pure(
+    A_prop, A_orig, A_sq_1, A_sq_2, V, alpha, g11, g12, Isat1, Isat2
+):
+    sat = 1 / (1 + A_sq_1 / Isat1 + A_sq_2 / Isat2)
+    return (
+        A_prop
+        + 1j * (g11 * A_sq_1 + g12 * A_sq_2) * sat
+        + (-alpha * sat + 1j * V) * A_orig
+    )
+
+
+_c_rk4_nl_rhs = mx.compile(_rk4_nl_rhs_pure)
+_c_rk4_nl_rhs_v = mx.compile(_rk4_nl_rhs_v_pure)
+_c_square_mod_rk4_nl_rhs = mx.compile(_square_mod_rk4_nl_rhs_pure)
+_c_square_mod_rk4_nl_rhs_v = mx.compile(_square_mod_rk4_nl_rhs_v_pure)
+_c_rk4_nl_rhs_c = mx.compile(_rk4_nl_rhs_c_pure)
+_c_rk4_nl_rhs_c_v = mx.compile(_rk4_nl_rhs_c_v_pure)
+
+
+def rk4_nl_rhs(
+    A_prop: mx.array,
+    A: mx.array,
+    A_sq: mx.array,
+    alpha: float,
+    g: float,
+    Isat: float,
+) -> mx.array:
+    """Accumulate nonlinear RHS for RK4 (no potential).
+
+    Parameters
+    ----------
+    A_prop : mx.array
+        Linearly propagated field
+    A : mx.array
+        Original field
+    A_sq : mx.array
+        Field modulus squared
+    alpha : float
+        Losses
+    g : float
+        Interactions
+    Isat : float
+        Saturation
+
+    Returns
+    -------
+    mx.array
+        The updated field.
+    """
+    return _c_rk4_nl_rhs(A_prop, A, A_sq, _to_mx(alpha), _to_mx(g), _to_mx(Isat))
+
+
+def rk4_nl_rhs_v(
+    A_prop: mx.array,
+    A: mx.array,
+    A_sq: mx.array,
+    V: mx.array,
+    alpha: float,
+    g: float,
+    Isat: float,
+) -> mx.array:
+    """Accumulate nonlinear RHS for RK4 (with potential).
+
+    Parameters
+    ----------
+    A_prop : mx.array
+        Linearly propagated field
+    A : mx.array
+        Original field
+    A_sq : mx.array
+        Field modulus squared
+    V : mx.array
+        Potential (pre-scaled)
+    alpha : float
+        Losses
+    g : float
+        Interactions
+    Isat : float
+        Saturation
+
+    Returns
+    -------
+    mx.array
+        The updated field.
+    """
+    return _c_rk4_nl_rhs_v(A_prop, A, A_sq, V, _to_mx(alpha), _to_mx(g), _to_mx(Isat))
+
+
+def square_mod_rk4_nl_rhs(
+    A_prop: mx.array,
+    A: mx.array,
+    alpha: float,
+    g: float,
+    Isat: float,
+) -> mx.array:
+    """Compute |A|^2 inline and accumulate nonlinear RHS for RK4 (no potential).
+
+    Parameters
+    ----------
+    A_prop : mx.array
+        Linearly propagated field
+    A : mx.array
+        Original field
+    alpha : float
+        Losses
+    g : float
+        Interactions
+    Isat : float
+        Saturation
+
+    Returns
+    -------
+    mx.array
+        The updated field.
+    """
+    return _c_square_mod_rk4_nl_rhs(A_prop, A, _to_mx(alpha), _to_mx(g), _to_mx(Isat))
+
+
+def square_mod_rk4_nl_rhs_v(
+    A_prop: mx.array,
+    A: mx.array,
+    V: mx.array,
+    alpha: float,
+    g: float,
+    Isat: float,
+) -> mx.array:
+    """Compute |A|^2 inline and accumulate nonlinear RHS for RK4 (with potential).
+
+    Parameters
+    ----------
+    A_prop : mx.array
+        Linearly propagated field
+    A : mx.array
+        Original field
+    V : mx.array
+        Potential (pre-scaled)
+    alpha : float
+        Losses
+    g : float
+        Interactions
+    Isat : float
+        Saturation
+
+    Returns
+    -------
+    mx.array
+        The updated field.
+    """
+    return _c_square_mod_rk4_nl_rhs_v(
+        A_prop, A, V, _to_mx(alpha), _to_mx(g), _to_mx(Isat)
+    )
+
+
+def rk4_nl_rhs_c(
+    A_prop: mx.array,
+    A_orig: mx.array,
+    A_sq_1: mx.array,
+    A_sq_2: mx.array,
+    alpha: float,
+    g11: float,
+    g12: float,
+    Isat1: float,
+    Isat2: float,
+) -> mx.array:
+    """Accumulate coupled nonlinear RHS for RK4 (no potential).
+
+    Parameters
+    ----------
+    A_prop : mx.array
+        Linearly propagated field
+    A_orig : mx.array
+        Original field (this component)
+    A_sq_1 : mx.array
+        Modulus squared of first component
+    A_sq_2 : mx.array
+        Modulus squared of second component
+    alpha : float
+        Losses
+    g11 : float
+        Intra-component interactions
+    g12 : float
+        Inter-component interactions
+    Isat1 : float
+        Saturation parameter of first component
+    Isat2 : float
+        Saturation parameter of second component
+
+    Returns
+    -------
+    mx.array
+        The updated field.
+    """
+    return _c_rk4_nl_rhs_c(
+        A_prop,
+        A_orig,
+        A_sq_1,
+        A_sq_2,
+        _to_mx(alpha),
+        _to_mx(g11),
+        _to_mx(g12),
+        _to_mx(Isat1),
+        _to_mx(Isat2),
+    )
+
+
+def rk4_nl_rhs_c_v(
+    A_prop: mx.array,
+    A_orig: mx.array,
+    A_sq_1: mx.array,
+    A_sq_2: mx.array,
+    V: mx.array,
+    alpha: float,
+    g11: float,
+    g12: float,
+    Isat1: float,
+    Isat2: float,
+) -> mx.array:
+    """Accumulate coupled nonlinear RHS for RK4 (with potential).
+
+    Parameters
+    ----------
+    A_prop : mx.array
+        Linearly propagated field
+    A_orig : mx.array
+        Original field (this component)
+    A_sq_1 : mx.array
+        Modulus squared of first component
+    A_sq_2 : mx.array
+        Modulus squared of second component
+    V : mx.array
+        Potential (pre-scaled)
+    alpha : float
+        Losses
+    g11 : float
+        Intra-component interactions
+    g12 : float
+        Inter-component interactions
+    Isat1 : float
+        Saturation parameter of first component
+    Isat2 : float
+        Saturation parameter of second component
+
+    Returns
+    -------
+    mx.array
+        The updated field.
+    """
+    return _c_rk4_nl_rhs_c_v(
+        A_prop,
+        A_orig,
+        A_sq_1,
+        A_sq_2,
+        V,
+        _to_mx(alpha),
+        _to_mx(g11),
+        _to_mx(g12),
+        _to_mx(Isat1),
+        _to_mx(Isat2),
+    )
+
+
+# ── Fused RK4 split step (nl_length == 0, uncoupled only) ────────────────────
+
+
+def _make_split_step_rk4(has_V, axes):
+    if not has_V:
+
+        def _pure(A, propagator, dz, alpha, g, Isat):
+            def rhs(A_in):
+                A_prop = mx.fft.fftn(A_in, axes=axes)
+                A_prop = A_prop * propagator
+                A_prop = mx.fft.ifftn(A_prop, axes=axes)
+                A_sq = (A_in * mx.conj(A_in)).real
+                sat = 1 / (1 + A_sq / Isat)
+                return A_prop + (1j * g * A_sq * sat - alpha * sat) * A_in
+
+            k1 = rhs(A)
+            k2 = rhs(A + k1 * dz / 3)
+            k3 = rhs(A + (-k1 / 3 + k2) * dz)
+            k4 = rhs(A + (k1 - k2 + k3) * dz)
+            return A + dz / 8 * (k1 + 3 * k2 + 3 * k3 + k4)
+
+    else:
+
+        def _pure(A, propagator, V, dz, alpha, g, k_half, Isat):
+            def rhs(A_in):
+                A_prop = mx.fft.fftn(A_in, axes=axes)
+                A_prop = A_prop * propagator
+                A_prop = mx.fft.ifftn(A_prop, axes=axes)
+                A_sq = (A_in * mx.conj(A_in)).real
+                sat = 1 / (1 + A_sq / Isat)
+                return (
+                    A_prop
+                    + (1j * g * A_sq * sat - alpha * sat + 1j * k_half * V) * A_in
+                )
+
+            k1 = rhs(A)
+            k2 = rhs(A + k1 * dz / 3)
+            k3 = rhs(A + (-k1 / 3 + k2) * dz)
+            k4 = rhs(A + (k1 - k2 + k3) * dz)
+            return A + dz / 8 * (k1 + 3 * k2 + 3 * k3 + k4)
+
+    return mx.compile(_pure)
+
+
+_SPLIT_STEP_RK4_CACHE: dict[tuple, object] = {}
+
+
+def split_step_rk4(
+    A: mx.array,
+    propagator: mx.array,
+    V: mx.array | None,
+    dz: float,
+    alpha: float,
+    g: float,
+    k_half: float,
+    Isat: float,
+    axes: tuple,
+) -> mx.array:
+    """Execute fused RK4 split step for MLX (nl_length == 0 only).
+
+    Parameters
+    ----------
+    A : mx.array
+        The field to propagate.
+    propagator : mx.array
+        The RK4 propagator (dispersion operator, not exponentiated).
+    V : mx.array or None
+        Potential field (unscaled).
+    dz : float
+        Propagation step.
+    alpha : float
+        Loss coefficient (half of total).
+    g : float
+        Nonlinear interaction strength.
+    k_half : float
+        Half the wavenumber (k/2) for V scaling.
+    Isat : float
+        Saturation intensity (converted units).
+    axes : tuple
+        FFT axes.
+
+    Returns
+    -------
+    mx.array
+        The propagated field.
+    """
+    key = (V is not None, axes)
+    if key not in _SPLIT_STEP_RK4_CACHE:
+        _SPLIT_STEP_RK4_CACHE[key] = _make_split_step_rk4(V is not None, axes)
+    fn = _SPLIT_STEP_RK4_CACHE[key]
+    if V is not None:
+        return fn(
+            A,
+            propagator,
+            V,
+            _to_mx(dz),
+            _to_mx(alpha),
+            _to_mx(g),
+            _to_mx(k_half),
+            _to_mx(Isat),
+        )
+    return fn(A, propagator, _to_mx(dz), _to_mx(alpha), _to_mx(g), _to_mx(Isat))

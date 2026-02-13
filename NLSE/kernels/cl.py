@@ -215,6 +215,17 @@ class OpenCLKernels:
                 ),
                 "apply_propagator": cl.Kernel(program, "apply_propagator"),
                 "rabi_coupling": cl.Kernel(program, "rabi_coupling"),
+                # RK4 nonlinear RHS kernels
+                "rk4_nl_rhs": cl.Kernel(program, "rk4_nl_rhs_fused"),
+                "rk4_nl_rhs_v": cl.Kernel(program, "rk4_nl_rhs_v_fused"),
+                "square_mod_rk4_nl_rhs": cl.Kernel(
+                    program, "square_mod_rk4_nl_rhs_fused"
+                ),
+                "square_mod_rk4_nl_rhs_v": cl.Kernel(
+                    program, "square_mod_rk4_nl_rhs_v_fused"
+                ),
+                "rk4_nl_rhs_c": cl.Kernel(program, "rk4_nl_rhs_c_fused"),
+                "rk4_nl_rhs_c_v": cl.Kernel(program, "rk4_nl_rhs_c_v_fused"),
             }
 
         return self._kernels[precision]
@@ -662,6 +673,295 @@ class OpenCLKernels:
             self.queue, global_size, None, A1.data, A2.data, cos_cast, sin_cast
         )
         return A1, A2
+
+    def _cast_params(self, dtype, *values):
+        """Cast scalar parameters to appropriate precision.
+
+        Parameters
+        ----------
+        dtype : numpy.dtype
+            Target dtype (complex64 or complex128)
+        values : float
+            Scalar values to cast
+
+        Returns
+        -------
+        list
+            Cast values.
+        """
+        fp = np.float32 if dtype == np.complex64 else np.float64
+        return [fp(v) for v in values]
+
+    def rk4_nl_rhs(
+        self,
+        A_prop: cla.Array,
+        A: cla.Array,
+        A_sq: cla.Array,
+        alpha: float,
+        g: float,
+        Isat: float,
+    ) -> cla.Array:
+        """Accumulate nonlinear RHS for RK4 (no potential).
+
+        Parameters
+        ----------
+        A_prop : cla.Array
+            Linearly propagated field (modified in-place)
+        A : cla.Array
+            Original field
+        A_sq : cla.Array
+            Field modulus squared
+        alpha : float
+            Losses
+        g : float
+            Interactions
+        Isat : float
+            Saturation
+
+        Returns
+        -------
+        cla.Array
+            The modified A_prop.
+        """
+        kernels = self._get_kernels(A.dtype)
+        params = self._cast_params(A.dtype, alpha, g, Isat)
+        kernels["rk4_nl_rhs"](
+            self.queue, (int(A.size),), None, A_prop.data, A.data, A_sq.data, *params
+        )
+        return A_prop
+
+    def rk4_nl_rhs_v(
+        self,
+        A_prop: cla.Array,
+        A: cla.Array,
+        A_sq: cla.Array,
+        V: cla.Array,
+        alpha: float,
+        g: float,
+        Isat: float,
+    ) -> cla.Array:
+        """Accumulate nonlinear RHS for RK4 (with potential).
+
+        Parameters
+        ----------
+        A_prop : cla.Array
+            Linearly propagated field (modified in-place)
+        A : cla.Array
+            Original field
+        A_sq : cla.Array
+            Field modulus squared
+        V : cla.Array
+            Potential (pre-scaled)
+        alpha : float
+            Losses
+        g : float
+            Interactions
+        Isat : float
+            Saturation
+
+        Returns
+        -------
+        cla.Array
+            The modified A_prop.
+        """
+        kernels = self._get_kernels(A.dtype)
+        params = self._cast_params(A.dtype, alpha, g, Isat)
+        kernels["rk4_nl_rhs_v"](
+            self.queue,
+            (int(A.size),),
+            None,
+            A_prop.data,
+            A.data,
+            A_sq.data,
+            V.data,
+            *params,
+        )
+        return A_prop
+
+    def square_mod_rk4_nl_rhs(
+        self,
+        A_prop: cla.Array,
+        A: cla.Array,
+        alpha: float,
+        g: float,
+        Isat: float,
+    ) -> cla.Array:
+        """Fused |A|^2 + RK4 NL RHS (no potential).
+
+        Parameters
+        ----------
+        A_prop : cla.Array
+            Linearly propagated field (modified in-place)
+        A : cla.Array
+            Original field
+        alpha : float
+            Losses
+        g : float
+            Interactions
+        Isat : float
+            Saturation
+
+        Returns
+        -------
+        cla.Array
+            The modified A_prop.
+        """
+        kernels = self._get_kernels(A.dtype)
+        params = self._cast_params(A.dtype, alpha, g, Isat)
+        kernels["square_mod_rk4_nl_rhs"](
+            self.queue, (int(A.size),), None, A_prop.data, A.data, *params
+        )
+        return A_prop
+
+    def square_mod_rk4_nl_rhs_v(
+        self,
+        A_prop: cla.Array,
+        A: cla.Array,
+        V: cla.Array,
+        alpha: float,
+        g: float,
+        Isat: float,
+    ) -> cla.Array:
+        """Fused |A|^2 + RK4 NL RHS (with potential).
+
+        Parameters
+        ----------
+        A_prop : cla.Array
+            Linearly propagated field (modified in-place)
+        A : cla.Array
+            Original field
+        V : cla.Array
+            Potential (pre-scaled)
+        alpha : float
+            Losses
+        g : float
+            Interactions
+        Isat : float
+            Saturation
+
+        Returns
+        -------
+        cla.Array
+            The modified A_prop.
+        """
+        kernels = self._get_kernels(A.dtype)
+        params = self._cast_params(A.dtype, alpha, g, Isat)
+        kernels["square_mod_rk4_nl_rhs_v"](
+            self.queue, (int(A.size),), None, A_prop.data, A.data, V.data, *params
+        )
+        return A_prop
+
+    def rk4_nl_rhs_c(
+        self,
+        A_prop: cla.Array,
+        A_orig: cla.Array,
+        A_sq_1: cla.Array,
+        A_sq_2: cla.Array,
+        alpha: float,
+        g11: float,
+        g12: float,
+        Isat1: float,
+        Isat2: float,
+    ) -> cla.Array:
+        """Accumulate coupled nonlinear RHS for RK4 (no potential).
+
+        Parameters
+        ----------
+        A_prop : cla.Array
+            Linearly propagated field (modified in-place)
+        A_orig : cla.Array
+            Original field (this component)
+        A_sq_1 : cla.Array
+            Modulus squared of first component
+        A_sq_2 : cla.Array
+            Modulus squared of second component
+        alpha : float
+            Losses
+        g11 : float
+            Intra-component interactions
+        g12 : float
+            Inter-component interactions
+        Isat1 : float
+            Saturation parameter of first component
+        Isat2 : float
+            Saturation parameter of second component
+
+        Returns
+        -------
+        cla.Array
+            The modified A_prop.
+        """
+        kernels = self._get_kernels(A_orig.dtype)
+        params = self._cast_params(A_orig.dtype, alpha, g11, g12, Isat1, Isat2)
+        kernels["rk4_nl_rhs_c"](
+            self.queue,
+            (int(A_orig.size),),
+            None,
+            A_prop.data,
+            A_orig.data,
+            A_sq_1.data,
+            A_sq_2.data,
+            *params,
+        )
+        return A_prop
+
+    def rk4_nl_rhs_c_v(
+        self,
+        A_prop: cla.Array,
+        A_orig: cla.Array,
+        A_sq_1: cla.Array,
+        A_sq_2: cla.Array,
+        V: cla.Array,
+        alpha: float,
+        g11: float,
+        g12: float,
+        Isat1: float,
+        Isat2: float,
+    ) -> cla.Array:
+        """Accumulate coupled nonlinear RHS for RK4 (with potential).
+
+        Parameters
+        ----------
+        A_prop : cla.Array
+            Linearly propagated field (modified in-place)
+        A_orig : cla.Array
+            Original field (this component)
+        A_sq_1 : cla.Array
+            Modulus squared of first component
+        A_sq_2 : cla.Array
+            Modulus squared of second component
+        V : cla.Array
+            Potential (pre-scaled)
+        alpha : float
+            Losses
+        g11 : float
+            Intra-component interactions
+        g12 : float
+            Inter-component interactions
+        Isat1 : float
+            Saturation parameter of first component
+        Isat2 : float
+            Saturation parameter of second component
+
+        Returns
+        -------
+        cla.Array
+            The modified A_prop.
+        """
+        kernels = self._get_kernels(A_orig.dtype)
+        params = self._cast_params(A_orig.dtype, alpha, g11, g12, Isat1, Isat2)
+        kernels["rk4_nl_rhs_c_v"](
+            self.queue,
+            (int(A_orig.size),),
+            None,
+            A_prop.data,
+            A_orig.data,
+            A_sq_1.data,
+            A_sq_2.data,
+            V.data,
+            *params,
+        )
+        return A_prop
 
     def vortex_cp(
         self, im: cla.Array, i: int, j: int, ii: cla.Array, jj: cla.Array, ll: int

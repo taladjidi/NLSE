@@ -201,8 +201,7 @@ class NLSE:
         Parameters
         ----------
         precision : str
-            Type of propagator to generate. For split step schemes
-            the step is inside the propagator, for RK4 it is not.
+            "single" or "double" precision for the split step propagator.
 
         Returns
         -------
@@ -218,19 +217,29 @@ class NLSE:
 
         # Use appropriate dtype based on precision
         dtype = np.complex128 if precision == "double" else np.complex64
-
-        match precision:
-            case "single" | "double":
-                propagator = np.exp(
-                    -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k * self.delta_z,
-                    dtype=dtype,
-                )
-            case "RK4":
-                propagator = (-1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k).astype(
-                    dtype
-                )
+        propagator = np.exp(
+            -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k * self.delta_z,
+            dtype=dtype,
+        )
 
         # Cache for future use
+        self._propagator_cache[cache_key] = propagator
+        return propagator
+
+    def _build_propagator_rk4(self) -> np.ndarray:
+        """Build raw dispersion operator for RK4 (no exp, no delta_z).
+
+        Returns
+        -------
+        np.ndarray
+            The raw dispersion operator.
+        """
+        cache_key = (self.NX, self.NY, "RK4", float(self.k))
+        if cache_key in self._propagator_cache:
+            return self._propagator_cache[cache_key]
+        propagator = (-1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k).astype(
+            np.complex64
+        )
         self._propagator_cache[cache_key] = propagator
         return propagator
 
@@ -542,31 +551,37 @@ class NLSE:
         plans : list
             List of FFT plan objects from backend.
         """
-        # prepare output array, this kills performance but we need it
         A_prop = A * 1
-        A_sq = (A * A.conj()).real
+        A_prop = self._apply_linear_step(A_prop, propagator, plans)
 
-        # Linear propagation step in Fourier domain
-        A_prop = self._backend.fft(A_prop, plans)
-        A_prop *= propagator
-        A_prop = self._backend.ifft(A_prop, plans)
+        kernels = self._backend.kernels
+        g = self.k / 2 * self.n2 * c * epsilon_0
+        alpha_half = self.alpha / 2
+        Isat_conv = 2 * self.I_sat / (epsilon_0 * c)
 
         if self.nl_length > 0:
+            A_sq = (A * A.conj()).real
             A_sq[:] = self._convolution(
                 A_sq, self.nl_profile, mode="same", axes=self._last_axes
             )
-        # Linear prop
-        arg = A_prop
-        # saturation
-        sat = 1 / (1 + A_sq / (2 * self.I_sat / (epsilon_0 * c)))
-        # Interactions
-        arg += 1j * self.k / 2 * self.n2 * c * epsilon_0 * A_sq * sat * A
-        # Losses
-        arg -= self.alpha / 2 * sat * A
-        if V is not None:
-            V_ = 1j * self.k / 2 * V * A
-            arg += V_
-        return arg
+            if V is None:
+                A_prop = kernels.rk4_nl_rhs(A_prop, A, A_sq, alpha_half, g, Isat_conv)
+            else:
+                V_scaled = V * np.float32(self.k / 2)
+                A_prop = kernels.rk4_nl_rhs_v(
+                    A_prop, A, A_sq, V_scaled, alpha_half, g, Isat_conv
+                )
+        else:
+            if V is None:
+                A_prop = kernels.square_mod_rk4_nl_rhs(
+                    A_prop, A, alpha_half, g, Isat_conv
+                )
+            else:
+                V_scaled = V * np.float32(self.k / 2)
+                A_prop = kernels.square_mod_rk4_nl_rhs_v(
+                    A_prop, A, V_scaled, alpha_half, g, Isat_conv
+                )
+        return A_prop
 
     def split_step_RK4(
         self,
@@ -599,6 +614,22 @@ class NLSE:
         np.ndarray
             The propagated field.
         """
+        kernels = self._backend.kernels
+
+        # MLX fused fast path (nl_length == 0, single-component only)
+        if hasattr(kernels, "split_step_rk4") and self.nl_length == 0 and A.ndim == 2:
+            return kernels.split_step_rk4(
+                A,
+                propagator,
+                V,
+                self.delta_z,
+                self.alpha / 2,
+                self.k / 2 * self.n2 * c * epsilon_0,
+                self.k / 2,
+                2 * self.I_sat / (epsilon_0 * c),
+                plans[0],
+            )
+
         k_1 = self._RK4_rhs_non_mutating(A, V, propagator, plans)
         k_2 = self._RK4_rhs_non_mutating(
             A + k_1 * self.delta_z / 3, V, propagator, plans
@@ -628,6 +659,7 @@ class NLSE:
         z: float,
         plot: bool = False,
         precision: str = "single",
+        method: str = "split_step",
         verbose: bool = True,
         normalize: bool = True,
         callback: list[Callable] | Callable | None = None,
@@ -654,7 +686,10 @@ class NLSE:
         precision : str, optional
             Does a "double" or a "single" application
             of the nonlinear term. This leads to a dz (single) or dz^3
-            (double)precision. Defaults to "single".
+            (double) precision. Defaults to "single".
+        method : str, optional
+            Integration method: "split_step" or "RK4".
+            Defaults to "split_step".
         verbose : bool, optional
             Prints progress and time.
             Defaults to True.
@@ -673,6 +708,11 @@ class NLSE:
         np.ndarray
             Propagated field in proper units V/m.
         """
+        # Backward compat: precision="RK4" maps to method="RK4"
+        if precision == "RK4":
+            method = "RK4"
+            precision = "single"
+
         assert (
             E_in.shape[self._last_axes[0] :] == self.XX.shape[self._last_axes[0] :]
         ), "Shape mismatch"
@@ -682,14 +722,13 @@ class NLSE:
         ], "Type mismatch, E_in should be complex64 or complex128"
         # define propagator if not already done
         if self.propagator is None:
-            self.propagator = self._build_propagator(precision=precision)
+            if method == "RK4":
+                self.propagator = self._build_propagator_rk4()
+            else:
+                self.propagator = self._build_propagator(precision=precision)
         if self._backend.name in ["CUPY", "CL", "MLX"]:
             self._send_arrays_to_gpu()
-        if self.V is None:
-            V = self.V
-        else:
-            # V was already sent to GPU in _send_arrays_to_gpu()
-            V = self.V
+        V = self.V
         A, A_sq = self._prepare_output_array(E_in, normalize)
         self.plans = self._build_fft_plan(A)
         if verbose:
@@ -714,7 +753,7 @@ class NLSE:
         while abs(z_prop) < z:
             if z > self.L:
                 self.n2 = 0
-            if precision == "RK4":
+            if method == "RK4":
                 A = self.split_step_RK4(A, V, self.propagator, self.plans)
             else:
                 A = self.split_step(A, A_sq, V, self.propagator, self.plans, precision)

@@ -121,6 +121,23 @@ class GPE(NLSE):
         self._propagator_cache[cache_key] = propagator
         return propagator
 
+    def _build_propagator_rk4(self) -> np.ndarray:
+        """Build raw dispersion operator for RK4 in quantum units.
+
+        Returns
+        -------
+        np.ndarray
+            The raw dispersion operator.
+        """
+        cache_key = (self.NX, self.NY, "RK4", float(self.m))
+        if cache_key in self._propagator_cache:
+            return self._propagator_cache[cache_key]
+        propagator = (-1j * 0.5 * hbar * (self.Kxx**2 + self.Kyy**2) / self.m).astype(
+            np.complex64
+        )
+        self._propagator_cache[cache_key] = propagator
+        return propagator
+
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot a field for monitoring.
 

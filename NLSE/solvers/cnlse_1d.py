@@ -156,6 +156,23 @@ class CNLSE_1d(CNLSE):
         self._propagator_cache[cache_key] = propagator
         return propagator
 
+    def _build_propagator_rk4(self) -> np.ndarray:
+        """Build raw 1D 2-component dispersion operator for RK4.
+
+        Returns
+        -------
+        np.ndarray
+            The raw dispersion operators for both components.
+        """
+        cache_key = (self.NX, "RK4", float(self.k), float(self.k2))
+        if cache_key in self._propagator_cache:
+            return self._propagator_cache[cache_key]
+        prop1 = (-1j * 0.5 * self.Kx**2 / self.k).astype(np.complex64)
+        prop2 = (-1j * 0.5 * self.Kx**2 / self.k2).astype(np.complex64)
+        propagator = np.array([prop1, prop2])
+        self._propagator_cache[cache_key] = propagator
+        return propagator
+
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot a field for monitoring.
 

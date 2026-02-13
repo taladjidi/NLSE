@@ -195,6 +195,151 @@ __kernel void nl_prop_c_without_v_fused(
     );
 }
 
+// RK4 nonlinear RHS kernels (additive, no exp)
+// These accumulate onto A_prop: A_prop += (nonlinear terms) * A
+
+// RK4 NL RHS without potential
+__kernel void rk4_nl_rhs_fused(
+    __global {{FP2_TYPE}}* A_prop,
+    __global const {{FP2_TYPE}}* A,
+    __global const {{FP_TYPE}}* A_sq,
+    const {{FP_TYPE}} alpha,
+    const {{FP_TYPE}} g,
+    const {{FP_TYPE}} Isat
+) {
+    int idx = get_global_id(0);
+    {{FP_TYPE}} sat = 1.0{{FP_SUFFIX}} / (1.0{{FP_SUFFIX}} + A_sq[idx] / Isat);
+    // coeff = -alpha*sat + 1j*g*A_sq*sat
+    {{FP_TYPE}} coeff_r = -alpha * sat;
+    {{FP_TYPE}} coeff_i = g * A_sq[idx] * sat;
+    // contrib = coeff * A
+    {{FP2_TYPE}} A_val = A[idx];
+    {{FP_TYPE}} contrib_r = coeff_r * A_val.x - coeff_i * A_val.y;
+    {{FP_TYPE}} contrib_i = coeff_r * A_val.y + coeff_i * A_val.x;
+    {{FP2_TYPE}} A_prop_val = A_prop[idx];
+    A_prop[idx] = ({{FP2_TYPE}})(A_prop_val.x + contrib_r, A_prop_val.y + contrib_i);
+}
+
+// RK4 NL RHS with potential
+__kernel void rk4_nl_rhs_v_fused(
+    __global {{FP2_TYPE}}* A_prop,
+    __global const {{FP2_TYPE}}* A,
+    __global const {{FP_TYPE}}* A_sq,
+    __global const {{FP_TYPE}}* V,
+    const {{FP_TYPE}} alpha,
+    const {{FP_TYPE}} g,
+    const {{FP_TYPE}} Isat
+) {
+    int idx = get_global_id(0);
+    {{FP_TYPE}} sat = 1.0{{FP_SUFFIX}} / (1.0{{FP_SUFFIX}} + A_sq[idx] / Isat);
+    // coeff = -alpha*sat + 1j*(g*A_sq*sat + V)
+    {{FP_TYPE}} coeff_r = -alpha * sat;
+    {{FP_TYPE}} coeff_i = g * A_sq[idx] * sat + V[idx];
+    {{FP2_TYPE}} A_val = A[idx];
+    {{FP_TYPE}} contrib_r = coeff_r * A_val.x - coeff_i * A_val.y;
+    {{FP_TYPE}} contrib_i = coeff_r * A_val.y + coeff_i * A_val.x;
+    {{FP2_TYPE}} A_prop_val = A_prop[idx];
+    A_prop[idx] = ({{FP2_TYPE}})(A_prop_val.x + contrib_r, A_prop_val.y + contrib_i);
+}
+
+// FUSED: |A|^2 + RK4 NL RHS without potential
+__kernel void square_mod_rk4_nl_rhs_fused(
+    __global {{FP2_TYPE}}* A_prop,
+    __global const {{FP2_TYPE}}* A,
+    const {{FP_TYPE}} alpha,
+    const {{FP_TYPE}} g,
+    const {{FP_TYPE}} Isat
+) {
+    int idx = get_global_id(0);
+    {{FP2_TYPE}} A_val = A[idx];
+    {{FP_TYPE}} A_sq_val = A_val.x * A_val.x + A_val.y * A_val.y;
+    {{FP_TYPE}} sat = 1.0{{FP_SUFFIX}} / (1.0{{FP_SUFFIX}} + A_sq_val / Isat);
+    {{FP_TYPE}} coeff_r = -alpha * sat;
+    {{FP_TYPE}} coeff_i = g * A_sq_val * sat;
+    {{FP_TYPE}} contrib_r = coeff_r * A_val.x - coeff_i * A_val.y;
+    {{FP_TYPE}} contrib_i = coeff_r * A_val.y + coeff_i * A_val.x;
+    {{FP2_TYPE}} A_prop_val = A_prop[idx];
+    A_prop[idx] = ({{FP2_TYPE}})(A_prop_val.x + contrib_r, A_prop_val.y + contrib_i);
+}
+
+// FUSED: |A|^2 + RK4 NL RHS with potential
+__kernel void square_mod_rk4_nl_rhs_v_fused(
+    __global {{FP2_TYPE}}* A_prop,
+    __global const {{FP2_TYPE}}* A,
+    __global const {{FP_TYPE}}* V,
+    const {{FP_TYPE}} alpha,
+    const {{FP_TYPE}} g,
+    const {{FP_TYPE}} Isat
+) {
+    int idx = get_global_id(0);
+    {{FP2_TYPE}} A_val = A[idx];
+    {{FP_TYPE}} A_sq_val = A_val.x * A_val.x + A_val.y * A_val.y;
+    {{FP_TYPE}} sat = 1.0{{FP_SUFFIX}} / (1.0{{FP_SUFFIX}} + A_sq_val / Isat);
+    {{FP_TYPE}} coeff_r = -alpha * sat;
+    {{FP_TYPE}} coeff_i = g * A_sq_val * sat + V[idx];
+    {{FP_TYPE}} contrib_r = coeff_r * A_val.x - coeff_i * A_val.y;
+    {{FP_TYPE}} contrib_i = coeff_r * A_val.y + coeff_i * A_val.x;
+    {{FP2_TYPE}} A_prop_val = A_prop[idx];
+    A_prop[idx] = ({{FP2_TYPE}})(A_prop_val.x + contrib_r, A_prop_val.y + contrib_i);
+}
+
+// Coupled RK4 NL RHS without potential
+// Interaction NOT multiplied by A_orig (matches CNLSE RK4 math)
+__kernel void rk4_nl_rhs_c_fused(
+    __global {{FP2_TYPE}}* A_prop,
+    __global const {{FP2_TYPE}}* A_orig,
+    __global const {{FP_TYPE}}* A_sq_1,
+    __global const {{FP_TYPE}}* A_sq_2,
+    const {{FP_TYPE}} alpha,
+    const {{FP_TYPE}} g11,
+    const {{FP_TYPE}} g12,
+    const {{FP_TYPE}} Isat1,
+    const {{FP_TYPE}} Isat2
+) {
+    int idx = get_global_id(0);
+    {{FP_TYPE}} sat = 1.0{{FP_SUFFIX}} / (1.0{{FP_SUFFIX}} + A_sq_1[idx] / Isat1 + A_sq_2[idx] / Isat2);
+    // Interaction: pure imaginary, NOT multiplied by A_orig
+    {{FP_TYPE}} interact_i = (g11 * A_sq_1[idx] + g12 * A_sq_2[idx]) * sat;
+    // Loss: -alpha*sat * A_orig (complex)
+    {{FP2_TYPE}} A_val = A_orig[idx];
+    {{FP_TYPE}} loss_coeff = alpha * sat;
+    {{FP2_TYPE}} A_prop_val = A_prop[idx];
+    A_prop[idx] = ({{FP2_TYPE}})(
+        A_prop_val.x - loss_coeff * A_val.x,
+        A_prop_val.y + interact_i - loss_coeff * A_val.y
+    );
+}
+
+// Coupled RK4 NL RHS with potential
+__kernel void rk4_nl_rhs_c_v_fused(
+    __global {{FP2_TYPE}}* A_prop,
+    __global const {{FP2_TYPE}}* A_orig,
+    __global const {{FP_TYPE}}* A_sq_1,
+    __global const {{FP_TYPE}}* A_sq_2,
+    __global const {{FP_TYPE}}* V,
+    const {{FP_TYPE}} alpha,
+    const {{FP_TYPE}} g11,
+    const {{FP_TYPE}} g12,
+    const {{FP_TYPE}} Isat1,
+    const {{FP_TYPE}} Isat2
+) {
+    int idx = get_global_id(0);
+    {{FP_TYPE}} sat = 1.0{{FP_SUFFIX}} / (1.0{{FP_SUFFIX}} + A_sq_1[idx] / Isat1 + A_sq_2[idx] / Isat2);
+    // Interaction: pure imaginary
+    {{FP_TYPE}} interact_i = (g11 * A_sq_1[idx] + g12 * A_sq_2[idx]) * sat;
+    // Loss + potential: (-alpha*sat + 1j*V) * A_orig
+    {{FP2_TYPE}} A_val = A_orig[idx];
+    {{FP_TYPE}} coeff_r = -alpha * sat;
+    {{FP_TYPE}} coeff_i = V[idx];
+    {{FP_TYPE}} lv_r = coeff_r * A_val.x - coeff_i * A_val.y;
+    {{FP_TYPE}} lv_i = coeff_r * A_val.y + coeff_i * A_val.x;
+    {{FP2_TYPE}} A_prop_val = A_prop[idx];
+    A_prop[idx] = ({{FP2_TYPE}})(
+        A_prop_val.x + lv_r,
+        A_prop_val.y + interact_i + lv_i
+    );
+}
+
 // Rabi coupling: 2x2 rotation of (A1, A2) pair
 __kernel void rabi_coupling(
     __global {{FP2_TYPE}}* A1,

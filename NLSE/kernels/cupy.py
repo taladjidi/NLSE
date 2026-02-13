@@ -427,3 +427,230 @@ def square_mod_nl_prop_v(A, V, dz, alpha, g, Isat):
     """
     _square_mod_nl_prop_v_fused(A, V, dz, alpha, g, Isat)
     return A
+
+
+# RK4 nonlinear RHS kernels (additive, no exp)
+
+
+@cp.fuse(kernel_name="rk4_nl_rhs")
+def _rk4_nl_rhs_fused(A_prop, A, A_sq, alpha, g, Isat):
+    """Fused RK4 NL RHS (no potential)."""
+    sat = 1 / (1 + A_sq / Isat)
+    A_prop += (1j * g * A_sq * sat - alpha * sat) * A
+
+
+def rk4_nl_rhs(A_prop, A, A_sq, alpha, g, Isat):
+    """Accumulate nonlinear RHS for RK4 (no potential).
+
+    Parameters
+    ----------
+    A_prop : cp.ndarray
+        Linearly propagated field (modified in-place)
+    A : cp.ndarray
+        Original field
+    A_sq : cp.ndarray
+        Field modulus squared
+    alpha : float
+        Losses
+    g : float
+        Interactions
+    Isat : float
+        Saturation
+
+    Returns
+    -------
+    cp.ndarray
+        The modified A_prop.
+    """
+    _rk4_nl_rhs_fused(A_prop, A, A_sq, alpha, g, Isat)
+    return A_prop
+
+
+@cp.fuse(kernel_name="rk4_nl_rhs_v")
+def _rk4_nl_rhs_v_fused(A_prop, A, A_sq, V, alpha, g, Isat):
+    """Fused RK4 NL RHS (with potential)."""
+    sat = 1 / (1 + A_sq / Isat)
+    A_prop += (1j * g * A_sq * sat - alpha * sat + 1j * V) * A
+
+
+def rk4_nl_rhs_v(A_prop, A, A_sq, V, alpha, g, Isat):
+    """Accumulate nonlinear RHS for RK4 (with potential).
+
+    Parameters
+    ----------
+    A_prop : cp.ndarray
+        Linearly propagated field (modified in-place)
+    A : cp.ndarray
+        Original field
+    A_sq : cp.ndarray
+        Field modulus squared
+    V : cp.ndarray
+        Potential (pre-scaled)
+    alpha : float
+        Losses
+    g : float
+        Interactions
+    Isat : float
+        Saturation
+
+    Returns
+    -------
+    cp.ndarray
+        The modified A_prop.
+    """
+    _rk4_nl_rhs_v_fused(A_prop, A, A_sq, V, alpha, g, Isat)
+    return A_prop
+
+
+@cp.fuse(kernel_name="square_mod_rk4_nl_rhs")
+def _square_mod_rk4_nl_rhs_fused(A_prop, A, alpha, g, Isat):
+    """Fused |A|^2 + RK4 NL RHS (no potential)."""
+    A_sq = (A * A.conj()).real
+    _rk4_nl_rhs_fused(A_prop, A, A_sq, alpha, g, Isat)
+
+
+def square_mod_rk4_nl_rhs(A_prop, A, alpha, g, Isat):
+    """Compute |A|^2 inline and accumulate nonlinear RHS for RK4 (no potential).
+
+    Parameters
+    ----------
+    A_prop : cp.ndarray
+        Linearly propagated field (modified in-place)
+    A : cp.ndarray
+        Original field
+    alpha : float
+        Losses
+    g : float
+        Interactions
+    Isat : float
+        Saturation
+
+    Returns
+    -------
+    cp.ndarray
+        The modified A_prop.
+    """
+    _square_mod_rk4_nl_rhs_fused(A_prop, A, alpha, g, Isat)
+    return A_prop
+
+
+@cp.fuse(kernel_name="square_mod_rk4_nl_rhs_v")
+def _square_mod_rk4_nl_rhs_v_fused(A_prop, A, V, alpha, g, Isat):
+    """Fused |A|^2 + RK4 NL RHS (with potential)."""
+    A_sq = (A * A.conj()).real
+    _rk4_nl_rhs_v_fused(A_prop, A, A_sq, V, alpha, g, Isat)
+
+
+def square_mod_rk4_nl_rhs_v(A_prop, A, V, alpha, g, Isat):
+    """Compute |A|^2 inline and accumulate nonlinear RHS for RK4 (with potential).
+
+    Parameters
+    ----------
+    A_prop : cp.ndarray
+        Linearly propagated field (modified in-place)
+    A : cp.ndarray
+        Original field
+    V : cp.ndarray
+        Potential (pre-scaled)
+    alpha : float
+        Losses
+    g : float
+        Interactions
+    Isat : float
+        Saturation
+
+    Returns
+    -------
+    cp.ndarray
+        The modified A_prop.
+    """
+    _square_mod_rk4_nl_rhs_v_fused(A_prop, A, V, alpha, g, Isat)
+    return A_prop
+
+
+@cp.fuse(kernel_name="rk4_nl_rhs_c")
+def _rk4_nl_rhs_c_fused(A_prop, A_orig, A_sq_1, A_sq_2, alpha, g11, g12, Isat1, Isat2):
+    """Fused coupled RK4 NL RHS (no potential)."""
+    sat = 1 / (1 + A_sq_1 / Isat1 + A_sq_2 / Isat2)
+    A_prop += 1j * (g11 * A_sq_1 + g12 * A_sq_2) * sat - alpha * sat * A_orig
+
+
+def rk4_nl_rhs_c(A_prop, A_orig, A_sq_1, A_sq_2, alpha, g11, g12, Isat1, Isat2):
+    """Accumulate coupled nonlinear RHS for RK4 (no potential).
+
+    Parameters
+    ----------
+    A_prop : cp.ndarray
+        Linearly propagated field (modified in-place)
+    A_orig : cp.ndarray
+        Original field (this component)
+    A_sq_1 : cp.ndarray
+        Modulus squared of first component
+    A_sq_2 : cp.ndarray
+        Modulus squared of second component
+    alpha : float
+        Losses
+    g11 : float
+        Intra-component interactions
+    g12 : float
+        Inter-component interactions
+    Isat1 : float
+        Saturation parameter of first component
+    Isat2 : float
+        Saturation parameter of second component
+
+    Returns
+    -------
+    cp.ndarray
+        The modified A_prop.
+    """
+    _rk4_nl_rhs_c_fused(A_prop, A_orig, A_sq_1, A_sq_2, alpha, g11, g12, Isat1, Isat2)
+    return A_prop
+
+
+@cp.fuse(kernel_name="rk4_nl_rhs_c_v")
+def _rk4_nl_rhs_c_v_fused(
+    A_prop, A_orig, A_sq_1, A_sq_2, V, alpha, g11, g12, Isat1, Isat2
+):
+    """Fused coupled RK4 NL RHS (with potential)."""
+    sat = 1 / (1 + A_sq_1 / Isat1 + A_sq_2 / Isat2)
+    A_prop += (
+        1j * (g11 * A_sq_1 + g12 * A_sq_2) * sat + (-alpha * sat + 1j * V) * A_orig
+    )
+
+
+def rk4_nl_rhs_c_v(A_prop, A_orig, A_sq_1, A_sq_2, V, alpha, g11, g12, Isat1, Isat2):
+    """Accumulate coupled nonlinear RHS for RK4 (with potential).
+
+    Parameters
+    ----------
+    A_prop : cp.ndarray
+        Linearly propagated field (modified in-place)
+    A_orig : cp.ndarray
+        Original field (this component)
+    A_sq_1 : cp.ndarray
+        Modulus squared of first component
+    A_sq_2 : cp.ndarray
+        Modulus squared of second component
+    V : cp.ndarray
+        Potential (pre-scaled)
+    alpha : float
+        Losses
+    g11 : float
+        Intra-component interactions
+    g12 : float
+        Inter-component interactions
+    Isat1 : float
+        Saturation parameter of first component
+    Isat2 : float
+        Saturation parameter of second component
+
+    Returns
+    -------
+    cp.ndarray
+        The modified A_prop.
+    """
+    _rk4_nl_rhs_c_v_fused(
+        A_prop, A_orig, A_sq_1, A_sq_2, V, alpha, g11, g12, Isat1, Isat2
+    )
+    return A_prop

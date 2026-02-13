@@ -229,20 +229,30 @@ class CNLSE(NLSE):
 
         dtype = np.complex128 if precision == "double" else np.complex64
         propagator1 = super()._build_propagator(precision=precision)
-        match precision:
-            case "single" | "double":
-                propagator2 = np.exp(
-                    -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k2 * self.delta_z,
-                    dtype=dtype,
-                )
-            case "RK4":
-                propagator2 = (
-                    -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k2
-                ).astype(dtype)
-
+        propagator2 = np.exp(
+            -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k2 * self.delta_z,
+            dtype=dtype,
+        )
         propagator = np.array([propagator1, propagator2])
 
         # Cache for future use
+        self._propagator_cache[cache_key] = propagator
+        return propagator
+
+    def _build_propagator_rk4(self) -> np.ndarray:
+        """Build raw 2-component dispersion operator for RK4.
+
+        Returns
+        -------
+        np.ndarray
+            The raw dispersion operators for both components.
+        """
+        cache_key = (self.NX, self.NY, "RK4", float(self.k), float(self.k2))
+        if cache_key in self._propagator_cache:
+            return self._propagator_cache[cache_key]
+        prop1 = super()._build_propagator_rk4()
+        prop2 = (-1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k2).astype(np.complex64)
+        propagator = np.array([prop1, prop2])
         self._propagator_cache[cache_key] = propagator
         return propagator
 
@@ -285,8 +295,6 @@ class CNLSE(NLSE):
         ----------
         A : np.ndarray
             Field to propagate.
-        A_sq : np.ndarray
-            Field modulus squared.
         V : np.ndarray
             Potential field (can be None).
         propagator : np.ndarray
@@ -295,44 +303,87 @@ class CNLSE(NLSE):
             List of FFT plan objects.
             Either a single FFT plan for both directions (GPU case)
             or distinct FFT and IFFT plans for FFTW.
-        precision : str, optional
-            Single or double application of
-            the nonlinear propagation step. Defaults to "single".
         """
-        # prepare output array, this kills performance but we need it
         A_prop = A * 1
+        A_prop = self._apply_linear_step(A_prop, propagator, plans)
+
+        kernels = self._backend.kernels
+
+        A1, A2 = self._take_components(A)
+        A_prop1, A_prop2 = self._take_components(A_prop)
+
         A_sq = (A * A.conj()).real
-        A_prop = self._backend.fft(A_prop, plans)
-        A_prop *= propagator
-        A_prop = self._backend.ifft(A_prop, plans)
+        A_sq_1, A_sq_2 = self._take_components(A_sq)
+
         if self.nl_length > 0:
-            A_sq[:] = self._convolution(
-                A_sq, self.nl_profile, mode="same", axes=self._last_axes
+            A_sq_1 = self._convolution(
+                A_sq_1, self.nl_profile, mode="same", axes=self._last_axes
             )
-        # Linear prop
-        arg = A_prop
-        # saturation
-        sat = 1 / (
-            1
-            + A_sq[0] * 1 / (2 * self.I_sat / (epsilon_0 * c))
-            + A_sq[1] * 1 / (2 * self.I_sat2 / (epsilon_0 * c))
-        )
-        # Interactions
-        arg[0] += 1j * (
-            self.k / 2 * self.n2 * c * epsilon_0 * A_sq[0] * sat
-            + self.k / 2 * self.n12 * c * epsilon_0 * A_sq[1] * sat
-        )
-        arg[1] += 1j * (
-            self.k / 2 * self.n22 * c * epsilon_0 * A_sq[1] * sat
-            + self.k / 2 * self.n12 * c * epsilon_0 * A_sq[0] * sat
-        )
-        # Losses
-        arg[0] -= self.alpha / 2 * sat * A[0]
-        arg[1] -= self.alpha2 / 2 * sat * A[1]
-        if V is not None:
-            V_ = 1j * self.k / 2 * V * A
-            arg += V_
-        return arg
+            A_sq_2 = self._convolution(
+                A_sq_2, self.nl_profile, mode="same", axes=self._last_axes
+            )
+
+        g11 = self.k / 2 * self.n2 * c * epsilon_0
+        g12 = self.k / 2 * self.n12 * c * epsilon_0
+        g22 = self.k / 2 * self.n22 * c * epsilon_0
+        Isat1 = 2 * self.I_sat / (epsilon_0 * c)
+        Isat2 = 2 * self.I_sat2 / (epsilon_0 * c)
+
+        if V is None:
+            A_prop1 = kernels.rk4_nl_rhs_c(
+                A_prop1,
+                A1,
+                A_sq_1,
+                A_sq_2,
+                self.alpha / 2,
+                g11,
+                g12,
+                Isat1,
+                Isat2,
+            )
+            A_prop2 = kernels.rk4_nl_rhs_c(
+                A_prop2,
+                A2,
+                A_sq_2,
+                A_sq_1,
+                self.alpha2 / 2,
+                g22,
+                g12,
+                Isat2,
+                Isat1,
+            )
+        else:
+            V_scaled = V * np.float32(self.k / 2)
+            A_prop1 = kernels.rk4_nl_rhs_c_v(
+                A_prop1,
+                A1,
+                A_sq_1,
+                A_sq_2,
+                V_scaled,
+                self.alpha / 2,
+                g11,
+                g12,
+                Isat1,
+                Isat2,
+            )
+            A_prop2 = kernels.rk4_nl_rhs_c_v(
+                A_prop2,
+                A2,
+                A_sq_2,
+                A_sq_1,
+                V_scaled,
+                self.alpha2 / 2,
+                g22,
+                g12,
+                Isat2,
+                Isat1,
+            )
+
+        if self._backend.name in ["CL", "CUPY", "MLX"]:
+            A_prop[0] = A_prop1
+            A_prop[1] = A_prop2
+
+        return A_prop
 
     def split_step(
         self,

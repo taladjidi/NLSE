@@ -280,6 +280,37 @@ class DDGPE(CNLSE):
         self._propagator_cache[cache_key] = propagator
         return propagator
 
+    def _build_propagator_rk4(self) -> np.ndarray:
+        """Build raw polariton dispersion operator for RK4.
+
+        Returns
+        -------
+        np.ndarray
+            The raw dispersion operators for exciton and cavity components.
+        """
+        cache_key = (
+            self.NX,
+            self.NY,
+            "RK4",
+            float(self.omega_exc),
+            float(self.omega_cav),
+            float(self.omega_pump),
+            float(self.k_z),
+        )
+        if cache_key in self._propagator_cache:
+            return self._propagator_cache[cache_key]
+        prop1 = (-1j * (self.omega_exc - self.omega_pump)).astype(np.complex64)
+        prop2 = (
+            -1j
+            * (
+                self.omega_cav * np.sqrt(1 + (self.Kxx**2 + self.Kyy**2) / self.k_z**2)
+                - self.omega_pump
+            )
+        ).astype(np.complex64)
+        propagator = np.array([prop1, prop2])
+        self._propagator_cache[cache_key] = propagator
+        return propagator
+
     def _prepare_output_array(self, E_in: np.ndarray, normalize: bool) -> np.ndarray:
         """Prepare the output array depending on __BACKEND__.
 

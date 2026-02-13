@@ -33,11 +33,6 @@ L = 10e-3
 alpha = 20
 
 
-# ---------------------------------------------------------------------------
-# Section 1: CPU reference backend correctness tests (always run)
-# ---------------------------------------------------------------------------
-
-
 class TestCPUCorrectness:
     """Tests that validate CPU backend internals."""
 
@@ -336,14 +331,9 @@ class TestCPUCorrectness:
         assert np.isfinite(E_out).all(), "CNLSE output contains NaN/Inf"
 
 
-# ---------------------------------------------------------------------------
-# Section 2: Cross-backend comparison — each backend vs CPU reference
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("backend", GPU_BACKENDS)
 class TestNLSEvsReference:
-    """Compare each backend against the CPU reference."""
+    """Compare each backend against the CPU reference for split-step."""
 
     def test_propagation_without_potential(self, backend):
         """Results without potential match CPU reference."""
@@ -535,9 +525,163 @@ class TestCNLSEvsReference:
         )
 
 
-# ---------------------------------------------------------------------------
-# Section 3: Extended CPU coverage tests
-# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("backend", GPU_BACKENDS)
+class TestNLSERK4vsReference:
+    """Compare RK4 on each backend against the CPU reference."""
+
+    def test_rk4_without_potential(self, backend):
+        """RK4 results without potential match CPU reference."""
+        simu_ref = NLSE(
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=N,
+            NY=N,
+            Isat=Isat,
+            backend="CPU",
+        )
+        simu_test = NLSE(
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=N,
+            NY=N,
+            Isat=Isat,
+            backend=backend,
+        )
+
+        XX, YY = np.meshgrid(simu_ref.X, simu_ref.Y)
+        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
+
+        E_ref = simu_ref.out_field(
+            E_in.copy(), L, verbose=False, plot=False, method="RK4"
+        )
+        E_test = simu_test.out_field(
+            E_in.copy(), L, verbose=False, plot=False, method="RK4"
+        )
+
+        np.testing.assert_allclose(
+            E_test,
+            E_ref,
+            rtol=1.5e-2,
+            atol=1e-4,
+            err_msg=f"RK4 {backend} does not match CPU reference (no potential)",
+        )
+
+    def test_rk4_with_potential(self, backend):
+        """RK4 results with potential match CPU reference."""
+        XX_v, YY_v = np.meshgrid(
+            np.linspace(-window / 2, window / 2, N),
+            np.linspace(-window / 2, window / 2, N),
+        )
+        V = 1e-4 * np.exp(-(XX_v**2 + YY_v**2) / (2e-3) ** 2)
+
+        simu_ref = NLSE(
+            alpha,
+            power,
+            window,
+            n2,
+            V,
+            L,
+            NX=N,
+            NY=N,
+            Isat=Isat,
+            backend="CPU",
+        )
+        simu_test = NLSE(
+            alpha,
+            power,
+            window,
+            n2,
+            V,
+            L,
+            NX=N,
+            NY=N,
+            Isat=Isat,
+            backend=backend,
+        )
+
+        XX, YY = np.meshgrid(simu_ref.X, simu_ref.Y)
+        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
+
+        E_ref = simu_ref.out_field(
+            E_in.copy(), L, verbose=False, plot=False, method="RK4"
+        )
+        E_test = simu_test.out_field(
+            E_in.copy(), L, verbose=False, plot=False, method="RK4"
+        )
+
+        np.testing.assert_allclose(
+            E_test,
+            E_ref,
+            rtol=1.5e-2,
+            atol=1e-4,
+            err_msg=f"RK4 {backend} does not match CPU reference (with potential)",
+        )
+
+
+@pytest.mark.parametrize("backend", GPU_BACKENDS)
+class TestCNLSERK4vsReference:
+    """Compare CNLSE RK4 on each backend against the CPU reference."""
+
+    def test_cnlse_rk4(self, backend):
+        """CNLSE RK4 results match CPU reference."""
+        n12 = 0.5e-9
+        NX = NY = 64
+
+        simu_ref = CNLSE(
+            alpha,
+            power,
+            window,
+            n2,
+            n12,
+            None,
+            L,
+            NX=NX,
+            NY=NY,
+            Isat=Isat,
+            backend="CPU",
+        )
+        simu_test = CNLSE(
+            alpha,
+            power,
+            window,
+            n2,
+            n12,
+            None,
+            L,
+            NX=NX,
+            NY=NY,
+            Isat=Isat,
+            backend=backend,
+        )
+
+        XX, YY = np.meshgrid(simu_ref.X, simu_ref.Y)
+        E_in = np.zeros((2, NX, NY), dtype=PRECISION_COMPLEX)
+        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
+        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
+
+        E_ref = simu_ref.out_field(
+            E_in.copy(), L, verbose=False, plot=False, method="RK4"
+        )
+        E_test = simu_test.out_field(
+            E_in.copy(), L, verbose=False, plot=False, method="RK4"
+        )
+
+        np.testing.assert_allclose(
+            E_test,
+            E_ref,
+            rtol=1e-2,
+            atol=1e-4,
+            err_msg=f"CNLSE RK4 {backend} does not match CPU reference",
+        )
+
 
 # Small grid for fast tests
 S = 64
@@ -734,7 +878,7 @@ class TestNLSEPropagator:
             Isat=Isat,
             backend="CPU",
         )
-        prop = simu._build_propagator(precision="RK4")
+        prop = simu._build_propagator_rk4()
         expected = -1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k
         np.testing.assert_allclose(
             prop,
@@ -942,7 +1086,7 @@ class TestNLSERK4:
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, _A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
-        prop = simu._build_propagator(precision="RK4")
+        prop = simu._build_propagator_rk4()
 
         # Just one step to exercise the code path
         A_before = A.copy()
@@ -975,6 +1119,189 @@ class TestNLSERK4:
             plot=False,
             precision="RK4",
         )
+        assert np.isfinite(E_out).all()
+
+    def test_rk4_power_conservation(self):
+        """RK4 with alpha=0 conserves the norm."""
+        simu = NLSE(
+            0,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
+        )
+        E_in = np.ones((S, S), dtype=PRECISION_COMPLEX)
+        E_out = simu.out_field(E_in, L, verbose=False, plot=False, method="RK4")
+
+        norm = np.sum(np.abs(E_out) ** 2 * simu.delta_X * simu.delta_Y)
+        norm *= c * epsilon_0 / 2
+
+        np.testing.assert_allclose(
+            norm,
+            simu.power,
+            rtol=1e-4,
+            err_msg="Norm not conserved with RK4 (alpha=0)",
+        )
+
+    def test_rk4_power_decay(self):
+        """RK4 with alpha>0 gives expected exponential power decay."""
+        test_alpha = 10.0
+        simu = NLSE(
+            test_alpha,
+            power,
+            window,
+            1e-10,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=1e20,
+            backend="CPU",
+        )
+
+        XX, YY = np.meshgrid(simu.X, simu.Y)
+        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
+        E_out = simu.out_field(
+            E_in, L, verbose=False, plot=False, normalize=False, method="RK4"
+        )
+
+        power_in = np.sum(np.abs(E_in) ** 2) * simu.delta_X * simu.delta_Y
+        power_out = np.sum(np.abs(E_out) ** 2) * simu.delta_X * simu.delta_Y
+
+        expected_ratio = np.exp(-test_alpha * L)
+        actual_ratio = power_out / power_in
+        rel_error = np.abs(actual_ratio - expected_ratio) / expected_ratio
+        assert rel_error < 0.01, f"RK4 power decay incorrect: {rel_error:.2%} error"
+
+    def test_rk4_method_parameter(self):
+        """method='RK4' produces same result as precision='RK4' (backward compat)."""
+        simu1 = NLSE(
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
+        )
+        simu2 = NLSE(
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
+        )
+        XX, YY = np.meshgrid(simu1.X, simu1.Y)
+        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
+
+        E_old = simu1.out_field(
+            E_in.copy(), L, verbose=False, plot=False, precision="RK4"
+        )
+        E_new = simu2.out_field(E_in.copy(), L, verbose=False, plot=False, method="RK4")
+
+        np.testing.assert_allclose(
+            E_new,
+            E_old,
+            rtol=1e-6,
+            err_msg="method='RK4' does not match precision='RK4'",
+        )
+
+
+class TestCNLSERK4:
+    """Tests for CNLSE RK4 propagation scheme."""
+
+    def test_cnlse_rk4_propagation(self):
+        """CNLSE RK4 produces valid output."""
+        n12_local = 0.5e-9
+        simu = CNLSE(
+            alpha,
+            power,
+            window,
+            n2,
+            n12_local,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
+        )
+        XX, YY = np.meshgrid(simu.X, simu.Y)
+        E_in = np.zeros((2, S, S), dtype=PRECISION_COMPLEX)
+        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
+        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
+
+        E_out = simu.out_field(E_in, L, verbose=False, plot=False, method="RK4")
+        assert E_out.shape == (2, S, S)
+        assert np.isfinite(E_out).all(), "CNLSE RK4 output contains NaN/Inf"
+
+    def test_cnlse_rk4_with_potential(self):
+        """CNLSE RK4 single step with potential exercises the V code path."""
+        n12_local = 0.5e-9
+        simu = CNLSE(
+            alpha,
+            power,
+            window,
+            n2,
+            n12_local,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            backend="CPU",
+        )
+        XX, YY = np.meshgrid(simu.X, simu.Y)
+        V = 1e2 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
+        E_in = np.zeros((2, S, S), dtype=PRECISION_COMPLEX)
+        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
+        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
+        A, _A_sq = simu._prepare_output_array(E_in, normalize=True)
+        plans = simu._build_fft_plan(A)
+        prop = simu._build_propagator_rk4()
+
+        A_before = A.copy()
+        simu.split_step_RK4(A, V, prop, plans)
+        assert np.isfinite(A).all(), "CNLSE RK4 with V produced NaN/Inf"
+        assert not np.allclose(A, A_before), "Field unchanged after RK4 step with V"
+
+    def test_cnlse_rk4_nonlocal(self):
+        """CNLSE RK4 with nl_length > 0."""
+        n12_local = 0.5e-9
+        simu = CNLSE(
+            alpha,
+            power,
+            window,
+            n2,
+            n12_local,
+            None,
+            L,
+            NX=S,
+            NY=S,
+            Isat=Isat,
+            nl_length=1e-3,
+            backend="CPU",
+        )
+        XX, YY = np.meshgrid(simu.X, simu.Y)
+        E_in = np.zeros((2, S, S), dtype=PRECISION_COMPLEX)
+        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
+        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
+
+        E_out = simu.out_field(E_in, L, verbose=False, plot=False, method="RK4")
+        assert E_out.shape == (2, S, S)
         assert np.isfinite(E_out).all()
 
 
@@ -1210,7 +1537,7 @@ class TestCNLSEExtended:
             Isat=Isat,
             backend="CPU",
         )
-        prop = simu._build_propagator(precision="RK4")
+        prop = simu._build_propagator_rk4()
         assert prop.shape == (2, S, S)
         # RK4 propagator should not be exponential (no delta_z)
         assert not np.allclose(np.abs(prop), 1.0)

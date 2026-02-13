@@ -354,3 +354,249 @@ def apply_propagator(A: np.ndarray, propagator: np.ndarray) -> np.ndarray:
             a.real * p.imag + a.imag * p.real
         )
     return A
+
+
+@numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
+def rk4_nl_rhs(
+    A_prop: np.ndarray,
+    A: np.ndarray,
+    A_sq: np.ndarray,
+    alpha: float,
+    g: float,
+    Isat: float,
+) -> np.ndarray:
+    """Accumulate nonlinear RHS for RK4 (no potential).
+
+    Parameters
+    ----------
+    A_prop : np.ndarray
+        Linearly propagated field (modified in-place)
+    A : np.ndarray
+        Original field
+    A_sq : np.ndarray
+        Field modulus squared
+    alpha : float
+        Losses
+    g : float
+        Interactions
+    Isat : float
+        Saturation
+    """
+    A_prop_flat = A_prop.ravel()
+    A_flat = A.ravel()
+    A_sq_flat = A_sq.ravel()
+    for i in numba.prange(A_flat.size):
+        sat = 1 / (1 + A_sq_flat[i] / Isat)
+        A_prop_flat[i] += (1j * g * A_sq_flat[i] * sat - alpha * sat) * A_flat[i]
+    return A_prop
+
+
+@numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
+def rk4_nl_rhs_v(
+    A_prop: np.ndarray,
+    A: np.ndarray,
+    A_sq: np.ndarray,
+    V: np.ndarray,
+    alpha: float,
+    g: float,
+    Isat: float,
+) -> np.ndarray:
+    """Accumulate nonlinear RHS for RK4 (with potential).
+
+    Parameters
+    ----------
+    A_prop : np.ndarray
+        Linearly propagated field (modified in-place)
+    A : np.ndarray
+        Original field
+    A_sq : np.ndarray
+        Field modulus squared
+    V : np.ndarray
+        Potential (pre-scaled)
+    alpha : float
+        Losses
+    g : float
+        Interactions
+    Isat : float
+        Saturation
+    """
+    A_prop_flat = A_prop.ravel()
+    A_flat = A.ravel()
+    A_sq_flat = A_sq.ravel()
+    V_flat = V.ravel()
+    for i in numba.prange(A_flat.size):
+        sat = 1 / (1 + A_sq_flat[i] / Isat)
+        A_prop_flat[i] += (
+            1j * g * A_sq_flat[i] * sat - alpha * sat + 1j * V_flat[i]
+        ) * A_flat[i]
+    return A_prop
+
+
+@numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
+def square_mod_rk4_nl_rhs(
+    A_prop: np.ndarray,
+    A: np.ndarray,
+    alpha: float,
+    g: float,
+    Isat: float,
+) -> np.ndarray:
+    """Compute |A|^2 inline and accumulate nonlinear RHS for RK4 (no potential).
+
+    Parameters
+    ----------
+    A_prop : np.ndarray
+        Linearly propagated field (modified in-place)
+    A : np.ndarray
+        Original field
+    alpha : float
+        Losses
+    g : float
+        Interactions
+    Isat : float
+        Saturation
+    """
+    A_prop_flat = A_prop.ravel()
+    A_flat = A.ravel()
+    for i in numba.prange(A_flat.size):
+        A_sq_val = A_flat[i].real * A_flat[i].real + A_flat[i].imag * A_flat[i].imag
+        sat = 1 / (1 + A_sq_val / Isat)
+        A_prop_flat[i] += (1j * g * A_sq_val * sat - alpha * sat) * A_flat[i]
+    return A_prop
+
+
+@numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
+def square_mod_rk4_nl_rhs_v(
+    A_prop: np.ndarray,
+    A: np.ndarray,
+    V: np.ndarray,
+    alpha: float,
+    g: float,
+    Isat: float,
+) -> np.ndarray:
+    """Compute |A|^2 inline and accumulate nonlinear RHS for RK4 (with potential).
+
+    Parameters
+    ----------
+    A_prop : np.ndarray
+        Linearly propagated field (modified in-place)
+    A : np.ndarray
+        Original field
+    V : np.ndarray
+        Potential (pre-scaled)
+    alpha : float
+        Losses
+    g : float
+        Interactions
+    Isat : float
+        Saturation
+    """
+    A_prop_flat = A_prop.ravel()
+    A_flat = A.ravel()
+    V_flat = V.ravel()
+    for i in numba.prange(A_flat.size):
+        A_sq_val = A_flat[i].real * A_flat[i].real + A_flat[i].imag * A_flat[i].imag
+        sat = 1 / (1 + A_sq_val / Isat)
+        A_prop_flat[i] += (
+            1j * g * A_sq_val * sat - alpha * sat + 1j * V_flat[i]
+        ) * A_flat[i]
+    return A_prop
+
+
+@numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
+def rk4_nl_rhs_c(
+    A_prop: np.ndarray,
+    A_orig: np.ndarray,
+    A_sq_1: np.ndarray,
+    A_sq_2: np.ndarray,
+    alpha: float,
+    g11: float,
+    g12: float,
+    Isat1: float,
+    Isat2: float,
+) -> np.ndarray:
+    """Accumulate coupled nonlinear RHS for RK4 (no potential).
+
+    Parameters
+    ----------
+    A_prop : np.ndarray
+        Linearly propagated field (modified in-place)
+    A_orig : np.ndarray
+        Original field (this component)
+    A_sq_1 : np.ndarray
+        Modulus squared of first component
+    A_sq_2 : np.ndarray
+        Modulus squared of second component
+    alpha : float
+        Losses
+    g11 : float
+        Intra-component interactions
+    g12 : float
+        Inter-component interactions
+    Isat1 : float
+        Saturation parameter of first component
+    Isat2 : float
+        Saturation parameter of second component
+    """
+    A_prop_flat = A_prop.ravel()
+    A_flat = A_orig.ravel()
+    A_sq_1_flat = A_sq_1.ravel()
+    A_sq_2_flat = A_sq_2.ravel()
+    for i in numba.prange(A_flat.size):
+        sat = 1 / (1 + A_sq_1_flat[i] / Isat1 + A_sq_2_flat[i] / Isat2)
+        A_prop_flat[i] += (
+            1j * (g11 * A_sq_1_flat[i] + g12 * A_sq_2_flat[i]) * sat
+            - alpha * sat * A_flat[i]
+        )
+    return A_prop
+
+
+@numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
+def rk4_nl_rhs_c_v(
+    A_prop: np.ndarray,
+    A_orig: np.ndarray,
+    A_sq_1: np.ndarray,
+    A_sq_2: np.ndarray,
+    V: np.ndarray,
+    alpha: float,
+    g11: float,
+    g12: float,
+    Isat1: float,
+    Isat2: float,
+) -> np.ndarray:
+    """Accumulate coupled nonlinear RHS for RK4 (with potential).
+
+    Parameters
+    ----------
+    A_prop : np.ndarray
+        Linearly propagated field (modified in-place)
+    A_orig : np.ndarray
+        Original field (this component)
+    A_sq_1 : np.ndarray
+        Modulus squared of first component
+    A_sq_2 : np.ndarray
+        Modulus squared of second component
+    V : np.ndarray
+        Potential (pre-scaled)
+    alpha : float
+        Losses
+    g11 : float
+        Intra-component interactions
+    g12 : float
+        Inter-component interactions
+    Isat1 : float
+        Saturation parameter of first component
+    Isat2 : float
+        Saturation parameter of second component
+    """
+    A_prop_flat = A_prop.ravel()
+    A_flat = A_orig.ravel()
+    A_sq_1_flat = A_sq_1.ravel()
+    A_sq_2_flat = A_sq_2.ravel()
+    V_flat = V.ravel()
+    for i in numba.prange(A_flat.size):
+        sat = 1 / (1 + A_sq_1_flat[i] / Isat1 + A_sq_2_flat[i] / Isat2)
+        A_prop_flat[i] += (
+            1j * (g11 * A_sq_1_flat[i] + g12 * A_sq_2_flat[i]) * sat
+            + (-alpha * sat + 1j * V_flat[i]) * A_flat[i]
+        )
+    return A_prop
