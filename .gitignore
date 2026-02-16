@@ -21,10 +21,8 @@ tex/paperNotes.bib
 fft.wisdom
 build/*
 NLSE.egg-info/*
-tests/__pycache__/*
 img/inheritance_graph.svg
 mkdocs-documentation/site/
-examples/__pycache__/*
 examples/*.npy
 examples/*.svg
 
@@ -37,3 +35,6 @@ benchmarks.pdf
 NLSE/kernels/metal/
 NLSE/kernels/metal_native/
 .coverage
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
