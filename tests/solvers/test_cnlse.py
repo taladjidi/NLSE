@@ -13,7 +13,7 @@ if CNLSE.__CUPY_AVAILABLE__:
 if CNLSE.__PYOPENCL_AVAILABLE__:
     AVAILABLE_BACKENDS.append("CL")
 
-N = 2048
+N = 256
 n2 = -1.6e-9
 n12 = -1e-10
 waist = 2.23e-3

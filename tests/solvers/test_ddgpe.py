@@ -86,41 +86,38 @@ def test_prepare_output_array() -> None:
 
 def test_send_arrays_to_gpu() -> None:
     if DDGPE.__CUPY_AVAILABLE__:
-        omega_exc = 1484.44 / h_bar
-        omega_cav = 1482.76 / h_bar
-        detuning = 0.17 / h_bar
-        k_z = 27
-        gamma = 0 * 0.07 / h_bar
-        omega = 5.07 / h_bar
-        g = 1e-2 / h_bar
+        omega_exc_s = 1484.44 / h_bar
+        omega_cav_s = 1482.76 / h_bar
+        detuning_s = 0.17 / h_bar
+        k_z_s = 27
+        gamma_s = 0 * 0.07 / h_bar
+        omega_s = 5.07 / h_bar
+        g_s = 1e-2 / h_bar
         V = np.random.random((N, N)) + 1j * np.random.random((N, N))
-        omega_cav = np.repeat(omega_cav, 2)
-        omega_cav = omega_cav[..., np.newaxis, np.newaxis, np.newaxis]
-        omega_exc = np.repeat(omega_exc, 2)
-        omega_exc = omega_exc[..., np.newaxis, np.newaxis, np.newaxis]
-        gamma = np.repeat(gamma, 2)
-        gamma = gamma[..., np.newaxis, np.newaxis, np.newaxis]
-        omega = np.repeat(omega, 2)
-        omega = omega[..., np.newaxis, np.newaxis, np.newaxis]
-        g = np.repeat(g, 2)
-        g = g[..., np.newaxis, np.newaxis, np.newaxis]
         simu = DDGPE(
-            gamma,
+            gamma_s,
             puiss,
             window,
-            g,
-            omega,
+            g_s,
+            omega_s,
             T,
-            omega_exc,
-            omega_cav,
-            detuning,
-            k_z,
+            omega_exc_s,
+            omega_cav_s,
+            detuning_s,
+            k_z_s,
             V=V,
             NX=N,
             NY=N,
             backend="CUPY",
         )
+        # Build propagator while params are still scalars
         simu.propagator = simu._build_propagator()
+        # Now broadcast params for GPU transfer test
+        simu.gamma = np.repeat(gamma_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
+        simu.g = np.repeat(g_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
+        simu.omega = np.repeat(omega_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
+        simu.omega_exc = np.repeat(omega_exc_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
+        simu.omega_cav = np.repeat(omega_cav_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
         simu._send_arrays_to_gpu()
         assert isinstance(simu.propagator, cp.ndarray), (
             "propagator is not a cp.ndarray. (Backend GPU)"
@@ -145,41 +142,38 @@ def test_send_arrays_to_gpu() -> None:
 
 def test_retrieve_arrays_from_gpu() -> None:
     if DDGPE.__CUPY_AVAILABLE__:
-        omega_exc = 1484.44 / h_bar
-        omega_cav = 1482.76 / h_bar
-        detuning = 0.17 / h_bar
-        k_z = 27
-        gamma = 0 * 0.07 / h_bar
-        g = 1e-2 / h_bar
-        omega = 5.07 / h_bar
+        omega_exc_s = 1484.44 / h_bar
+        omega_cav_s = 1482.76 / h_bar
+        detuning_s = 0.17 / h_bar
+        k_z_s = 27
+        gamma_s = 0 * 0.07 / h_bar
+        g_s = 1e-2 / h_bar
+        omega_s = 5.07 / h_bar
         V = np.random.random((N, N)) + 1j * np.random.random((N, N))
-        omega_cav = np.repeat(omega_cav, 2)
-        omega_cav = omega_cav[..., np.newaxis, np.newaxis, np.newaxis]
-        omega_exc = np.repeat(omega_exc, 2)
-        omega_exc = omega_exc[..., np.newaxis, np.newaxis, np.newaxis]
-        gamma = np.repeat(gamma, 2)
-        gamma = gamma[..., np.newaxis, np.newaxis, np.newaxis]
-        omega = np.repeat(omega, 2)
-        omega = omega[..., np.newaxis, np.newaxis, np.newaxis]
-        g = np.repeat(g, 2)
-        g = g[..., np.newaxis, np.newaxis, np.newaxis]
         simu = DDGPE(
-            gamma,
+            gamma_s,
             puiss,
             window,
-            g,
-            omega,
+            g_s,
+            omega_s,
             T,
-            omega_exc,
-            omega_cav,
-            detuning,
-            k_z,
+            omega_exc_s,
+            omega_cav_s,
+            detuning_s,
+            k_z_s,
             V=V,
             NX=N,
             NY=N,
             backend="CUPY",
         )
+        # Build propagator while params are still scalars
         simu.propagator = simu._build_propagator()
+        # Now broadcast params for GPU transfer test
+        simu.gamma = np.repeat(gamma_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
+        simu.g = np.repeat(g_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
+        simu.omega = np.repeat(omega_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
+        simu.omega_exc = np.repeat(omega_exc_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
+        simu.omega_cav = np.repeat(omega_cav_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
         simu._send_arrays_to_gpu()
         simu._retrieve_arrays_from_gpu()
         assert isinstance(simu.propagator, np.ndarray), (

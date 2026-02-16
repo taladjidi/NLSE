@@ -340,7 +340,7 @@ def apply_propagator(A: cp.ndarray, propagator: cp.ndarray) -> cp.ndarray:
 @cp.fuse(kernel_name="square_mod_cp")
 def _square_mod_fused(A: cp.ndarray, A_sq: cp.ndarray) -> None:
     """Fused implementation of square_mod."""
-    A_sq[:] = (A * A.conj()).real
+    A_sq[:] = cp.real(A * cp.conj(A))
 
 
 def square_mod(A: cp.ndarray, A_sq: cp.ndarray) -> cp.ndarray:
@@ -366,7 +366,7 @@ def square_mod(A: cp.ndarray, A_sq: cp.ndarray) -> cp.ndarray:
 @cp.fuse(kernel_name="square_mod_nl_prop")
 def _square_mod_nl_prop_fused(A, dz, alpha, g, Isat):
     """Fused implementation of square_mod_nl_prop."""
-    A_sq = (A * A.conj()).real
+    A_sq = cp.real(A * cp.conj(A))
     _nl_prop_without_V_fused(A, A_sq, dz, alpha, g, Isat)
 
 
@@ -398,7 +398,7 @@ def square_mod_nl_prop(A, dz, alpha, g, Isat):
 @cp.fuse(kernel_name="square_mod_nl_prop_v")
 def _square_mod_nl_prop_v_fused(A, V, dz, alpha, g, Isat):
     """Fused implementation of square_mod_nl_prop_v."""
-    A_sq = (A * A.conj()).real
+    A_sq = cp.real(A * cp.conj(A))
     _nl_prop_fused(A, A_sq, dz, alpha, V, g, Isat)
 
 
@@ -564,7 +564,7 @@ def rk4_nl_rhs_v(A_prop, A, A_sq, V, alpha, g, Isat):
 @cp.fuse(kernel_name="square_mod_rk4_nl_rhs")
 def _square_mod_rk4_nl_rhs_fused(A_prop, A, alpha, g, Isat):
     """Fused |A|^2 + RK4 NL RHS (no potential)."""
-    A_sq = (A * A.conj()).real
+    A_sq = cp.real(A * cp.conj(A))
     _rk4_nl_rhs_fused(A_prop, A, A_sq, alpha, g, Isat)
 
 
@@ -596,7 +596,7 @@ def square_mod_rk4_nl_rhs(A_prop, A, alpha, g, Isat):
 @cp.fuse(kernel_name="square_mod_rk4_nl_rhs_v")
 def _square_mod_rk4_nl_rhs_v_fused(A_prop, A, V, alpha, g, Isat):
     """Fused |A|^2 + RK4 NL RHS (with potential)."""
-    A_sq = (A * A.conj()).real
+    A_sq = cp.real(A * cp.conj(A))
     _rk4_nl_rhs_v_fused(A_prop, A, A_sq, V, alpha, g, Isat)
 
 

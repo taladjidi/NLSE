@@ -235,7 +235,9 @@ class TestCacheManagement:
 
     def test_cache_invalidation_forces_rebenchmark(self):
         """Test that cache invalidation works in full workflow."""
-        # Create solver with auto backend
+        from NLSE.utils import get_benchmark_cache_path
+
+        # Create solver with auto backend to populate cache
         simu1 = NLSE(
             alpha=0,
             power=1,
@@ -247,12 +249,14 @@ class TestCacheManagement:
             NY=256,
             backend="auto",
         )
-        backend1 = simu1.backend
+        assert simu1.backend in list_available_backends()
 
         # Invalidate cache
         benchmark.invalidate_cache()
+        cache_path = get_benchmark_cache_path()
+        assert not cache_path.exists(), "Cache should be invalidated"
 
-        # Create new solver (should re-benchmark)
+        # Create new solver (should re-benchmark and recreate cache)
         simu2 = NLSE(
             alpha=0,
             power=1,
@@ -264,10 +268,10 @@ class TestCacheManagement:
             NY=256,
             backend="auto",
         )
-        backend2 = simu2.backend
 
-        # Should get same result (hardware didn't change)
-        assert backend1 == backend2
+        # Should select a valid backend and recreate cache
+        assert simu2.backend in list_available_backends()
+        assert cache_path.exists(), "Cache should be recreated after invalidation"
 
     def test_view_benchmark_results(self):
         """Test viewing benchmark results after auto selection."""

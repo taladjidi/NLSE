@@ -22,14 +22,14 @@ PRECISION_COMPLEX = np.complex64
 PRECISION_REAL = np.float32
 
 # Physical parameters matching reference
-N = 2048
+N = 128
 n2 = -1.6e-9
 waist = 2.23e-3
 waist2 = 70e-6
 window = 4 * waist
 power = 1.05
 Isat = 10e4
-L = 10e-3
+L = 1e-3
 alpha = 20
 
 

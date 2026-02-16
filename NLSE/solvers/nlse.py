@@ -167,6 +167,7 @@ class NLSE:
                 self.nl_profile.shape[0] // 2, self.nl_profile.shape[1] // 2
             ] = np.nanmax(self.nl_profile[np.logical_not(np.isinf(self.nl_profile))])
             self.nl_profile /= self.nl_profile.sum()
+            self.nl_profile = self.nl_profile.astype(np.float32)
         else:
             self.nl_profile = np.ones((self.NY, self.NX), dtype=np.float32)
 

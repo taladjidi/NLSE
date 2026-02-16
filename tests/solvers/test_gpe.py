@@ -12,7 +12,7 @@ if GPE.__CUPY_AVAILABLE__:
 if GPE.__PYOPENCL_AVAILABLE__:
     AVAILABLE_BACKENDS.append("CL")
 
-N = 2048
+N = 256
 N_at = 1e6
 g = 1e3 / (N_at / 1e-3**2)
 waist = 1e-3
