@@ -2,10 +2,54 @@
 
 import json
 import time
+from pathlib import Path
 
 import pytest
 from NLSE.backends import benchmark, list_available_backends
-from NLSE.utils import get_benchmark_cache_path
+from NLSE.utils import get_benchmark_cache_path, get_cache_dir
+
+
+class TestCacheDir:
+    """Test that cache directory lives inside the NLSE package."""
+
+    def test_cache_dir_inside_package(self):
+        """Cache dir should be under the NLSE package directory."""
+        import NLSE
+
+        package_dir = Path(NLSE.__file__).parent
+        cache_dir = get_cache_dir()
+        assert cache_dir == package_dir / ".cache"
+
+    def test_cache_dir_created(self):
+        """get_cache_dir() should create the directory if needed."""
+        cache_dir = get_cache_dir()
+        assert cache_dir.exists()
+        assert cache_dir.is_dir()
+
+    def test_benchmark_cache_in_cache_dir(self):
+        """Benchmark cache file should be inside the cache dir."""
+        cache_dir = get_cache_dir()
+        bench_path = get_benchmark_cache_path()
+        assert bench_path.parent == cache_dir
+        assert bench_path.name == "fft_benchmark.json"
+
+    def test_wisdom_in_cache_dir(self):
+        """FFTW wisdom should be written inside the cache dir."""
+        cache_dir = get_cache_dir()
+        wisdom_path = cache_dir / "fft.wisdom"
+
+        # Remove existing wisdom to test it gets recreated
+        if wisdom_path.exists():
+            wisdom_path.unlink()
+
+        from NLSE.backends.cpu import CPUBackend
+
+        backend = CPUBackend()
+        shape = (64, 64)
+        dtype = __import__("numpy").complex64
+        backend.build_fft(shape, axes=(-2, -1), dtype=dtype)
+
+        assert wisdom_path.exists()
 
 
 class TestBenchmarkBackend:

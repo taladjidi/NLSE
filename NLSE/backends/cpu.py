@@ -8,6 +8,7 @@ import numpy as np
 import pyfftw
 
 from ..kernels import cpu as kernels_cpu
+from ..utils import get_cache_dir
 from .backend import Backend
 
 pyfftw.config.NUM_THREADS = multiprocessing.cpu_count()
@@ -72,8 +73,9 @@ class CPUBackend(Backend):
         )
 
         # Load FFTW wisdom if available
+        wisdom_path = get_cache_dir() / "fft.wisdom"
         try:
-            with open("fft.wisdom", "rb") as file:
+            with open(wisdom_path, "rb") as file:
                 wisdom = pickle.load(file)
                 pyfftw.import_wisdom(wisdom)
         except (FileNotFoundError, Exception):
@@ -129,7 +131,7 @@ class CPUBackend(Backend):
             )
 
         # Save FFTW wisdom
-        with open("fft.wisdom", "wb") as file:
+        with open(wisdom_path, "wb") as file:
             wisdom = pyfftw.export_wisdom()
             pickle.dump(wisdom, file)
 

@@ -3,7 +3,6 @@ __pycache__/
 *$py.class
 *.so
 .vscode/settings.json
-NLSE/fft.wisdom
 tex/benchmarks.pdf
 tex/output.png
 tex/paper.aux
@@ -18,7 +17,6 @@ tex/paper.synctex.gz
 tex/paper.tex
 tex/paperNotes.bib
 .DS_Store
-fft.wisdom
 build/*
 NLSE.egg-info/*
 img/inheritance_graph.svg
@@ -38,3 +36,4 @@ NLSE/kernels/metal_native/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+NLSE/.cache/
