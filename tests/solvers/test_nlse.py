@@ -6,7 +6,7 @@ from scipy.constants import c, epsilon_0
 
 if NLSE.__CUPY_AVAILABLE__:
     import cupy as cp
-    from pyvkfft.cuda import VkFFTApp as VkFFTApp_cuda
+    from NLSE.backends.cupy_backend import _CuFFTPlan
 if NLSE.__PYOPENCL_AVAILABLE__:
     import pyopencl.array as cla
     from pyvkfft.opencl import VkFFTApp as VkFFTApp_cl
@@ -81,13 +81,9 @@ def test_build_fft_plan() -> None:
             ), f"Plan shape is wrong. (Backend {backend})"
         elif backend == "CUPY" and NLSE.__CUPY_AVAILABLE__:
             assert len(plans) == 1, f"Number of plans is wrong. (Backend {backend})"
-            assert isinstance(plans[0], VkFFTApp_cuda), (
+            assert isinstance(plans[0], _CuFFTPlan), (
                 f"Plan type is wrong. (Backend {backend})"
             )
-            assert plans[0].shape0 == (
-                N,
-                N,
-            ), f"Plan shape is wrong. (Backend {backend})"
         elif backend == "CL" and NLSE.__PYOPENCL_AVAILABLE__:
             assert len(plans) == 1, f"Number of plans is wrong. (Backend {backend})"
             assert isinstance(plans[0], VkFFTApp_cl), (

@@ -464,19 +464,20 @@ class CUDAKernels:
         )
         return A
 
-    def linear_step(self, A, propagator, plan):
+    def linear_step(self, A, propagator, plan, unnorm_ifft=False):
         """Fused linear propagation: FFT + propagator multiply + IFFT.
-
-        Eliminates Python dispatch overhead between the three operations.
 
         Parameters
         ----------
         A : cp.ndarray
             Complex field array (modified in-place)
         propagator : cp.ndarray
-            Pre-computed propagator array
-        plan : VkFFTApp
-            Pre-built VkFFT plan for in-place FFT
+            Pre-computed propagator array (pre-divided by N_fft when
+            unnorm_ifft is True)
+        plan : _CuFFTPlan or VkFFTApp
+            Pre-built FFT plan
+        unnorm_ifft : bool
+            If True, use unnormalized IFFT (1/N absorbed into propagator).
 
         Returns
         -------
@@ -487,7 +488,10 @@ class CUDAKernels:
         N = int(A.size)
         plan.fft(A, A)
         self._launch(kernels["apply_propagator"], N, A, propagator, np.int32(N))
-        plan.ifft(A, A)
+        if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
+            plan.ifft_unnorm(A, A)
+        else:
+            plan.ifft(A, A)
         return A
 
     def apply_propagator(self, A, propagator):

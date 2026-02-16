@@ -373,6 +373,9 @@ class NLSE:
         """
         kernels = self._backend.kernels
         if hasattr(kernels, "linear_step"):
+            prop_fft = getattr(self, "_propagator_fft", None)
+            if prop_fft is not None:
+                return kernels.linear_step(A, prop_fft, plans[0], unnorm_ifft=True)
             return kernels.linear_step(A, propagator, plans[0])
         A = self._backend.fft(A, plans)
         A = kernels.apply_propagator(A, propagator)
@@ -697,6 +700,17 @@ class NLSE:
             self._V_scaled = V * np.float32(self.k / 2)
         else:
             self._V_scaled = None
+        # For cuFFT unnormalized IFFT: absorb 1/N into the propagator
+        # so linear_step can skip the separate normalization kernel.
+        kernels = self._backend.kernels
+        if hasattr(kernels, "linear_step") and self.propagator is not None:
+            N_fft = 1
+            for ax in self._last_axes:
+                N_fft *= self.propagator.shape[ax]
+            inv_N = np.float32(1.0 / N_fft) if self.propagator.dtype == np.complex64 else np.float64(1.0 / N_fft)
+            self._propagator_fft = self.propagator * inv_N
+        else:
+            self._propagator_fft = None
 
     def out_field(
         self,

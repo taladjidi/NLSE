@@ -11,19 +11,44 @@ if not __CUPY_AVAILABLE__:
     raise ImportError("CuPy is not available - cannot import CUPYBackend")
 
 import cupy as cp
-from pyvkfft.cuda import VkFFTApp
+import cupyx.scipy.fft as _cufft
+from cupyx.scipy.fftpack import get_fft_plan
 
-# NOTE: VkFFT vs cuFFT — ncu profiling (RTX 3050, 2048x2048) shows VkFFT
-# already hits 95% DRAM bandwidth on the column pass and 71% on the row pass.
-# cuFFT benchmarks show similar wall-clock times. Switching to cuFFT would
-# not yield significant gains for this grid size.
+
+class _CuFFTPlan:
+    """cuFFT plan wrapper with .fft()/.ifft() API matching VkFFTApp.
+
+    This allows CUDAKernels.linear_step to call plan.fft(A, A) / plan.ifft(A, A)
+    without knowing which FFT library is behind it.
+    """
+
+    __slots__ = ("_axes", "_plan")
+
+    def __init__(self, a: Any, axes: tuple) -> None:
+        self._plan = get_fft_plan(a, axes=axes, value_type="C2C")
+        self._axes = axes
+
+    def fft(self, a: Any, out: Any) -> Any:
+        """Forward FFT, in-place when out is a."""
+        return _cufft.fftn(a, axes=self._axes, overwrite_x=(out is a), plan=self._plan)
+
+    def ifft(self, a: Any, out: Any) -> Any:
+        """Inverse FFT (normalized by 1/N), in-place when out is a."""
+        return _cufft.ifftn(
+            a, axes=self._axes, overwrite_x=(out is a), plan=self._plan
+        )
+
+    def ifft_unnorm(self, a: Any, out: Any) -> Any:
+        """Inverse FFT without 1/N normalization (raw cuFFT).
+
+        Used by linear_step where 1/N is absorbed into the propagator.
+        """
+        self._plan.fft(a, out, cp.cuda.cufft.CUFFT_INVERSE)
+        return out
 
 
 class CUPYBackend(Backend):
-    """CUPY backend using CuPy and VkFFT."""
-
-    def __init__(self):
-        self._vkfft_apps = {}
+    """CUPY backend using CuPy and cuFFT."""
 
     @property
     def name(self) -> str:
@@ -52,17 +77,17 @@ class CUPYBackend(Backend):
         dtype: np.dtype,
         array: np.ndarray | None = None,
     ) -> list:
-        """Build VkFFT app for CUDA.
+        """Build cuFFT plan for CUDA.
 
         Returns
         -------
         list
-            List containing VkFFTApp instance (for consistency with CPU backend)
+            List containing _CuFFTPlan instance (for consistency with CPU backend)
 
         """
         A = cp.zeros(shape, dtype=dtype)
-        app = VkFFTApp(A.shape, A.dtype, axes=axes, ndim=len(axes))
-        return [app]
+        plan = _CuFFTPlan(A, axes=axes)
+        return [plan]
 
     def fft(self, array: Any, plan: list) -> Any:
         """Perform forward FFT."""

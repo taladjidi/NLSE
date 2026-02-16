@@ -5,7 +5,7 @@ from scipy.constants import c, epsilon_0
 
 if NLSE_3d.__CUPY_AVAILABLE__:
     import cupy as cp
-    from pyvkfft.cuda import VkFFTApp
+    from NLSE.backends.cupy_backend import _CuFFTPlan
 PRECISION_COMPLEX = np.complex64
 PRECISION_REAL = np.float32
 AVAILABLE_BACKENDS = ["CPU"]
@@ -85,14 +85,9 @@ def test_build_fft_plan() -> None:
         plans = simu._build_fft_plan(A)
         if backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
             assert len(plans) == 1, f"Number of plans is wrong. (Backend {backend})"
-            assert isinstance(plans[0], VkFFTApp), (
+            assert isinstance(plans[0], _CuFFTPlan), (
                 f"Plan type is wrong. (Backend {backend})"
             )
-            assert plans[0].shape0 == (
-                N,
-                N,
-                NZ,
-            ), f"Plan shape is wrong. (Backend {backend})"
         elif backend == "CPU":
             assert len(plans) == 2, f"Number of plans is wrong. (Backend {backend})"
             assert isinstance(plans[0], pyfftw.FFTW), (
