@@ -412,6 +412,14 @@ class NLSE:
             The propagated field.
         """
         kernels = self._backend.kernels
+        # Use pre-computed constants (set in out_field), with fallbacks
+        # for direct split_step calls outside out_field.
+        alpha_half = getattr(self, "_alpha_half", self.alpha / 2)
+        g = self.k / 2 * self.n2 * c * epsilon_0
+        Isat_conv = getattr(self, "_Isat_conv", 2 * self.I_sat / (epsilon_0 * c))
+        V_scaled = getattr(self, "_V_scaled", None)
+        if V_scaled is None and V is not None:
+            V_scaled = V * np.float32(self.k / 2)
 
         # MLX fused fast path (nl_length == 0 only)
         if hasattr(kernels, "split_step") and self.nl_length == 0:
@@ -421,10 +429,10 @@ class NLSE:
                 propagator,
                 V,
                 dz,
-                self.alpha / 2,
-                self.k / 2 * self.n2 * c * epsilon_0,
+                alpha_half,
+                g,
                 self.k / 2,
-                2 * self.I_sat / (epsilon_0 * c),
+                Isat_conv,
                 precision,
                 plans[0],
             )
@@ -442,39 +450,37 @@ class NLSE:
                         A,
                         A_sq,
                         self.delta_z / 2,
-                        self.alpha / 2,
-                        self.k / 2 * self.n2 * c * epsilon_0,
-                        2 * self.I_sat / (epsilon_0 * c),
+                        alpha_half,
+                        g,
+                        Isat_conv,
                     )
                 else:
-                    V_scaled = V * np.float32(self.k / 2)
                     A = kernels.nl_prop(
                         A,
                         A_sq,
                         self.delta_z / 2,
-                        self.alpha / 2,
+                        alpha_half,
                         V_scaled,
-                        self.k / 2 * self.n2 * c * epsilon_0,
-                        2 * self.I_sat / (epsilon_0 * c),
+                        g,
+                        Isat_conv,
                     )
             else:
                 if V is None:
                     A = kernels.square_mod_nl_prop(
                         A,
                         self.delta_z / 2,
-                        self.alpha / 2,
-                        self.k / 2 * self.n2 * c * epsilon_0,
-                        2 * self.I_sat / (epsilon_0 * c),
+                        alpha_half,
+                        g,
+                        Isat_conv,
                     )
                 else:
-                    V_scaled = V * np.float32(self.k / 2)
                     A = kernels.square_mod_nl_prop_v(
                         A,
                         V_scaled,
                         self.delta_z / 2,
-                        self.alpha / 2,
-                        self.k / 2 * self.n2 * c * epsilon_0,
-                        2 * self.I_sat / (epsilon_0 * c),
+                        alpha_half,
+                        g,
+                        Isat_conv,
                     )
 
         # Linear propagation in Fourier domain
@@ -495,38 +501,37 @@ class NLSE:
                     A,
                     A_sq,
                     dz_step,
-                    self.alpha / 2,
-                    self.k / 2 * self.n2 * c * epsilon_0,
-                    2 * self.I_sat / (epsilon_0 * c),
+                    alpha_half,
+                    g,
+                    Isat_conv,
                 )
             else:
                 A = kernels.nl_prop(
                     A,
                     A_sq,
                     dz_step,
-                    self.alpha / 2,
-                    self.k / 2 * V,
-                    self.k / 2 * self.n2 * c * epsilon_0,
-                    2 * self.I_sat / (epsilon_0 * c),
+                    alpha_half,
+                    V_scaled,
+                    g,
+                    Isat_conv,
                 )
         else:
             if V is None:
                 A = kernels.square_mod_nl_prop(
                     A,
                     dz_step,
-                    self.alpha / 2,
-                    self.k / 2 * self.n2 * c * epsilon_0,
-                    2 * self.I_sat / (epsilon_0 * c),
+                    alpha_half,
+                    g,
+                    Isat_conv,
                 )
             else:
-                V_scaled = V * np.float32(self.k / 2)
                 A = kernels.square_mod_nl_prop_v(
                     A,
                     V_scaled,
                     dz_step,
-                    self.alpha / 2,
-                    self.k / 2 * self.n2 * c * epsilon_0,
-                    2 * self.I_sat / (epsilon_0 * c),
+                    alpha_half,
+                    g,
+                    Isat_conv,
                 )
         return A
 
@@ -560,9 +565,13 @@ class NLSE:
             k = self._apply_linear_step(k, propagator, plans)
 
         kernels = self._backend.kernels
+        # Use pre-computed constants (set in out_field), with fallbacks
+        alpha_half = getattr(self, "_alpha_half", self.alpha / 2)
         g = self.k / 2 * self.n2 * c * epsilon_0
-        alpha_half = self.alpha / 2
-        Isat_conv = 2 * self.I_sat / (epsilon_0 * c)
+        Isat_conv = getattr(self, "_Isat_conv", 2 * self.I_sat / (epsilon_0 * c))
+        V_scaled = getattr(self, "_V_scaled", None)
+        if V_scaled is None and V is not None:
+            V_scaled = V * np.float32(self.k / 2)
 
         if self.nl_length > 0:
             A_sq = (A_in * A_in.conj()).real
@@ -572,7 +581,6 @@ class NLSE:
             if V is None:
                 k = kernels.rk4_nl_rhs(k, A_in, A_sq, alpha_half, g, Isat_conv)
             else:
-                V_scaled = V * np.float32(self.k / 2)
                 k = kernels.rk4_nl_rhs_v(
                     k, A_in, A_sq, V_scaled, alpha_half, g, Isat_conv
                 )
@@ -580,7 +588,6 @@ class NLSE:
             if V is None:
                 k = kernels.square_mod_rk4_nl_rhs(k, A_in, alpha_half, g, Isat_conv)
             else:
-                V_scaled = V * np.float32(self.k / 2)
                 k = kernels.square_mod_rk4_nl_rhs_v(
                     k, A_in, V_scaled, alpha_half, g, Isat_conv
                 )
@@ -682,6 +689,15 @@ class NLSE:
         else:
             raise ValueError("callbacks should be a callable or a list of callables")
 
+    def _precompute_step_constants(self, V: np.ndarray | None) -> None:
+        """Pre-compute constants that are invariant across propagation steps."""
+        self._alpha_half = self.alpha / 2
+        self._Isat_conv = 2 * self.I_sat / (epsilon_0 * c)
+        if V is not None:
+            self._V_scaled = V * np.float32(self.k / 2)
+        else:
+            self._V_scaled = None
+
     def out_field(
         self,
         E_in: np.ndarray,
@@ -761,6 +777,7 @@ class NLSE:
         A, A_sq = self._prepare_output_array(E_in, normalize)
         self.plans = self._build_fft_plan(A)
         self._allocate_rk4_buffers(A, method)
+        self._precompute_step_constants(V)
         if verbose:
             pbar = tqdm.tqdm(
                 total=100,
