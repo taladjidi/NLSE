@@ -9,7 +9,7 @@ if NLSE.__CUPY_AVAILABLE__:
     from NLSE.backends.cupy_backend import _CuFFTPlan
 if NLSE.__PYOPENCL_AVAILABLE__:
     import pyopencl.array as cla
-    from pyvkfft.opencl import VkFFTApp as VkFFTApp_cl
+    from NLSE.backends.opencl import _VkFFTPlan
 PRECISION_COMPLEX = np.complex64
 PRECISION_REAL = np.float32
 
@@ -79,10 +79,10 @@ def test_build_fft_plan(backend) -> None:
         )
     elif backend == "CL" and NLSE.__PYOPENCL_AVAILABLE__:
         assert len(plans) == 1, f"Number of plans is wrong. (Backend {backend})"
-        assert isinstance(plans[0], VkFFTApp_cl), (
+        assert isinstance(plans[0], _VkFFTPlan), (
             f"Plan type is wrong. (Backend {backend})"
         )
-        assert plans[0].shape0 == (
+        assert plans[0]._app.shape0 == (
             N,
             N,
         ), f"Plan shape is wrong. (Backend {backend})"
@@ -114,19 +114,11 @@ def test_prepare_output_array(backend) -> None:
         f"Output array is not C-contiguous. (Backend {backend})"
     )
     if backend == "CPU":
-        assert out.flags.aligned, (
-            f"Output array is not aligned. (Backend {backend})"
-        )
-        assert out_sq.flags.aligned, (
-            f"Output array is not aligned. (Backend {backend})"
-        )
-    if (
-        simu.backend == "CUPY" and NLSE.__CUPY_AVAILABLE__
-    ) or simu.backend == "CPU":
+        assert out.flags.aligned, f"Output array is not aligned. (Backend {backend})"
+        assert out_sq.flags.aligned, f"Output array is not aligned. (Backend {backend})"
+    if (simu.backend == "CUPY" and NLSE.__CUPY_AVAILABLE__) or simu.backend == "CPU":
         integral = (
-            (out.real * out.real + out.imag * out.imag)
-            * simu.delta_X
-            * simu.delta_Y
+            (out.real * out.real + out.imag * out.imag) * simu.delta_X * simu.delta_Y
         ).sum(axis=simu._last_axes)
     if backend == "CL" and NLSE.__PYOPENCL_AVAILABLE__:
         arr = out.real * out.real + out.imag * out.imag
@@ -264,9 +256,7 @@ def test_split_step(backend) -> None:
         backend == "CL" and NLSE.__PYOPENCL_AVAILABLE__
     ):
         simu._send_arrays_to_gpu()
-    simu.split_step(
-        A, A_sq, simu.V, simu.propagator, simu.plans, precision="double"
-    )
+    simu.split_step(A, A_sq, simu.V, simu.propagator, simu.plans, precision="double")
     if backend == "CPU":
         assert np.allclose(A, np.ones((N, N), dtype=PRECISION_COMPLEX)), (
             f"Split step is not unitary. (Backend {backend})"

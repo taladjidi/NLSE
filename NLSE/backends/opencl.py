@@ -15,6 +15,35 @@ from pyopencl import array as cla
 from pyvkfft.opencl import VkFFTApp
 
 
+class _VkFFTPlan:
+    """VkFFT plan wrapper with .fft()/.ifft()/.ifft_unnorm() API.
+
+    Matches _CuFFTPlan so that OpenCLKernels.linear_step can call
+    plan.fft(A, A) / plan.ifft(A, A) / plan.ifft_unnorm(A, A)
+    without knowing which FFT library is behind it.
+    """
+
+    __slots__ = ("_app", "_app_unnorm")
+
+    def __init__(self, shape, dtype, queue, axes, ndim):
+        self._app = VkFFTApp(shape, dtype, queue=queue, axes=axes, ndim=ndim)
+        self._app_unnorm = VkFFTApp(
+            shape, dtype, queue=queue, axes=axes, ndim=ndim, norm=0
+        )
+
+    def fft(self, a, out):
+        """Forward FFT."""
+        return self._app.fft(a, out)
+
+    def ifft(self, a, out):
+        """Inverse FFT (normalized by 1/N)."""
+        return self._app.ifft(a, out)
+
+    def ifft_unnorm(self, a, out):
+        """Inverse FFT without 1/N normalization."""
+        return self._app_unnorm.ifft(a, out)
+
+
 class OpenCLBackend(Backend):
     """OpenCL backend using PyOpenCL and VkFFT."""
 
@@ -69,9 +98,8 @@ class OpenCLBackend(Backend):
             List containing VkFFTApp instance (for consistency with CPU backend)
 
         """
-        A = cla.zeros(self._queue, shape, dtype)
-        app = VkFFTApp(A.shape, A.dtype, queue=self._queue, axes=axes, ndim=len(axes))
-        return [app]
+        plan = _VkFFTPlan(shape, dtype, queue=self._queue, axes=axes, ndim=len(axes))
+        return [plan]
 
     def fft(self, array: Any, plan: list) -> Any:
         """Perform forward FFT."""

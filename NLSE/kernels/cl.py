@@ -233,6 +233,37 @@ class OpenCLKernels:
 
         return self._kernels[precision]
 
+    def linear_step(self, A, propagator, plan, unnorm_ifft=False):
+        """Fused linear propagation: FFT + propagator multiply + IFFT.
+
+        Parameters
+        ----------
+        A : cla.Array
+            Complex field array (modified in-place)
+        propagator : cla.Array
+            Pre-computed propagator array (pre-divided by N_fft when
+            unnorm_ifft is True)
+        plan : _VkFFTPlan or VkFFTApp
+            Pre-built FFT plan
+        unnorm_ifft : bool
+            If True, use unnormalized IFFT (1/N absorbed into propagator).
+
+        Returns
+        -------
+        cla.Array
+            The propagated field A.
+        """
+        plan.fft(A, A)
+        kernels = self._get_kernels(A.dtype)
+        kernels["apply_propagator"](
+            self.queue, (int(A.size),), None, A.data, propagator.data
+        )
+        if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
+            plan.ifft_unnorm(A, A)
+        else:
+            plan.ifft(A, A)
+        return A
+
     def nl_prop(
         self,
         A: cla.Array,

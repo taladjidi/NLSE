@@ -212,9 +212,7 @@ class NLSE:
 
     def _compute_propagator_rk4(self) -> np.ndarray:
         """Compute the raw dispersion operator for RK4 (no caching)."""
-        return (-1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k).astype(
-            np.complex64
-        )
+        return (-1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k).astype(np.complex64)
 
     def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Build the linear propagation matrix with caching.
@@ -638,9 +636,7 @@ class NLSE:
             alpha_half = getattr(self, "_alpha_half", self.alpha / 2)
             g = getattr(self, "_g", self.k / 2 * self.n2 * c * epsilon_0)
             k_half = getattr(self, "_k_half", np.float32(self.k / 2))
-            Isat_conv = getattr(
-                self, "_Isat_conv", 2 * self.I_sat / (epsilon_0 * c)
-            )
+            Isat_conv = getattr(self, "_Isat_conv", 2 * self.I_sat / (epsilon_0 * c))
             return kernels.split_step_rk4(
                 A,
                 propagator,
@@ -706,21 +702,42 @@ class NLSE:
             raise ValueError("callbacks should be a callable or a list of callables")
 
     def _run_propagation(
-        self, A, A_sq, V, z, precision, method,
-        callback, callback_args, verbose, pbar,
+        self,
+        A,
+        A_sq,
+        V,
+        z,
+        precision,
+        method,
+        callback,
+        callback_args,
+        verbose,
+        pbar,
     ):
-        """Execute the propagation loop, using the backend's fast path if eligible."""
+        """Execute the propagation loop, using the backend's fast path if eligible.
+
+        Returns
+        -------
+        np.ndarray
+            The propagated field (may be a new object for functional backends).
+        """
         n_steps = int(np.ceil(z / abs(self.delta_z)))
         if z > self.L:
             self.n2 = 0
 
+        # Use a mutable container so the closure can update A for functional
+        # backends (MLX) where kernels return new arrays.
+        state = [A]
+
         if method == "RK4":
+
             def _step():
-                self.split_step_RK4(A, V, self.propagator, self.plans)
+                state[0] = self.split_step_RK4(state[0], V, self.propagator, self.plans)
         else:
+
             def _step():
-                self.split_step(
-                    A, A_sq, V, self.propagator, self.plans, precision
+                state[0] = self.split_step(
+                    state[0], A_sq, V, self.propagator, self.plans, precision
                 )
 
         is_scalar_n2 = isinstance(self.n2, (int, float, np.floating))
@@ -734,11 +751,25 @@ class NLSE:
             self._backend.execute_loop(_step, n_steps)
         else:
             self._loop_with_callbacks(
-                _step, z, callback, callback_args, A, verbose, pbar,
+                _step,
+                z,
+                callback,
+                callback_args,
+                state,
+                verbose,
+                pbar,
             )
+        return state[0]
 
     def _loop_with_callbacks(
-        self, step_fn, z, callback, callback_args, A, verbose, pbar,
+        self,
+        step_fn,
+        z,
+        callback,
+        callback_args,
+        state,
+        verbose,
+        pbar,
     ):
         """Run propagation loop with per-step callbacks."""
         z_prop = 0.0
@@ -746,7 +777,7 @@ class NLSE:
         while abs(z_prop) < z:
             step_fn()
             if callback is not None:
-                self._run_callbacks(callback, callback_args, A, z, i)
+                self._run_callbacks(callback, callback_args, state[0], z, i)
             z_prop += self.delta_z
             i += 1
             if verbose:
@@ -763,10 +794,15 @@ class NLSE:
             self._V_scaled = V * self._k_half
         else:
             self._V_scaled = None
-        # For cuFFT unnormalized IFFT: absorb 1/N into the propagator
-        # so linear_step can skip the separate normalization kernel.
+        # Unnormalized IFFT: absorb 1/N into the propagator so
+        # linear_step can skip the separate normalization multiply.
+        # Supported by CUPY (cuFFT) and CL (VkFFT norm=0).
         kernels = self._backend.kernels
-        if hasattr(kernels, "linear_step") and self.propagator is not None:
+        if (
+            hasattr(kernels, "linear_step")
+            and self.propagator is not None
+            and self._backend.name in ("CUPY", "CL")
+        ):
             N_fft = 1
             for ax in self._last_axes:
                 N_fft *= self.propagator.shape[ax]
@@ -877,9 +913,17 @@ class NLSE:
         if type(self.delta_z) is complex:
             print("Warning: imaginary time evolution !")
 
-        self._run_propagation(
-            A, A_sq, V, z, precision, method,
-            callback, callback_args, verbose, pbar if verbose else None,
+        A = self._run_propagation(
+            A,
+            A_sq,
+            V,
+            z,
+            precision,
+            method,
+            callback,
+            callback_args,
+            verbose,
+            pbar if verbose else None,
         )
 
         if verbose:
