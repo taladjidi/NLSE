@@ -2,11 +2,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.constants import c, epsilon_0
 
-from ..utils import __BACKEND__, __CUPY_AVAILABLE__
+from ..utils import __BACKEND__
 from .cnlse import CNLSE
-
-if __CUPY_AVAILABLE__:
-    import cupy as cp
 
 
 class CNLSE_1d(CNLSE):
@@ -107,42 +104,19 @@ class CNLSE_1d(CNLSE):
         A2 = A[..., 1, :]
 
         # OpenCL/CUPY backends don't support offset arrays - make contiguous copies
-        if self._backend.name in ["CL", "CUPY", "MLX"]:
+        if self._backend.is_device_backend:
             if hasattr(A1, "copy"):
                 A1 = A1.copy()
                 A2 = A2.copy()
 
         return A1, A2
 
-    def _build_propagator(self, precision: str = "single") -> np.ndarray:
-        """Build the linear propagation matrix.
+    def _propagator_cache_key(self, precision: str) -> tuple:
+        """Return cache key for 1D coupled propagator."""
+        return (self.NX, float(self.delta_z), precision, float(self.k), float(self.k2))
 
-        Uses caching to avoid recomputing propagators with identical parameters.
-
-        Parameters
-        ----------
-        precision : str, optional
-            "single" or "double" application of the
-            propagator. Defaults to "single".
-
-        Returns
-        -------
-        np.ndarray
-            The propagator matrix.
-        """
-        # Create cache key (1D version, includes k2 for second component)
-        cache_key = (
-            self.NX,
-            float(self.delta_z),
-            precision,
-            float(self.k),
-            float(self.k2),
-        )
-
-        # Return cached propagator if available
-        if cache_key in self._propagator_cache:
-            return self._propagator_cache[cache_key]
-
+    def _compute_propagator(self, precision: str) -> np.ndarray:
+        """Compute the 1D coupled linear propagation matrices."""
         dtype = np.complex128 if precision == "double" else np.complex64
         propagator1 = np.exp(
             -1j * 0.5 * (self.Kx**2) / self.k * self.delta_z, dtype=dtype
@@ -150,28 +124,17 @@ class CNLSE_1d(CNLSE):
         propagator2 = np.exp(
             -1j * 0.5 * (self.Kx**2) / self.k2 * self.delta_z, dtype=dtype
         )
-        propagator = np.array([propagator1, propagator2])
+        return np.array([propagator1, propagator2])
 
-        # Cache for future use
-        self._propagator_cache[cache_key] = propagator
-        return propagator
+    def _propagator_rk4_cache_key(self) -> tuple:
+        """Return cache key for 1D coupled RK4 dispersion operator."""
+        return (self.NX, "RK4", float(self.k), float(self.k2))
 
-    def _build_propagator_rk4(self) -> np.ndarray:
-        """Build raw 1D 2-component dispersion operator for RK4.
-
-        Returns
-        -------
-        np.ndarray
-            The raw dispersion operators for both components.
-        """
-        cache_key = (self.NX, "RK4", float(self.k), float(self.k2))
-        if cache_key in self._propagator_cache:
-            return self._propagator_cache[cache_key]
+    def _compute_propagator_rk4(self) -> np.ndarray:
+        """Compute the raw 1D coupled dispersion operators for RK4."""
         prop1 = (-1j * 0.5 * self.Kx**2 / self.k).astype(np.complex64)
         prop2 = (-1j * 0.5 * self.Kx**2 / self.k2).astype(np.complex64)
-        propagator = np.array([prop1, prop2])
-        self._propagator_cache[cache_key] = propagator
-        return propagator
+        return np.array([prop1, prop2])
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot a field for monitoring.
@@ -183,12 +146,7 @@ class CNLSE_1d(CNLSE):
         z : float
             Propagation distance in m.
         """
-        # if array is multi-dimensional, drop dims until the shape is 2D
-        if A_plot.ndim > 2:
-            while len(A_plot.shape) > 2:
-                A_plot = A_plot[0]
-        if self.__CUPY_AVAILABLE__ and isinstance(A_plot, cp.ndarray):
-            A_plot = A_plot.get()
+        A_plot = self._to_plot_array(A_plot, 2)
         A_1_plot = A_plot[0]
         A_2_plot = A_plot[1]
         fig, ax = plt.subplots(2, 2, layout="constrained", figsize=(10, 10))

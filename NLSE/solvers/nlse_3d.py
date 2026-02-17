@@ -2,11 +2,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.constants import c, epsilon_0
 
-from ..utils import __BACKEND__, __CUPY_AVAILABLE__
+from ..utils import __BACKEND__
 from .nlse import NLSE
-
-if __CUPY_AVAILABLE__:
-    import cupy as cp
 
 
 class NLSE_3d(NLSE):
@@ -119,64 +116,30 @@ class NLSE_3d(NLSE):
         # Override normalization factor for 3D (includes delta_T)
         self._norm_grid_factor = np.float32(self.delta_X * self.delta_Y * self.delta_T)
 
-    def _build_propagator(self, precision: str = "single") -> np.ndarray:
-        """Build the linear propagation matrix.
-
-        Uses caching to avoid recomputing propagators with identical parameters.
-
-        Parameters
-        ----------
-        precision : str, optional
-            "single" or "double" precision. Defaults to "single".
-
-        Returns
-        -------
-        np.ndarray
-            The propagator.
-        """
-        # Create cache key (3D version includes D0 and NZ)
-        cache_key = (
-            self.NX,
-            self.NY,
-            self.NZ,
-            float(self.delta_z),
-            precision,
-            float(self.k),
-            float(self.D0),
+    def _propagator_cache_key(self, precision: str) -> tuple:
+        """Return cache key for 3D propagator."""
+        return (
+            self.NX, self.NY, self.NZ,
+            float(self.delta_z), precision,
+            float(self.k), float(self.D0),
         )
 
-        # Return cached propagator if available
-        if cache_key in self._propagator_cache:
-            return self._propagator_cache[cache_key]
-
+    def _compute_propagator(self, precision: str) -> np.ndarray:
+        """Compute the 3D linear propagation matrix (spatial + temporal)."""
         dtype = np.complex128 if precision == "double" else np.complex64
-        prop_2d = super()._build_propagator(precision)
+        prop_2d = super()._compute_propagator(precision)
         prop_t = np.exp(-1j * self.D0 / 2 * self.Omega**2, dtype=dtype)
-        # prop_t *= np.exp(1 / self.vg * self.Omega)
-        propagator = prop_2d * prop_t
+        return prop_2d * prop_t
 
-        # Cache for future use
-        self._propagator_cache[cache_key] = propagator
-        return propagator
+    def _propagator_rk4_cache_key(self) -> tuple:
+        """Return cache key for 3D RK4 dispersion operator."""
+        return (self.NX, self.NY, self.NZ, "RK4", float(self.k), float(self.D0))
 
-    def _build_propagator_rk4(self) -> np.ndarray:
-        """Build raw 3D dispersion operator for RK4.
-
-        Adds spatial and temporal dispersion (no exp, no delta_z).
-
-        Returns
-        -------
-        np.ndarray
-            The raw dispersion operator.
-        """
-        cache_key = (self.NX, self.NY, self.NZ, "RK4", float(self.k), float(self.D0))
-        if cache_key in self._propagator_cache:
-            return self._propagator_cache[cache_key]
-        prop_spatial = super()._build_propagator_rk4()
+    def _compute_propagator_rk4(self) -> np.ndarray:
+        """Compute the raw 3D dispersion operator for RK4."""
+        prop_spatial = super()._compute_propagator_rk4()
         prop_temporal = (-1j * self.D0 / 2 * self.Omega**2).astype(np.complex64)
-        propagator = prop_spatial + prop_temporal
-        self._propagator_cache[cache_key] = propagator
-        return propagator
+        return prop_spatial + prop_temporal
 
     def _prepare_output_array(
         self, E_in: np.ndarray, normalize: bool
@@ -237,12 +200,7 @@ class NLSE_3d(NLSE):
         z : float
             Propagation distance in m.
         """
-        # if array is multi-dimensional, drop dims until the shape is 2D
-        if A_plot.ndim > 3:
-            while len(A_plot.shape) > 3:
-                A_plot = A_plot[0]
-        if self.__CUPY_AVAILABLE__ and isinstance(A_plot, cp.ndarray):
-            A_plot = A_plot.get()
+        A_plot = self._to_plot_array(A_plot, 3)
         fig, ax = plt.subplots(2, 2, layout="constrained", figsize=(10, 10))
         fig.suptitle(rf"Field at $z$ = {z:.2e} m")
         ext_real = [

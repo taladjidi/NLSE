@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from NLSE import DDGPE
 
 if DDGPE.__CUPY_AVAILABLE__:
@@ -6,11 +7,6 @@ if DDGPE.__CUPY_AVAILABLE__:
 
 PRECISION_COMPLEX = np.complex64
 PRECISION_REAL = np.float32
-AVAILABLE_BACKENDS = ["CPU"]
-if DDGPE.__CUPY_AVAILABLE__:
-    AVAILABLE_BACKENDS.append("CUPY")
-if DDGPE.__PYOPENCL_AVAILABLE__:
-    AVAILABLE_BACKENDS.append("CL")
 
 N = 256
 T = 1
@@ -27,61 +23,60 @@ g = 1e-2 / h_bar
 puiss = detuning / g
 
 
-def test_prepare_output_array() -> None:
-    for backend in AVAILABLE_BACKENDS:
-        simu = DDGPE(
-            gamma,
-            puiss,
-            window,
-            g,
-            omega,
-            T,
-            omega_exc,
-            omega_cav,
-            detuning,
-            k_z,
-            NX=N,
-            NY=N,
-            backend=backend,
+def test_prepare_output_array(backend) -> None:
+    simu = DDGPE(
+        gamma,
+        puiss,
+        window,
+        g,
+        omega,
+        T,
+        omega_exc,
+        omega_cav,
+        detuning,
+        k_z,
+        NX=N,
+        NY=N,
+        backend=backend,
+    )
+    if backend == "CUPY" and DDGPE.__CUPY_AVAILABLE__:
+        A = cp.ones((2, N, N), dtype=PRECISION_COMPLEX)
+    else:
+        A = np.ones((2, N, N), dtype=PRECISION_COMPLEX)
+    out, out_sq = simu._prepare_output_array(A, normalize=False)
+    # Convert CL arrays to numpy for assertions
+    if backend == "CL":
+        out = out.get()
+        out_sq = out_sq.get()
+    assert out.flags.c_contiguous, (
+        f"Output array is not C-contiguous. (Backend {backend})"
+    )
+    assert out_sq.flags.c_contiguous, (
+        f"Output array is not C-contiguous. (Backend {backend})"
+    )
+    assert out.shape == (
+        2,
+        N,
+        N,
+    ), f"Output array has wrong shape. (Backend {backend})"
+    if backend == "CUPY" and DDGPE.__CUPY_AVAILABLE__:
+        assert isinstance(out, cp.ndarray), (
+            f"Output array type does not match backend. (Backend {backend})"
         )
-        if backend == "CUPY" and DDGPE.__CUPY_AVAILABLE__:
-            A = cp.ones((2, N, N), dtype=PRECISION_COMPLEX)
-        else:
-            A = np.ones((2, N, N), dtype=PRECISION_COMPLEX)
-        out, out_sq = simu._prepare_output_array(A, normalize=False)
-        # Convert CL arrays to numpy for assertions
-        if backend == "CL":
-            out = out.get()
-            out_sq = out_sq.get()
-        assert out.flags.c_contiguous, (
-            f"Output array is not C-contiguous. (Backend {backend})"
+        out /= cp.max(cp.abs(out))
+        A /= cp.max(cp.abs(A))
+        assert cp.allclose(out, A), (
+            f"Output array does not match input array. (Backend {backend})"
         )
-        assert out_sq.flags.c_contiguous, (
-            f"Output array is not C-contiguous. (Backend {backend})"
+    else:
+        assert isinstance(out, np.ndarray), (
+            f"Output array type does not match backend. (Backend {backend})"
         )
-        assert out.shape == (
-            2,
-            N,
-            N,
-        ), f"Output array has wrong shape. (Backend {backend})"
-        if backend == "CUPY" and DDGPE.__CUPY_AVAILABLE__:
-            assert isinstance(out, cp.ndarray), (
-                f"Output array type does not match backend. (Backend {backend})"
-            )
-            out /= cp.max(cp.abs(out))
-            A /= cp.max(cp.abs(A))
-            assert cp.allclose(out, A), (
-                f"Output array does not match input array. (Backend {backend})"
-            )
-        else:
-            assert isinstance(out, np.ndarray), (
-                f"Output array type does not match backend. (Backend {backend})"
-            )
-            out /= np.max(np.abs(out))
-            A /= np.max(np.abs(A))
-            assert np.allclose(out, A), (
-                f"Output array does not match input array. (Backend {backend})"
-            )
+        out /= np.max(np.abs(out))
+        A /= np.max(np.abs(A))
+        assert np.allclose(out, A), (
+            f"Output array does not match input array. (Backend {backend})"
+        )
 
 
 def test_send_arrays_to_gpu() -> None:
@@ -116,8 +111,12 @@ def test_send_arrays_to_gpu() -> None:
         simu.gamma = np.repeat(gamma_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
         simu.g = np.repeat(g_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
         simu.omega = np.repeat(omega_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
-        simu.omega_exc = np.repeat(omega_exc_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
-        simu.omega_cav = np.repeat(omega_cav_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
+        simu.omega_exc = np.repeat(omega_exc_s, 2)[
+            ..., np.newaxis, np.newaxis, np.newaxis
+        ]
+        simu.omega_cav = np.repeat(omega_cav_s, 2)[
+            ..., np.newaxis, np.newaxis, np.newaxis
+        ]
         simu._send_arrays_to_gpu()
         assert isinstance(simu.propagator, cp.ndarray), (
             "propagator is not a cp.ndarray. (Backend GPU)"
@@ -172,8 +171,12 @@ def test_retrieve_arrays_from_gpu() -> None:
         simu.gamma = np.repeat(gamma_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
         simu.g = np.repeat(g_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
         simu.omega = np.repeat(omega_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
-        simu.omega_exc = np.repeat(omega_exc_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
-        simu.omega_cav = np.repeat(omega_cav_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
+        simu.omega_exc = np.repeat(omega_exc_s, 2)[
+            ..., np.newaxis, np.newaxis, np.newaxis
+        ]
+        simu.omega_cav = np.repeat(omega_cav_s, 2)[
+            ..., np.newaxis, np.newaxis, np.newaxis
+        ]
         simu._send_arrays_to_gpu()
         simu._retrieve_arrays_from_gpu()
         assert isinstance(simu.propagator, np.ndarray), (
@@ -196,74 +199,72 @@ def test_retrieve_arrays_from_gpu() -> None:
         pass
 
 
-def test_build_propagator() -> None:
-    for backend in AVAILABLE_BACKENDS:
-        simu = DDGPE(
-            gamma,
-            puiss,
-            window,
-            g,
-            omega,
-            T,
-            omega_exc,
-            omega_cav,
-            detuning,
-            k_z,
-            NX=N,
-            NY=N,
-        )
-        prop = simu._build_propagator()
-        assert np.allclose(
-            prop[0],
-            np.exp(
-                -1j
-                * (simu.omega_exc * (1 + 0 * simu.Kxx**2) - simu.omega_pump)
-                * simu.delta_z
-            ),
-        ), f"Propagator1 is wrong. (Backend {backend})"
-        assert np.allclose(
-            prop[1],
-            np.exp(
-                -1j
-                * (simu.omega_exc * (1 + 0 * simu.Kxx**2) - simu.omega_pump)
-                * simu.delta_z
-            ),
-        ), f"Propagator2 is wrong. (Backend {backend})"
+def test_build_propagator(backend) -> None:
+    simu = DDGPE(
+        gamma,
+        puiss,
+        window,
+        g,
+        omega,
+        T,
+        omega_exc,
+        omega_cav,
+        detuning,
+        k_z,
+        NX=N,
+        NY=N,
+    )
+    prop = simu._build_propagator()
+    assert np.allclose(
+        prop[0],
+        np.exp(
+            -1j
+            * (simu.omega_exc * (1 + 0 * simu.Kxx**2) - simu.omega_pump)
+            * simu.delta_z
+        ),
+    ), f"Propagator1 is wrong. (Backend {backend})"
+    assert np.allclose(
+        prop[1],
+        np.exp(
+            -1j
+            * (simu.omega_exc * (1 + 0 * simu.Kxx**2) - simu.omega_pump)
+            * simu.delta_z
+        ),
+    ), f"Propagator2 is wrong. (Backend {backend})"
 
 
-def test_take_components() -> None:
-    for backend in AVAILABLE_BACKENDS:
-        simu = DDGPE(
-            gamma,
-            puiss,
-            window,
-            g,
-            omega,
-            T,
-            omega_exc,
-            omega_cav,
-            detuning,
-            k_z,
-            NX=N,
-            NY=N,
-            backend=backend,
-        )
-        # create a larger array to test the fancy indexing
-        A = np.ones((3, 2, N, N), dtype=PRECISION_COMPLEX)
-        A1, A2 = simu._take_components(A)
-        assert A1.shape[-2:] == (
-            N,
-            N,
-        ), f"A1 has wrong last dimensions. (Backend {backend})"
-        assert A2.shape[-2:] == (
-            N,
-            N,
-        ), f"A2 has wrong last dimensions. (Backend {backend})"
-        assert A1.shape == A2.shape, (
-            f"A1 and A2 have different shapes. (Backend {backend})"
-        )
-        assert A1.shape[0] == 3, f"A1 has wrong first dimensions. (Backend {backend})"
-        assert A2.shape[0] == 3, f"A2 has wrong first dimensions. (Backend {backend})"
+def test_take_components(backend) -> None:
+    simu = DDGPE(
+        gamma,
+        puiss,
+        window,
+        g,
+        omega,
+        T,
+        omega_exc,
+        omega_cav,
+        detuning,
+        k_z,
+        NX=N,
+        NY=N,
+        backend=backend,
+    )
+    # create a larger array to test the fancy indexing
+    A = np.ones((3, 2, N, N), dtype=PRECISION_COMPLEX)
+    A1, A2 = simu._take_components(A)
+    assert A1.shape[-2:] == (
+        N,
+        N,
+    ), f"A1 has wrong last dimensions. (Backend {backend})"
+    assert A2.shape[-2:] == (
+        N,
+        N,
+    ), f"A2 has wrong last dimensions. (Backend {backend})"
+    assert A1.shape == A2.shape, (
+        f"A1 and A2 have different shapes. (Backend {backend})"
+    )
+    assert A1.shape[0] == 3, f"A1 has wrong first dimensions. (Backend {backend})"
+    assert A2.shape[0] == 3, f"A2 has wrong first dimensions. (Backend {backend})"
 
 
 def callback_sample(
@@ -315,70 +316,73 @@ def turn_on(
     F_laser_t[time >= t_up] = 1
 
 
-def test_out_field() -> None:
-    # CL backend is too slow for DDGPE propagation (unoptimized array-expression kernels)
-    backends = [b for b in AVAILABLE_BACKENDS if b != "CL"]
-    for backend in backends:
-        simu = DDGPE(
-            gamma,
-            puiss,
-            window,
-            g,
-            omega,
-            T,
-            omega_exc,
-            omega_cav,
-            detuning,
-            k_z,
-            NX=N,
-            NY=N,
-            backend=backend,
-        )
-        simu.delta_z = 0.1 / 32  # need to be adjusted automatically
-        time = np.arange(0, T + simu.delta_z, step=simu.delta_z, dtype=np.float32)
-        save_every = 1  # np.argwhere(time == 1)[0][0]
-        sample1 = np.zeros(time.size // save_every, dtype=np.float32)
-        sample2 = np.zeros(time.size // save_every, dtype=np.float32)
-        sample3 = np.zeros(time.size // save_every, dtype=np.float32)
-        E0 = np.zeros((2, simu.NY, simu.NX), dtype=np.complex64)
-        F_pump = 0
-        F_pump_r = F_pump * np.exp(-((simu.XX**2 + simu.YY**2) / waist**2)).astype(
-            np.complex64
-        )
-        F_pump_t = np.zeros(time.shape, dtype=np.complex64)
-        F_probe = 0
-        F_probe_r = F_probe * np.exp(-((simu.XX**2 + simu.YY**2) / waist**2)).astype(
-            np.complex64
-        )
-        F_probe_t = np.zeros(time.shape, dtype=np.complex64)
-        turn_on(F_pump_t, time, t_up=20)
-        callback = [callback_sample]
-        if backend == "CUPY" and DDGPE.__CUPY_AVAILABLE__:
-            callback_args = [
-                [
-                    cp.asarray(F_pump_r),
-                    F_pump_t,
-                    cp.asarray(F_probe_r),
-                    F_probe_t,
-                ],
-                [save_every, sample1, sample2, sample3],
-            ]
-        else:
-            callback_args = [
-                [
-                    F_pump_r,
-                    F_pump_t,
-                    F_probe_r,
-                    F_probe_t,
-                ],
-                [save_every, sample1, sample2, sample3],
-            ]
-        simu.out_field(
-            E0,
-            T,
-            simu.laser_excitation,
-            plot=False,
-            callback=callback,
-            callback_args=callback_args,
-        )
-        # test stationarity here
+# CL backend is too slow for DDGPE propagation (unoptimized array-expression kernels)
+@pytest.mark.parametrize(
+    "ddgpe_backend",
+    [b for b in (["CPU"] + (["CUPY"] if DDGPE.__CUPY_AVAILABLE__ else [])) ],
+)
+def test_out_field(ddgpe_backend) -> None:
+    backend = ddgpe_backend
+    simu = DDGPE(
+        gamma,
+        puiss,
+        window,
+        g,
+        omega,
+        T,
+        omega_exc,
+        omega_cav,
+        detuning,
+        k_z,
+        NX=N,
+        NY=N,
+        backend=backend,
+    )
+    simu.delta_z = 0.1 / 32  # need to be adjusted automatically
+    time = np.arange(0, T + simu.delta_z, step=simu.delta_z, dtype=np.float32)
+    save_every = 1  # np.argwhere(time == 1)[0][0]
+    sample1 = np.zeros(time.size // save_every, dtype=np.float32)
+    sample2 = np.zeros(time.size // save_every, dtype=np.float32)
+    sample3 = np.zeros(time.size // save_every, dtype=np.float32)
+    E0 = np.zeros((2, simu.NY, simu.NX), dtype=np.complex64)
+    F_pump = 0
+    F_pump_r = F_pump * np.exp(-((simu.XX**2 + simu.YY**2) / waist**2)).astype(
+        np.complex64
+    )
+    F_pump_t = np.zeros(time.shape, dtype=np.complex64)
+    F_probe = 0
+    F_probe_r = F_probe * np.exp(-((simu.XX**2 + simu.YY**2) / waist**2)).astype(
+        np.complex64
+    )
+    F_probe_t = np.zeros(time.shape, dtype=np.complex64)
+    turn_on(F_pump_t, time, t_up=20)
+    callback = [callback_sample]
+    if backend == "CUPY" and DDGPE.__CUPY_AVAILABLE__:
+        callback_args = [
+            [
+                cp.asarray(F_pump_r),
+                F_pump_t,
+                cp.asarray(F_probe_r),
+                F_probe_t,
+            ],
+            [save_every, sample1, sample2, sample3],
+        ]
+    else:
+        callback_args = [
+            [
+                F_pump_r,
+                F_pump_t,
+                F_probe_r,
+                F_probe_t,
+            ],
+            [save_every, sample1, sample2, sample3],
+        ]
+    simu.out_field(
+        E0,
+        T,
+        simu.laser_excitation,
+        plot=False,
+        callback=callback,
+        callback_args=callback_args,
+    )
+    # test stationarity here

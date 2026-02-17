@@ -150,13 +150,9 @@ class CUDAKernels:
                 "nl_prop": module.get_function("nl_prop_fused"),
                 "nl_prop_without_v": module.get_function("nl_prop_without_v_fused"),
                 "nl_prop_c": module.get_function("nl_prop_c_fused"),
-                "nl_prop_c_without_v": module.get_function(
-                    "nl_prop_c_without_v_fused"
-                ),
+                "nl_prop_c_without_v": module.get_function("nl_prop_c_without_v_fused"),
                 "square_mod": module.get_function("square_mod_fused"),
-                "square_mod_nl_prop": module.get_function(
-                    "square_mod_nl_prop_fused"
-                ),
+                "square_mod_nl_prop": module.get_function("square_mod_nl_prop_fused"),
                 "square_mod_nl_prop_v": module.get_function(
                     "square_mod_nl_prop_v_fused"
                 ),
@@ -282,7 +278,14 @@ class CUDAKernels:
         N = int(A.size)
         dz_c, alpha_c, g_c, Isat_c = self._cast(A.dtype, dz, alpha, g, Isat)
         self._launch(
-            kernels["nl_prop_without_v"], N, A, A_sq, dz_c, alpha_c, g_c, Isat_c,
+            kernels["nl_prop_without_v"],
+            N,
+            A,
+            A_sq,
+            dz_c,
+            alpha_c,
+            g_c,
+            Isat_c,
             np.int32(N),
         )
         return A
@@ -369,7 +372,12 @@ class CUDAKernels:
         N = int(A1.size)
         params = self._cast(A1.dtype, dz, alpha, g11, g12, Isat1, Isat2)
         self._launch(
-            kernels["nl_prop_c_without_v"], N, A1, A_sq_1, A_sq_2, *params,
+            kernels["nl_prop_c_without_v"],
+            N,
+            A1,
+            A_sq_1,
+            A_sq_2,
+            *params,
             np.int32(N),
         )
         return A1
@@ -423,7 +431,13 @@ class CUDAKernels:
         N = int(A.size)
         dz_c, alpha_c, g_c, Isat_c = self._cast(A.dtype, dz, alpha, g, Isat)
         self._launch(
-            kernels["square_mod_nl_prop"], N, A, dz_c, alpha_c, g_c, Isat_c,
+            kernels["square_mod_nl_prop"],
+            N,
+            A,
+            dz_c,
+            alpha_c,
+            g_c,
+            Isat_c,
             np.int32(N),
         )
         return A
@@ -459,7 +473,14 @@ class CUDAKernels:
         N = int(A.size)
         dz_c, alpha_c, g_c, Isat_c = self._cast(A.dtype, dz, alpha, g, Isat)
         self._launch(
-            kernels["square_mod_nl_prop_v"], N, A, V, dz_c, alpha_c, g_c, Isat_c,
+            kernels["square_mod_nl_prop_v"],
+            N,
+            A,
+            V,
+            dz_c,
+            alpha_c,
+            g_c,
+            Isat_c,
             np.int32(N),
         )
         return A
@@ -763,14 +784,18 @@ class CUDAKernels:
         if self._has_array_params(alpha, g11, g12, Isat1, Isat2):
             from .cupy import rk4_nl_rhs_c as _fused
 
-            return _fused(
-                A_prop, A_orig, A_sq_1, A_sq_2, alpha, g11, g12, Isat1, Isat2
-            )
+            return _fused(A_prop, A_orig, A_sq_1, A_sq_2, alpha, g11, g12, Isat1, Isat2)
         kernels = self._get_kernels(A_orig.dtype)
         N = int(A_orig.size)
         params = self._cast(A_orig.dtype, alpha, g11, g12, Isat1, Isat2)
         self._launch(
-            kernels["rk4_nl_rhs_c"], N, A_prop, A_orig, A_sq_1, A_sq_2, *params,
+            kernels["rk4_nl_rhs_c"],
+            N,
+            A_prop,
+            A_orig,
+            A_sq_1,
+            A_sq_2,
+            *params,
             np.int32(N),
         )
         return A_prop
@@ -818,7 +843,14 @@ class CUDAKernels:
         N = int(A_orig.size)
         params = self._cast(A_orig.dtype, alpha, g11, g12, Isat1, Isat2)
         self._launch(
-            kernels["rk4_nl_rhs_c_v"], N, A_prop, A_orig, A_sq_1, A_sq_2, V, *params,
+            kernels["rk4_nl_rhs_c_v"],
+            N,
+            A_prop,
+            A_orig,
+            A_sq_1,
+            A_sq_2,
+            V,
+            *params,
             np.int32(N),
         )
         return A_prop

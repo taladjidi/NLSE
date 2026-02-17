@@ -194,10 +194,30 @@ class NLSE:
             self._convolution = signal.oaconvolve
         # CL backend doesn't have convolution yet
 
-    def _build_propagator(self, precision: str = "single") -> np.ndarray:
-        """Build the linear propagation matrix.
+    def _propagator_cache_key(self, precision: str) -> tuple:
+        """Return cache key for the split-step propagator."""
+        return (self.NX, self.NY, float(self.delta_z), precision, float(self.k))
 
-        Uses caching to avoid recomputing propagators with identical parameters.
+    def _compute_propagator(self, precision: str) -> np.ndarray:
+        """Compute the linear propagation matrix (no caching)."""
+        dtype = np.complex128 if precision == "double" else np.complex64
+        return np.exp(
+            -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k * self.delta_z,
+            dtype=dtype,
+        )
+
+    def _propagator_rk4_cache_key(self) -> tuple:
+        """Return cache key for the RK4 dispersion operator."""
+        return (self.NX, self.NY, "RK4", float(self.k))
+
+    def _compute_propagator_rk4(self) -> np.ndarray:
+        """Compute the raw dispersion operator for RK4 (no caching)."""
+        return (-1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k).astype(
+            np.complex64
+        )
+
+    def _build_propagator(self, precision: str = "single") -> np.ndarray:
+        """Build the linear propagation matrix with caching.
 
         Parameters
         ----------
@@ -209,38 +229,25 @@ class NLSE:
         np.ndarray
             The propagator matrix.
         """
-        # Create cache key from parameters that affect propagator
-        cache_key = (self.NX, self.NY, float(self.delta_z), precision, float(self.k))
-
-        # Return cached propagator if available
+        cache_key = self._propagator_cache_key(precision)
         if cache_key in self._propagator_cache:
             return self._propagator_cache[cache_key]
-
-        # Use appropriate dtype based on precision
-        dtype = np.complex128 if precision == "double" else np.complex64
-        propagator = np.exp(
-            -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k * self.delta_z,
-            dtype=dtype,
-        )
-
-        # Cache for future use
+        propagator = self._compute_propagator(precision)
         self._propagator_cache[cache_key] = propagator
         return propagator
 
     def _build_propagator_rk4(self) -> np.ndarray:
-        """Build raw dispersion operator for RK4 (no exp, no delta_z).
+        """Build raw dispersion operator for RK4 with caching.
 
         Returns
         -------
         np.ndarray
             The raw dispersion operator.
         """
-        cache_key = (self.NX, self.NY, "RK4", float(self.k))
+        cache_key = self._propagator_rk4_cache_key()
         if cache_key in self._propagator_cache:
             return self._propagator_cache[cache_key]
-        propagator = (-1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k).astype(
-            np.complex64
-        )
+        propagator = self._compute_propagator_rk4()
         self._propagator_cache[cache_key] = propagator
         return propagator
 
@@ -314,43 +321,41 @@ class NLSE:
                 A[:] = E_in
         return A, A_sq
 
+    # Attributes to send to GPU: arrays (always transferred) and params
+    # (transferred only if they are np.ndarray, i.e. batched).
+    # Subclasses extend these tuples to add their own attributes.
+    _gpu_array_attrs = ("V", "nl_profile", "propagator")
+    _gpu_param_attrs = ("power", "n2", "alpha", "I_sat")
+
     def _send_arrays_to_gpu(self) -> None:
         """Send arrays to device using backend."""
-        if self._backend.name in ["CUPY", "CL", "MLX"]:
-            if self.V is not None:
-                # Ensure float32 dtype for GPU backends
-                self.V = self._backend.from_numpy(
-                    np.ascontiguousarray(self.V, dtype=np.float32)
-                )
-            self.nl_profile = self._backend.from_numpy(self.nl_profile)
-            self.propagator = self._backend.from_numpy(self.propagator)
-            # for broadcasting of parameters in case they are
-            # not already on the device
-            if isinstance(self.power, np.ndarray):
-                self.power = self._backend.from_numpy(self.power)
-            if isinstance(self.n2, np.ndarray):
-                self.n2 = self._backend.from_numpy(self.n2)
-            if isinstance(self.alpha, np.ndarray):
-                self.alpha = self._backend.from_numpy(self.alpha)
-            if isinstance(self.I_sat, np.ndarray):
-                self.I_sat = self._backend.from_numpy(self.I_sat)
+        if not self._backend.is_device_backend:
+            return
+        for attr in self._gpu_array_attrs:
+            val = getattr(self, attr, None)
+            if val is None:
+                continue
+            if attr == "V":
+                val = np.ascontiguousarray(val, dtype=np.float32)
+            setattr(self, attr, self._backend.from_numpy(val))
+        for attr in self._gpu_param_attrs:
+            val = getattr(self, attr)
+            if isinstance(val, np.ndarray):
+                setattr(self, attr, self._backend.from_numpy(val))
 
     def _retrieve_arrays_from_gpu(self) -> None:
         """Retrieve arrays from device using backend."""
-        if self._backend.name in ["CUPY", "CL", "MLX"]:
-            if self.V is not None:
-                self.V = self._backend.to_numpy(self.V)
-            self.nl_profile = self._backend.to_numpy(self.nl_profile)
-            self.propagator = self._backend.to_numpy(self.propagator)
-            # Retrieve parameters if they were sent to device
-            if not isinstance(self.power, (int, float)):
-                self.power = self._backend.to_numpy(self.power)
-            if not isinstance(self.n2, (int, float)):
-                self.n2 = self._backend.to_numpy(self.n2)
-            if not isinstance(self.alpha, (int, float)):
-                self.alpha = self._backend.to_numpy(self.alpha)
-            if not isinstance(self.I_sat, (int, float)):
-                self.I_sat = self._backend.to_numpy(self.I_sat)
+        if not self._backend.is_device_backend:
+            return
+        for attr in self._gpu_array_attrs:
+            val = getattr(self, attr, None)
+            if val is None:
+                continue
+            setattr(self, attr, self._backend.to_numpy(val))
+        for attr in self._gpu_param_attrs:
+            val = getattr(self, attr)
+            if not isinstance(val, (int, float)):
+                setattr(self, attr, self._backend.to_numpy(val))
 
     def _apply_linear_step(
         self, A: np.ndarray, propagator: np.ndarray, plans: list
@@ -418,11 +423,12 @@ class NLSE:
         # Use pre-computed constants (set in out_field), with fallbacks
         # for direct split_step calls outside out_field.
         alpha_half = getattr(self, "_alpha_half", self.alpha / 2)
-        g = self.k / 2 * self.n2 * c * epsilon_0
+        g = getattr(self, "_g", self.k / 2 * self.n2 * c * epsilon_0)
         Isat_conv = getattr(self, "_Isat_conv", 2 * self.I_sat / (epsilon_0 * c))
+        k_half = getattr(self, "_k_half", np.float32(self.k / 2))
         V_scaled = getattr(self, "_V_scaled", None)
         if V_scaled is None and V is not None:
-            V_scaled = V * np.float32(self.k / 2)
+            V_scaled = V * k_half
 
         # MLX fused fast path (nl_length == 0 only)
         if hasattr(kernels, "split_step") and self.nl_length == 0:
@@ -434,7 +440,7 @@ class NLSE:
                 dz,
                 alpha_half,
                 g,
-                self.k / 2,
+                k_half,
                 Isat_conv,
                 precision,
                 plans[0],
@@ -570,11 +576,12 @@ class NLSE:
         kernels = self._backend.kernels
         # Use pre-computed constants (set in out_field), with fallbacks
         alpha_half = getattr(self, "_alpha_half", self.alpha / 2)
-        g = self.k / 2 * self.n2 * c * epsilon_0
+        g = getattr(self, "_g", self.k / 2 * self.n2 * c * epsilon_0)
         Isat_conv = getattr(self, "_Isat_conv", 2 * self.I_sat / (epsilon_0 * c))
+        k_half = getattr(self, "_k_half", np.float32(self.k / 2))
         V_scaled = getattr(self, "_V_scaled", None)
         if V_scaled is None and V is not None:
-            V_scaled = V * np.float32(self.k / 2)
+            V_scaled = V * k_half
 
         if self.nl_length > 0:
             A_sq = (A_in * A_in.conj()).real
@@ -628,15 +635,21 @@ class NLSE:
 
         # MLX fused fast path (nl_length == 0, single-component only)
         if hasattr(kernels, "split_step_rk4") and self.nl_length == 0 and A.ndim == 2:
+            alpha_half = getattr(self, "_alpha_half", self.alpha / 2)
+            g = getattr(self, "_g", self.k / 2 * self.n2 * c * epsilon_0)
+            k_half = getattr(self, "_k_half", np.float32(self.k / 2))
+            Isat_conv = getattr(
+                self, "_Isat_conv", 2 * self.I_sat / (epsilon_0 * c)
+            )
             return kernels.split_step_rk4(
                 A,
                 propagator,
                 V,
                 self.delta_z,
-                self.alpha / 2,
-                self.k / 2 * self.n2 * c * epsilon_0,
-                self.k / 2,
-                2 * self.I_sat / (epsilon_0 * c),
+                alpha_half,
+                g,
+                k_half,
+                Isat_conv,
                 plans[0],
             )
 
@@ -692,12 +705,62 @@ class NLSE:
         else:
             raise ValueError("callbacks should be a callable or a list of callables")
 
+    def _run_propagation(
+        self, A, A_sq, V, z, precision, method,
+        callback, callback_args, verbose, pbar,
+    ):
+        """Execute the propagation loop, using the backend's fast path if eligible."""
+        n_steps = int(np.ceil(z / abs(self.delta_z)))
+        if z > self.L:
+            self.n2 = 0
+
+        if method == "RK4":
+            def _step():
+                self.split_step_RK4(A, V, self.propagator, self.plans)
+        else:
+            def _step():
+                self.split_step(
+                    A, A_sq, V, self.propagator, self.plans, precision
+                )
+
+        is_scalar_n2 = isinstance(self.n2, (int, float, np.floating))
+        can_use_fast_loop = (
+            callback is None
+            and is_scalar_n2
+            and self.nl_length == 0
+            and not isinstance(self.delta_z, complex)
+        )
+        if can_use_fast_loop:
+            self._backend.execute_loop(_step, n_steps)
+        else:
+            self._loop_with_callbacks(
+                _step, z, callback, callback_args, A, verbose, pbar,
+            )
+
+    def _loop_with_callbacks(
+        self, step_fn, z, callback, callback_args, A, verbose, pbar,
+    ):
+        """Run propagation loop with per-step callbacks."""
+        z_prop = 0.0
+        i = 0
+        while abs(z_prop) < z:
+            step_fn()
+            if callback is not None:
+                self._run_callbacks(callback, callback_args, A, z, i)
+            z_prop += self.delta_z
+            i += 1
+            if verbose:
+                pbar.n = abs(z_prop) / z * 100
+                pbar.refresh()
+
     def _precompute_step_constants(self, V: np.ndarray | None) -> None:
         """Pre-compute constants that are invariant across propagation steps."""
         self._alpha_half = self.alpha / 2
+        self._g = self.k / 2 * self.n2 * c * epsilon_0
         self._Isat_conv = 2 * self.I_sat / (epsilon_0 * c)
+        self._k_half = np.float32(self.k / 2)
         if V is not None:
-            self._V_scaled = V * np.float32(self.k / 2)
+            self._V_scaled = V * self._k_half
         else:
             self._V_scaled = None
         # For cuFFT unnormalized IFFT: absorb 1/N into the propagator
@@ -707,7 +770,11 @@ class NLSE:
             N_fft = 1
             for ax in self._last_axes:
                 N_fft *= self.propagator.shape[ax]
-            inv_N = np.float32(1.0 / N_fft) if self.propagator.dtype == np.complex64 else np.float64(1.0 / N_fft)
+            inv_N = (
+                np.float32(1.0 / N_fft)
+                if self.propagator.dtype == np.complex64
+                else np.float64(1.0 / N_fft)
+            )
             self._propagator_fft = self.propagator * inv_N
         else:
             self._propagator_fft = None
@@ -785,7 +852,7 @@ class NLSE:
                 self.propagator = self._build_propagator_rk4()
             else:
                 self.propagator = self._build_propagator(precision=precision)
-        if self._backend.name in ["CUPY", "CL", "MLX"]:
+        if self._backend.is_device_backend:
             self._send_arrays_to_gpu()
         V = self.V
         A, A_sq = self._prepare_output_array(E_in, normalize)
@@ -807,25 +874,17 @@ class NLSE:
             end_gpu = cp.cuda.Event()
             start_gpu.record()
         t0 = time.perf_counter()
-        z_prop = 0
-        i = 0
         if type(self.delta_z) is complex:
             print("Warning: imaginary time evolution !")
-        while abs(z_prop) < z:
-            if z > self.L:
-                self.n2 = 0
-            if method == "RK4":
-                A = self.split_step_RK4(A, V, self.propagator, self.plans)
-            else:
-                A = self.split_step(A, A_sq, V, self.propagator, self.plans, precision)
 
-            if callback is not None:
-                self._run_callbacks(callback, callback_args, A, z, i)
-            z_prop += self.delta_z
-            i += 1
-            if verbose:
-                pbar.n = abs(z_prop) / z * 100
-                pbar.refresh()
+        self._run_propagation(
+            A, A_sq, V, z, precision, method,
+            callback, callback_args, verbose, pbar if verbose else None,
+        )
+
+        if verbose:
+            pbar.n = 100
+            pbar.refresh()
         t_cpu = time.perf_counter() - t0
         if verbose:
             pbar.close()
@@ -844,7 +903,7 @@ class NLSE:
                 print(f"\nTime spent to solve : {t_cpu} s (CPU)\n")
         self.n2 = n2_old
         return_np_array = isinstance(E_in, np.ndarray)
-        if self._backend.name in ["CUPY", "CL", "MLX"]:
+        if self._backend.is_device_backend:
             if return_np_array:
                 A = self._backend.to_numpy(A)
             self._retrieve_arrays_from_gpu()
@@ -852,6 +911,14 @@ class NLSE:
         if plot:
             self.plot_field(A, z)
         return A
+
+    def _to_plot_array(self, A_plot: np.ndarray, target_ndim: int) -> np.ndarray:
+        """Reduce dimensions and convert to numpy for plotting."""
+        while A_plot.ndim > target_ndim:
+            A_plot = A_plot[0]
+        if not isinstance(A_plot, np.ndarray):
+            A_plot = self._backend.to_numpy(A_plot)
+        return A_plot
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot a field for monitoring.
@@ -863,13 +930,7 @@ class NLSE:
         z : float
             Propagation distance.
         """
-        # if array is multi-dimensional, drop dims until the shape is 2D
-        if A_plot.ndim > 2:
-            while len(A_plot.shape) > 2:
-                A_plot = A_plot[0]
-        # Convert to numpy if on device
-        if not isinstance(A_plot, np.ndarray):
-            A_plot = self._backend.to_numpy(A_plot)
+        A_plot = self._to_plot_array(A_plot, 2)
         fig, ax = plt.subplots(1, 3, layout="constrained", figsize=(15, 5))
         fig.suptitle(rf"Field at $z$ = {z:.2e} m")
         ext_real = [

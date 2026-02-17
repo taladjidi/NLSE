@@ -29,14 +29,13 @@ class _CuFFTPlan:
         self._axes = axes
 
     def fft(self, a: Any, out: Any) -> Any:
-        """Forward FFT, in-place when out is a."""
-        return _cufft.fftn(a, axes=self._axes, overwrite_x=(out is a), plan=self._plan)
+        """Forward FFT (unnormalized, raw cuFFT). Graph-capture safe."""
+        self._plan.fft(a, out, cp.cuda.cufft.CUFFT_FORWARD)
+        return out
 
     def ifft(self, a: Any, out: Any) -> Any:
         """Inverse FFT (normalized by 1/N), in-place when out is a."""
-        return _cufft.ifftn(
-            a, axes=self._axes, overwrite_x=(out is a), plan=self._plan
-        )
+        return _cufft.ifftn(a, axes=self._axes, overwrite_x=(out is a), plan=self._plan)
 
     def ifft_unnorm(self, a: Any, out: Any) -> Any:
         """Inverse FFT without 1/N normalization (raw cuFFT).
@@ -109,3 +108,36 @@ class CUPYBackend(Backend):
     def supports_double_precision(self) -> bool:
         """CUDA GPUs typically support double precision."""
         return True
+
+    def execute_loop(self, step_fn: Any, n_iters: int) -> None:
+        """Execute step_fn using CUDA graph capture/replay.
+
+        One warmup iteration runs normally to prime cuFFT plans and
+        JIT-compiled kernels. Then one iteration is captured into a
+        CUDA graph, and the remaining iterations replay that graph.
+
+        Parameters
+        ----------
+        step_fn : callable
+            One propagation step (in-place on pre-allocated GPU arrays).
+        n_iters : int
+            Total number of iterations.
+
+        """
+        if n_iters < 3:
+            for _ in range(n_iters):
+                step_fn()
+            return
+
+        stream = cp.cuda.Stream(non_blocking=True)
+        with stream:
+            # Warmup: execute one step to prime cuFFT / lazy kernels
+            step_fn()
+            # Capture: record one step (operations are NOT executed)
+            stream.begin_capture()
+            step_fn()
+            graph = stream.end_capture()
+            # Replay the captured graph for the remaining iterations
+            for _ in range(n_iters - 1):
+                graph.launch(stream)
+        stream.synchronize()

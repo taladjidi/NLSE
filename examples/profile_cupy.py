@@ -93,7 +93,6 @@ def profile_method(simu, E_0, z_run, method, precision="single"):
 
     Returns (cpu_seconds, gpu_milliseconds).
     """
-    label = method  # "split_step" or "RK4"
     # Reset propagator for this method
     simu.propagator = None
     simu.plans = None
@@ -102,7 +101,7 @@ def profile_method(simu, E_0, z_run, method, precision="single"):
     start_gpu = cp.cuda.Event()
     end_gpu = cp.cuda.Event()
 
-    cp.cuda.nvtx.RangePush(label)
+    cp.cuda.nvtx.RangePush(method)
     start_gpu.record()
     t0 = time.perf_counter()
 

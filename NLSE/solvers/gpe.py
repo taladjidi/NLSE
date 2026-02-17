@@ -2,11 +2,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.constants import atomic_mass, c, epsilon_0, hbar
 
-from ..utils import __BACKEND__, __CUPY_AVAILABLE__
+from ..utils import __BACKEND__
 from .nlse import NLSE
-
-if __CUPY_AVAILABLE__:
-    import cupy as cp
 
 
 class GPE(NLSE):
@@ -89,54 +86,27 @@ class GPE(NLSE):
         # GPE uses quantum units (Hz), not optical (W), so norm_constant is 1.0
         self._norm_constant = np.float32(1.0)
 
-    def _build_propagator(self, precision: str = "single") -> np.ndarray:
-        """Build the linear propagation matrix.
+    def _propagator_cache_key(self, precision: str) -> tuple:
+        """Return cache key for GPE propagator."""
+        return (self.NX, self.NY, float(self.delta_t), precision, float(self.m))
 
-        Uses caching to avoid recomputing propagators with identical parameters.
-
-        Parameters
-        ----------
-        precision : str, optional
-            "single" or "double" precision. Defaults to "single".
-
-        Returns
-        -------
-        np.ndarray
-            The propagator matrix.
-        """
-        # Create cache key (GPE uses delta_t and m instead of delta_z and k)
-        cache_key = (self.NX, self.NY, float(self.delta_t), precision, float(self.m))
-
-        # Return cached propagator if available
-        if cache_key in self._propagator_cache:
-            return self._propagator_cache[cache_key]
-
+    def _compute_propagator(self, precision: str) -> np.ndarray:
+        """Compute the GPE linear propagation matrix."""
         dtype = np.complex128 if precision == "double" else np.complex64
-        propagator = np.exp(
+        return np.exp(
             -1j * 0.5 * hbar * (self.Kxx**2 + self.Kyy**2) / self.m * self.delta_t,
             dtype=dtype,
         )
 
-        # Cache for future use
-        self._propagator_cache[cache_key] = propagator
-        return propagator
+    def _propagator_rk4_cache_key(self) -> tuple:
+        """Return cache key for GPE RK4 dispersion operator."""
+        return (self.NX, self.NY, "RK4", float(self.m))
 
-    def _build_propagator_rk4(self) -> np.ndarray:
-        """Build raw dispersion operator for RK4 in quantum units.
-
-        Returns
-        -------
-        np.ndarray
-            The raw dispersion operator.
-        """
-        cache_key = (self.NX, self.NY, "RK4", float(self.m))
-        if cache_key in self._propagator_cache:
-            return self._propagator_cache[cache_key]
-        propagator = (-1j * 0.5 * hbar * (self.Kxx**2 + self.Kyy**2) / self.m).astype(
-            np.complex64
-        )
-        self._propagator_cache[cache_key] = propagator
-        return propagator
+    def _compute_propagator_rk4(self) -> np.ndarray:
+        """Compute the raw GPE dispersion operator for RK4."""
+        return (
+            -1j * 0.5 * hbar * (self.Kxx**2 + self.Kyy**2) / self.m
+        ).astype(np.complex64)
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot a field for monitoring.
@@ -148,12 +118,7 @@ class GPE(NLSE):
         z : float
             Propagation distance in m.
         """
-        # if array is multi-dimensional, drop dims until the shape is 2D
-        if A_plot.ndim > 2:
-            while len(A_plot.shape) > 2:
-                A_plot = A_plot[0]
-        if self.__CUPY_AVAILABLE__ and isinstance(A_plot, cp.ndarray):
-            A_plot = A_plot.get()
+        A_plot = self._to_plot_array(A_plot, 2)
         fig, ax = plt.subplots(1, 3, layout="constrained", figsize=(15, 5))
         fig.suptitle(rf"Field at $z$ = {z:.2e} m")
         ext_real = [

@@ -3,18 +3,20 @@ from collections.abc import Callable
 import matplotlib.pyplot as plt
 import numpy as np
 
-from ..utils import __BACKEND__, __CUPY_AVAILABLE__, __PYOPENCL_AVAILABLE__
+from ..utils import __BACKEND__, __CUPY_AVAILABLE__
 from .cnlse import CNLSE
 
 if __CUPY_AVAILABLE__:
     import cupy as cp
 
-if __PYOPENCL_AVAILABLE__:
-    pass
-
 
 class DDGPE(CNLSE):
     """A class to solve the 2D driven dissipative Gross-Pitaevskii equation."""
+
+    _gpu_param_attrs = CNLSE._gpu_param_attrs + (
+        "gamma", "g", "omega", "k_z",
+        "omega_exc", "omega_cav", "detuning", "omega_pump",
+    )
 
     def __init__(
         self,
@@ -188,76 +190,22 @@ class DDGPE(CNLSE):
         A[..., 1, :, :] -= F_pump_r * F_pump_t[i] * simu.delta_z * 1j
         A[..., 1, :, :] -= F_probe_r * F_probe_t[i] * simu.delta_z * 1j
 
-    def _send_arrays_to_gpu(self) -> None:
-        """Send arrays to device."""
-        super()._send_arrays_to_gpu()
-        # for broadcasting of parameters in case they are
-        # not already on the device
-        if self._backend.name in ["CUPY", "CL", "MLX"]:
-            for attr in (
-                "gamma",
-                "g",
-                "omega",
-                "k_z",
-                "omega_exc",
-                "omega_cav",
-                "detuning",
-                "omega_pump",
-            ):
-                val = getattr(self, attr)
-                if isinstance(val, np.ndarray):
-                    setattr(self, attr, self._backend.from_numpy(val))
+    def _precompute_step_constants(self, V: np.ndarray | None) -> None:
+        """Pre-compute constants for DDGPE propagation steps."""
+        super()._precompute_step_constants(V)
+        self._gamma_half = self.gamma / 2
+        self._gamma2_half = self.gamma2 / 2
 
-    def _retrieve_arrays_from_gpu(self) -> None:
-        """Retrieve arrays from device."""
-        super()._retrieve_arrays_from_gpu()
-        for attr in (
-            "gamma",
-            "g",
-            "omega",
-            "k_z",
-            "omega_exc",
-            "omega_cav",
-            "detuning",
-            "omega_pump",
-        ):
-            val = getattr(self, attr)
-            if hasattr(val, "get"):
-                setattr(self, attr, val.get())
-            elif self._backend.name == "MLX" and not isinstance(val, (int, float)):
-                setattr(self, attr, self._backend.to_numpy(val))
-
-    def _build_propagator(self, precision: str = "single") -> np.ndarray:
-        """Build the propagators.
-
-        Uses caching to avoid recomputing propagators with identical parameters.
-
-        Parameters
-        ----------
-        precision : str, optional
-            "single" or "double" precision. Defaults to "single".
-
-        Returns
-        -------
-        np.ndarray
-            A tuple of linear propagators for each component.
-        """
-        # Create cache key (includes DDGPE-specific parameters)
-        cache_key = (
-            self.NX,
-            self.NY,
-            float(self.delta_z),
-            precision,
-            float(self.omega_exc),
-            float(self.omega_cav),
-            float(self.omega_pump),
-            float(self.k_z),
+    def _propagator_cache_key(self, precision: str) -> tuple:
+        """Return cache key for DDGPE propagator."""
+        return (
+            self.NX, self.NY, float(self.delta_z), precision,
+            float(self.omega_exc), float(self.omega_cav),
+            float(self.omega_pump), float(self.k_z),
         )
 
-        # Return cached propagator if available
-        if cache_key in self._propagator_cache:
-            return self._propagator_cache[cache_key]
-
+    def _compute_propagator(self, precision: str) -> np.ndarray:
+        """Compute the DDGPE polariton propagation matrices."""
         dtype = np.complex128 if precision == "double" else np.complex64
         propagator1 = np.exp(
             -1j
@@ -268,48 +216,35 @@ class DDGPE(CNLSE):
         propagator2 = np.exp(
             -1j
             * (
-                self.omega_cav * np.sqrt(1 + (self.Kxx**2 + self.Kyy**2) / self.k_z**2)
+                self.omega_cav
+                * np.sqrt(1 + (self.Kxx**2 + self.Kyy**2) / self.k_z**2)
                 - self.omega_pump
             )
             * self.delta_z,
             dtype=dtype,
         )
-        propagator = np.array([propagator1, propagator2])
+        return np.array([propagator1, propagator2])
 
-        # Cache for future use
-        self._propagator_cache[cache_key] = propagator
-        return propagator
-
-    def _build_propagator_rk4(self) -> np.ndarray:
-        """Build raw polariton dispersion operator for RK4.
-
-        Returns
-        -------
-        np.ndarray
-            The raw dispersion operators for exciton and cavity components.
-        """
-        cache_key = (
-            self.NX,
-            self.NY,
-            "RK4",
-            float(self.omega_exc),
-            float(self.omega_cav),
-            float(self.omega_pump),
-            float(self.k_z),
+    def _propagator_rk4_cache_key(self) -> tuple:
+        """Return cache key for DDGPE RK4 dispersion operator."""
+        return (
+            self.NX, self.NY, "RK4",
+            float(self.omega_exc), float(self.omega_cav),
+            float(self.omega_pump), float(self.k_z),
         )
-        if cache_key in self._propagator_cache:
-            return self._propagator_cache[cache_key]
+
+    def _compute_propagator_rk4(self) -> np.ndarray:
+        """Compute the raw DDGPE polariton dispersion operators for RK4."""
         prop1 = (-1j * (self.omega_exc - self.omega_pump)).astype(np.complex64)
         prop2 = (
             -1j
             * (
-                self.omega_cav * np.sqrt(1 + (self.Kxx**2 + self.Kyy**2) / self.k_z**2)
+                self.omega_cav
+                * np.sqrt(1 + (self.Kxx**2 + self.Kyy**2) / self.k_z**2)
                 - self.omega_pump
             )
         ).astype(np.complex64)
-        propagator = np.array([prop1, prop2])
-        self._propagator_cache[cache_key] = propagator
-        return propagator
+        return np.array([prop1, prop2])
 
     def _prepare_output_array(self, E_in: np.ndarray, normalize: bool) -> np.ndarray:
         """Prepare the output array depending on __BACKEND__.
@@ -367,188 +302,99 @@ class DDGPE(CNLSE):
         np.ndarray
             The propagated field.
         """
-        A1, A2 = self._take_components(A)
-        if precision == "double":
-            A_sq = self._backend.kernels.square_mod(A, A_sq)
-            A_sq_1, A_sq_2 = self._take_components(A_sq)
-            if self.nl_length > 0:
-                A_sq_1 = self._convolution(
-                    A_sq_1, self.nl_profile, mode="same", axes=self._last_axes
-                )
-                A_sq_2 = self._convolution(
-                    A_sq_2, self.nl_profile, mode="same", axes=self._last_axes
-                )
+        # Use pre-computed constants with fallbacks
+        gamma_half = getattr(self, "_gamma_half", self.gamma / 2)
+        gamma2_half = getattr(self, "_gamma2_half", self.gamma2 / 2)
+        kernels = self._backend.kernels
 
+        A1, A2 = self._take_components(A)
+
+        # First half-step (double precision only)
+        if precision == "double":
+            A_sq, A_sq_1, A_sq_2 = self._compute_A_sq_components(A, A_sq)
             if V is None:
-                A1 = self._backend.kernels.nl_prop_without_V_c(
-                    A1,
-                    A_sq_1,
-                    A_sq_2,
-                    self.delta_z / 2,
-                    self.gamma / 2,
-                    self.g,
-                    self.g12,
-                    self.I_sat,
-                    self.I_sat2,
+                A1 = kernels.nl_prop_without_V_c(
+                    A1, A_sq_1, A_sq_2, self.delta_z / 2,
+                    gamma_half, self.g, self.g12, self.I_sat, self.I_sat2,
                 )
-                A2 = self._backend.kernels.nl_prop_without_V_c(
-                    A2,
-                    A_sq_2,
-                    A_sq_1,
-                    self.delta_z / 2,
-                    self.gamma2 / 2,
-                    self.g,
-                    self.g12,
-                    self.I_sat,
-                    self.I_sat2,
+                A2 = kernels.nl_prop_without_V_c(
+                    A2, A_sq_2, A_sq_1, self.delta_z / 2,
+                    gamma2_half, self.g, self.g12, self.I_sat, self.I_sat2,
                 )
             else:
-                A1 = self._backend.kernels.nl_prop_c(
-                    A1,
-                    A_sq_1,
-                    A_sq_2,
-                    self.delta_z / 2,
-                    self.gamma / 2,
-                    V,
-                    self.g,
-                    self.g12,
-                    self.I_sat,
-                    self.I_sat2,
+                A1 = kernels.nl_prop_c(
+                    A1, A_sq_1, A_sq_2, self.delta_z / 2,
+                    gamma_half, V, self.g, self.g12, self.I_sat, self.I_sat2,
                 )
-                A2 = self._backend.kernels.nl_prop_c(
-                    A2,
-                    A_sq_2,
-                    A_sq_1,
-                    self.delta_z / 2,
-                    self.gamma2 / 2,
-                    V,
-                    self.g2,
-                    self.g12,
-                    self.I_sat,
-                    self.I_sat2,
+                A2 = kernels.nl_prop_c(
+                    A2, A_sq_2, A_sq_1, self.delta_z / 2,
+                    gamma2_half, V, self.g2, self.g12, self.I_sat, self.I_sat2,
                 )
-        # For GPU backends with double precision, write back modified
-        # components before FFT (A1/A2 are copies, not views)
-        if precision == "double" and self._backend.name in ["CL", "CUPY", "MLX"]:
-            A[0] = A1
-            A[1] = A2
+            if self._backend.is_device_backend:
+                A[0] = A1
+                A[1] = A2
+
+        # Linear propagation in Fourier domain
         A = self._apply_linear_step(A, propagator, plans)
-        # Re-extract components after FFT/IFFT (copies are now stale)
+
+        # Second half-step (always)
         A1, A2 = self._take_components(A)
-        A_sq = self._backend.kernels.square_mod(A, A_sq)
-        A_sq_1, A_sq_2 = self._take_components(A_sq)
-        if self.nl_length > 0:
-            A_sq_1 = self._convolution(
-                A_sq_1, self.nl_profile, mode="same", axes=self._last_axes
-            )
-            A_sq_2 = self._convolution(
-                A_sq_2, self.nl_profile, mode="same", axes=self._last_axes
-            )
+        A_sq, A_sq_1, A_sq_2 = self._compute_A_sq_components(A, A_sq)
+
         if precision == "double":
             if V is None:
-                A1 = self._backend.kernels.nl_prop_without_V_c(
-                    A1,
-                    A_sq_1,
-                    A_sq_2,
-                    self.delta_z / 2,
-                    self.gamma / 2,
-                    self.g,
-                    self.g12,
-                    self.I_sat,
-                    self.I_sat2,
+                A1 = kernels.nl_prop_without_V_c(
+                    A1, A_sq_1, A_sq_2, self.delta_z / 2,
+                    gamma_half, self.g, self.g12, self.I_sat, self.I_sat2,
                 )
-                A2 = self._backend.kernels.nl_prop_without_V_c(
-                    A2,
-                    A_sq_2,
-                    A_sq_1,
-                    self.delta_z / 2,
-                    self.gamma2 / 2,
-                    self.g,
-                    self.g12,
-                    self.I_sat,
-                    self.I_sat2,
+                A2 = kernels.nl_prop_without_V_c(
+                    A2, A_sq_2, A_sq_1, self.delta_z / 2,
+                    gamma2_half, self.g, self.g12, self.I_sat, self.I_sat2,
                 )
             else:
-                A1 = self._backend.kernels.nl_prop_c(
-                    A1,
-                    A_sq_1,
-                    A_sq_2,
-                    self.delta_z / 2,
-                    self.gamma / 2,
-                    self.k / 2 * V,
-                    self.g,
-                    self.g12,
-                    self.I_sat,
-                    self.I_sat2,
+                # TODO: inconsistency — V is scaled by k/2 for comp1 but
+                # unscaled for comp2 in this branch only
+                A1 = kernels.nl_prop_c(
+                    A1, A_sq_1, A_sq_2, self.delta_z / 2,
+                    gamma_half, self.k / 2 * V,
+                    self.g, self.g12, self.I_sat, self.I_sat2,
                 )
-                A2 = self._backend.kernels.nl_prop_c(
-                    A2,
-                    A_sq_2,
-                    A_sq_1,
-                    self.delta_z / 2,
-                    self.gamma2 / 2,
-                    V,
-                    self.g2,
-                    self.g12,
-                    self.I_sat,
-                    self.I_sat2,
+                A2 = kernels.nl_prop_c(
+                    A2, A_sq_2, A_sq_1, self.delta_z / 2,
+                    gamma2_half, V,
+                    self.g2, self.g12, self.I_sat, self.I_sat2,
                 )
         else:
             if V is None:
-                A1 = self._backend.kernels.nl_prop_without_V_c(
-                    A1,
-                    A_sq_1,
-                    A_sq_2,
-                    self.delta_z,
-                    self.alpha / 2,
-                    self.g,
-                    self.g12,
-                    self.I_sat,
-                    self.I_sat2,
+                # TODO: inconsistency — comp1 uses self.alpha/2 but
+                # comp2 uses self.gamma2/2 in single precision
+                A1 = kernels.nl_prop_without_V_c(
+                    A1, A_sq_1, A_sq_2, self.delta_z,
+                    self.alpha / 2, self.g, self.g12,
+                    self.I_sat, self.I_sat2,
                 )
-                A2 = self._backend.kernels.nl_prop_without_V_c(
-                    A2,
-                    A_sq_2,
-                    A_sq_1,
-                    self.delta_z,
-                    self.gamma2 / 2,
-                    self.g2,
-                    self.g12,
-                    self.I_sat,
-                    self.I_sat2,
+                A2 = kernels.nl_prop_without_V_c(
+                    A2, A_sq_2, A_sq_1, self.delta_z,
+                    gamma2_half, self.g2, self.g12,
+                    self.I_sat, self.I_sat2,
                 )
             else:
-                A1 = self._backend.kernels.nl_prop_c(
-                    A1,
-                    A_sq_1,
-                    A_sq_2,
-                    self.delta_z,
-                    self.gamma / 2,
-                    V,
-                    self.g,
-                    self.g12,
-                    self.I_sat,
-                    self.I_sat2,
+                A1 = kernels.nl_prop_c(
+                    A1, A_sq_1, A_sq_2, self.delta_z,
+                    gamma_half, V, self.g, self.g12,
+                    self.I_sat, self.I_sat2,
                 )
-                A2 = self._backend.kernels.nl_prop_c(
-                    A2,
-                    A_sq_2,
-                    A_sq_1,
-                    self.delta_z,
-                    self.gamma2 / 2,
-                    V,
-                    self.g2,
-                    self.g12,
-                    self.I_sat,
-                    self.I_sat2,
+                A2 = kernels.nl_prop_c(
+                    A2, A_sq_2, A_sq_1, self.delta_z,
+                    gamma2_half, V, self.g2, self.g12,
+                    self.I_sat, self.I_sat2,
                 )
             if self.omega is not None:
-                A1, A2 = self._backend.kernels.rabi_coupling(
+                A1, A2 = kernels.rabi_coupling(
                     A1, A2, self.delta_z, self.omega / 2
                 )
 
-        # For GPU backends, copy modified components back to original array
-        if self._backend.name in ["CL", "CUPY", "MLX"]:
+        if self._backend.is_device_backend:
             A[0] = A1
             A[1] = A2
         return A
@@ -563,12 +409,7 @@ class DDGPE(CNLSE):
         t : float
             The time at which the field was sampled.
         """
-        # if array is multi-dimensional, drop dims until the shape is 2D
-        if A_plot.ndim > 3:
-            while len(A_plot.shape) > 3:
-                A_plot = A_plot[0]
-        if self.__CUPY_AVAILABLE__ and isinstance(A_plot, cp.ndarray):
-            A_plot = A_plot.get()
+        A_plot = self._to_plot_array(A_plot, 3)
         fig, ax = plt.subplots(2, 2, layout="constrained", figsize=(10, 10))
         fig.suptitle(rf"Field at $t$ = {t:} ps")
         ext_real = [

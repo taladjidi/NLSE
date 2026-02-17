@@ -15,6 +15,11 @@ class Backend(ABC):
         """Backend name identifier."""
         pass
 
+    @property
+    def is_device_backend(self) -> bool:
+        """Whether this backend runs on a device (GPU/accelerator)."""
+        return self.name in ("CUPY", "CL", "MLX")
+
     @abstractmethod
     def allocate_field(self, shape: tuple, dtype: np.dtype) -> Any:
         """Allocate a field array on this backend.
@@ -169,3 +174,21 @@ class Backend(ABC):
 
         """
         pass
+
+    def execute_loop(self, step_fn: Any, n_iters: int) -> None:
+        """Execute step_fn n_iters times, optimally for this backend.
+
+        Backends may override this to use hardware-specific acceleration
+        (e.g. CUDA graph capture/replay).
+
+        Parameters
+        ----------
+        step_fn : callable
+            Function that performs one propagation step (in-place on
+            pre-allocated arrays).
+        n_iters : int
+            Number of iterations to execute.
+
+        """
+        for _ in range(n_iters):
+            step_fn()

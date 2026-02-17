@@ -8,11 +8,6 @@ if NLSE_3d.__CUPY_AVAILABLE__:
     from NLSE.backends.cupy_backend import _CuFFTPlan
 PRECISION_COMPLEX = np.complex64
 PRECISION_REAL = np.float32
-AVAILABLE_BACKENDS = ["CPU"]
-if NLSE_3d.__CUPY_AVAILABLE__:
-    AVAILABLE_BACKENDS.append("CUPY")
-if NLSE_3d.__PYOPENCL_AVAILABLE__:
-    AVAILABLE_BACKENDS.append("CL")
 
 N = 256
 NZ = 128
@@ -29,153 +24,150 @@ L = 1e-2
 alpha = 20
 
 
-def test_build_propagator() -> None:
-    for backend in AVAILABLE_BACKENDS:
-        simu = NLSE_3d(
-            alpha=alpha,
-            energy=energy,
-            window=window,
-            n2=n2,
-            D0=D0,
-            vg=vg,
-            V=None,
-            L=L,
-            NX=N,
-            NY=N,
-            NZ=NZ,
-            Isat=Isat,
-            backend=backend,
-        )
-        prop = simu._build_propagator()
-        prop_th = np.exp(
-            -1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * simu.delta_z
-        )
-        prop_th *= np.exp(-1j * simu.D0 / 2 * simu.Omega**2)
-        assert np.allclose(
-            prop,
-            prop_th,
-        ), f"Propagator is wrong. (Backend {backend})"
+def test_build_propagator(backend) -> None:
+    simu = NLSE_3d(
+        alpha=alpha,
+        energy=energy,
+        window=window,
+        n2=n2,
+        D0=D0,
+        vg=vg,
+        V=None,
+        L=L,
+        NX=N,
+        NY=N,
+        NZ=NZ,
+        Isat=Isat,
+        backend=backend,
+    )
+    prop = simu._build_propagator()
+    prop_th = np.exp(
+        -1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * simu.delta_z
+    )
+    prop_th *= np.exp(-1j * simu.D0 / 2 * simu.Omega**2)
+    assert np.allclose(
+        prop,
+        prop_th,
+    ), f"Propagator is wrong. (Backend {backend})"
 
 
-def test_build_fft_plan() -> None:
-    for backend in AVAILABLE_BACKENDS:
-        simu = NLSE_3d(
-            alpha=alpha,
-            energy=energy,
-            window=window,
-            n2=n2,
-            D0=D0,
-            vg=vg,
-            V=None,
-            L=L,
-            NX=N,
-            NY=N,
-            NZ=NZ,
-            Isat=Isat,
-            backend=backend,
+def test_build_fft_plan(backend) -> None:
+    simu = NLSE_3d(
+        alpha=alpha,
+        energy=energy,
+        window=window,
+        n2=n2,
+        D0=D0,
+        vg=vg,
+        V=None,
+        L=L,
+        NX=N,
+        NY=N,
+        NZ=NZ,
+        Isat=Isat,
+        backend=backend,
+    )
+    if backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
+        A = cp.random.random((N, N, NZ)).astype(
+            PRECISION_REAL
+        ) + 1j * cp.random.random((N, N, NZ)).astype(PRECISION_REAL)
+    else:
+        A = np.random.random((N, N, NZ)).astype(
+            PRECISION_REAL
+        ) + 1j * np.random.random((N, N, NZ)).astype(PRECISION_REAL)
+    plans = simu._build_fft_plan(A)
+    if backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
+        assert len(plans) == 1, f"Number of plans is wrong. (Backend {backend})"
+        assert isinstance(plans[0], _CuFFTPlan), (
+            f"Plan type is wrong. (Backend {backend})"
         )
-        if backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
-            A = cp.random.random((N, N, NZ)).astype(
-                PRECISION_REAL
-            ) + 1j * cp.random.random((N, N, NZ)).astype(PRECISION_REAL)
-        else:
-            A = np.random.random((N, N, NZ)).astype(
-                PRECISION_REAL
-            ) + 1j * np.random.random((N, N, NZ)).astype(PRECISION_REAL)
-        plans = simu._build_fft_plan(A)
-        if backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
-            assert len(plans) == 1, f"Number of plans is wrong. (Backend {backend})"
-            assert isinstance(plans[0], _CuFFTPlan), (
-                f"Plan type is wrong. (Backend {backend})"
-            )
-        elif backend == "CPU":
-            assert len(plans) == 2, f"Number of plans is wrong. (Backend {backend})"
-            assert isinstance(plans[0], pyfftw.FFTW), (
-                f"Plan type is wrong. (Backend {backend})"
-            )
-            assert plans[0].output_shape == (
-                N,
-                N,
-                NZ,
-            ), f"Plan shape is wrong. (Backend {backend})"
-
-
-def test_prepare_output_array() -> None:
-    for backend in AVAILABLE_BACKENDS:
-        simu = NLSE_3d(
-            alpha=alpha,
-            energy=energy,
-            window=window,
-            n2=n2,
-            D0=D0,
-            vg=vg,
-            V=None,
-            L=L,
-            NX=N,
-            NY=N,
-            NZ=NZ,
-            Isat=Isat,
-            backend=backend,
+    elif backend == "CPU":
+        assert len(plans) == 2, f"Number of plans is wrong. (Backend {backend})"
+        assert isinstance(plans[0], pyfftw.FFTW), (
+            f"Plan type is wrong. (Backend {backend})"
         )
-        if backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
-            A = cp.random.random((N, N, NZ)).astype(
-                PRECISION_REAL
-            ) + 1j * cp.random.random((N, N, NZ)).astype(PRECISION_REAL)
-        else:
-            A = np.random.random((N, N, NZ)).astype(
-                PRECISION_REAL
-            ) + 1j * np.random.random((N, N, NZ)).astype(PRECISION_REAL)
-        out, out_sq = simu._prepare_output_array(A, normalize=True)
-        # Convert CL arrays to numpy for assertions
-        if backend == "CL":
-            out = out.get()
-            out_sq = out_sq.get()
-        assert out.flags.c_contiguous, (
-            f"Output array is not C-contiguous. (Backend {backend})"
-        )
-        assert out_sq.flags.c_contiguous, (
-            f"Output array is not C-contiguous. (Backend {backend})"
-        )
-        if backend == "CPU":
-            assert out.flags.aligned, (
-                f"Output array is not aligned. (Backend {backend})"
-            )
-            assert out_sq.flags.aligned, (
-                f"Output array is not aligned. (Backend {backend})"
-            )
-        integral = (
-            (out.real * out.real + out.imag * out.imag)
-            * simu.delta_X
-            * simu.delta_Y
-            * simu.delta_T
-        ).sum(axis=simu._last_axes)
-        integral *= c * epsilon_0 / 2
-        assert np.allclose(integral, simu.energy), (
-            f"Normalization failed. (Backend {backend})"
-        )
-        assert out.shape == (
+        assert plans[0].output_shape == (
             N,
             N,
             NZ,
-        ), f"Output array has wrong shape. (Backend {backend})"
-        if backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
-            assert isinstance(out, cp.ndarray), (
-                f"Output array type does not match backend. (Backend {backend})"
-            )
-            out /= cp.max(cp.abs(out))
-            A /= cp.max(cp.abs(A))
-            assert cp.allclose(out, A), (
-                f"Output array does not match input array. (Backend {backend})"
-            )
-        else:
-            assert isinstance(out, np.ndarray), (
-                f"Output array type does not match backend. (Backend {backend})"
-            )
-            out /= np.max(np.abs(out))
-            A /= np.max(np.abs(A))
-            assert np.allclose(out, A), (
-                f"Output array does not match input array. (Backend {backend})"
-            )
+        ), f"Plan shape is wrong. (Backend {backend})"
+
+
+def test_prepare_output_array(backend) -> None:
+    simu = NLSE_3d(
+        alpha=alpha,
+        energy=energy,
+        window=window,
+        n2=n2,
+        D0=D0,
+        vg=vg,
+        V=None,
+        L=L,
+        NX=N,
+        NY=N,
+        NZ=NZ,
+        Isat=Isat,
+        backend=backend,
+    )
+    if backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
+        A = cp.random.random((N, N, NZ)).astype(
+            PRECISION_REAL
+        ) + 1j * cp.random.random((N, N, NZ)).astype(PRECISION_REAL)
+    else:
+        A = np.random.random((N, N, NZ)).astype(
+            PRECISION_REAL
+        ) + 1j * np.random.random((N, N, NZ)).astype(PRECISION_REAL)
+    out, out_sq = simu._prepare_output_array(A, normalize=True)
+    # Convert CL arrays to numpy for assertions
+    if backend == "CL":
+        out = out.get()
+        out_sq = out_sq.get()
+    assert out.flags.c_contiguous, (
+        f"Output array is not C-contiguous. (Backend {backend})"
+    )
+    assert out_sq.flags.c_contiguous, (
+        f"Output array is not C-contiguous. (Backend {backend})"
+    )
+    if backend == "CPU":
+        assert out.flags.aligned, (
+            f"Output array is not aligned. (Backend {backend})"
+        )
+        assert out_sq.flags.aligned, (
+            f"Output array is not aligned. (Backend {backend})"
+        )
+    integral = (
+        (out.real * out.real + out.imag * out.imag)
+        * simu.delta_X
+        * simu.delta_Y
+        * simu.delta_T
+    ).sum(axis=simu._last_axes)
+    integral *= c * epsilon_0 / 2
+    assert np.allclose(integral, simu.energy), (
+        f"Normalization failed. (Backend {backend})"
+    )
+    assert out.shape == (
+        N,
+        N,
+        NZ,
+    ), f"Output array has wrong shape. (Backend {backend})"
+    if backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
+        assert isinstance(out, cp.ndarray), (
+            f"Output array type does not match backend. (Backend {backend})"
+        )
+        out /= cp.max(cp.abs(out))
+        A /= cp.max(cp.abs(A))
+        assert cp.allclose(out, A), (
+            f"Output array does not match input array. (Backend {backend})"
+        )
+    else:
+        assert isinstance(out, np.ndarray), (
+            f"Output array type does not match backend. (Backend {backend})"
+        )
+        out /= np.max(np.abs(out))
+        A /= np.max(np.abs(A))
+        assert np.allclose(out, A), (
+            f"Output array does not match input array. (Backend {backend})"
+        )
 
 
 def test_send_arrays_to_gpu() -> None:
@@ -267,76 +259,74 @@ def test_retrieve_arrays_from_gpu() -> None:
         pass
 
 
-def test_split_step() -> None:
-    for backend in AVAILABLE_BACKENDS:
-        simu = NLSE_3d(
-            alpha=alpha,
-            energy=energy,
-            window=window,
-            n2=n2,
-            D0=D0,
-            vg=vg,
-            V=None,
-            L=L,
-            NX=N,
-            NY=N,
-            NZ=NZ,
-            Isat=Isat,
-            backend=backend,
+def test_split_step(backend) -> None:
+    simu = NLSE_3d(
+        alpha=alpha,
+        energy=energy,
+        window=window,
+        n2=n2,
+        D0=D0,
+        vg=vg,
+        V=None,
+        L=L,
+        NX=N,
+        NY=N,
+        NZ=NZ,
+        Isat=Isat,
+        backend=backend,
+    )
+    simu.delta_z = 0
+    simu.propagator = simu._build_propagator()
+    E = np.ones((N, N, NZ), dtype=PRECISION_COMPLEX)
+    A, A_sq = simu._prepare_output_array(E, normalize=False)
+    simu.plans = simu._build_fft_plan(A)
+    simu.propagator = simu._build_propagator()
+    if backend in ["CUPY", "CL"]:
+        simu._send_arrays_to_gpu()
+    simu.split_step(
+        A, A_sq, simu.V, simu.propagator, simu.plans, precision="double"
+    )
+    if backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
+        assert cp.allclose(A, cp.ones((N, N, NZ), dtype=PRECISION_COMPLEX)), (
+            f"Split step is not unitary. (Backend {backend})"
         )
-        simu.delta_z = 0
-        simu.propagator = simu._build_propagator()
-        E = np.ones((N, N, NZ), dtype=PRECISION_COMPLEX)
-        A, A_sq = simu._prepare_output_array(E, normalize=False)
-        simu.plans = simu._build_fft_plan(A)
-        simu.propagator = simu._build_propagator()
-        if backend in ["CUPY", "CL"]:
-            simu._send_arrays_to_gpu()
-        simu.split_step(
-            A, A_sq, simu.V, simu.propagator, simu.plans, precision="double"
+    else:
+        if backend == "CL":
+            A = A.get()
+        assert np.allclose(A, np.ones((N, N, NZ), dtype=PRECISION_COMPLEX)), (
+            f"Split step is not unitary. (Backend {backend})"
         )
-        if backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
-            assert cp.allclose(A, cp.ones((N, N, NZ), dtype=PRECISION_COMPLEX)), (
-                f"Split step is not unitary. (Backend {backend})"
-            )
-        else:
-            if backend == "CL":
-                A = A.get()
-            assert np.allclose(A, np.ones((N, N, NZ), dtype=PRECISION_COMPLEX)), (
-                f"Split step is not unitary. (Backend {backend})"
-            )
 
 
 # tests for convergence of the solver : the norm of the field should be
 # conserved
-def test_out_field() -> None:
-    for backend in AVAILABLE_BACKENDS:
-        simu = NLSE_3d(
-            alpha=alpha,
-            energy=energy,
-            window=window,
-            n2=n2,
-            D0=D0,
-            vg=vg,
-            V=None,
-            L=L,
-            NX=N,
-            NY=N,
-            NZ=NZ,
-            Isat=Isat,
-            backend=backend,
-        )
-        E0 = np.ones((N, N, NZ), dtype=PRECISION_COMPLEX)
-        E = simu.out_field(
-            E0, simu.delta_z, verbose=False, plot=False, precision="single"
-        )
-        norm = np.sum(np.abs(E) ** 2 * simu.delta_X * simu.delta_Y * simu.delta_T)
-        norm *= c * epsilon_0 / 2
-        assert E.shape == (
-            N,
-            N,
-            NZ,
-        ), f"Output array has wrong shape. (Backend {backend})"
-        assert np.allclose(norm, simu.energy, rtol=1e-4), (
-            f"Norm not conserved. (Backend {backend})"
-        )
+def test_out_field(backend) -> None:
+    simu = NLSE_3d(
+        alpha=alpha,
+        energy=energy,
+        window=window,
+        n2=n2,
+        D0=D0,
+        vg=vg,
+        V=None,
+        L=L,
+        NX=N,
+        NY=N,
+        NZ=NZ,
+        Isat=Isat,
+        backend=backend,
+    )
+    E0 = np.ones((N, N, NZ), dtype=PRECISION_COMPLEX)
+    E = simu.out_field(
+        E0, simu.delta_z, verbose=False, plot=False, precision="single"
+    )
+    norm = np.sum(np.abs(E) ** 2 * simu.delta_X * simu.delta_Y * simu.delta_T)
+    norm *= c * epsilon_0 / 2
+    assert E.shape == (
+        N,
+        N,
+        NZ,
+    ), f"Output array has wrong shape. (Backend {backend})"
+    assert np.allclose(norm, simu.energy, rtol=1e-4), (
+        f"Norm not conserved. (Backend {backend})"
+    )

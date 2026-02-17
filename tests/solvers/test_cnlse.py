@@ -7,11 +7,6 @@ if CNLSE.__CUPY_AVAILABLE__:
 
 PRECISION_COMPLEX = np.complex64
 PRECISION_REAL = np.float32
-AVAILABLE_BACKENDS = ["CPU"]
-if CNLSE.__CUPY_AVAILABLE__:
-    AVAILABLE_BACKENDS.append("CUPY")
-if CNLSE.__PYOPENCL_AVAILABLE__:
-    AVAILABLE_BACKENDS.append("CL")
 
 N = 256
 n2 = -1.6e-9
@@ -26,68 +21,67 @@ L = 1e-3
 alpha = 20
 
 
-def test_prepare_output_array() -> None:
-    for backend in AVAILABLE_BACKENDS:
-        simu = CNLSE(
-            alpha,
-            power,
-            window,
-            n2,
-            n12,
-            None,
-            L,
-            NX=N,
-            NY=N,
-            Isat=Isat,
-            backend=backend,
+def test_prepare_output_array(backend) -> None:
+    simu = CNLSE(
+        alpha,
+        power,
+        window,
+        n2,
+        n12,
+        None,
+        L,
+        NX=N,
+        NY=N,
+        Isat=Isat,
+        backend=backend,
+    )
+    if backend == "CUPY" and CNLSE.__CUPY_AVAILABLE__:
+        A = cp.ones((2, N, N), dtype=PRECISION_COMPLEX)
+    else:
+        A = np.ones((2, N, N), dtype=PRECISION_COMPLEX)
+    out, out_sq = simu._prepare_output_array(A, normalize=True)
+    # Convert CL arrays to numpy for assertions
+    if backend == "CL":
+        out = out.get()
+        out_sq = out_sq.get()
+    assert out.flags.c_contiguous, (
+        f"Output array is not C-contiguous. (Backend {backend})"
+    )
+    assert out_sq.flags.c_contiguous, (
+        f"Output array is not C-contiguous. (Backend {backend})"
+    )
+    integral = (
+        (out.real * out.real + out.imag * out.imag) * simu.delta_X * simu.delta_Y
+    ).sum(axis=simu._last_axes)
+    integral *= c * epsilon_0 / 2
+    assert np.allclose(
+        integral,
+        np.array([simu.power, simu.power2]),
+        rtol=1e-4,
+    ), f"Normalization failed. (Backend {backend})"
+    assert out.shape == (
+        2,
+        N,
+        N,
+    ), f"Output array has wrong shape. (Backend {backend})"
+    if backend == "CUPY" and CNLSE.__CUPY_AVAILABLE__:
+        assert isinstance(out, cp.ndarray), (
+            f"Output array type does not match backend. (Backend {backend})"
         )
-        if backend == "CUPY" and CNLSE.__CUPY_AVAILABLE__:
-            A = cp.ones((2, N, N), dtype=PRECISION_COMPLEX)
-        else:
-            A = np.ones((2, N, N), dtype=PRECISION_COMPLEX)
-        out, out_sq = simu._prepare_output_array(A, normalize=True)
-        # Convert CL arrays to numpy for assertions
-        if backend == "CL":
-            out = out.get()
-            out_sq = out_sq.get()
-        assert out.flags.c_contiguous, (
-            f"Output array is not C-contiguous. (Backend {backend})"
+        out /= cp.max(cp.abs(out))
+        A /= cp.max(cp.abs(A))
+        assert cp.allclose(out, A), (
+            f"Output array does not match input array. (Backend {backend})"
         )
-        assert out_sq.flags.c_contiguous, (
-            f"Output array is not C-contiguous. (Backend {backend})"
+    else:
+        assert isinstance(out, np.ndarray), (
+            f"Output array type does not match backend. (Backend {backend})"
         )
-        integral = (
-            (out.real * out.real + out.imag * out.imag) * simu.delta_X * simu.delta_Y
-        ).sum(axis=simu._last_axes)
-        integral *= c * epsilon_0 / 2
-        assert np.allclose(
-            integral,
-            np.array([simu.power, simu.power2]),
-            rtol=1e-4,
-        ), f"Normalization failed. (Backend {backend})"
-        assert out.shape == (
-            2,
-            N,
-            N,
-        ), f"Output array has wrong shape. (Backend {backend})"
-        if backend == "CUPY" and CNLSE.__CUPY_AVAILABLE__:
-            assert isinstance(out, cp.ndarray), (
-                f"Output array type does not match backend. (Backend {backend})"
-            )
-            out /= cp.max(cp.abs(out))
-            A /= cp.max(cp.abs(A))
-            assert cp.allclose(out, A), (
-                f"Output array does not match input array. (Backend {backend})"
-            )
-        else:
-            assert isinstance(out, np.ndarray), (
-                f"Output array type does not match backend. (Backend {backend})"
-            )
-            out /= np.max(np.abs(out))
-            A /= np.max(np.abs(A))
-            assert np.allclose(out, A), (
-                f"Output array does not match input array. (Backend {backend})"
-            )
+        out /= np.max(np.abs(out))
+        A /= np.max(np.abs(A))
+        assert np.allclose(out, A), (
+            f"Output array does not match input array. (Backend {backend})"
+        )
 
 
 def test_send_arrays_to_gpu() -> None:
@@ -187,104 +181,101 @@ def test_retrieve_arrays_from_gpu() -> None:
         pass
 
 
-def test_take_components() -> None:
-    for backend in AVAILABLE_BACKENDS:
-        simu = CNLSE(
-            alpha,
-            power,
-            window,
-            n2,
-            n12,
-            None,
-            L,
-            NX=N,
-            NY=N,
-            Isat=Isat,
-            backend=backend,
-        )
-        # create a larger array to test the fancy indexing
-        A = np.ones((3, 2, N, N), dtype=PRECISION_COMPLEX)
-        A1, A2 = simu._take_components(A)
-        assert A1.shape[-2:] == (
-            N,
-            N,
-        ), f"A1 has wrong last dimensions. (Backend {backend})"
-        assert A2.shape[-2:] == (
-            N,
-            N,
-        ), f"A2 has wrong last dimensions. (Backend {backend})"
-        assert A1.shape == A2.shape, (
-            f"A1 and A2 have different shapes. (Backend {backend})"
-        )
-        assert A1.shape[0] == 3, f"A1 has wrong first dimensions. (Backend {backend})"
-        assert A2.shape[0] == 3, f"A2 has wrong first dimensions. (Backend {backend})"
+def test_take_components(backend) -> None:
+    simu = CNLSE(
+        alpha,
+        power,
+        window,
+        n2,
+        n12,
+        None,
+        L,
+        NX=N,
+        NY=N,
+        Isat=Isat,
+        backend=backend,
+    )
+    # create a larger array to test the fancy indexing
+    A = np.ones((3, 2, N, N), dtype=PRECISION_COMPLEX)
+    A1, A2 = simu._take_components(A)
+    assert A1.shape[-2:] == (
+        N,
+        N,
+    ), f"A1 has wrong last dimensions. (Backend {backend})"
+    assert A2.shape[-2:] == (
+        N,
+        N,
+    ), f"A2 has wrong last dimensions. (Backend {backend})"
+    assert A1.shape == A2.shape, (
+        f"A1 and A2 have different shapes. (Backend {backend})"
+    )
+    assert A1.shape[0] == 3, f"A1 has wrong first dimensions. (Backend {backend})"
+    assert A2.shape[0] == 3, f"A2 has wrong first dimensions. (Backend {backend})"
 
 
-def test_split_step() -> None:
-    for backend in AVAILABLE_BACKENDS:
-        simu = CNLSE(
-            alpha,
-            power,
-            window,
-            n2,
-            n12,
-            None,
-            L,
-            NX=N,
-            NY=N,
-            Isat=Isat,
-            backend=backend,
+def test_split_step(backend) -> None:
+    simu = CNLSE(
+        alpha,
+        power,
+        window,
+        n2,
+        n12,
+        None,
+        L,
+        NX=N,
+        NY=N,
+        Isat=Isat,
+        backend=backend,
+    )
+    simu.delta_z = 0
+    simu.propagator = simu._build_propagator()
+    E = np.ones((2, N, N), dtype=PRECISION_COMPLEX)
+    A, A_sq = simu._prepare_output_array(E, normalize=False)
+    simu.plans = simu._build_fft_plan(A)
+    if backend in ["CUPY", "CL"]:
+        simu._send_arrays_to_gpu()
+    simu.split_step(
+        A,
+        A_sq,
+        simu.V,
+        simu.propagator,
+        simu.plans,
+        precision="double",
+    )
+    if backend == "CUPY" and CNLSE.__CUPY_AVAILABLE__:
+        assert cp.allclose(A, cp.ones((2, N, N), dtype=PRECISION_COMPLEX)), (
+            f"Split-step is not unitary. (Backend {backend})"
         )
-        simu.delta_z = 0
-        simu.propagator = simu._build_propagator()
-        E = np.ones((2, N, N), dtype=PRECISION_COMPLEX)
-        A, A_sq = simu._prepare_output_array(E, normalize=False)
-        simu.plans = simu._build_fft_plan(A)
-        if backend in ["CUPY", "CL"]:
-            simu._send_arrays_to_gpu()
-        simu.split_step(
-            A,
-            A_sq,
-            simu.V,
-            simu.propagator,
-            simu.plans,
-            precision="double",
+    else:
+        if backend == "CL":
+            A = A.get()
+        assert np.allclose(A, np.ones((2, N, N), dtype=PRECISION_COMPLEX)), (
+            f"Split-step is not unitary. (Backend {backend})"
         )
-        if backend == "CUPY" and CNLSE.__CUPY_AVAILABLE__:
-            assert cp.allclose(A, cp.ones((2, N, N), dtype=PRECISION_COMPLEX)), (
-                f"Split-step is not unitary. (Backend {backend})"
-            )
-        else:
-            if backend == "CL":
-                A = A.get()
-            assert np.allclose(A, np.ones((2, N, N), dtype=PRECISION_COMPLEX)), (
-                f"Split-step is not unitary. (Backend {backend})"
-            )
 
 
 # tests for convergence of the solver : the norm of the field should be
 # conserved
-def test_out_field() -> None:
+def test_out_field(backend) -> None:
     E = np.ones((2, N, N), dtype=PRECISION_COMPLEX)
-    for backend in AVAILABLE_BACKENDS:
-        simu = CNLSE(
-            0,
-            power,
-            window,
-            n2,
-            n12,
-            None,
-            L,
-            NX=N,
-            NY=N,
-            Isat=Isat,
-            backend=backend,
-        )
-        E = simu.out_field(E, L, verbose=False, plot=False, precision="single")
-        norm = np.sum(
-            np.abs(E) ** 2 * simu.delta_X * simu.delta_Y * c * epsilon_0 / 2,
-            axis=simu._last_axes,
-        )
-        assert np.allclose(norm, [simu.power, simu.power2], rtol=1e-4), (
-            "Norm not conserved."
-        )
+    simu = CNLSE(
+        0,
+        power,
+        window,
+        n2,
+        n12,
+        None,
+        L,
+        NX=N,
+        NY=N,
+        Isat=Isat,
+        backend=backend,
+    )
+    E = simu.out_field(E, L, verbose=False, plot=False, precision="single")
+    norm = np.sum(
+        np.abs(E) ** 2 * simu.delta_X * simu.delta_Y * c * epsilon_0 / 2,
+        axis=simu._last_axes,
+    )
+    assert np.allclose(norm, [simu.power, simu.power2], rtol=1e-4), (
+        "Norm not conserved."
+    )
