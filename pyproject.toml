@@ -56,6 +56,9 @@ where = ["."]
 include = ["NLSE*"]
 exclude = ["tests*"]
 
+[tool.setuptools.package-data]
+"NLSE.kernels" = ["cl_source/*.cl"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
