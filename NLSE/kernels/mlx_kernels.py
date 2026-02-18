@@ -655,7 +655,7 @@ def _square_mod_rk4_nl_rhs_v_pure(A_prop, A, V, alpha, g, Isat):
 
 def _rk4_nl_rhs_c_pure(A_prop, A_orig, A_sq_1, A_sq_2, alpha, g11, g12, Isat1, Isat2):
     sat = 1 / (1 + A_sq_1 / Isat1 + A_sq_2 / Isat2)
-    return A_prop + 1j * (g11 * A_sq_1 + g12 * A_sq_2) * sat - alpha * sat * A_orig
+    return A_prop + (1j * (g11 * A_sq_1 + g12 * A_sq_2) * sat - alpha * sat) * A_orig
 
 
 def _rk4_nl_rhs_c_v_pure(
@@ -664,8 +664,7 @@ def _rk4_nl_rhs_c_v_pure(
     sat = 1 / (1 + A_sq_1 / Isat1 + A_sq_2 / Isat2)
     return (
         A_prop
-        + 1j * (g11 * A_sq_1 + g12 * A_sq_2) * sat
-        + (-alpha * sat + 1j * V) * A_orig
+        + (1j * (g11 * A_sq_1 + g12 * A_sq_2) * sat - alpha * sat + 1j * V) * A_orig
     )
 
 
@@ -1021,3 +1020,508 @@ def split_step_rk4(
             _to_mx(Isat),
         )
     return fn(A, propagator, _to_mx(dz), _to_mx(alpha), _to_mx(g), _to_mx(Isat))
+
+
+# ── Fused coupled split step (nl_length == 0) ─────────────────────────────
+
+
+def _make_split_step_coupled(precision, has_V, has_omega, axes):
+    if precision == "single" and not has_V and not has_omega:
+
+        def _pure(A, propagator, dz, alpha1, alpha2, g11, g12, g22, Isat1, Isat2):
+            A = mx.fft.fftn(A, axes=axes)
+            A = A * propagator
+            A = mx.fft.ifftn(A, axes=axes)
+            A1 = A[0]
+            A2 = A[1]
+            sq1 = (A1 * mx.conj(A1)).real
+            sq2 = (A2 * mx.conj(A2)).real
+            sat = 1 / (1 + sq1 / Isat1 + sq2 / Isat2)
+            A1 = A1 * mx.exp(dz * (1j * (g11 * sq1 + g12 * sq2) * sat - alpha1 * sat))
+            A2 = A2 * mx.exp(dz * (1j * (g22 * sq2 + g12 * sq1) * sat - alpha2 * sat))
+            return mx.stack([A1, A2])
+
+    elif precision == "single" and not has_V and has_omega:
+
+        def _pure(
+            A,
+            propagator,
+            dz,
+            alpha1,
+            alpha2,
+            g11,
+            g12,
+            g22,
+            Isat1,
+            Isat2,
+            cos_val,
+            sin_val,
+        ):
+            A = mx.fft.fftn(A, axes=axes)
+            A = A * propagator
+            A = mx.fft.ifftn(A, axes=axes)
+            A1 = A[0]
+            A2 = A[1]
+            sq1 = (A1 * mx.conj(A1)).real
+            sq2 = (A2 * mx.conj(A2)).real
+            sat = 1 / (1 + sq1 / Isat1 + sq2 / Isat2)
+            A1 = A1 * mx.exp(dz * (1j * (g11 * sq1 + g12 * sq2) * sat - alpha1 * sat))
+            A2 = A2 * mx.exp(dz * (1j * (g22 * sq2 + g12 * sq1) * sat - alpha2 * sat))
+            new_A1 = cos_val * A1 - 1j * sin_val * A2
+            new_A2 = cos_val * A2 - 1j * sin_val * A1
+            return mx.stack([new_A1, new_A2])
+
+    elif precision == "single" and has_V and not has_omega:
+
+        def _pure(
+            A,
+            propagator,
+            V,
+            dz,
+            alpha1,
+            alpha2,
+            g11,
+            g12,
+            g22,
+            k_half1,
+            k_half2,
+            Isat1,
+            Isat2,
+        ):
+            A = mx.fft.fftn(A, axes=axes)
+            A = A * propagator
+            A = mx.fft.ifftn(A, axes=axes)
+            A1 = A[0]
+            A2 = A[1]
+            sq1 = (A1 * mx.conj(A1)).real
+            sq2 = (A2 * mx.conj(A2)).real
+            sat = 1 / (1 + sq1 / Isat1 + sq2 / Isat2)
+            A1 = A1 * mx.exp(
+                dz
+                * (1j * (g11 * sq1 + g12 * sq2) * sat - alpha1 * sat + 1j * k_half1 * V)
+            )
+            A2 = A2 * mx.exp(
+                dz
+                * (1j * (g22 * sq2 + g12 * sq1) * sat - alpha2 * sat + 1j * k_half2 * V)
+            )
+            return mx.stack([A1, A2])
+
+    elif precision == "single" and has_V and has_omega:
+
+        def _pure(
+            A,
+            propagator,
+            V,
+            dz,
+            alpha1,
+            alpha2,
+            g11,
+            g12,
+            g22,
+            k_half1,
+            k_half2,
+            Isat1,
+            Isat2,
+            cos_val,
+            sin_val,
+        ):
+            A = mx.fft.fftn(A, axes=axes)
+            A = A * propagator
+            A = mx.fft.ifftn(A, axes=axes)
+            A1 = A[0]
+            A2 = A[1]
+            sq1 = (A1 * mx.conj(A1)).real
+            sq2 = (A2 * mx.conj(A2)).real
+            sat = 1 / (1 + sq1 / Isat1 + sq2 / Isat2)
+            A1 = A1 * mx.exp(
+                dz
+                * (1j * (g11 * sq1 + g12 * sq2) * sat - alpha1 * sat + 1j * k_half1 * V)
+            )
+            A2 = A2 * mx.exp(
+                dz
+                * (1j * (g22 * sq2 + g12 * sq1) * sat - alpha2 * sat + 1j * k_half2 * V)
+            )
+            new_A1 = cos_val * A1 - 1j * sin_val * A2
+            new_A2 = cos_val * A2 - 1j * sin_val * A1
+            return mx.stack([new_A1, new_A2])
+
+    elif precision == "double" and not has_V:
+
+        def _pure(A, propagator, dz_half, alpha1, alpha2, g11, g12, g22, Isat1, Isat2):
+            A1 = A[0]
+            A2 = A[1]
+            sq1 = (A1 * mx.conj(A1)).real
+            sq2 = (A2 * mx.conj(A2)).real
+            sat = 1 / (1 + sq1 / Isat1 + sq2 / Isat2)
+            A1 = A1 * mx.exp(
+                dz_half * (1j * (g11 * sq1 + g12 * sq2) * sat - alpha1 * sat)
+            )
+            A2 = A2 * mx.exp(
+                dz_half * (1j * (g22 * sq2 + g12 * sq1) * sat - alpha2 * sat)
+            )
+            A = mx.stack([A1, A2])
+            A = mx.fft.fftn(A, axes=axes)
+            A = A * propagator
+            A = mx.fft.ifftn(A, axes=axes)
+            A1 = A[0]
+            A2 = A[1]
+            sq1 = (A1 * mx.conj(A1)).real
+            sq2 = (A2 * mx.conj(A2)).real
+            sat = 1 / (1 + sq1 / Isat1 + sq2 / Isat2)
+            A1 = A1 * mx.exp(
+                dz_half * (1j * (g11 * sq1 + g12 * sq2) * sat - alpha1 * sat)
+            )
+            A2 = A2 * mx.exp(
+                dz_half * (1j * (g22 * sq2 + g12 * sq1) * sat - alpha2 * sat)
+            )
+            return mx.stack([A1, A2])
+
+    else:  # double, has_V
+
+        def _pure(
+            A,
+            propagator,
+            V,
+            dz_half,
+            alpha1,
+            alpha2,
+            g11,
+            g12,
+            g22,
+            k_half1,
+            k_half2,
+            Isat1,
+            Isat2,
+        ):
+            A1 = A[0]
+            A2 = A[1]
+            sq1 = (A1 * mx.conj(A1)).real
+            sq2 = (A2 * mx.conj(A2)).real
+            sat = 1 / (1 + sq1 / Isat1 + sq2 / Isat2)
+            A1 = A1 * mx.exp(
+                dz_half
+                * (1j * (g11 * sq1 + g12 * sq2) * sat - alpha1 * sat + 1j * k_half1 * V)
+            )
+            A2 = A2 * mx.exp(
+                dz_half
+                * (1j * (g22 * sq2 + g12 * sq1) * sat - alpha2 * sat + 1j * k_half2 * V)
+            )
+            A = mx.stack([A1, A2])
+            A = mx.fft.fftn(A, axes=axes)
+            A = A * propagator
+            A = mx.fft.ifftn(A, axes=axes)
+            A1 = A[0]
+            A2 = A[1]
+            sq1 = (A1 * mx.conj(A1)).real
+            sq2 = (A2 * mx.conj(A2)).real
+            sat = 1 / (1 + sq1 / Isat1 + sq2 / Isat2)
+            A1 = A1 * mx.exp(
+                dz_half
+                * (1j * (g11 * sq1 + g12 * sq2) * sat - alpha1 * sat + 1j * k_half1 * V)
+            )
+            A2 = A2 * mx.exp(
+                dz_half
+                * (1j * (g22 * sq2 + g12 * sq1) * sat - alpha2 * sat + 1j * k_half2 * V)
+            )
+            return mx.stack([A1, A2])
+
+    return mx.compile(_pure)
+
+
+_SPLIT_STEP_COUPLED_CACHE: dict[tuple, object] = {}
+
+
+def split_step_coupled(
+    A: mx.array,
+    propagator: mx.array,
+    V: mx.array | None,
+    dz: float,
+    alpha1: float,
+    alpha2: float,
+    g11: float,
+    g12: float,
+    g22: float,
+    k_half1: float,
+    k_half2: float,
+    Isat1: float,
+    Isat2: float,
+    precision: str,
+    axes: tuple,
+    omega: float | None = None,
+) -> mx.array:
+    """Execute fused coupled split step for MLX (nl_length == 0 only).
+
+    Parameters
+    ----------
+    A : mx.array
+        The coupled field (2, ...) to propagate.
+    propagator : mx.array
+        The propagator matrix.
+    V : mx.array or None
+        Potential field (unscaled).
+    dz : float
+        Step size (full for single, half for double).
+    alpha1 : float
+        Half-loss, component 1.
+    alpha2 : float
+        Half-loss, component 2.
+    g11 : float
+        Intra-component 1 interaction.
+    g12 : float
+        Cross-component interaction.
+    g22 : float
+        Intra-component 2 interaction.
+    k_half1 : float
+        k/2 for component 1 V scaling.
+    k_half2 : float
+        k2/2 for component 2 V scaling.
+    Isat1 : float
+        Saturation, component 1.
+    Isat2 : float
+        Saturation, component 2.
+    precision : str
+        "single" or "double".
+    axes : tuple
+        FFT axes.
+    omega : float or None
+        Rabi coupling (half). None to skip.
+
+    Returns
+    -------
+    mx.array
+        The propagated field.
+    """
+    has_omega = omega is not None and precision == "single"
+    key = (precision, V is not None, has_omega, axes)
+    if key not in _SPLIT_STEP_COUPLED_CACHE:
+        _SPLIT_STEP_COUPLED_CACHE[key] = _make_split_step_coupled(
+            precision, V is not None, has_omega, axes
+        )
+    fn = _SPLIT_STEP_COUPLED_CACHE[key]
+    dz_mx = _to_mx(dz)
+    a1_mx = _to_mx(alpha1)
+    a2_mx = _to_mx(alpha2)
+    g11_mx = _to_mx(g11)
+    g12_mx = _to_mx(g12)
+    g22_mx = _to_mx(g22)
+    Isat1_mx = _to_mx(Isat1)
+    Isat2_mx = _to_mx(Isat2)
+
+    if V is not None and has_omega:
+        cos_val = _to_mx(float(mx.cos(_to_mx(omega * dz))))
+        sin_val = _to_mx(float(mx.sin(_to_mx(omega * dz))))
+        return fn(
+            A,
+            propagator,
+            V,
+            dz_mx,
+            a1_mx,
+            a2_mx,
+            g11_mx,
+            g12_mx,
+            g22_mx,
+            _to_mx(k_half1),
+            _to_mx(k_half2),
+            Isat1_mx,
+            Isat2_mx,
+            cos_val,
+            sin_val,
+        )
+    if V is not None:
+        return fn(
+            A,
+            propagator,
+            V,
+            dz_mx,
+            a1_mx,
+            a2_mx,
+            g11_mx,
+            g12_mx,
+            g22_mx,
+            _to_mx(k_half1),
+            _to_mx(k_half2),
+            Isat1_mx,
+            Isat2_mx,
+        )
+    if has_omega:
+        cos_val = _to_mx(float(mx.cos(_to_mx(omega * dz))))
+        sin_val = _to_mx(float(mx.sin(_to_mx(omega * dz))))
+        return fn(
+            A,
+            propagator,
+            dz_mx,
+            a1_mx,
+            a2_mx,
+            g11_mx,
+            g12_mx,
+            g22_mx,
+            Isat1_mx,
+            Isat2_mx,
+            cos_val,
+            sin_val,
+        )
+    return fn(
+        A,
+        propagator,
+        dz_mx,
+        a1_mx,
+        a2_mx,
+        g11_mx,
+        g12_mx,
+        g22_mx,
+        Isat1_mx,
+        Isat2_mx,
+    )
+
+
+# ── Fused coupled RK4 RHS (nl_length == 0) ────────────────────────────────
+
+
+def _make_rk4_rhs_coupled(has_V, axes):
+    if not has_V:
+
+        def _pure(
+            A_in,
+            propagator,
+            alpha1,
+            alpha2,
+            g11,
+            g12,
+            g22,
+            Isat1,
+            Isat2,
+        ):
+            k = mx.fft.fftn(A_in, axes=axes)
+            k = k * propagator
+            k = mx.fft.ifftn(k, axes=axes)
+            a1 = A_in[0]
+            a2 = A_in[1]
+            sq1 = (a1 * mx.conj(a1)).real
+            sq2 = (a2 * mx.conj(a2)).real
+            sat = 1 / (1 + sq1 / Isat1 + sq2 / Isat2)
+            interact1 = 1j * (g11 * sq1 + g12 * sq2) * sat
+            interact2 = 1j * (g22 * sq2 + g12 * sq1) * sat
+            k1 = k[0] + (interact1 - alpha1 * sat) * a1
+            k2 = k[1] + (interact2 - alpha2 * sat) * a2
+            return mx.stack([k1, k2])
+
+    else:
+
+        def _pure(
+            A_in,
+            propagator,
+            V1,
+            V2,
+            alpha1,
+            alpha2,
+            g11,
+            g12,
+            g22,
+            Isat1,
+            Isat2,
+        ):
+            k = mx.fft.fftn(A_in, axes=axes)
+            k = k * propagator
+            k = mx.fft.ifftn(k, axes=axes)
+            a1 = A_in[0]
+            a2 = A_in[1]
+            sq1 = (a1 * mx.conj(a1)).real
+            sq2 = (a2 * mx.conj(a2)).real
+            sat = 1 / (1 + sq1 / Isat1 + sq2 / Isat2)
+            interact1 = 1j * (g11 * sq1 + g12 * sq2) * sat
+            interact2 = 1j * (g22 * sq2 + g12 * sq1) * sat
+            k1 = k[0] + (interact1 - alpha1 * sat + 1j * V1) * a1
+            k2 = k[1] + (interact2 - alpha2 * sat + 1j * V2) * a2
+            return mx.stack([k1, k2])
+
+    return mx.compile(_pure)
+
+
+_RK4_RHS_COUPLED_CACHE: dict[tuple, object] = {}
+
+
+def rk4_rhs_coupled(
+    A_in: mx.array,
+    propagator: mx.array,
+    V1: mx.array | None,
+    V2: mx.array | None,
+    alpha1: float,
+    alpha2: float,
+    g11: float,
+    g12: float,
+    g22: float,
+    Isat1: float,
+    Isat2: float,
+    axes: tuple,
+) -> mx.array:
+    """Execute fused coupled RK4 RHS for MLX (nl_length == 0 only).
+
+    Parameters
+    ----------
+    A_in : mx.array
+        Input field (2, ...), not modified.
+    propagator : mx.array
+        RK4 propagator (dispersion operator).
+    V1 : mx.array or None
+        Pre-scaled potential, component 1.
+    V2 : mx.array or None
+        Pre-scaled potential, component 2.
+    alpha1 : float
+        Half-loss, component 1.
+    alpha2 : float
+        Half-loss, component 2.
+    g11 : float
+        Intra-component 1 interaction.
+    g12 : float
+        Cross-component interaction.
+    g22 : float
+        Intra-component 2 interaction.
+    Isat1 : float
+        Saturation, component 1.
+    Isat2 : float
+        Saturation, component 2.
+    axes : tuple
+        FFT axes.
+
+    Returns
+    -------
+    mx.array
+        The RHS result.
+    """
+    has_V = V1 is not None
+    key = (has_V, axes)
+    if key not in _RK4_RHS_COUPLED_CACHE:
+        _RK4_RHS_COUPLED_CACHE[key] = _make_rk4_rhs_coupled(has_V, axes)
+    fn = _RK4_RHS_COUPLED_CACHE[key]
+    a1_mx = _to_mx(alpha1)
+    a2_mx = _to_mx(alpha2)
+    g11_mx = _to_mx(g11)
+    g12_mx = _to_mx(g12)
+    g22_mx = _to_mx(g22)
+    Isat1_mx = _to_mx(Isat1)
+    Isat2_mx = _to_mx(Isat2)
+    if has_V:
+        return fn(
+            A_in,
+            propagator,
+            V1,
+            V2,
+            a1_mx,
+            a2_mx,
+            g11_mx,
+            g12_mx,
+            g22_mx,
+            Isat1_mx,
+            Isat2_mx,
+        )
+    return fn(
+        A_in,
+        propagator,
+        a1_mx,
+        a2_mx,
+        g11_mx,
+        g12_mx,
+        g22_mx,
+        Isat1_mx,
+        Isat2_mx,
+    )

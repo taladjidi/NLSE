@@ -56,13 +56,13 @@ def test_prepare_output_array(backend) -> None:
         backend=backend,
     )
     if backend == "CUPY" and GPE.__CUPY_AVAILABLE__:
-        E_in = cp.random.random((N, N)).astype(
-            PRECISION_REAL
-        ) + 1j * cp.random.random((N, N)).astype(PRECISION_REAL)
+        E_in = cp.random.random((N, N)).astype(PRECISION_REAL) + 1j * cp.random.random(
+            (N, N)
+        ).astype(PRECISION_REAL)
     else:
-        E_in = np.random.random((N, N)).astype(
-            PRECISION_REAL
-        ) + 1j * np.random.random((N, N)).astype(PRECISION_REAL)
+        E_in = np.random.random((N, N)).astype(PRECISION_REAL) + 1j * np.random.random(
+            (N, N)
+        ).astype(PRECISION_REAL)
     A, A_sq = simu._prepare_output_array(E_in, normalize=True)
     # Convert CL arrays to numpy for assertions
     if backend == "CL":
@@ -76,15 +76,11 @@ def test_prepare_output_array(backend) -> None:
     )
     if backend == "CPU":
         assert A.flags.aligned, f"Output array is not aligned. (Backend {backend})"
-        assert A_sq.flags.aligned, (
-            f"Output array is not aligned. (Backend {backend})"
-        )
-    integral = (
-        (A.real * A.real + A.imag * A.imag) * simu.delta_X * simu.delta_Y
-    ).sum(axis=simu._last_axes)
-    assert np.allclose(integral, simu.N), (
-        f"Normalization failed. (Backend {backend})"
+        assert A_sq.flags.aligned, f"Output array is not aligned. (Backend {backend})"
+    integral = ((A.real * A.real + A.imag * A.imag) * simu.delta_X * simu.delta_Y).sum(
+        axis=simu._last_axes
     )
+    assert np.allclose(integral, simu.N), f"Normalization failed. (Backend {backend})"
     if backend == "CUPY" and GPE.__CUPY_AVAILABLE__:
         assert isinstance(A, cp.ndarray), (
             f"Output array type does not match backend. (Backend {backend})"

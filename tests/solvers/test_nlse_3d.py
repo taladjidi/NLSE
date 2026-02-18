@@ -41,9 +41,7 @@ def test_build_propagator(backend) -> None:
         backend=backend,
     )
     prop = simu._build_propagator()
-    prop_th = np.exp(
-        -1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * simu.delta_z
-    )
+    prop_th = np.exp(-1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * simu.delta_z)
     prop_th *= np.exp(-1j * simu.D0 / 2 * simu.Omega**2)
     assert np.allclose(
         prop,
@@ -68,13 +66,13 @@ def test_build_fft_plan(backend) -> None:
         backend=backend,
     )
     if backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
-        A = cp.random.random((N, N, NZ)).astype(
-            PRECISION_REAL
-        ) + 1j * cp.random.random((N, N, NZ)).astype(PRECISION_REAL)
+        A = cp.random.random((N, N, NZ)).astype(PRECISION_REAL) + 1j * cp.random.random(
+            (N, N, NZ)
+        ).astype(PRECISION_REAL)
     else:
-        A = np.random.random((N, N, NZ)).astype(
-            PRECISION_REAL
-        ) + 1j * np.random.random((N, N, NZ)).astype(PRECISION_REAL)
+        A = np.random.random((N, N, NZ)).astype(PRECISION_REAL) + 1j * np.random.random(
+            (N, N, NZ)
+        ).astype(PRECISION_REAL)
     plans = simu._build_fft_plan(A)
     if backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
         assert len(plans) == 1, f"Number of plans is wrong. (Backend {backend})"
@@ -110,13 +108,13 @@ def test_prepare_output_array(backend) -> None:
         backend=backend,
     )
     if backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
-        A = cp.random.random((N, N, NZ)).astype(
-            PRECISION_REAL
-        ) + 1j * cp.random.random((N, N, NZ)).astype(PRECISION_REAL)
+        A = cp.random.random((N, N, NZ)).astype(PRECISION_REAL) + 1j * cp.random.random(
+            (N, N, NZ)
+        ).astype(PRECISION_REAL)
     else:
-        A = np.random.random((N, N, NZ)).astype(
-            PRECISION_REAL
-        ) + 1j * np.random.random((N, N, NZ)).astype(PRECISION_REAL)
+        A = np.random.random((N, N, NZ)).astype(PRECISION_REAL) + 1j * np.random.random(
+            (N, N, NZ)
+        ).astype(PRECISION_REAL)
     out, out_sq = simu._prepare_output_array(A, normalize=True)
     # Convert CL arrays to numpy for assertions
     if backend == "CL":
@@ -129,12 +127,8 @@ def test_prepare_output_array(backend) -> None:
         f"Output array is not C-contiguous. (Backend {backend})"
     )
     if backend == "CPU":
-        assert out.flags.aligned, (
-            f"Output array is not aligned. (Backend {backend})"
-        )
-        assert out_sq.flags.aligned, (
-            f"Output array is not aligned. (Backend {backend})"
-        )
+        assert out.flags.aligned, f"Output array is not aligned. (Backend {backend})"
+        assert out_sq.flags.aligned, f"Output array is not aligned. (Backend {backend})"
     integral = (
         (out.real * out.real + out.imag * out.imag)
         * simu.delta_X
@@ -283,9 +277,7 @@ def test_split_step(backend) -> None:
     simu.propagator = simu._build_propagator()
     if backend in ["CUPY", "CL"]:
         simu._send_arrays_to_gpu()
-    simu.split_step(
-        A, A_sq, simu.V, simu.propagator, simu.plans, precision="double"
-    )
+    simu.split_step(A, A_sq, simu.V, simu.propagator, simu.plans, precision="double")
     if backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
         assert cp.allclose(A, cp.ones((N, N, NZ), dtype=PRECISION_COMPLEX)), (
             f"Split step is not unitary. (Backend {backend})"
@@ -317,9 +309,7 @@ def test_out_field(backend) -> None:
         backend=backend,
     )
     E0 = np.ones((N, N, NZ), dtype=PRECISION_COMPLEX)
-    E = simu.out_field(
-        E0, simu.delta_z, verbose=False, plot=False, precision="single"
-    )
+    E = simu.out_field(E0, simu.delta_z, verbose=False, plot=False, precision="single")
     norm = np.sum(np.abs(E) ** 2 * simu.delta_X * simu.delta_Y * simu.delta_T)
     norm *= c * epsilon_0 / 2
     assert E.shape == (

@@ -47,7 +47,7 @@ def norm(
     """Save the norm of the field.
 
     This callback will save the norm of the field every save_every steps into the
-    E_samples array.
+    norms array.
 
     Parameters
     ----------
@@ -61,8 +61,8 @@ def norm(
         Step number.
     save_every : int
         Number of propagation steps between each step.
-    E_samples : np.ndarray
-        Array to store the samples.
+    norms : np.ndarray
+        Array to store the norms.
     """
     if i % save_every == 0:
         norms[i // save_every] = (A.real * A.real + A.imag * A.imag).sum()
@@ -134,7 +134,7 @@ def adapt_delta_z(
     """
     delta_z.append(simu.delta_z)
     if i % update_every == 0:
-        A_sq = A.real * A.real + A.imag * A.imag * c * epsilon_0 / 2
+        A_sq = (A.real * A.real + A.imag * A.imag) * c * epsilon_0 / 2
         delta_n = np.abs(simu.n2) * A_sq / (1 + A_sq / simu.I_sat)
         z_nl = float(1 / (simu.k * delta_n.max()))
         simu.delta_z = np.abs(z_nl) / 12

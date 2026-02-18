@@ -74,7 +74,7 @@ markers = [
 ]
 
 [tool.ruff]
-src = ["src"]
+src = ["NLSE"]
 line-length = 88  # Enforce the default value
 
 [tool.ruff.lint]

@@ -229,6 +229,17 @@ class OpenCLKernels:
                 ),
                 "rk4_nl_rhs_c": cl.Kernel(program, "rk4_nl_rhs_c_fused"),
                 "rk4_nl_rhs_c_v": cl.Kernel(program, "rk4_nl_rhs_c_v_fused"),
+                # Fused RK4 stage update kernels
+                "rk4_set_and_axpy": cl.Kernel(program, "rk4_set_and_axpy"),
+                "rk4_acc_and_axpy": cl.Kernel(program, "rk4_acc_and_axpy"),
+                # Interleaved coupled kernels
+                "coupled_nl_prop_c_v": cl.Kernel(program, "coupled_nl_prop_c_v"),
+                "coupled_nl_prop_c": cl.Kernel(program, "coupled_nl_prop_c"),
+                "coupled_rk4_nl_rhs_c_v": cl.Kernel(program, "coupled_rk4_nl_rhs_c_v"),
+                "coupled_rk4_nl_rhs_c": cl.Kernel(program, "coupled_rk4_nl_rhs_c"),
+                "rabi_coupling_interleaved": cl.Kernel(
+                    program, "rabi_coupling_interleaved"
+                ),
             }
 
         return self._kernels[precision]
@@ -300,23 +311,7 @@ class OpenCLKernels:
         """
         kernels = self._get_kernels(A.dtype)
         global_size = (int(A.size),)
-
-        # Cast parameters to appropriate precision
-        if A.dtype == np.complex64:
-            dz_cast, alpha_cast, g_cast, Isat_cast = (
-                np.float32(dz),
-                np.float32(alpha),
-                np.float32(g),
-                np.float32(Isat),
-            )
-        else:
-            dz_cast, alpha_cast, g_cast, Isat_cast = (
-                np.float64(dz),
-                np.float64(alpha),
-                np.float64(g),
-                np.float64(Isat),
-            )
-
+        dz_c, alpha_c, g_c, Isat_c = self._cast_params(A.dtype, dz, alpha, g, Isat)
         kernels["nl_prop"](
             self.queue,
             global_size,
@@ -324,10 +319,10 @@ class OpenCLKernels:
             A.data,
             A_sq.data,
             V.data,
-            dz_cast,
-            alpha_cast,
-            g_cast,
-            Isat_cast,
+            dz_c,
+            alpha_c,
+            g_c,
+            Isat_c,
         )
         return A
 
@@ -364,32 +359,9 @@ class OpenCLKernels:
         """
         kernels = self._get_kernels(A.dtype)
         global_size = (int(A.size),)
-
-        if A.dtype == np.complex64:
-            dz_cast, alpha_cast, g_cast, Isat_cast = (
-                np.float32(dz),
-                np.float32(alpha),
-                np.float32(g),
-                np.float32(Isat),
-            )
-        else:
-            dz_cast, alpha_cast, g_cast, Isat_cast = (
-                np.float64(dz),
-                np.float64(alpha),
-                np.float64(g),
-                np.float64(Isat),
-            )
-
+        dz_c, alpha_c, g_c, Isat_c = self._cast_params(A.dtype, dz, alpha, g, Isat)
         kernels["nl_prop_without_v"](
-            self.queue,
-            global_size,
-            None,
-            A.data,
-            A_sq.data,
-            dz_cast,
-            alpha_cast,
-            g_cast,
-            Isat_cast,
+            self.queue, global_size, None, A.data, A_sq.data, dz_c, alpha_c, g_c, Isat_c
         )
         return A
 
@@ -439,11 +411,7 @@ class OpenCLKernels:
         kernels = self._get_kernels(A1.dtype)
         global_size = (int(A1.size),)
 
-        if A1.dtype == np.complex64:
-            params = [np.float32(x) for x in [dz, alpha, g11, g12, Isat1, Isat2]]
-        else:
-            params = [np.float64(x) for x in [dz, alpha, g11, g12, Isat1, Isat2]]
-
+        params = self._cast_params(A1.dtype, dz, alpha, g11, g12, Isat1, Isat2)
         kernels["nl_prop_c"](
             self.queue,
             global_size,
@@ -499,11 +467,7 @@ class OpenCLKernels:
         kernels = self._get_kernels(A1.dtype)
         global_size = (int(A1.size),)
 
-        if A1.dtype == np.complex64:
-            params = [np.float32(x) for x in [dz, alpha, g11, g12, Isat1, Isat2]]
-        else:
-            params = [np.float64(x) for x in [dz, alpha, g11, g12, Isat1, Isat2]]
-
+        params = self._cast_params(A1.dtype, dz, alpha, g11, g12, Isat1, Isat2)
         kernels["nl_prop_c_without_v"](
             self.queue, global_size, None, A1.data, A_sq_1.data, A_sq_2.data, *params
         )
@@ -559,31 +523,9 @@ class OpenCLKernels:
         """
         kernels = self._get_kernels(A.dtype)
         global_size = (int(A.size),)
-
-        if A.dtype == np.complex64:
-            dz_cast, alpha_cast, g_cast, Isat_cast = (
-                np.float32(dz),
-                np.float32(alpha),
-                np.float32(g),
-                np.float32(Isat),
-            )
-        else:
-            dz_cast, alpha_cast, g_cast, Isat_cast = (
-                np.float64(dz),
-                np.float64(alpha),
-                np.float64(g),
-                np.float64(Isat),
-            )
-
+        dz_c, alpha_c, g_c, Isat_c = self._cast_params(A.dtype, dz, alpha, g, Isat)
         kernels["square_mod_nl_prop"](
-            self.queue,
-            global_size,
-            None,
-            A.data,
-            dz_cast,
-            alpha_cast,
-            g_cast,
-            Isat_cast,
+            self.queue, global_size, None, A.data, dz_c, alpha_c, g_c, Isat_c
         )
         return A
 
@@ -620,32 +562,9 @@ class OpenCLKernels:
         """
         kernels = self._get_kernels(A.dtype)
         global_size = (int(A.size),)
-
-        if A.dtype == np.complex64:
-            dz_cast, alpha_cast, g_cast, Isat_cast = (
-                np.float32(dz),
-                np.float32(alpha),
-                np.float32(g),
-                np.float32(Isat),
-            )
-        else:
-            dz_cast, alpha_cast, g_cast, Isat_cast = (
-                np.float64(dz),
-                np.float64(alpha),
-                np.float64(g),
-                np.float64(Isat),
-            )
-
+        dz_c, alpha_c, g_c, Isat_c = self._cast_params(A.dtype, dz, alpha, g, Isat)
         kernels["square_mod_nl_prop_v"](
-            self.queue,
-            global_size,
-            None,
-            A.data,
-            V.data,
-            dz_cast,
-            alpha_cast,
-            g_cast,
-            Isat_cast,
+            self.queue, global_size, None, A.data, V.data, dz_c, alpha_c, g_c, Isat_c
         )
         return A
 
@@ -697,19 +616,16 @@ class OpenCLKernels:
 
         cos_val = np.cos(omega * dz)
         sin_val = np.sin(omega * dz)
-
-        if A1.dtype == np.complex64:
-            cos_cast, sin_cast = np.float32(cos_val), np.float32(sin_val)
-        else:
-            cos_cast, sin_cast = np.float64(cos_val), np.float64(sin_val)
-
+        cos_c, sin_c = self._cast_params(A1.dtype, cos_val, sin_val)
         kernels["rabi_coupling"](
-            self.queue, global_size, None, A1.data, A2.data, cos_cast, sin_cast
+            self.queue, global_size, None, A1.data, A2.data, cos_c, sin_c
         )
         return A1, A2
 
     def _cast_params(self, dtype, *values):
         """Cast scalar parameters to appropriate precision.
+
+        Skips re-casting values that are already the correct numpy scalar type.
 
         Parameters
         ----------
@@ -724,7 +640,7 @@ class OpenCLKernels:
             Cast values.
         """
         fp = np.float32 if dtype == np.complex64 else np.float64
-        return [fp(v) for v in values]
+        return [v if type(v) is fp else fp(v) for v in values]
 
     def rk4_axpy(
         self,
@@ -752,9 +668,10 @@ class OpenCLKernels:
             The modified output array.
         """
         kernels = self._get_kernels(A.dtype)
+        gs = (int(A.size),)
         c_cast = np.float32(c) if A.dtype == np.complex64 else np.float64(c)
         kernels["rk4_axpy"](
-            self.queue, (int(A.size),), None, out.data, A.data, c_cast, k.data
+            self.queue, gs, self._local_size(A.size), out.data, A.data, c_cast, k.data
         )
         return out
 
@@ -781,11 +698,105 @@ class OpenCLKernels:
             The modified accumulator array.
         """
         kernels = self._get_kernels(acc.dtype)
-        w_cast = np.float32(w) if acc.dtype == np.complex64 else np.float64(w)
+        gs = (int(acc.size),)
+        (w_cast,) = self._cast_params(acc.dtype, w)
         kernels["rk4_accumulate"](
-            self.queue, (int(acc.size),), None, acc.data, w_cast, k.data
+            self.queue, gs, self._local_size(acc.size), acc.data, w_cast, k.data
         )
         return acc
+
+    def rk4_set_and_axpy(
+        self,
+        acc: cla.Array,
+        out: cla.Array,
+        A: cla.Array,
+        k: cla.Array,
+        c: float,
+    ) -> tuple[cla.Array, cla.Array]:
+        """Fused: acc = k, out = A + c * k (RK4 stage 1 update).
+
+        Combines the copy-to-acc and axpy-to-A_tmp into a single kernel.
+
+        Parameters
+        ----------
+        acc : cla.Array
+            Accumulator (set to k, in-place)
+        out : cla.Array
+            Output array (set to A + c*k, in-place)
+        A : cla.Array
+            Base field
+        k : cla.Array
+            RK4 slope array
+        c : float
+            Scalar coefficient for A_tmp
+
+        Returns
+        -------
+        tuple[cla.Array, cla.Array]
+            The modified (acc, out) arrays.
+        """
+        kernels = self._get_kernels(A.dtype)
+        gs = (int(A.size),)
+        (c_cast,) = self._cast_params(A.dtype, c)
+        kernels["rk4_set_and_axpy"](
+            self.queue,
+            gs,
+            self._local_size(A.size),
+            acc.data,
+            out.data,
+            A.data,
+            k.data,
+            c_cast,
+        )
+        return acc, out
+
+    def rk4_acc_and_axpy(
+        self,
+        acc: cla.Array,
+        out: cla.Array,
+        A: cla.Array,
+        k: cla.Array,
+        w: float,
+        c: float,
+    ) -> tuple[cla.Array, cla.Array]:
+        """Fused: acc += w * k, out = A + c * k (RK4 stages 2-3 update).
+
+        Combines the accumulate-to-acc and axpy-to-A_tmp into a single kernel.
+
+        Parameters
+        ----------
+        acc : cla.Array
+            Accumulator (modified in-place)
+        out : cla.Array
+            Output array (set to A + c*k, in-place)
+        A : cla.Array
+            Base field
+        k : cla.Array
+            RK4 slope array
+        w : float
+            Accumulate weight
+        c : float
+            Scalar coefficient for A_tmp
+
+        Returns
+        -------
+        tuple[cla.Array, cla.Array]
+            The modified (acc, out) arrays.
+        """
+        kernels = self._get_kernels(A.dtype)
+        w_cast, c_cast = self._cast_params(A.dtype, w, c)
+        kernels["rk4_acc_and_axpy"](
+            self.queue,
+            (int(A.size),),
+            self._local_size(A.size),
+            acc.data,
+            out.data,
+            A.data,
+            k.data,
+            w_cast,
+            c_cast,
+        )
+        return acc, out
 
     def rk4_nl_rhs(
         self,
@@ -1057,6 +1068,464 @@ class OpenCLKernels:
             *params,
         )
         return A_prop
+
+    # ── Fused multi-dispatch methods ─────────────────────────────────────────
+    # These chain multiple GPU operations in a single Python call to eliminate
+    # interpreter overhead between kernel dispatches.
+
+    def _local_size(self, global_n):
+        """Return optimal local work size for bandwidth-bound kernels."""
+        if global_n >= 256 and global_n % 256 == 0:
+            return (256,)
+        return None
+
+    def split_step_fused(
+        self,
+        A: cla.Array,
+        propagator: cla.Array,
+        V_scaled: cla.Array | None,
+        dz: float,
+        alpha: float,
+        g: float,
+        Isat: float,
+        precision: str,
+        plan,
+        unnorm_ifft: bool = False,
+    ) -> cla.Array:
+        """Fused split step: all GPU operations in one Python call.
+
+        Chains FFT + apply_propagator + IFFT + nonlinear step (and an
+        additional NL half-step for double precision) without returning
+        to the solver between dispatches.
+
+        Parameters
+        ----------
+        A : cla.Array
+            Complex field array (modified in-place).
+        propagator : cla.Array
+            Pre-computed propagator (pre-divided by N_fft when
+            unnorm_ifft is True).
+        V_scaled : cla.Array or None
+            Pre-scaled potential (V * k/2), or None.
+        dz : float
+            Nonlinear step size (full for single, half for double).
+        alpha : float
+            Half-loss coefficient.
+        g : float
+            Nonlinear interaction strength.
+        Isat : float
+            Saturation intensity (converted units).
+        precision : str
+            "single" or "double".
+        plan : _VkFFTPlan
+            Pre-built FFT plan.
+        unnorm_ifft : bool
+            If True, use unnormalized IFFT.
+
+        Returns
+        -------
+        cla.Array
+            The propagated field A.
+        """
+        kerns = self._get_kernels(A.dtype)
+        gs = (int(A.size),)
+        ls = self._local_size(A.size)
+        dz_c, alpha_c, g_c, Isat_c = self._cast_params(A.dtype, dz, alpha, g, Isat)
+
+        # Double precision: NL half-step before linear step
+        if precision == "double":
+            if V_scaled is not None:
+                kerns["square_mod_nl_prop_v"](
+                    self.queue,
+                    gs,
+                    ls,
+                    A.data,
+                    V_scaled.data,
+                    dz_c,
+                    alpha_c,
+                    g_c,
+                    Isat_c,
+                )
+            else:
+                kerns["square_mod_nl_prop"](
+                    self.queue,
+                    gs,
+                    ls,
+                    A.data,
+                    dz_c,
+                    alpha_c,
+                    g_c,
+                    Isat_c,
+                )
+
+        # Linear step: FFT → propagator multiply → IFFT
+        plan.fft(A, A)
+        kerns["apply_propagator"](self.queue, gs, ls, A.data, propagator.data)
+        if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
+            plan.ifft_unnorm(A, A)
+        else:
+            plan.ifft(A, A)
+
+        # Nonlinear step
+        if V_scaled is not None:
+            kerns["square_mod_nl_prop_v"](
+                self.queue,
+                gs,
+                ls,
+                A.data,
+                V_scaled.data,
+                dz_c,
+                alpha_c,
+                g_c,
+                Isat_c,
+            )
+        else:
+            kerns["square_mod_nl_prop"](
+                self.queue,
+                gs,
+                ls,
+                A.data,
+                dz_c,
+                alpha_c,
+                g_c,
+                Isat_c,
+            )
+        return A
+
+    def rk4_rhs_fused(
+        self,
+        A_in: cla.Array,
+        k: cla.Array,
+        V_scaled: cla.Array | None,
+        propagator: cla.Array,
+        plan,
+        alpha: float,
+        g: float,
+        Isat: float,
+        unnorm_ifft: bool = False,
+    ) -> cla.Array:
+        """Fused RK4 RHS: out-of-place FFT + propagator + IFFT + NL step.
+
+        Eliminates the buffer copy (k[:] = A_in) by using an out-of-place
+        FFT that writes directly from A_in into k.
+
+        Parameters
+        ----------
+        A_in : cla.Array
+            Input field (not modified).
+        k : cla.Array
+            Output buffer for RHS result (modified in-place).
+        V_scaled : cla.Array or None
+            Pre-scaled potential (V * k/2), or None.
+        propagator : cla.Array
+            Pre-computed propagator (pre-divided by N_fft when
+            unnorm_ifft is True).
+        plan : _VkFFTPlan
+            Pre-built FFT plan (must support fft_oop).
+        alpha : float
+            Half-loss coefficient.
+        g : float
+            Nonlinear interaction strength.
+        Isat : float
+            Saturation intensity (converted units).
+        unnorm_ifft : bool
+            If True, use unnormalized IFFT.
+
+        Returns
+        -------
+        cla.Array
+            The modified buffer k.
+        """
+        kerns = self._get_kernels(A_in.dtype)
+        gs = (int(A_in.size),)
+        ls = self._local_size(A_in.size)
+        alpha_c, g_c, Isat_c = self._cast_params(A_in.dtype, alpha, g, Isat)
+
+        # Out-of-place FFT: A_in → k (eliminates buffer copy)
+        plan.fft_oop(A_in, k)
+
+        # Apply propagator to k
+        kerns["apply_propagator"](self.queue, gs, ls, k.data, propagator.data)
+
+        # IFFT k in-place
+        if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
+            plan.ifft_unnorm(k, k)
+        else:
+            plan.ifft(k, k)
+
+        # Nonlinear RHS: k = k + NL(A_in)
+        if V_scaled is not None:
+            kerns["square_mod_rk4_nl_rhs_v"](
+                self.queue,
+                gs,
+                ls,
+                k.data,
+                A_in.data,
+                V_scaled.data,
+                *[alpha_c, g_c, Isat_c],
+            )
+        else:
+            kerns["square_mod_rk4_nl_rhs"](
+                self.queue,
+                gs,
+                ls,
+                k.data,
+                A_in.data,
+                *[alpha_c, g_c, Isat_c],
+            )
+        return k
+
+    # ── Fused interleaved coupled methods ────────────────────────────────────
+
+    def split_step_coupled_fused(
+        self,
+        A: cla.Array,
+        propagator: cla.Array,
+        V1: cla.Array | None,
+        V2: cla.Array | None,
+        N_sq: int,
+        dz: float,
+        alpha1: float,
+        alpha2: float,
+        g11: float,
+        g12: float,
+        g22: float,
+        Isat1: float,
+        Isat2: float,
+        precision: str,
+        plan,
+        omega: float | None = None,
+        unnorm_ifft: bool = False,
+    ) -> cla.Array:
+        """Fused coupled split step on interleaved (2, N_sq) array.
+
+        Parameters
+        ----------
+        A : cla.Array
+            Interleaved field (2, ...) modified in-place.
+        propagator : cla.Array
+            Pre-computed propagator for both components.
+        V1 : cla.Array or None
+            Pre-scaled potential for component 1.
+        V2 : cla.Array or None
+            Pre-scaled potential for component 2.
+        N_sq : int
+            Number of elements per component.
+        dz : float
+            Nonlinear step size (full for single, half for double).
+        alpha1 : float
+            Half-loss coefficient, component 1.
+        alpha2 : float
+            Half-loss coefficient, component 2.
+        g11 : float
+            Intra-component 1 interaction.
+        g12 : float
+            Cross-component interaction.
+        g22 : float
+            Intra-component 2 interaction.
+        Isat1 : float
+            Saturation intensity, component 1.
+        Isat2 : float
+            Saturation intensity, component 2.
+        precision : str
+            "single" or "double".
+        plan : VkFFT plan
+            Pre-built FFT plan.
+        omega : float or None
+            Rabi coupling (half). None to skip.
+        unnorm_ifft : bool
+            Use unnormalized IFFT.
+
+        Returns
+        -------
+        cla.Array
+            The propagated field A.
+        """
+        kerns = self._get_kernels(A.dtype)
+        gs = (N_sq,)
+        ls = self._local_size(N_sq)
+        N_sq_i = np.int32(N_sq)
+        params = self._cast_params(
+            A.dtype, dz, alpha1, alpha2, g11, g12, g22, Isat1, Isat2
+        )
+
+        # Double precision: NL half-step before linear
+        if precision == "double":
+            if V1 is not None:
+                kerns["coupled_nl_prop_c_v"](
+                    self.queue,
+                    gs,
+                    ls,
+                    A.data,
+                    V1.data,
+                    V2.data,
+                    N_sq_i,
+                    *params,
+                )
+            else:
+                kerns["coupled_nl_prop_c"](
+                    self.queue,
+                    gs,
+                    ls,
+                    A.data,
+                    N_sq_i,
+                    *params,
+                )
+
+        # Linear step: FFT → propagator multiply → IFFT (on full 2*N_sq)
+        gs_full = (int(A.size),)
+        ls_full = self._local_size(A.size)
+        plan.fft(A, A)
+        kerns["apply_propagator"](self.queue, gs_full, ls_full, A.data, propagator.data)
+        if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
+            plan.ifft_unnorm(A, A)
+        else:
+            plan.ifft(A, A)
+
+        # Nonlinear step
+        if V1 is not None:
+            kerns["coupled_nl_prop_c_v"](
+                self.queue,
+                gs,
+                ls,
+                A.data,
+                V1.data,
+                V2.data,
+                N_sq_i,
+                *params,
+            )
+        else:
+            kerns["coupled_nl_prop_c"](
+                self.queue,
+                gs,
+                ls,
+                A.data,
+                N_sq_i,
+                *params,
+            )
+
+        # Rabi coupling (single precision only)
+        if omega is not None:
+            cos_val = np.cos(omega * float(params[0]))  # omega * dz
+            sin_val = np.sin(omega * float(params[0]))
+            cos_c, sin_c = self._cast_params(A.dtype, cos_val, sin_val)
+            kerns["rabi_coupling_interleaved"](
+                self.queue,
+                gs,
+                ls,
+                A.data,
+                N_sq_i,
+                cos_c,
+                sin_c,
+            )
+
+        return A
+
+    def rk4_rhs_coupled_fused(
+        self,
+        A_in: cla.Array,
+        k: cla.Array,
+        V1: cla.Array | None,
+        V2: cla.Array | None,
+        propagator: cla.Array,
+        plan,
+        N_sq: int,
+        alpha1: float,
+        alpha2: float,
+        g11: float,
+        g12: float,
+        g22: float,
+        Isat1: float,
+        Isat2: float,
+        unnorm_ifft: bool = False,
+    ) -> cla.Array:
+        """Fused coupled RK4 RHS on interleaved (2, N_sq) arrays.
+
+        Parameters
+        ----------
+        A_in : cla.Array
+            Input field (not modified).
+        k : cla.Array
+            Output buffer (modified in-place).
+        V1 : cla.Array or None
+            Pre-scaled potential, component 1.
+        V2 : cla.Array or None
+            Pre-scaled potential, component 2.
+        propagator : cla.Array
+            Pre-computed propagator.
+        plan : VkFFT plan
+            Pre-built FFT plan (must support fft_oop).
+        N_sq : int
+            Number of elements per component.
+        alpha1 : float
+            Half-loss, component 1.
+        alpha2 : float
+            Half-loss, component 2.
+        g11 : float
+            Intra-component 1 interaction.
+        g12 : float
+            Cross-component interaction.
+        g22 : float
+            Intra-component 2 interaction.
+        Isat1 : float
+            Saturation, component 1.
+        Isat2 : float
+            Saturation, component 2.
+        unnorm_ifft : bool
+            Use unnormalized IFFT.
+
+        Returns
+        -------
+        cla.Array
+            The modified buffer k.
+        """
+        kerns = self._get_kernels(A_in.dtype)
+        gs_full = (int(A_in.size),)
+        ls_full = self._local_size(A_in.size)
+        gs = (N_sq,)
+        ls = self._local_size(N_sq)
+        N_sq_i = np.int32(N_sq)
+
+        # Out-of-place FFT: A_in → k
+        plan.fft_oop(A_in, k)
+
+        # Apply propagator
+        kerns["apply_propagator"](self.queue, gs_full, ls_full, k.data, propagator.data)
+
+        # IFFT
+        if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
+            plan.ifft_unnorm(k, k)
+        else:
+            plan.ifft(k, k)
+
+        # Coupled NL RHS
+        params = self._cast_params(
+            A_in.dtype, alpha1, alpha2, g11, g12, g22, Isat1, Isat2
+        )
+        if V1 is not None:
+            kerns["coupled_rk4_nl_rhs_c_v"](
+                self.queue,
+                gs,
+                ls,
+                k.data,
+                A_in.data,
+                V1.data,
+                V2.data,
+                N_sq_i,
+                *params,
+            )
+        else:
+            kerns["coupled_rk4_nl_rhs_c"](
+                self.queue,
+                gs,
+                ls,
+                k.data,
+                A_in.data,
+                N_sq_i,
+                *params,
+            )
+
+        return k
 
     def vortex_cp(
         self, im: cla.Array, i: int, j: int, ii: cla.Array, jj: cla.Array, ll: int

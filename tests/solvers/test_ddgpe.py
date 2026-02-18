@@ -260,9 +260,7 @@ def test_take_components(backend) -> None:
         N,
         N,
     ), f"A2 has wrong last dimensions. (Backend {backend})"
-    assert A1.shape == A2.shape, (
-        f"A1 and A2 have different shapes. (Backend {backend})"
-    )
+    assert A1.shape == A2.shape, f"A1 and A2 have different shapes. (Backend {backend})"
     assert A1.shape[0] == 3, f"A1 has wrong first dimensions. (Backend {backend})"
     assert A2.shape[0] == 3, f"A2 has wrong first dimensions. (Backend {backend})"
 
@@ -319,7 +317,7 @@ def turn_on(
 # CL backend is too slow for DDGPE propagation (unoptimized array-expression kernels)
 @pytest.mark.parametrize(
     "ddgpe_backend",
-    [b for b in (["CPU"] + (["CUPY"] if DDGPE.__CUPY_AVAILABLE__ else [])) ],
+    list(["CPU"] + (["CUPY"] if DDGPE.__CUPY_AVAILABLE__ else [])),
 )
 def test_out_field(ddgpe_backend) -> None:
     backend = ddgpe_backend

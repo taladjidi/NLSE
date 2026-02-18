@@ -354,15 +354,14 @@ extern "C" __global__ void rk4_nl_rhs_c_fused(
     int idx = blockDim.x * blockIdx.x + threadIdx.x;
     if (idx >= N) return;
     {{FP_TYPE}} sat = ({{FP_TYPE}})1.0 / (({{FP_TYPE}})1.0 + A_sq_1[idx] / Isat1 + A_sq_2[idx] / Isat2);
-    // Interaction: pure imaginary, NOT multiplied by A_orig
+    // NL coefficient: (1j * interact - alpha*sat) * A_orig
     {{FP_TYPE}} interact_i = (g11 * A_sq_1[idx] + g12 * A_sq_2[idx]) * sat;
-    // Loss: -alpha*sat * A_orig (complex)
     {{FP2_TYPE}} A_val = A_orig[idx];
-    {{FP_TYPE}} loss_coeff = alpha * sat;
+    {{FP_TYPE}} coeff_r = -alpha * sat;
     {{FP2_TYPE}} A_prop_val = A_prop[idx];
     A_prop[idx] = make_{{FP2_TYPE}}(
-        A_prop_val.x - loss_coeff * A_val.x,
-        A_prop_val.y + interact_i - loss_coeff * A_val.y
+        A_prop_val.x + coeff_r * A_val.x - interact_i * A_val.y,
+        A_prop_val.y + coeff_r * A_val.y + interact_i * A_val.x
     );
 }
 
@@ -383,18 +382,17 @@ extern "C" __global__ void rk4_nl_rhs_c_v_fused(
     int idx = blockDim.x * blockIdx.x + threadIdx.x;
     if (idx >= N) return;
     {{FP_TYPE}} sat = ({{FP_TYPE}})1.0 / (({{FP_TYPE}})1.0 + A_sq_1[idx] / Isat1 + A_sq_2[idx] / Isat2);
-    // Interaction: pure imaginary
+    // NL coefficient: (1j*interact - alpha*sat + 1j*V) * A_orig
     {{FP_TYPE}} interact_i = (g11 * A_sq_1[idx] + g12 * A_sq_2[idx]) * sat;
-    // Loss + potential: (-alpha*sat + 1j*V) * A_orig
     {{FP2_TYPE}} A_val = A_orig[idx];
     {{FP_TYPE}} coeff_r = -alpha * sat;
-    {{FP_TYPE}} coeff_i = V[idx];
-    {{FP_TYPE}} lv_r = coeff_r * A_val.x - coeff_i * A_val.y;
-    {{FP_TYPE}} lv_i = coeff_r * A_val.y + coeff_i * A_val.x;
+    {{FP_TYPE}} coeff_i = interact_i + V[idx];
+    {{FP_TYPE}} nl_r = coeff_r * A_val.x - coeff_i * A_val.y;
+    {{FP_TYPE}} nl_i = coeff_r * A_val.y + coeff_i * A_val.x;
     {{FP2_TYPE}} A_prop_val = A_prop[idx];
     A_prop[idx] = make_{{FP2_TYPE}}(
-        A_prop_val.x + lv_r,
-        A_prop_val.y + interact_i + lv_i
+        A_prop_val.x + nl_r,
+        A_prop_val.y + nl_i
     );
 }
 

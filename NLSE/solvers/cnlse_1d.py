@@ -24,7 +24,7 @@ class CNLSE_1d(CNLSE):
         wvl: float = 780e-9,
         omega: float | None = None,
         backend: str = __BACKEND__,
-    ) -> object:
+    ) -> None:
         """Instantiate the class with all the relevant physical parameters.
 
         Parameters
@@ -60,10 +60,6 @@ class CNLSE_1d(CNLSE):
         backend : str, optional
             "GPU" or "CPU". Defaults to __BACKEND__.
 
-        Returns
-        -------
-        object
-            CNLSE class instance.
         """
         super().__init__(
             alpha=alpha,
@@ -163,7 +159,7 @@ class CNLSE_1d(CNLSE):
         ax[1, 0].plot(self.X * 1e3, np.abs(A_2_plot) ** 2 * epsilon_0 * c / 2 * 1e-4)
         ax[1, 0].set_title(r"$|\psi_2|^2$")
         ax[1, 0].set_xlabel("x in mm")
-        ax[1, 0].set_ylabel(r"Intensity $\frac{\epsilon_0 c}{2}|\psi_1|^2$ in $W/cm^2$")
+        ax[1, 0].set_ylabel(r"Intensity $\frac{\epsilon_0 c}{2}|\psi_2|^2$ in $W/cm^2$")
         ax[1, 1].plot(self.X * 1e3, np.unwrap(np.angle(A_2_plot)))
         ax[1, 1].set_title(r"$\mathrm{arg}(\psi_2)$")
         ax[1, 1].set_xlabel("x in mm")

@@ -56,9 +56,9 @@ def nl_prop_without_V(
 
     Parameters
     ----------
-    A : cp.ndarray
+    A : np.ndarray
         The field to propagate
-    A_sq : cp.ndarray
+    A_sq : np.ndarray
         The field modulus squared
     dz : float
         Propagation step in m
@@ -97,17 +97,17 @@ def nl_prop_c(
 
     Parameters
     ----------
-    A1 : cp.ndarray
+    A1 : np.ndarray
         The field to propagate (1st component)
-    A_sq_1 : cp.ndarray
+    A_sq_1 : np.ndarray
         The field modulus squared (1st component)
-    A_sq_2 : cp.ndarray
+    A_sq_2 : np.ndarray
         The field modulus squared (2nd component)
     dz : float
         Propagation step in m
     alpha : float
         Losses
-    V : cp.ndarray
+    V : np.ndarray
         Potential
     g11 : float
         Intra-component interactions
@@ -124,7 +124,7 @@ def nl_prop_c(
     V_flat = V.ravel()
     for i in numba.prange(A1_flat.size):
         # Saturation parameter
-        sat = 1 / (1 + A_sq_1_flat[i] * 1 / Isat1 + A_sq_2_flat[i] * 1 / Isat2)
+        sat = 1 / (1 + A_sq_1_flat[i] / Isat1 + A_sq_2_flat[i] / Isat2)
         # Losses
         arg = -alpha * sat
         # Interactions
@@ -151,11 +151,11 @@ def nl_prop_without_V_c(
 
     Parameters
     ----------
-    A1 : cp.ndarray
+    A1 : np.ndarray
         The field to propagate (1st component)
-    A_sq_1 : cp.ndarray
+    A_sq_1 : np.ndarray
         The field modulus squared (1st component)
-    A_sq_2 : cp.ndarray
+    A_sq_2 : np.ndarray
         The field modulus squared (2nd component)
     dz : float
         Propagation step in m
@@ -175,7 +175,7 @@ def nl_prop_without_V_c(
     A_sq_2_flat = A_sq_2.ravel()
     for i in numba.prange(A1_flat.size):
         # Saturation parameter
-        sat = 1 / (1 + A_sq_1_flat[i] * 1 / Isat1 + A_sq_2_flat[i] * 1 / Isat2)
+        sat = 1 / (1 + A_sq_1_flat[i] / Isat1 + A_sq_2_flat[i] / Isat2)
         # Losses
         arg = -alpha * sat
         # Interactions
@@ -214,33 +214,28 @@ def rabi_coupling(A1: np.ndarray, A2: np.ndarray, dz: float, omega: float) -> tu
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
 def vortex(
-    im: np.ndarray, i: int, j: int, ii: np.ndarray, jj: np.ndarray, ll: int
+    im: np.ndarray, i0: int, j0: int, ii: np.ndarray, jj: np.ndarray, ll: int
 ) -> None:
-    """Generate a vortex of charge l at position (i,j) on the image im.
+    """Generate a vortex of charge l at position (i0, j0) on the image im.
 
     Parameters
     ----------
     im : np.ndarray
-        Image
-    i : int
-        position row of the vortex
-    j : int
-        position column of the vortex
-    ii : int
-        meshgrid position row (coordinates of the image)
-    jj : int
-        meshgrid position column (coordinates of the image)
+        Image.
+    i0 : int
+        Row position of the vortex.
+    j0 : int
+        Column position of the vortex.
+    ii : np.ndarray
+        Meshgrid row coordinates of the image.
+    jj : np.ndarray
+        Meshgrid column coordinates of the image.
     ll : int
-        vortex charge
-
-    Returns
-    -------
-    None
-
+        Vortex charge.
     """
     for i in numba.prange(im.shape[0]):
         for j in numba.prange(im.shape[1]):
-            im[i, j] += np.angle(((ii[i, j] - i) + 1j * (jj[i, j] - j)) ** ll)
+            im[i, j] += np.angle(((ii[i, j] - i0) + 1j * (jj[i, j] - j0)) ** ll)
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
@@ -250,14 +245,14 @@ def square_mod(A: np.ndarray, A_sq: np.ndarray) -> np.ndarray:
     Parameters
     ----------
     A : np.ndarray
-        The field
+        The field.
     A_sq : np.ndarray
-        The modulus squared of the field
+        The modulus squared of the field (output buffer).
 
     Returns
     -------
-    None
-
+    np.ndarray
+        The modulus squared of the field.
     """
     A_flat = A.ravel()
     A_sq_flat = A_sq.ravel()
@@ -596,9 +591,8 @@ def rk4_nl_rhs_c(
     for i in numba.prange(A_flat.size):
         sat = 1 / (1 + A_sq_1_flat[i] / Isat1 + A_sq_2_flat[i] / Isat2)
         A_prop_flat[i] += (
-            1j * (g11 * A_sq_1_flat[i] + g12 * A_sq_2_flat[i]) * sat
-            - alpha * sat * A_flat[i]
-        )
+            1j * (g11 * A_sq_1_flat[i] + g12 * A_sq_2_flat[i]) * sat - alpha * sat
+        ) * A_flat[i]
     return A_prop
 
 
@@ -649,6 +643,7 @@ def rk4_nl_rhs_c_v(
         sat = 1 / (1 + A_sq_1_flat[i] / Isat1 + A_sq_2_flat[i] / Isat2)
         A_prop_flat[i] += (
             1j * (g11 * A_sq_1_flat[i] + g12 * A_sq_2_flat[i]) * sat
-            + (-alpha * sat + 1j * V_flat[i]) * A_flat[i]
-        )
+            - alpha * sat
+            + 1j * V_flat[i]
+        ) * A_flat[i]
     return A_prop

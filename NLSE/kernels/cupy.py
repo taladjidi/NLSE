@@ -132,7 +132,7 @@ def _nl_prop_c_fused(
 ) -> None:
     """Fused implementation of nl_prop_c."""
     # Saturation parameter
-    sat = 1 / (1 + A_sq_1 * 1 / Isat1 + A_sq_2 * 1 / Isat2)
+    sat = 1 / (1 + A_sq_1 / Isat1 + A_sq_2 / Isat2)
     # Interactions
     arg = 1j * (g11 * A_sq_1 * sat + g12 * A_sq_2 * sat)
     # Losses
@@ -204,7 +204,7 @@ def _nl_prop_without_V_c_fused(
 ) -> None:
     """Fused implementation of nl_prop_without_V_c."""
     # Saturation parameter
-    sat = 1 / (1 + A_sq_1 * 1 / Isat1 + A_sq_2 * 1 / Isat2)
+    sat = 1 / (1 + A_sq_1 / Isat1 + A_sq_2 / Isat2)
     # Interactions
     arg = 1j * (g11 * A_sq_1 * sat + g12 * A_sq_2 * sat)
     # Losses
@@ -258,14 +258,16 @@ def nl_prop_without_V_c(
 
 
 @cp.fuse(kernel_name="rabi_coupling")
-def _rabi_coupling_fused(A1: cp.array, A2: cp.array, dz: float, omega: float) -> None:
+def _rabi_coupling_fused(
+    A1: cp.ndarray, A2: cp.ndarray, dz: float, omega: float
+) -> None:
     """Fused implementation of rabi_coupling."""
     A1_old = A1.copy()
     A1[:] = cp.cos(omega * dz) * A1 - 1j * cp.sin(omega * dz) * A2
     A2[:] = cp.cos(omega * dz) * A2 - 1j * cp.sin(omega * dz) * A1_old
 
 
-def rabi_coupling(A1: cp.array, A2: cp.array, dz: float, omega: float) -> tuple:
+def rabi_coupling(A1: cp.ndarray, A2: cp.ndarray, dz: float, omega: float) -> tuple:
     """Apply Rabi coupling term.
 
     Implement the Rabi hopping term, exchanging density between components.
@@ -631,7 +633,7 @@ def square_mod_rk4_nl_rhs_v(A_prop, A, V, alpha, g, Isat):
 def _rk4_nl_rhs_c_fused(A_prop, A_orig, A_sq_1, A_sq_2, alpha, g11, g12, Isat1, Isat2):
     """Fused coupled RK4 NL RHS (no potential)."""
     sat = 1 / (1 + A_sq_1 / Isat1 + A_sq_2 / Isat2)
-    A_prop += 1j * (g11 * A_sq_1 + g12 * A_sq_2) * sat - alpha * sat * A_orig
+    A_prop += (1j * (g11 * A_sq_1 + g12 * A_sq_2) * sat - alpha * sat) * A_orig
 
 
 def rk4_nl_rhs_c(A_prop, A_orig, A_sq_1, A_sq_2, alpha, g11, g12, Isat1, Isat2):
@@ -673,9 +675,7 @@ def _rk4_nl_rhs_c_v_fused(
 ):
     """Fused coupled RK4 NL RHS (with potential)."""
     sat = 1 / (1 + A_sq_1 / Isat1 + A_sq_2 / Isat2)
-    A_prop += (
-        1j * (g11 * A_sq_1 + g12 * A_sq_2) * sat + (-alpha * sat + 1j * V) * A_orig
-    )
+    A_prop += (1j * (g11 * A_sq_1 + g12 * A_sq_2) * sat - alpha * sat + 1j * V) * A_orig
 
 
 def rk4_nl_rhs_c_v(A_prop, A_orig, A_sq_1, A_sq_2, V, alpha, g11, g12, Isat1, Isat2):

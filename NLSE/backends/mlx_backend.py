@@ -78,23 +78,21 @@ class MLXBackend(Backend):
     def fft(self, array: Any, plan: list) -> Any:
         """Perform forward FFT."""
         axes = plan[0]
-        result = mx.fft.fftn(array, axes=axes)
-        mx.eval(result)
-        return result
+        return mx.fft.fftn(array, axes=axes)
 
     def ifft(self, array: Any, plan: list) -> Any:
         """Perform inverse FFT."""
         axes = plan[0]
-        result = mx.fft.ifftn(array, axes=axes)
-        mx.eval(result)
-        return result
+        return mx.fft.ifftn(array, axes=axes)
 
     @property
     def kernels(self) -> Any:
         """Return MLX kernels module."""
-        from ..kernels import mlx_kernels
+        if not hasattr(self, "_kernels"):
+            from ..kernels import mlx_kernels
 
-        return mlx_kernels
+            self._kernels = mlx_kernels
+        return self._kernels
 
     def supports_double_precision(self) -> bool:
         """MLX does not support double precision."""

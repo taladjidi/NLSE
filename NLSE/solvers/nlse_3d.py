@@ -29,7 +29,7 @@ class NLSE_3d(NLSE):
         nl_length: float = 0,
         wvl: float = 780e-9,
         backend: str = __BACKEND__,
-    ) -> object:
+    ) -> None:
         """Instantiate the simulation.
 
         Solves an equation : d/dz psi = -1/2k0(d2/dx2 + d2/dy2) psi +
@@ -119,9 +119,13 @@ class NLSE_3d(NLSE):
     def _propagator_cache_key(self, precision: str) -> tuple:
         """Return cache key for 3D propagator."""
         return (
-            self.NX, self.NY, self.NZ,
-            float(self.delta_z), precision,
-            float(self.k), float(self.D0),
+            self.NX,
+            self.NY,
+            self.NZ,
+            float(self.delta_z),
+            precision,
+            float(self.k),
+            float(self.D0),
         )
 
     def _compute_propagator(self, precision: str) -> np.ndarray:
@@ -140,6 +144,18 @@ class NLSE_3d(NLSE):
         prop_spatial = super()._compute_propagator_rk4()
         prop_temporal = (-1j * self.D0 / 2 * self.Omega**2).astype(np.complex64)
         return prop_spatial + prop_temporal
+
+    def _rk4_max_dz(self) -> float:
+        """Compute the maximum stable RK4 step size for 3D.
+
+        Include both spatial K^2/(2k) and temporal D0/2*Omega^2 dispersion.
+        """
+        D_spatial = 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k
+        D_temporal = abs(self.D0) / 2 * self.Omega**2
+        D_max = float(np.max(D_spatial + D_temporal))
+        if D_max == 0:
+            return np.inf
+        return 2.83 / D_max
 
     def _prepare_output_array(
         self, E_in: np.ndarray, normalize: bool

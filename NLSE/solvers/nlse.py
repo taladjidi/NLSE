@@ -4,6 +4,7 @@
 
 import multiprocessing
 import time
+import warnings
 from collections.abc import Callable
 from typing import Any
 
@@ -113,10 +114,10 @@ class NLSE:
         self.NX = NX
         self.NY = NY
         # self.window = window
-        if isinstance(window, float) or isinstance(window, int):
-            self.window = [window, window]
-        elif isinstance(window, tuple) or isinstance(window, list):
+        if isinstance(window, (list, tuple)):
             self.window = window
+        else:
+            self.window = [window, window]
         Dn = self.n2 * self.power / min(self.window) ** 2
         z_nl = 1 / (self.k * abs(Dn))
         if not isinstance(z_nl, (int, float)):
@@ -213,6 +214,77 @@ class NLSE:
     def _compute_propagator_rk4(self) -> np.ndarray:
         """Compute the raw dispersion operator for RK4 (no caching)."""
         return (-1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k).astype(np.complex64)
+
+    def _rk4_max_dz(self) -> float:
+        """Compute the maximum stable step size for explicit RK4.
+
+        The RK4 stability region for purely imaginary eigenvalues has
+        radius ~2.83. The largest eigenvalue of the dispersion operator
+        is K_max^2 / (2*k). Returns the maximum dz that keeps the
+        scheme within the stability region.
+        """
+        D_max = float(np.max(0.5 * (self.Kxx**2 + self.Kyy**2) / self.k))
+        if D_max == 0:
+            return np.inf
+        return 2.83 / D_max
+
+    def _split_step_max_dz(self, A: np.ndarray) -> float:
+        """Compute the maximum step size for split-step accuracy.
+
+        Ensure the intensity-dependent nonlinear phase per step stays
+        below pi to avoid phase aliasing. Only the Kerr term
+        ``g * |A|^2 * sat`` is considered because it varies with the
+        field and causes splitting error. The potential V is applied
+        exactly via the exponential and does not limit accuracy.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            Normalized field (possibly on device).
+        """
+        A_np = self._backend.to_numpy(A)
+        I_peak = float(np.max(np.abs(A_np) ** 2))
+        g = abs(getattr(self, "_g", self.k / 2 * self.n2 * c * epsilon_0))
+        Isat = getattr(self, "_Isat_conv", 2 * self.I_sat / (epsilon_0 * c))
+        nl_rate = g * I_peak / (1 + I_peak / Isat)
+        if nl_rate == 0:
+            return np.inf
+        return np.pi / nl_rate
+
+    def _enforce_step_limit(self, A: np.ndarray, method: str, precision: str) -> None:
+        """Cap delta_z to the stability/accuracy limit for the chosen method.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            Normalized field (possibly on device).
+        method : str
+            Integration method ("split_step" or "RK4").
+        precision : str
+            "single" or "double".
+        """
+        if method == "RK4":
+            max_dz = self._rk4_max_dz()
+            label = "RK4 stability"
+        else:
+            max_dz = self._split_step_max_dz(A)
+            label = "split-step accuracy"
+        if self.delta_z > max_dz:
+            warnings.warn(
+                f"delta_z={self.delta_z:.2e} exceeds {label} limit "
+                f"({max_dz:.2e}). Reducing to {0.9 * max_dz:.2e}.",
+                stacklevel=2,
+            )
+            self.delta_z = 0.9 * max_dz
+            # Rebuild propagator (split_step propagator depends on dz)
+            self.propagator = None
+            if method == "RK4":
+                self.propagator = self._build_propagator_rk4()
+            else:
+                self.propagator = self._build_propagator(precision=precision)
+            # Send only the new propagator to device
+            if self._backend.is_device_backend:
+                self.propagator = self._backend.from_numpy(self.propagator)
 
     def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Build the linear propagation matrix with caching.
@@ -428,6 +500,23 @@ class NLSE:
         if V_scaled is None and V is not None:
             V_scaled = V * k_half
 
+        # CL fused fast path (nl_length == 0 only)
+        if hasattr(kernels, "split_step_fused") and self.nl_length == 0:
+            dz = self.delta_z / 2 if precision == "double" else self.delta_z
+            prop_fft = getattr(self, "_propagator_fft", None)
+            return kernels.split_step_fused(
+                A,
+                prop_fft if prop_fft is not None else propagator,
+                V_scaled,
+                dz,
+                alpha_half,
+                g,
+                Isat_conv,
+                precision,
+                plans[0],
+                unnorm_ifft=(prop_fft is not None),
+            )
+
         # MLX fused fast path (nl_length == 0 only)
         if hasattr(kernels, "split_step") and self.nl_length == 0:
             dz = self.delta_z / 2 if precision == "double" else self.delta_z
@@ -565,12 +654,6 @@ class NLSE:
         plans : list
             List of FFT plan objects from backend.
         """
-        if self._backend.name == "MLX":
-            k = self._apply_linear_step(A_in, propagator, plans)
-        else:
-            k[:] = A_in
-            k = self._apply_linear_step(k, propagator, plans)
-
         kernels = self._backend.kernels
         # Use pre-computed constants (set in out_field), with fallbacks
         alpha_half = getattr(self, "_alpha_half", self.alpha / 2)
@@ -580,6 +663,27 @@ class NLSE:
         V_scaled = getattr(self, "_V_scaled", None)
         if V_scaled is None and V is not None:
             V_scaled = V * k_half
+
+        # CL fused fast path: out-of-place FFT eliminates buffer copy
+        if hasattr(kernels, "rk4_rhs_fused") and self.nl_length == 0:
+            prop_fft = getattr(self, "_propagator_fft", None)
+            return kernels.rk4_rhs_fused(
+                A_in,
+                k,
+                V_scaled,
+                prop_fft if prop_fft is not None else propagator,
+                plans[0],
+                alpha_half,
+                g,
+                Isat_conv,
+                unnorm_ifft=(prop_fft is not None),
+            )
+
+        if self._backend.name == "MLX":
+            k = self._apply_linear_step(A_in, propagator, plans)
+        else:
+            k[:] = A_in
+            k = self._apply_linear_step(k, propagator, plans)
 
         if self.nl_length > 0:
             A_sq = (A_in * A_in.conj()).real
@@ -656,20 +760,32 @@ class NLSE:
         acc = self._rk4_acc
         h = self.delta_z
 
+        # Use fused stage kernels when available (CL backend)
+        has_fused = hasattr(kernels, "rk4_set_and_axpy")
+
         # Stage 1: k1 = f(A)
         k = self._RK4_rhs(A, k, V, propagator, plans)
-        acc = kernels.rk4_axpy(acc, k, 0.0, k)  # acc = k (copy via axpy)
-        A_tmp = kernels.rk4_axpy(A_tmp, A, h / 2, k)  # A_tmp = A + h/2*k1
+        if has_fused:
+            acc, A_tmp = kernels.rk4_set_and_axpy(acc, A_tmp, A, k, h / 2)
+        else:
+            acc = kernels.rk4_axpy(acc, k, 0.0, k)  # acc = k (copy via axpy)
+            A_tmp = kernels.rk4_axpy(A_tmp, A, h / 2, k)  # A_tmp = A + h/2*k1
 
         # Stage 2: k2 = f(A + h/2*k1)
         k = self._RK4_rhs(A_tmp, k, V, propagator, plans)
-        acc = kernels.rk4_accumulate(acc, 2.0, k)  # acc = k1 + 2*k2
-        A_tmp = kernels.rk4_axpy(A_tmp, A, h / 2, k)  # A_tmp = A + h/2*k2
+        if has_fused:
+            acc, A_tmp = kernels.rk4_acc_and_axpy(acc, A_tmp, A, k, 2.0, h / 2)
+        else:
+            acc = kernels.rk4_accumulate(acc, 2.0, k)  # acc = k1 + 2*k2
+            A_tmp = kernels.rk4_axpy(A_tmp, A, h / 2, k)  # A_tmp = A + h/2*k2
 
         # Stage 3: k3 = f(A + h/2*k2)
         k = self._RK4_rhs(A_tmp, k, V, propagator, plans)
-        acc = kernels.rk4_accumulate(acc, 2.0, k)  # acc = k1 + 2*k2 + 2*k3
-        A_tmp = kernels.rk4_axpy(A_tmp, A, h, k)  # A_tmp = A + h*k3
+        if has_fused:
+            acc, A_tmp = kernels.rk4_acc_and_axpy(acc, A_tmp, A, k, 2.0, h)
+        else:
+            acc = kernels.rk4_accumulate(acc, 2.0, k)  # acc = k1 + 2*k2 + 2*k3
+            A_tmp = kernels.rk4_axpy(A_tmp, A, h, k)  # A_tmp = A + h*k3
 
         # Stage 4: k4 = f(A + h*k3)
         k = self._RK4_rhs(A_tmp, k, V, propagator, plans)
@@ -784,12 +900,37 @@ class NLSE:
                 pbar.n = abs(z_prop) / z * 100
                 pbar.refresh()
 
-    def _precompute_step_constants(self, V: np.ndarray | None) -> None:
-        """Pre-compute constants that are invariant across propagation steps."""
-        self._alpha_half = self.alpha / 2
-        self._g = self.k / 2 * self.n2 * c * epsilon_0
-        self._Isat_conv = 2 * self.I_sat / (epsilon_0 * c)
-        self._k_half = np.float32(self.k / 2)
+    def _precompute_step_constants(
+        self, V: np.ndarray | None, precision: str = "single"
+    ) -> None:
+        """Pre-compute constants that are invariant across propagation steps.
+
+        Parameters
+        ----------
+        V : np.ndarray or None
+            Potential field.
+        precision : str
+            "single" or "double" — used to select scalar dtype.
+        """
+        fp = np.float32 if precision == "single" else np.float64
+        alpha_half = self.alpha / 2
+        g = self.k / 2 * self.n2 * c * epsilon_0
+        Isat_conv = 2 * self.I_sat / (epsilon_0 * c)
+        k_half = self.k / 2
+        # Cast scalar constants to target precision once
+        if isinstance(alpha_half, (int, float, np.floating)):
+            self._alpha_half = fp(alpha_half)
+        else:
+            self._alpha_half = alpha_half
+        if isinstance(g, (int, float, np.floating)):
+            self._g = fp(g)
+        else:
+            self._g = g
+        if isinstance(Isat_conv, (int, float, np.floating)):
+            self._Isat_conv = fp(Isat_conv)
+        else:
+            self._Isat_conv = Isat_conv
+        self._k_half = fp(k_half)
         if V is not None:
             self._V_scaled = V * self._k_half
         else:
@@ -894,7 +1035,8 @@ class NLSE:
         A, A_sq = self._prepare_output_array(E_in, normalize)
         self.plans = self._build_fft_plan(A)
         self._allocate_rk4_buffers(A, method)
-        self._precompute_step_constants(V)
+        self._precompute_step_constants(V, precision)
+        self._enforce_step_limit(A, method, precision)
         if verbose:
             pbar = tqdm.tqdm(
                 total=100,
@@ -929,6 +1071,13 @@ class NLSE:
         if verbose:
             pbar.n = 100
             pbar.refresh()
+        # Synchronize device backends before timing
+        if self._backend.name == "CL":
+            self._backend.queue.finish()
+        elif self._backend.name == "MLX":
+            import mlx.core as mx
+
+            mx.eval(A)
         t_cpu = time.perf_counter() - t0
         if verbose:
             pbar.close()

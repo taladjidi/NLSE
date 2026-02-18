@@ -206,9 +206,7 @@ def test_take_components(backend) -> None:
         N,
         N,
     ), f"A2 has wrong last dimensions. (Backend {backend})"
-    assert A1.shape == A2.shape, (
-        f"A1 and A2 have different shapes. (Backend {backend})"
-    )
+    assert A1.shape == A2.shape, f"A1 and A2 have different shapes. (Backend {backend})"
     assert A1.shape[0] == 3, f"A1 has wrong first dimensions. (Backend {backend})"
     assert A2.shape[0] == 3, f"A2 has wrong first dimensions. (Backend {backend})"
 

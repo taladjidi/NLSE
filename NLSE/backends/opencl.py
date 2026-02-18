@@ -23,17 +23,24 @@ class _VkFFTPlan:
     without knowing which FFT library is behind it.
     """
 
-    __slots__ = ("_app", "_app_unnorm")
+    __slots__ = ("_app", "_app_oop", "_app_unnorm")
 
     def __init__(self, shape, dtype, queue, axes, ndim):
         self._app = VkFFTApp(shape, dtype, queue=queue, axes=axes, ndim=ndim)
         self._app_unnorm = VkFFTApp(
             shape, dtype, queue=queue, axes=axes, ndim=ndim, norm=0
         )
+        self._app_oop = VkFFTApp(
+            shape, dtype, queue=queue, axes=axes, ndim=ndim, inplace=False
+        )
 
     def fft(self, a, out):
-        """Forward FFT."""
+        """Forward FFT (in-place when a is out)."""
         return self._app.fft(a, out)
+
+    def fft_oop(self, src, dest):
+        """Out-of-place forward FFT (src is not modified)."""
+        return self._app_oop.fft(src, dest)
 
     def ifft(self, a, out):
         """Inverse FFT (normalized by 1/N)."""

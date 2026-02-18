@@ -22,7 +22,7 @@ class NLSE_1d(NLSE):
         nl_length: float = 0,
         wvl: float = 780e-9,
         backend: str = __BACKEND__,
-    ) -> object:
+    ) -> None:
         """Instantiate the simulation.
 
         Solves an equation : d/dz psi = -1/2k0(d2/dx2) psi + k0 dn psi +
@@ -79,9 +79,7 @@ class NLSE_1d(NLSE):
     def _compute_propagator(self, precision: str) -> np.ndarray:
         """Compute the 1D linear propagation matrix."""
         dtype = np.complex128 if precision == "double" else np.complex64
-        return np.exp(
-            -1j * 0.5 * (self.Kx**2) / self.k * self.delta_z, dtype=dtype
-        )
+        return np.exp(-1j * 0.5 * (self.Kx**2) / self.k * self.delta_z, dtype=dtype)
 
     def _propagator_rk4_cache_key(self) -> tuple:
         """Return cache key for 1D RK4 dispersion operator."""
@@ -90,6 +88,13 @@ class NLSE_1d(NLSE):
     def _compute_propagator_rk4(self) -> np.ndarray:
         """Compute the raw 1D dispersion operator for RK4."""
         return (-1j * 0.5 * self.Kx**2 / self.k).astype(np.complex64)
+
+    def _rk4_max_dz(self) -> float:
+        """Compute the maximum stable RK4 step size for 1D."""
+        D_max = float(np.max(0.5 * self.Kx**2 / self.k))
+        if D_max == 0:
+            return np.inf
+        return 2.83 / D_max
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot a field for monitoring.

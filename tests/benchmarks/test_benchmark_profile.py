@@ -186,13 +186,14 @@ class TestKernelBenchmark:
     def test_vortex(self, benchmark):
         """Benchmark vortex kernel."""
         im = np.zeros((N, N), dtype=PRECISION_COMPLEX)
-        i = np.arange(N, dtype=np.int32)
-        j = np.arange(N, dtype=np.int32)
-        ii, jj = np.meshgrid(i, j)
+        coords = np.arange(N, dtype=np.int32)
+        ii, jj = np.meshgrid(coords, coords)
+        i0 = N // 2
+        j0 = N // 2
         ll = 1
 
         def kernel():
-            vortex(im.copy(), i, j, ii, jj, ll)
+            vortex(im.copy(), i0, j0, ii, jj, ll)
 
         benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
         assert np.all(np.isfinite(im))

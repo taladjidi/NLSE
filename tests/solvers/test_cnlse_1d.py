@@ -69,12 +69,8 @@ def test_prepare_output_array(backend) -> None:
         f"Output array is not C-contiguous. (Backend {backend})"
     )
     if backend == "CPU":
-        assert out.flags.aligned, (
-            f"Output array is not aligned. (Backend {backend})"
-        )
-        assert out_sq.flags.aligned, (
-            f"Output array is not aligned. (Backend {backend})"
-        )
+        assert out.flags.aligned, f"Output array is not aligned. (Backend {backend})"
+        assert out_sq.flags.aligned, f"Output array is not aligned. (Backend {backend})"
     integral = ((out.real * out.real + out.imag * out.imag) * simu.delta_X**2).sum(
         axis=simu._last_axes
     )
@@ -129,9 +125,7 @@ def test_split_step(backend) -> None:
     simu.propagator = simu._build_propagator()
     if backend in ["CUPY", "CL"]:
         simu._send_arrays_to_gpu()
-    simu.split_step(
-        A, A_sq, simu.V, simu.propagator, simu.plans, precision="double"
-    )
+    simu.split_step(A, A_sq, simu.V, simu.propagator, simu.plans, precision="double")
     if backend == "CUPY" and CNLSE_1d.__CUPY_AVAILABLE__:
         assert cp.allclose(A, cp.ones((2, N), dtype=PRECISION_COMPLEX)), (
             f"Split step is not unitary. (Backend {backend})"
@@ -149,9 +143,7 @@ def test_out_field(backend) -> None:
         0, power, window, n2, n12, None, L, NX=N, Isat=Isat, backend=backend
     )
     E0 = np.ones((2, N), dtype=PRECISION_COMPLEX)
-    A = simu.out_field(
-        E0, simu.delta_z, verbose=False, plot=False, precision="single"
-    )
+    A = simu.out_field(E0, simu.delta_z, verbose=False, plot=False, precision="single")
     rho = A.real * A.real + A.imag * A.imag
     print(rho)
     integral = (rho * simu.delta_X**2).sum(axis=simu._last_axes)

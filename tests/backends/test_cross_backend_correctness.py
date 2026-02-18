@@ -682,6 +682,453 @@ class TestCNLSERK4vsReference:
             err_msg=f"CNLSE RK4 {backend} does not match CPU reference",
         )
 
+    def test_cnlse_rk4_with_potential(self, backend):
+        """CNLSE RK4 with potential matches CPU reference."""
+        n12 = 0.5e-9
+        NX = NY = 64
+        XX_v, YY_v = np.meshgrid(
+            np.linspace(-window / 2, window / 2, NX),
+            np.linspace(-window / 2, window / 2, NY),
+        )
+        V = 1e-4 * np.exp(-(XX_v**2 + YY_v**2) / (2e-3) ** 2)
+
+        simu_ref = CNLSE(
+            alpha,
+            power,
+            window,
+            n2,
+            n12,
+            V,
+            L,
+            NX=NX,
+            NY=NY,
+            Isat=Isat,
+            backend="CPU",
+        )
+        simu_test = CNLSE(
+            alpha,
+            power,
+            window,
+            n2,
+            n12,
+            V,
+            L,
+            NX=NX,
+            NY=NY,
+            Isat=Isat,
+            backend=backend,
+        )
+
+        XX, YY = np.meshgrid(simu_ref.X, simu_ref.Y)
+        E_in = np.zeros((2, NX, NY), dtype=PRECISION_COMPLEX)
+        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
+        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
+
+        E_ref = simu_ref.out_field(
+            E_in.copy(), L, verbose=False, plot=False, method="RK4"
+        )
+        E_test = simu_test.out_field(
+            E_in.copy(), L, verbose=False, plot=False, method="RK4"
+        )
+
+        np.testing.assert_allclose(
+            E_test,
+            E_ref,
+            rtol=1e-2,
+            atol=1e-4,
+            err_msg=f"CNLSE RK4 {backend} with V does not match CPU reference",
+        )
+
+
+@pytest.mark.parametrize("backend", GPU_BACKENDS)
+class TestCNLSEvsReferenceExtended:
+    """Extended CNLSE cross-backend tests (potential, omega, double precision)."""
+
+    def test_coupled_propagation_with_potential(self, backend):
+        """CNLSE with potential matches CPU reference."""
+        n12 = 0.5e-9
+        NX = NY = 64
+        XX_v, YY_v = np.meshgrid(
+            np.linspace(-window / 2, window / 2, NX),
+            np.linspace(-window / 2, window / 2, NY),
+        )
+        V = 1e-4 * np.exp(-(XX_v**2 + YY_v**2) / (2e-3) ** 2)
+
+        simu_ref = CNLSE(
+            alpha,
+            power,
+            window,
+            n2,
+            n12,
+            V,
+            L,
+            NX=NX,
+            NY=NY,
+            Isat=Isat,
+            backend="CPU",
+        )
+        simu_test = CNLSE(
+            alpha,
+            power,
+            window,
+            n2,
+            n12,
+            V,
+            L,
+            NX=NX,
+            NY=NY,
+            Isat=Isat,
+            backend=backend,
+        )
+
+        XX, YY = np.meshgrid(simu_ref.X, simu_ref.Y)
+        E_in = np.zeros((2, NX, NY), dtype=PRECISION_COMPLEX)
+        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
+        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
+
+        E_ref = simu_ref.out_field(E_in.copy(), L, verbose=False, plot=False)
+        E_test = simu_test.out_field(E_in.copy(), L, verbose=False, plot=False)
+
+        np.testing.assert_allclose(
+            E_test,
+            E_ref,
+            rtol=1e-2,
+            atol=1e-4,
+            err_msg=f"CNLSE {backend} with V does not match CPU reference",
+        )
+
+    def test_coupled_propagation_with_omega(self, backend):
+        """CNLSE with Rabi coupling matches CPU reference."""
+        n12 = 0.5e-9
+        NX = NY = 64
+        omega = 1e3
+
+        simu_ref = CNLSE(
+            alpha,
+            power,
+            window,
+            n2,
+            n12,
+            None,
+            L,
+            NX=NX,
+            NY=NY,
+            Isat=Isat,
+            omega=omega,
+            backend="CPU",
+        )
+        simu_test = CNLSE(
+            alpha,
+            power,
+            window,
+            n2,
+            n12,
+            None,
+            L,
+            NX=NX,
+            NY=NY,
+            Isat=Isat,
+            omega=omega,
+            backend=backend,
+        )
+
+        XX, YY = np.meshgrid(simu_ref.X, simu_ref.Y)
+        E_in = np.zeros((2, NX, NY), dtype=PRECISION_COMPLEX)
+        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
+        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
+
+        E_ref = simu_ref.out_field(E_in.copy(), L, verbose=False, plot=False)
+        E_test = simu_test.out_field(E_in.copy(), L, verbose=False, plot=False)
+
+        np.testing.assert_allclose(
+            E_test,
+            E_ref,
+            rtol=1e-2,
+            atol=1e-4,
+            err_msg=f"CNLSE {backend} with omega does not match CPU reference",
+        )
+
+    def test_coupled_propagation_double_precision(self, backend):
+        """CNLSE double precision matches CPU reference."""
+        n12 = 0.5e-9
+        NX = NY = 64
+
+        simu_test = CNLSE(
+            alpha,
+            power,
+            window,
+            n2,
+            n12,
+            None,
+            L,
+            NX=NX,
+            NY=NY,
+            Isat=Isat,
+            backend=backend,
+        )
+        if not simu_test._backend.supports_double_precision():
+            pytest.skip(f"{backend} does not support double precision")
+
+        simu_ref = CNLSE(
+            alpha,
+            power,
+            window,
+            n2,
+            n12,
+            None,
+            L,
+            NX=NX,
+            NY=NY,
+            Isat=Isat,
+            backend="CPU",
+        )
+
+        XX, YY = np.meshgrid(simu_ref.X, simu_ref.Y)
+        E_in = np.zeros((2, NX, NY), dtype=PRECISION_COMPLEX)
+        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
+        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
+
+        E_ref = simu_ref.out_field(
+            E_in.copy(), L, verbose=False, plot=False, precision="double"
+        )
+        E_test = simu_test.out_field(
+            E_in.copy(), L, verbose=False, plot=False, precision="double"
+        )
+
+        np.testing.assert_allclose(
+            E_test,
+            E_ref,
+            rtol=1e-2,
+            atol=1e-4,
+            err_msg=f"CNLSE {backend} double precision does not match CPU reference",
+        )
+
+
+@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
+class TestNLSECrossMethod:
+    """Compare split_step vs RK4 on same backend (both solve same equation)."""
+
+    def test_split_step_vs_rk4_without_potential(self, backend):
+        """Split-step and RK4 converge to same result (no potential)."""
+        simu_ss = NLSE(
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=N,
+            NY=N,
+            Isat=Isat,
+            backend=backend,
+        )
+        simu_rk = NLSE(
+            alpha,
+            power,
+            window,
+            n2,
+            None,
+            L,
+            NX=N,
+            NY=N,
+            Isat=Isat,
+            backend=backend,
+        )
+
+        XX, YY = np.meshgrid(simu_ss.X, simu_ss.Y)
+        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
+
+        E_ss = simu_ss.out_field(
+            E_in.copy(), L, verbose=False, plot=False, precision="single"
+        )
+        E_rk = simu_rk.out_field(
+            E_in.copy(), L, verbose=False, plot=False, method="RK4"
+        )
+
+        np.testing.assert_allclose(
+            E_rk,
+            E_ss,
+            rtol=5e-2,
+            atol=1e-3,
+            err_msg=f"RK4 vs split_step mismatch on {backend} (no potential)",
+        )
+
+    def test_split_step_vs_rk4_with_potential(self, backend):
+        """Split-step and RK4 converge to same result (with potential)."""
+        XX_v, YY_v = np.meshgrid(
+            np.linspace(-window / 2, window / 2, N),
+            np.linspace(-window / 2, window / 2, N),
+        )
+        V = 1e-4 * np.exp(-(XX_v**2 + YY_v**2) / (2e-3) ** 2)
+
+        simu_ss = NLSE(
+            alpha,
+            power,
+            window,
+            n2,
+            V,
+            L,
+            NX=N,
+            NY=N,
+            Isat=Isat,
+            backend=backend,
+        )
+        simu_rk = NLSE(
+            alpha,
+            power,
+            window,
+            n2,
+            V,
+            L,
+            NX=N,
+            NY=N,
+            Isat=Isat,
+            backend=backend,
+        )
+
+        XX, YY = np.meshgrid(simu_ss.X, simu_ss.Y)
+        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
+
+        E_ss = simu_ss.out_field(
+            E_in.copy(), L, verbose=False, plot=False, precision="single"
+        )
+        E_rk = simu_rk.out_field(
+            E_in.copy(), L, verbose=False, plot=False, method="RK4"
+        )
+
+        np.testing.assert_allclose(
+            E_rk,
+            E_ss,
+            rtol=5e-2,
+            atol=1e-3,
+            err_msg=f"RK4 vs split_step mismatch on {backend} (with potential)",
+        )
+
+
+@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
+class TestCNLSECrossMethod:
+    """Compare CNLSE split_step vs RK4 on same backend.
+
+    Uses weak nonlinearity so both O(dz) split-step and O(dz^4) RK4 converge
+    to the same result within tolerance.
+    """
+
+    # Weak NL for method convergence
+    n2_weak = -1e-10
+    n12_weak = 1e-10
+    dz_fine = 1e-5
+
+    def test_cnlse_split_step_vs_rk4(self, backend):
+        """CNLSE split-step and RK4 converge to same result."""
+        NX = NY = 64
+
+        simu_ss = CNLSE(
+            alpha,
+            power,
+            window,
+            self.n2_weak,
+            self.n12_weak,
+            None,
+            L,
+            NX=NX,
+            NY=NY,
+            Isat=Isat,
+            backend=backend,
+        )
+        simu_ss.delta_z = self.dz_fine
+        simu_rk = CNLSE(
+            alpha,
+            power,
+            window,
+            self.n2_weak,
+            self.n12_weak,
+            None,
+            L,
+            NX=NX,
+            NY=NY,
+            Isat=Isat,
+            backend=backend,
+        )
+        simu_rk.delta_z = self.dz_fine
+
+        XX, YY = np.meshgrid(simu_ss.X, simu_ss.Y)
+        E_in = np.zeros((2, NX, NY), dtype=PRECISION_COMPLEX)
+        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
+        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
+
+        E_ss = simu_ss.out_field(
+            E_in.copy(), L, verbose=False, plot=False, precision="single"
+        )
+        E_rk = simu_rk.out_field(
+            E_in.copy(), L, verbose=False, plot=False, method="RK4"
+        )
+
+        np.testing.assert_allclose(
+            E_rk,
+            E_ss,
+            rtol=5e-2,
+            atol=1e-3,
+            err_msg=f"CNLSE RK4 vs split_step mismatch on {backend}",
+        )
+
+    def test_cnlse_split_step_vs_rk4_with_potential(self, backend):
+        """CNLSE split-step and RK4 with potential converge to same result."""
+        NX = NY = 64
+        XX_v, YY_v = np.meshgrid(
+            np.linspace(-window / 2, window / 2, NX),
+            np.linspace(-window / 2, window / 2, NY),
+        )
+        V = 1e-4 * np.exp(-(XX_v**2 + YY_v**2) / (2e-3) ** 2)
+
+        simu_ss = CNLSE(
+            alpha,
+            power,
+            window,
+            self.n2_weak,
+            self.n12_weak,
+            V,
+            L,
+            NX=NX,
+            NY=NY,
+            Isat=Isat,
+            backend=backend,
+        )
+        simu_ss.delta_z = self.dz_fine
+        simu_rk = CNLSE(
+            alpha,
+            power,
+            window,
+            self.n2_weak,
+            self.n12_weak,
+            V,
+            L,
+            NX=NX,
+            NY=NY,
+            Isat=Isat,
+            backend=backend,
+        )
+        simu_rk.delta_z = self.dz_fine
+
+        XX, YY = np.meshgrid(simu_ss.X, simu_ss.Y)
+        E_in = np.zeros((2, NX, NY), dtype=PRECISION_COMPLEX)
+        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
+        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
+
+        E_ss = simu_ss.out_field(
+            E_in.copy(), L, verbose=False, plot=False, precision="single"
+        )
+        E_rk = simu_rk.out_field(
+            E_in.copy(), L, verbose=False, plot=False, method="RK4"
+        )
+
+        np.testing.assert_allclose(
+            E_rk,
+            E_ss,
+            rtol=5e-2,
+            atol=1e-3,
+            err_msg=f"CNLSE RK4 vs split_step with V mismatch on {backend}",
+        )
+
 
 # Small grid for fast tests
 S = 64

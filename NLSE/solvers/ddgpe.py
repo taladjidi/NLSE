@@ -13,9 +13,16 @@ if __CUPY_AVAILABLE__:
 class DDGPE(CNLSE):
     """A class to solve the 2D driven dissipative Gross-Pitaevskii equation."""
 
-    _gpu_param_attrs = CNLSE._gpu_param_attrs + (
-        "gamma", "g", "omega", "k_z",
-        "omega_exc", "omega_cav", "detuning", "omega_pump",
+    _gpu_param_attrs = (
+        *CNLSE._gpu_param_attrs,
+        "gamma",
+        "g",
+        "omega",
+        "k_z",
+        "omega_exc",
+        "omega_cav",
+        "detuning",
+        "omega_pump",
     )
 
     def __init__(
@@ -37,7 +44,7 @@ class DDGPE(CNLSE):
         Isat: float = np.inf,
         nl_length: float = 0,
         backend: str = __BACKEND__,
-    ) -> object:
+    ) -> None:
         """Instantiate the class with all the relevant physical parameters.
 
         Parameters
@@ -50,12 +57,22 @@ class DDGPE(CNLSE):
             Computational window in m.
         g : float
             Interaction parameter.
-        n12 : float
-            Inter component interaction parameter.
-        V : np.ndarray
-            Potential landscape in a.u.
-        L : float
-            Length of the cell in m.
+        omega : float
+            Rabi coupling strength.
+        T : float
+            Total propagation time in s.
+        omega_exc : float
+            Exciton frequency in rad/s.
+        omega_cav : float
+            Cavity frequency in rad/s.
+        detuning : float
+            Detuning from lower polariton in rad/s.
+        k_z : float
+            Longitudinal wavevector in m^-1.
+        V : np.ndarray, optional
+            Potential landscape in a.u. Defaults to None.
+        g12 : float, optional
+            Inter component interaction parameter. Defaults to 0.
         NX : int, optional
             Number of points along x. Defaults to 1024.
         NY : int, optional
@@ -63,22 +80,13 @@ class DDGPE(CNLSE):
         Isat : float, optional
             Saturation intensity, assumed to be the same
             for both components. Defaults to infinity.
-        nl_length : float
+        nl_length : float, optional
             Non local length in m.
             The non-local kernel is the instantiated as a Bessel function
             to model a diffusive non-locality stored in the nl_profile
-            attribute.
-        wvl : float, optional
-            Wavelength in m. Defaults to 780 nm.
-        omega : float, optional
-            Rabi coupling. Defaults to None.
+            attribute. Defaults to 0.
         backend : str, optional
             "GPU" or "CPU". Defaults to __BACKEND__.
-
-        Returns
-        -------
-        object
-            CNLSE class instance.
         """
         super().__init__(
             alpha=gamma,
@@ -190,18 +198,26 @@ class DDGPE(CNLSE):
         A[..., 1, :, :] -= F_pump_r * F_pump_t[i] * simu.delta_z * 1j
         A[..., 1, :, :] -= F_probe_r * F_probe_t[i] * simu.delta_z * 1j
 
-    def _precompute_step_constants(self, V: np.ndarray | None) -> None:
+    def _precompute_step_constants(
+        self, V: np.ndarray | None, precision: str = "single"
+    ) -> None:
         """Pre-compute constants for DDGPE propagation steps."""
-        super()._precompute_step_constants(V)
-        self._gamma_half = self.gamma / 2
-        self._gamma2_half = self.gamma2 / 2
+        super()._precompute_step_constants(V, precision)
+        fp = np.float32 if precision == "single" else np.float64
+        self._gamma_half = fp(self.gamma / 2)
+        self._gamma2_half = fp(self.gamma2 / 2)
 
     def _propagator_cache_key(self, precision: str) -> tuple:
         """Return cache key for DDGPE propagator."""
         return (
-            self.NX, self.NY, float(self.delta_z), precision,
-            float(self.omega_exc), float(self.omega_cav),
-            float(self.omega_pump), float(self.k_z),
+            self.NX,
+            self.NY,
+            float(self.delta_z),
+            precision,
+            float(self.omega_exc),
+            float(self.omega_cav),
+            float(self.omega_pump),
+            float(self.k_z),
         )
 
     def _compute_propagator(self, precision: str) -> np.ndarray:
@@ -216,8 +232,7 @@ class DDGPE(CNLSE):
         propagator2 = np.exp(
             -1j
             * (
-                self.omega_cav
-                * np.sqrt(1 + (self.Kxx**2 + self.Kyy**2) / self.k_z**2)
+                self.omega_cav * np.sqrt(1 + (self.Kxx**2 + self.Kyy**2) / self.k_z**2)
                 - self.omega_pump
             )
             * self.delta_z,
@@ -228,9 +243,13 @@ class DDGPE(CNLSE):
     def _propagator_rk4_cache_key(self) -> tuple:
         """Return cache key for DDGPE RK4 dispersion operator."""
         return (
-            self.NX, self.NY, "RK4",
-            float(self.omega_exc), float(self.omega_cav),
-            float(self.omega_pump), float(self.k_z),
+            self.NX,
+            self.NY,
+            "RK4",
+            float(self.omega_exc),
+            float(self.omega_cav),
+            float(self.omega_pump),
+            float(self.k_z),
         )
 
     def _compute_propagator_rk4(self) -> np.ndarray:
@@ -239,12 +258,31 @@ class DDGPE(CNLSE):
         prop2 = (
             -1j
             * (
-                self.omega_cav
-                * np.sqrt(1 + (self.Kxx**2 + self.Kyy**2) / self.k_z**2)
+                self.omega_cav * np.sqrt(1 + (self.Kxx**2 + self.Kyy**2) / self.k_z**2)
                 - self.omega_pump
             )
         ).astype(np.complex64)
         return np.array([prop1, prop2])
+
+    def _rk4_max_dz(self) -> float:
+        """Compute the maximum stable RK4 step size for DDGPE.
+
+        Use the actual polariton dispersion eigenvalues instead of K^2/(2k).
+        """
+        D_exc = abs(self.omega_exc - self.omega_pump)
+        D_cav = float(
+            np.max(
+                np.abs(
+                    self.omega_cav
+                    * np.sqrt(1 + (self.Kxx**2 + self.Kyy**2) / self.k_z**2)
+                    - self.omega_pump
+                )
+            )
+        )
+        D_max = max(D_exc, D_cav)
+        if D_max == 0:
+            return np.inf
+        return 2.83 / D_max
 
     def _prepare_output_array(self, E_in: np.ndarray, normalize: bool) -> np.ndarray:
         """Prepare the output array depending on __BACKEND__.
@@ -286,10 +324,9 @@ class DDGPE(CNLSE):
             Squared modulus of the fields.
         V : np.ndarray
             Potential field (can be None).
-        propagator1 : np.ndarray
-            Propagator matrix for field 1.
-        propagator2 : np.ndarray
-            Propagator matrix for field 2.
+        propagator : np.ndarray
+            Propagator matrix for both fields
+            [propagator1, propagator2].
         plans : list
             List of FFT plan objects. Either a single FFT plan for
             both directions (GPU case) or distinct FFT and IFFT plans for FFTW.
@@ -314,21 +351,51 @@ class DDGPE(CNLSE):
             A_sq, A_sq_1, A_sq_2 = self._compute_A_sq_components(A, A_sq)
             if V is None:
                 A1 = kernels.nl_prop_without_V_c(
-                    A1, A_sq_1, A_sq_2, self.delta_z / 2,
-                    gamma_half, self.g, self.g12, self.I_sat, self.I_sat2,
+                    A1,
+                    A_sq_1,
+                    A_sq_2,
+                    self.delta_z / 2,
+                    gamma_half,
+                    self.g,
+                    self.g12,
+                    self.I_sat,
+                    self.I_sat2,
                 )
                 A2 = kernels.nl_prop_without_V_c(
-                    A2, A_sq_2, A_sq_1, self.delta_z / 2,
-                    gamma2_half, self.g, self.g12, self.I_sat, self.I_sat2,
+                    A2,
+                    A_sq_2,
+                    A_sq_1,
+                    self.delta_z / 2,
+                    gamma2_half,
+                    self.g2,
+                    self.g12,
+                    self.I_sat,
+                    self.I_sat2,
                 )
             else:
                 A1 = kernels.nl_prop_c(
-                    A1, A_sq_1, A_sq_2, self.delta_z / 2,
-                    gamma_half, V, self.g, self.g12, self.I_sat, self.I_sat2,
+                    A1,
+                    A_sq_1,
+                    A_sq_2,
+                    self.delta_z / 2,
+                    gamma_half,
+                    V,
+                    self.g,
+                    self.g12,
+                    self.I_sat,
+                    self.I_sat2,
                 )
                 A2 = kernels.nl_prop_c(
-                    A2, A_sq_2, A_sq_1, self.delta_z / 2,
-                    gamma2_half, V, self.g2, self.g12, self.I_sat, self.I_sat2,
+                    A2,
+                    A_sq_2,
+                    A_sq_1,
+                    self.delta_z / 2,
+                    gamma2_half,
+                    V,
+                    self.g2,
+                    self.g12,
+                    self.I_sat,
+                    self.I_sat2,
                 )
             if self._backend.is_device_backend:
                 A[0] = A1
@@ -341,58 +408,57 @@ class DDGPE(CNLSE):
         A1, A2 = self._take_components(A)
         A_sq, A_sq_1, A_sq_2 = self._compute_A_sq_components(A, A_sq)
 
-        if precision == "double":
-            if V is None:
-                A1 = kernels.nl_prop_without_V_c(
-                    A1, A_sq_1, A_sq_2, self.delta_z / 2,
-                    gamma_half, self.g, self.g12, self.I_sat, self.I_sat2,
-                )
-                A2 = kernels.nl_prop_without_V_c(
-                    A2, A_sq_2, A_sq_1, self.delta_z / 2,
-                    gamma2_half, self.g, self.g12, self.I_sat, self.I_sat2,
-                )
-            else:
-                # TODO: inconsistency — V is scaled by k/2 for comp1 but
-                # unscaled for comp2 in this branch only
-                A1 = kernels.nl_prop_c(
-                    A1, A_sq_1, A_sq_2, self.delta_z / 2,
-                    gamma_half, self.k / 2 * V,
-                    self.g, self.g12, self.I_sat, self.I_sat2,
-                )
-                A2 = kernels.nl_prop_c(
-                    A2, A_sq_2, A_sq_1, self.delta_z / 2,
-                    gamma2_half, V,
-                    self.g2, self.g12, self.I_sat, self.I_sat2,
-                )
+        dz_step = self.delta_z / 2 if precision == "double" else self.delta_z
+        if V is None:
+            A1 = kernels.nl_prop_without_V_c(
+                A1,
+                A_sq_1,
+                A_sq_2,
+                dz_step,
+                gamma_half,
+                self.g,
+                self.g12,
+                self.I_sat,
+                self.I_sat2,
+            )
+            A2 = kernels.nl_prop_without_V_c(
+                A2,
+                A_sq_2,
+                A_sq_1,
+                dz_step,
+                gamma2_half,
+                self.g2,
+                self.g12,
+                self.I_sat,
+                self.I_sat2,
+            )
         else:
-            if V is None:
-                # TODO: inconsistency — comp1 uses self.alpha/2 but
-                # comp2 uses self.gamma2/2 in single precision
-                A1 = kernels.nl_prop_without_V_c(
-                    A1, A_sq_1, A_sq_2, self.delta_z,
-                    self.alpha / 2, self.g, self.g12,
-                    self.I_sat, self.I_sat2,
-                )
-                A2 = kernels.nl_prop_without_V_c(
-                    A2, A_sq_2, A_sq_1, self.delta_z,
-                    gamma2_half, self.g2, self.g12,
-                    self.I_sat, self.I_sat2,
-                )
-            else:
-                A1 = kernels.nl_prop_c(
-                    A1, A_sq_1, A_sq_2, self.delta_z,
-                    gamma_half, V, self.g, self.g12,
-                    self.I_sat, self.I_sat2,
-                )
-                A2 = kernels.nl_prop_c(
-                    A2, A_sq_2, A_sq_1, self.delta_z,
-                    gamma2_half, V, self.g2, self.g12,
-                    self.I_sat, self.I_sat2,
-                )
-            if self.omega is not None:
-                A1, A2 = kernels.rabi_coupling(
-                    A1, A2, self.delta_z, self.omega / 2
-                )
+            A1 = kernels.nl_prop_c(
+                A1,
+                A_sq_1,
+                A_sq_2,
+                dz_step,
+                gamma_half,
+                V,
+                self.g,
+                self.g12,
+                self.I_sat,
+                self.I_sat2,
+            )
+            A2 = kernels.nl_prop_c(
+                A2,
+                A_sq_2,
+                A_sq_1,
+                dz_step,
+                gamma2_half,
+                V,
+                self.g2,
+                self.g12,
+                self.I_sat,
+                self.I_sat2,
+            )
+        if precision == "single" and self.omega is not None:
+            A1, A2 = kernels.rabi_coupling(A1, A2, self.delta_z, self.omega / 2)
 
         if self._backend.is_device_backend:
             A[0] = A1
@@ -501,11 +567,15 @@ class DDGPE(CNLSE):
         np.ndarray
             Propagated field.
         """
+        if callback is None:
+            callback = []
+        elif callable(callback):
+            callback = [callback]
         if laser_excitation is None:
             callback.insert(0, self.laser_excitation)
         else:
             callback.insert(0, laser_excitation)
-        super().out_field(
+        return super().out_field(
             E_in=E_in,
             z=t,
             plot=plot,
