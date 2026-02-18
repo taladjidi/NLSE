@@ -36,7 +36,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-opencl = ["pyopencl", "pyvkfft"]
+opencl = ["pyopencl", "pyvkfft", "mako"]
 gpu = ["cupy"]
 dev = [
   "pytest>=7.0",

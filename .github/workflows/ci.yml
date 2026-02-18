@@ -145,15 +145,11 @@ jobs:
                   tool: "pytest"
                   output-file-path: benchmark.json
                   github-token: ${{ secrets.GITHUB_TOKEN }}
-                  # Push and deploy GitHub pages for main branch
-                  auto-push: ${{ github.ref == 'refs/heads/main' }}
+                  auto-push: false
                   # Alert if performance degrades by 200%
                   alert-threshold: "200%"
                   # Comment on PRs with benchmark comparison
                   comment-on-alert: true
                   fail-on-alert: false
-                  # Store results in gh-pages branch
-                  gh-pages-branch: gh-pages
-                  benchmark-data-dir-path: benchmarks
                   # Save cache between runs
                   external-data-json-path: ./cache/benchmark-data.json

@@ -421,9 +421,8 @@ class CNLSE(NLSE):
                 Isat1,
             )
 
-        if self._backend.is_device_backend:
-            k[0] = k1
-            k[1] = k2
+        k[0] = k1
+        k[1] = k2
 
         return k
 
@@ -637,9 +636,8 @@ class CNLSE(NLSE):
             A1, A2 = self._apply_nl_prop_c(
                 A1, A2, A_sq_1, A_sq_2, self.delta_z / 2, *nl_args
             )
-            if self._backend.is_device_backend:
-                A[0] = A1
-                A[1] = A2
+            A[0] = A1
+            A[1] = A2
 
         # Linear propagation in Fourier domain
         A = self._apply_linear_step(A, propagator, plans)
@@ -655,9 +653,8 @@ class CNLSE(NLSE):
                 A1, A2, self.delta_z, self.omega / 2
             )
 
-        if self._backend.is_device_backend:
-            A[0] = A1
-            A[1] = A2
+        A[0] = A1
+        A[1] = A2
         return A
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
