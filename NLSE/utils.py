@@ -37,24 +37,25 @@ try:
     # sudo apt install intel-opencl-icd opencl-headers ocl-icd-opencl-dev
     # or for AMD
     # sudo apt install opencl-headers ocl-icd-opencl-dev
-    import pyopencl
+    import pyopencl as cl
 
+    # Verify an OpenCL device is actually available, not just the library
+    ctx = cl.create_some_context(interactive=False)
+    device = ctx.devices[0]
     __PYOPENCL_AVAILABLE__ = True
-
-    # Check for double precision support
-    try:
-        import pyopencl as cl
-
-        ctx = cl.create_some_context(interactive=False)
-        device = ctx.devices[0]
-        __PYOPENCL_DOUBLE_SUPPORT__ = bool(device.double_fp_config)
-    except Exception:
-        __PYOPENCL_DOUBLE_SUPPORT__ = False
+    __PYOPENCL_DOUBLE_SUPPORT__ = bool(device.double_fp_config)
 
 except ImportError:
     warnings.warn(
         "PyOpenCL not available, OpenCL backend unavailable. "
         "Install pyopencl for OpenCL support.",
+        ImportWarning,
+        stacklevel=2,
+    )
+    __PYOPENCL_AVAILABLE__ = False
+except Exception:
+    warnings.warn(
+        "PyOpenCL installed but no OpenCL device found. OpenCL backend unavailable.",
         ImportWarning,
         stacklevel=2,
     )

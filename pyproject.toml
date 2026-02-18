@@ -31,13 +31,13 @@ dependencies = [
   "numba",
   "numpy",
   "pyfftw",
-  "pyopencl",
-  "pyvkfft",
   "scipy",
   "tqdm",
 ]
 
 [project.optional-dependencies]
+opencl = ["pyopencl", "pyvkfft"]
+gpu = ["cupy"]
 dev = [
   "pytest>=7.0",
   "pytest-cov",
@@ -45,7 +45,6 @@ dev = [
   "ruff",
   "mypy",
 ]
-gpu = ["cupy"]
 
 [project.urls]
 Documentation = "https://nlse.readthedocs.io"
