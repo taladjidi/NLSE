@@ -81,7 +81,10 @@ class CPUBackend(Backend):
         except (FileNotFoundError, Exception):
             pass
 
-        # Build FFT plans with actual array
+        # FFTW planning (FFTW_MEASURE) overwrites the input/output arrays.
+        # Save and restore array contents to preserve field data.
+        saved = A.copy()
+
         plan_fft = pyfftw.FFTW(
             A,
             A,
@@ -129,6 +132,9 @@ class CPUBackend(Backend):
                 threads=multiprocessing.cpu_count(),
                 axes=axes,
             )
+
+        # Restore array contents after planning
+        A[:] = saved
 
         # Save FFTW wisdom
         with open(wisdom_path, "wb") as file:
