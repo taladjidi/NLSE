@@ -72,10 +72,17 @@ jobs:
                   sudo apt-get update
                   sudo apt-get install -y ocl-icd-opencl-dev pocl-opencl-icd
 
-            - name: Install dependencies
+            - name: Install dependencies (with OpenCL)
+              if: runner.os != 'Windows'
               run: |
                   python -m pip install --upgrade pip
                   pip install -e ".[dev,opencl]"
+
+            - name: Install dependencies (without OpenCL)
+              if: runner.os == 'Windows'
+              run: |
+                  python -m pip install --upgrade pip
+                  pip install -e ".[dev]"
 
             - name: Cache FFTW wisdom and benchmarks
               uses: actions/cache@v4
