@@ -14,30 +14,37 @@ plugins:
 
 nav:
   - Home: index.md
-  - Getting started:
-      - Installation: "installation.md"
-      - Basic Usage: "basic_usage.md"
-
-      - Structure and Inheritance: "structure_and_inheritance.md"
-      - Contributing: "contributing.md"
+  - Getting Started:
+      - Installation: installation.md
+      - Quick Start: quick_start.md
+  - User Guide:
+      - Physics Background: physics_problem.md
+      - Solvers Overview: solvers_overview.md
+      - Backends: backends.md
+      - Callbacks: callbacks.md
+      - Numerical Methods: numerical_methods.md
+      - Examples Gallery: examples.md
   - Tutorial:
-      - What is the Physics problem ?: "physics_problem.md"
-      - A NLSE tutorial: "nlse_tutorial.ipynb"
-  - How to:
-      - How to ?: "how_to.md"
-  - Reference:
-      - NLSE: nlse.md
-      - 1D NLSE : nlse_1d.md
-      - 3D NLSE : nlse_3d.md
-      - Coupled NLSE: cnlse.md
-      - 1D Coupled NLSE: cnlse_1d.md
-      - GPE: gpe.md
-      - Driven dissipative GPE: ddgpe.md
-      - Kernels: kernels.md
+      - NLSE Tutorial: nlse_tutorial.ipynb
+  - API Reference:
+      - NLSE: reference/nlse.md
+      - NLSE_1d: reference/nlse_1d.md
+      - NLSE_3d: reference/nlse_3d.md
+      - CNLSE: reference/cnlse.md
+      - CNLSE_1d: reference/cnlse_1d.md
+      - GPE: reference/gpe.md
+      - DDGPE: reference/ddgpe.md
+      - Callbacks: reference/callbacks.md
+      - Backends: reference/backends.md
+      - Kernels: reference/kernels.md
+  - Contributing: contributing.md
 
 markdown_extensions:
   - pymdownx.arithmatex:
       generic: true
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
 
 extra_javascript:
   - javascripts/mathjax.js

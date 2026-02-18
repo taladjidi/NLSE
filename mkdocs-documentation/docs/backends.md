@@ -1,0 +1,107 @@
+# Backends
+
+NLSE supports multiple compute backends to run on different hardware. Each backend provides array operations, FFT planning and execution, and numerical kernels.
+
+## Available Backends
+
+| Backend | Name | Library | Hardware | FFT |
+|---------|------|---------|----------|-----|
+| CPU | `"CPU"` | NumPy + Numba | Any CPU | PyFFTW |
+| CUPY | `"CUPY"` | CuPy | NVIDIA GPU (CUDA) | cuFFT |
+| OpenCL | `"CL"` | PyOpenCL | Any GPU/CPU with OpenCL | VkFFT |
+| MLX | `"MLX"` | Apple MLX | Apple Silicon | MLX FFT |
+
+## Backend Selection
+
+### Auto-detection
+
+By default, NLSE picks the best available backend at import time:
+
+1. **CUPY** if CuPy is installed and a CUDA GPU is available
+2. **MLX** if MLX is installed (Apple Silicon only)
+3. **CPU** (always available)
+
+```python
+from NLSE import NLSE
+
+# Uses the auto-detected default backend
+simu = NLSE(alpha=20, power=1.0, window=8e-3, n2=-1.6e-9, V=None, L=10e-3)
+print(simu.backend)  # e.g., "CUPY"
+```
+
+### Explicit selection
+
+Specify a backend at creation:
+
+```python
+simu = NLSE(..., backend="CPU")
+simu = NLSE(..., backend="CUPY")
+simu = NLSE(..., backend="CL")
+simu = NLSE(..., backend="MLX")
+```
+
+### Auto-benchmarking
+
+Use `backend="auto"` to benchmark all available backends and select the fastest for your grid size:
+
+```python
+simu = NLSE(..., backend="auto")
+```
+
+Benchmark results are cached to disk (in `NLSE/.cache/fft_benchmark.json`) so subsequent runs reuse them.
+
+### Switching at runtime
+
+You can change the backend after creating a solver:
+
+```python
+simu.backend = "CL"
+```
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `NLSE_BACKEND` | Force a specific backend (e.g., `"CPU"`, `"CUPY"`, `"CL"`, `"MLX"`) |
+| `NLSE_QUIET` | Suppress backend auto-selection messages when set |
+| `NLSE_FORCE_BENCHMARK` | Re-run FFT benchmarks even if cache exists |
+
+Example:
+
+```bash
+export NLSE_BACKEND=CPU
+export NLSE_QUIET=1
+python my_simulation.py
+```
+
+## Backend Capabilities
+
+| Feature | CPU | CUPY | CL | MLX |
+|---------|-----|------|----|-----|
+| Single precision | Yes | Yes | Yes | Yes |
+| Double precision | Yes | Yes | Device-dependent | No |
+| Non-local interactions | Yes | Yes | No | No |
+| Broadcasting | No | Yes | No | No |
+| Convolution | Yes | Yes | No | No |
+
+## Performance Tips
+
+### Grid sizes
+
+Use grid sizes that are powers of 2 (e.g., 256, 512, 1024, 2048) or have low prime factors. FFT performance drops significantly with large prime factors.
+
+### PyFFTW wisdom caching
+
+The CPU backend uses `FFTW_MEASURE` planning. The first run with a new grid size is slower while FFTW measures optimal FFT plans. Plans are cached in `fft.wisdom` for reuse.
+
+### CUPY
+
+CuPy achieves best performance through kernel fusion (`cupy.fuse`) which reduces memory bandwidth overhead. Broadcasting enables running many simulations in parallel on a single GPU.
+
+### OpenCL
+
+The OpenCL backend uses native C kernels (in `NLSE/kernels/cl_source/kernels.cl`) for maximum performance. These replace PyOpenCL array expressions to avoid implicit kernel launches and temporary buffer allocations. Build options include `-cl-fast-relaxed-math` and `-cl-mad-enable`.
+
+### MLX
+
+The MLX backend leverages Apple Silicon's unified memory architecture. It uses lazy evaluation -- computations are deferred and batched for efficiency.

@@ -43,9 +43,7 @@ dev = [
   "pytest-cov",
   "pytest-benchmark",
   "ruff",
-  "black",
   "mypy",
-  "cupy",  # Include GPU support for dev
 ]
 gpu = ["cupy"]
 

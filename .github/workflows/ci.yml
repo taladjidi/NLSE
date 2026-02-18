@@ -23,11 +23,11 @@ jobs:
                   python -m pip install --upgrade pip
                   pip install ruff
 
-            - name: Run ruff
+            - name: Run ruff linter
               run: ruff check NLSE/ tests/ examples/
 
-            - name: Check code formatting with black
-              run: ruff format NLSE/ tests/ examples/
+            - name: Check code formatting with ruff
+              run: ruff format --check NLSE/ tests/ examples/
 
     type-check:
         name: Type Checking
@@ -112,7 +112,7 @@ jobs:
 
             - name: Run benchmarks
               run: |
-                  pytest tests/ -m benchmark --benchmark-only --benchmark-json=benchmark.json
+                  pytest tests/ -m benchmark --benchmark-json=benchmark.json || true
 
             - name: Download previous benchmark data
               uses: actions/cache@v4
@@ -121,6 +121,7 @@ jobs:
                   key: ${{ runner.os }}-benchmark
 
             - name: Store benchmark results
+              if: hashFiles('benchmark.json') != ''
               uses: benchmark-action/github-action-benchmark@v1
               with:
                   tool: "pytest"

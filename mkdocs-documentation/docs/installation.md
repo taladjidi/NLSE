@@ -1,59 +1,94 @@
-## Installation
+# Installation
 
-First clone the repository:
+## Basic Install
+
+Clone the repository and install with pip:
 
 ```bash
 git clone https://github.com/Quantum-Optics-LKB/NLSE.git
 cd NLSE
+pip install .
 ```
 
-Then pip install the package:
+For development (includes pytest, ruff, mypy, etc.):
 
 ```bash
-pip install .
+pip install -e ".[dev]"
 ```
 
 ## Requirements
 
-### Supported platforms
+- **Python**: 3.10 or later
+- **Platforms**: Linux, macOS, Windows
 
-This code has been tested on the three main platforms: Linux, MacOs and Windows.
+Core dependencies (`numpy`, `scipy`, `matplotlib`, `numba`, `pyfftw`, `tqdm`) are installed automatically.
 
-### GPU computing
+## GPU Backends
 
-For optimal speed, this code uses your GPU (graphics card).
-For this, you need specific libraries.
-For Nvidia cards, you need a [CUDA](https://developer.nvidia.com/cuda-toolkit) install.
-For AMD cards, you need a [ROCm](https://rocmdocs.amd.com/en/latest/) install.
-Of course, you need to update your graphics driver to take full advantage of these.
-In any case we use [CuPy](https://cupy.dev) for the Python interface to these libraries.
+By default, NLSE uses the CPU backend (NumPy + PyFFTW). For GPU acceleration, install one or more of the following:
 
-**The `cupy` dependency is not included in [`setup.py`](https://github.com/Quantum-Optics-LKB/NLSE/tree/main/setup.py) in order to not break installation on platforms that do not support it !**
+### CUPY (NVIDIA CUDA)
 
-### PyFFTW
+For NVIDIA GPUs with CUDA support:
 
-If the code does not find Cupy, it will fall back to a CPU based implementation that uses the CPU : [PyFFTW](https://pyfftw.readthedocs.io/en/latest/).
-To make the best out of your computer, this library is multithreaded.
-By default it will use all available threads.
-If this is not what you want, you can disable this by setting the variable `pyfftw.config.NUM_THREADS` to a number of your choosing.
+```bash
+pip install cupy-cuda12x   # for CUDA 12.x
+# or
+pip install cupy-cuda11x   # for CUDA 11.x
+```
 
-**WARNING** : The default flag passed to `FFTW` for planning is `FFTW_PATIENT` which means that the first run of the code can take a long time.
-This information is cached so subsequent runs just have to load the plans, removing this computation time.
+See the [CuPy installation guide](https://docs.cupy.dev/en/stable/install.html) for details.
 
-Other than this, the code relies on these libraries :
+### OpenCL (Cross-platform GPU)
 
-- `numba` : for best CPU performance on Intel CPU's, with `icc_rt`
-- `pickle`
-- `numpy`
-- `scipy`
-- `matplotlib`
+For AMD, Intel, or NVIDIA GPUs via OpenCL:
 
-## Tests
+```bash
+pip install pyopencl
+```
 
-Tests are included to check functionalities and benchmark performance.
-You can run all tests by executing `pytest` at the root of the package (warning: this might take some time !).
-It will test both CPU and GPU backends.
+You also need an OpenCL runtime installed for your GPU. On macOS, OpenCL is available by default.
 
-The benchmarks can be run using [`tests/benchmarks.py`](https://github.com/Quantum-Optics-LKB/NLSE/tree/main/tests/benchmarks.py) and compare a "naive" numpy implementation of the main solver loop to our solver.
-On a Nvidia RTX4090 GPU and Ryzen 7950X CPU, we test our solver to the following results:
-![benchmarks](https://github.com/Quantum-Optics-LKB/NLSE/tree/main/img/benchmarks.png)
+### MLX (Apple Silicon)
+
+For Apple Silicon Macs (M1/M2/M3/M4):
+
+```bash
+pip install mlx
+```
+
+MLX provides native GPU acceleration on Apple hardware.
+
+## Backend Selection
+
+NLSE auto-detects the best available backend. The priority order is:
+
+1. **CUPY** (if CuPy is installed and a CUDA GPU is available)
+2. **MLX** (if MLX is installed on Apple Silicon)
+3. **CPU** (always available)
+
+You can override this with the `NLSE_BACKEND` environment variable:
+
+```bash
+export NLSE_BACKEND=CPU   # force CPU backend
+```
+
+See the [Backends](backends.md) page for more details.
+
+## PyFFTW Notes
+
+The CPU backend uses [PyFFTW](https://pyfftw.readthedocs.io/en/latest/) for Fast Fourier Transforms. FFT planning uses the `FFTW_MEASURE` flag, which means the first run may be slower while FFTW measures optimal plans. These plans are cached (in `fft.wisdom`) so subsequent runs are faster.
+
+PyFFTW uses all available CPU threads by default. To limit this:
+
+```python
+import pyfftw
+pyfftw.config.NUM_THREADS = 4  # use 4 threads
+```
+
+## Running Tests
+
+```bash
+pytest tests/               # run all tests
+pytest tests/ -v --tb=short  # verbose with short tracebacks
+```
