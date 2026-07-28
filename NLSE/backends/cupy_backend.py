@@ -47,7 +47,15 @@ class _CuFFTPlan:
 
 
 class CUPYBackend(Backend):
-    """CUPY backend using CuPy and cuFFT."""
+    """CUPY backend using CuPy and cuFFT.
+
+    Deliberately exposes no fused split step: execute_loop captures the
+    whole propagation step into a CUDA graph, which removes the launch
+    overhead that fusion exists to amortize on the other GPU backends.
+    """
+
+    has_linear_step = True
+    supports_unnormalized_ifft = True
 
     @property
     def name(self) -> str:

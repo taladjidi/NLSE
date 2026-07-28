@@ -7,7 +7,59 @@ import numpy as np
 
 
 class Backend(ABC):
-    """Abstract base class for compute backends."""
+    """Abstract base class for compute backends.
+
+    Besides the array/FFT interface, a backend declares which optional
+    kernel entry points its ``kernels`` object provides. The solvers branch
+    on these flags to pick a fused fast path. Declaring them here keeps the
+    solver/kernel contract in one place: previously the solvers probed for
+    the methods with ``hasattr``, so the contract existed only implicitly
+    and differed silently between backends.
+
+    Every flag defaults to False, meaning "take the generic path". A
+    backend that sets a flag to True must provide the matching method on
+    its ``kernels`` object with the signature documented below.
+    """
+
+    # kernels.linear_step(A, propagator, plan, unnorm_ifft=False)
+    # Fused FFT -> propagator multiply -> IFFT.
+    has_linear_step = False
+
+    # The inverse FFT can skip its 1/N normalization, so the factor can be
+    # folded into the propagator once instead of costing a pass per step.
+    # Requires kernels.linear_step to honour unnorm_ifft.
+    supports_unnormalized_ifft = False
+
+    # kernels.split_step_fused(
+    #     A, propagator, V_scaled, dz, alpha, g, Isat, precision, plan,
+    #     unnorm_ifft=False)
+    # A whole single-component split step without returning to Python.
+    has_fused_split_step = False
+
+    # kernels.rk4_rhs_fused(
+    #     A_in, k, V_scaled, propagator, plan, alpha, g, Isat,
+    #     unnorm_ifft=False)
+    has_fused_rk4_rhs = False
+
+    # kernels.split_step_rk4_fused(
+    #     A, propagator, V_scaled, dz, alpha, g, Isat, plan)
+    # A whole RK4 step (all four stages) in one call.
+    has_fused_rk4_step = False
+
+    # kernels.rk4_set_and_axpy / kernels.rk4_acc_and_axpy
+    # Combine the accumulate and axpy of an RK4 stage into one launch.
+    has_fused_rk4_stage_update = False
+
+    # kernels.split_step_coupled_fused(
+    #     A, propagator, V1_scaled, V2_scaled, dz, alpha1, alpha2,
+    #     g11, g12, g22, Isat1, Isat2, precision, plan, omega=None,
+    #     unnorm_ifft=False)
+    has_fused_coupled_split_step = False
+
+    # kernels.rk4_rhs_coupled_fused(
+    #     A_in, k, V1_scaled, V2_scaled, propagator, plan, alpha1, alpha2,
+    #     g11, g12, g22, Isat1, Isat2, unnorm_ifft=False)
+    has_fused_coupled_rk4_rhs = False
 
     @property
     @abstractmethod

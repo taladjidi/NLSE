@@ -1283,7 +1283,6 @@ class OpenCLKernels:
         propagator: cla.Array,
         V1: cla.Array | None,
         V2: cla.Array | None,
-        N_sq: int,
         dz: float,
         alpha1: float,
         alpha2: float,
@@ -1309,8 +1308,6 @@ class OpenCLKernels:
             Pre-scaled potential for component 1.
         V2 : cla.Array or None
             Pre-scaled potential for component 2.
-        N_sq : int
-            Number of elements per component.
         dz : float
             Nonlinear step size (full for single, half for double).
         alpha1 : float
@@ -1342,6 +1339,8 @@ class OpenCLKernels:
             The propagated field A.
         """
         kerns = self._get_kernels(A.dtype)
+        # Interleaved (2, N_sq) layout: one thread per component element.
+        N_sq = int(A.size) // 2
         gs = (N_sq,)
         ls = self._local_size(N_sq)
         N_sq_i = np.int32(N_sq)
@@ -1429,7 +1428,6 @@ class OpenCLKernels:
         V2: cla.Array | None,
         propagator: cla.Array,
         plan,
-        N_sq: int,
         alpha1: float,
         alpha2: float,
         g11: float,
@@ -1455,8 +1453,6 @@ class OpenCLKernels:
             Pre-computed propagator.
         plan : VkFFT plan
             Pre-built FFT plan (must support fft_oop).
-        N_sq : int
-            Number of elements per component.
         alpha1 : float
             Half-loss, component 1.
         alpha2 : float
@@ -1480,6 +1476,8 @@ class OpenCLKernels:
             The modified buffer k.
         """
         kerns = self._get_kernels(A_in.dtype)
+        # Interleaved (2, N_sq) layout: one thread per component element.
+        N_sq = int(A_in.size) // 2
         gs_full = (int(A_in.size),)
         ls_full = self._local_size(A_in.size)
         gs = (N_sq,)

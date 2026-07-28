@@ -456,15 +456,13 @@ def _make_split_step(precision, has_V, axes):
 
     elif precision == "single" and has_V:
 
-        def _pure(A, propagator, V, dz, alpha, g, k_half, Isat):
+        def _pure(A, propagator, V_scaled, dz, alpha, g, Isat):
             A = mx.fft.fftn(A, axes=axes)
             A = A * propagator
             A = mx.fft.ifftn(A, axes=axes)
             A_sq = (A * mx.conj(A)).real
             sat = 1 / (1 + A_sq / Isat)
-            return A * mx.exp(
-                dz * (1j * g * A_sq * sat - alpha * sat + 1j * k_half * V)
-            )
+            return A * mx.exp(dz * (1j * g * A_sq * sat - alpha * sat + 1j * V_scaled))
 
     elif precision == "double" and not has_V:
 
@@ -481,11 +479,11 @@ def _make_split_step(precision, has_V, axes):
 
     else:  # double, has_V
 
-        def _pure(A, propagator, V, dz_half, alpha, g, k_half, Isat):
+        def _pure(A, propagator, V_scaled, dz_half, alpha, g, Isat):
             A_sq = (A * mx.conj(A)).real
             sat = 1 / (1 + A_sq / Isat)
             A = A * mx.exp(
-                dz_half * (1j * g * A_sq * sat - alpha * sat + 1j * k_half * V)
+                dz_half * (1j * g * A_sq * sat - alpha * sat + 1j * V_scaled)
             )
             A = mx.fft.fftn(A, axes=axes)
             A = A * propagator
@@ -493,7 +491,7 @@ def _make_split_step(precision, has_V, axes):
             A_sq = (A * mx.conj(A)).real
             sat = 1 / (1 + A_sq / Isat)
             return A * mx.exp(
-                dz_half * (1j * g * A_sq * sat - alpha * sat + 1j * k_half * V)
+                dz_half * (1j * g * A_sq * sat - alpha * sat + 1j * V_scaled)
             )
 
     return mx.compile(_pure)
@@ -502,17 +500,17 @@ def _make_split_step(precision, has_V, axes):
 _SPLIT_STEP_CACHE: dict[tuple, object] = {}
 
 
-def split_step(
+def split_step_fused(
     A: mx.array,
     propagator: mx.array,
-    V: mx.array | None,
+    V_scaled: mx.array | None,
     dz: float,
     alpha: float,
     g: float,
-    k_half: float,
     Isat: float,
     precision: str,
-    axes: tuple,
+    plan: tuple,
+    unnorm_ifft: bool = False,
 ) -> mx.array:
     """Execute fused split step for MLX (nl_length == 0 only).
 
@@ -522,41 +520,42 @@ def split_step(
         The field to propagate.
     propagator : mx.array
         The propagator matrix.
-    V : mx.array or None
-        Potential field (unscaled).
+    V_scaled : mx.array or None
+        Pre-scaled potential (V * k/2), or None.
     dz : float
         Propagation step (full for single, half for double precision).
     alpha : float
         Loss coefficient (half of total).
     g : float
         Nonlinear interaction strength.
-    k_half : float
-        Half the wavenumber (k/2) for V scaling.
     Isat : float
         Saturation intensity (converted units).
     precision : str
         "single" or "double" split step precision.
-    axes : tuple
-        FFT axes.
+    plan : tuple
+        FFT axes (MLX has no plan objects).
+    unnorm_ifft : bool
+        Accepted for signature compatibility with the other fused
+        backends and ignored: MLX always normalizes its inverse FFT.
 
     Returns
     -------
     mx.array
         The propagated field.
     """
-    key = (precision, V is not None, axes)
+    axes = plan
+    key = (precision, V_scaled is not None, axes)
     if key not in _SPLIT_STEP_CACHE:
-        _SPLIT_STEP_CACHE[key] = _make_split_step(precision, V is not None, axes)
+        _SPLIT_STEP_CACHE[key] = _make_split_step(precision, V_scaled is not None, axes)
     fn = _SPLIT_STEP_CACHE[key]
-    if V is not None:
+    if V_scaled is not None:
         return fn(
             A,
             propagator,
-            V,
+            V_scaled,
             _to_mx(dz),
             _to_mx(alpha),
             _to_mx(g),
-            _to_mx(k_half),
             _to_mx(Isat),
         )
     return fn(A, propagator, _to_mx(dz), _to_mx(alpha), _to_mx(g), _to_mx(Isat))
@@ -941,7 +940,7 @@ def _make_split_step_rk4(has_V, axes):
 
     else:
 
-        def _pure(A, propagator, V, dz, alpha, g, k_half, Isat):
+        def _pure(A, propagator, V_scaled, dz, alpha, g, Isat):
             def rhs(A_in):
                 A_prop = mx.fft.fftn(A_in, axes=axes)
                 A_prop = A_prop * propagator
@@ -949,8 +948,7 @@ def _make_split_step_rk4(has_V, axes):
                 A_sq = (A_in * mx.conj(A_in)).real
                 sat = 1 / (1 + A_sq / Isat)
                 return (
-                    A_prop
-                    + (1j * g * A_sq * sat - alpha * sat + 1j * k_half * V) * A_in
+                    A_prop + (1j * g * A_sq * sat - alpha * sat + 1j * V_scaled) * A_in
                 )
 
             k1 = rhs(A)
@@ -965,18 +963,17 @@ def _make_split_step_rk4(has_V, axes):
 _SPLIT_STEP_RK4_CACHE: dict[tuple, object] = {}
 
 
-def split_step_rk4(
+def split_step_rk4_fused(
     A: mx.array,
     propagator: mx.array,
-    V: mx.array | None,
+    V_scaled: mx.array | None,
     dz: float,
     alpha: float,
     g: float,
-    k_half: float,
     Isat: float,
-    axes: tuple,
+    plan: tuple,
 ) -> mx.array:
-    """Execute fused RK4 split step for MLX (nl_length == 0 only).
+    """Execute a whole fused RK4 step for MLX (nl_length == 0 only).
 
     Parameters
     ----------
@@ -984,39 +981,37 @@ def split_step_rk4(
         The field to propagate.
     propagator : mx.array
         The RK4 propagator (dispersion operator, not exponentiated).
-    V : mx.array or None
-        Potential field (unscaled).
+    V_scaled : mx.array or None
+        Pre-scaled potential (V * k/2), or None.
     dz : float
         Propagation step.
     alpha : float
         Loss coefficient (half of total).
     g : float
         Nonlinear interaction strength.
-    k_half : float
-        Half the wavenumber (k/2) for V scaling.
     Isat : float
         Saturation intensity (converted units).
-    axes : tuple
-        FFT axes.
+    plan : tuple
+        FFT axes (MLX has no plan objects).
 
     Returns
     -------
     mx.array
         The propagated field.
     """
-    key = (V is not None, axes)
+    axes = plan
+    key = (V_scaled is not None, axes)
     if key not in _SPLIT_STEP_RK4_CACHE:
-        _SPLIT_STEP_RK4_CACHE[key] = _make_split_step_rk4(V is not None, axes)
+        _SPLIT_STEP_RK4_CACHE[key] = _make_split_step_rk4(V_scaled is not None, axes)
     fn = _SPLIT_STEP_RK4_CACHE[key]
-    if V is not None:
+    if V_scaled is not None:
         return fn(
             A,
             propagator,
-            V,
+            V_scaled,
             _to_mx(dz),
             _to_mx(alpha),
             _to_mx(g),
-            _to_mx(k_half),
             _to_mx(Isat),
         )
     return fn(A, propagator, _to_mx(dz), _to_mx(alpha), _to_mx(g), _to_mx(Isat))
@@ -1076,15 +1071,14 @@ def _make_split_step_coupled(precision, has_V, has_omega, axes):
         def _pure(
             A,
             propagator,
-            V,
+            V1_scaled,
+            V2_scaled,
             dz,
             alpha1,
             alpha2,
             g11,
             g12,
             g22,
-            k_half1,
-            k_half2,
             Isat1,
             Isat2,
         ):
@@ -1098,11 +1092,11 @@ def _make_split_step_coupled(precision, has_V, has_omega, axes):
             sat = 1 / (1 + sq1 / Isat1 + sq2 / Isat2)
             A1 = A1 * mx.exp(
                 dz
-                * (1j * (g11 * sq1 + g12 * sq2) * sat - alpha1 * sat + 1j * k_half1 * V)
+                * (1j * (g11 * sq1 + g12 * sq2) * sat - alpha1 * sat + 1j * V1_scaled)
             )
             A2 = A2 * mx.exp(
                 dz
-                * (1j * (g22 * sq2 + g12 * sq1) * sat - alpha2 * sat + 1j * k_half2 * V)
+                * (1j * (g22 * sq2 + g12 * sq1) * sat - alpha2 * sat + 1j * V2_scaled)
             )
             return mx.stack([A1, A2])
 
@@ -1111,15 +1105,14 @@ def _make_split_step_coupled(precision, has_V, has_omega, axes):
         def _pure(
             A,
             propagator,
-            V,
+            V1_scaled,
+            V2_scaled,
             dz,
             alpha1,
             alpha2,
             g11,
             g12,
             g22,
-            k_half1,
-            k_half2,
             Isat1,
             Isat2,
             cos_val,
@@ -1135,11 +1128,11 @@ def _make_split_step_coupled(precision, has_V, has_omega, axes):
             sat = 1 / (1 + sq1 / Isat1 + sq2 / Isat2)
             A1 = A1 * mx.exp(
                 dz
-                * (1j * (g11 * sq1 + g12 * sq2) * sat - alpha1 * sat + 1j * k_half1 * V)
+                * (1j * (g11 * sq1 + g12 * sq2) * sat - alpha1 * sat + 1j * V1_scaled)
             )
             A2 = A2 * mx.exp(
                 dz
-                * (1j * (g22 * sq2 + g12 * sq1) * sat - alpha2 * sat + 1j * k_half2 * V)
+                * (1j * (g22 * sq2 + g12 * sq1) * sat - alpha2 * sat + 1j * V2_scaled)
             )
             new_A1 = cos_val * A1 - 1j * sin_val * A2
             new_A2 = cos_val * A2 - 1j * sin_val * A1
@@ -1181,15 +1174,14 @@ def _make_split_step_coupled(precision, has_V, has_omega, axes):
         def _pure(
             A,
             propagator,
-            V,
+            V1_scaled,
+            V2_scaled,
             dz_half,
             alpha1,
             alpha2,
             g11,
             g12,
             g22,
-            k_half1,
-            k_half2,
             Isat1,
             Isat2,
         ):
@@ -1200,11 +1192,11 @@ def _make_split_step_coupled(precision, has_V, has_omega, axes):
             sat = 1 / (1 + sq1 / Isat1 + sq2 / Isat2)
             A1 = A1 * mx.exp(
                 dz_half
-                * (1j * (g11 * sq1 + g12 * sq2) * sat - alpha1 * sat + 1j * k_half1 * V)
+                * (1j * (g11 * sq1 + g12 * sq2) * sat - alpha1 * sat + 1j * V1_scaled)
             )
             A2 = A2 * mx.exp(
                 dz_half
-                * (1j * (g22 * sq2 + g12 * sq1) * sat - alpha2 * sat + 1j * k_half2 * V)
+                * (1j * (g22 * sq2 + g12 * sq1) * sat - alpha2 * sat + 1j * V2_scaled)
             )
             A = mx.stack([A1, A2])
             A = mx.fft.fftn(A, axes=axes)
@@ -1217,11 +1209,11 @@ def _make_split_step_coupled(precision, has_V, has_omega, axes):
             sat = 1 / (1 + sq1 / Isat1 + sq2 / Isat2)
             A1 = A1 * mx.exp(
                 dz_half
-                * (1j * (g11 * sq1 + g12 * sq2) * sat - alpha1 * sat + 1j * k_half1 * V)
+                * (1j * (g11 * sq1 + g12 * sq2) * sat - alpha1 * sat + 1j * V1_scaled)
             )
             A2 = A2 * mx.exp(
                 dz_half
-                * (1j * (g22 * sq2 + g12 * sq1) * sat - alpha2 * sat + 1j * k_half2 * V)
+                * (1j * (g22 * sq2 + g12 * sq1) * sat - alpha2 * sat + 1j * V2_scaled)
             )
             return mx.stack([A1, A2])
 
@@ -1231,23 +1223,23 @@ def _make_split_step_coupled(precision, has_V, has_omega, axes):
 _SPLIT_STEP_COUPLED_CACHE: dict[tuple, object] = {}
 
 
-def split_step_coupled(
+def split_step_coupled_fused(
     A: mx.array,
     propagator: mx.array,
-    V: mx.array | None,
+    V1_scaled: mx.array | None,
+    V2_scaled: mx.array | None,
     dz: float,
     alpha1: float,
     alpha2: float,
     g11: float,
     g12: float,
     g22: float,
-    k_half1: float,
-    k_half2: float,
     Isat1: float,
     Isat2: float,
     precision: str,
-    axes: tuple,
+    plan: tuple,
     omega: float | None = None,
+    unnorm_ifft: bool = False,
 ) -> mx.array:
     """Execute fused coupled split step for MLX (nl_length == 0 only).
 
@@ -1257,8 +1249,10 @@ def split_step_coupled(
         The coupled field (2, ...) to propagate.
     propagator : mx.array
         The propagator matrix.
-    V : mx.array or None
-        Potential field (unscaled).
+    V1_scaled : mx.array or None
+        Pre-scaled potential for component 1 (V * k/2), or None.
+    V2_scaled : mx.array or None
+        Pre-scaled potential for component 2 (V * k2/2), or None.
     dz : float
         Step size (full for single, half for double).
     alpha1 : float
@@ -1271,31 +1265,32 @@ def split_step_coupled(
         Cross-component interaction.
     g22 : float
         Intra-component 2 interaction.
-    k_half1 : float
-        k/2 for component 1 V scaling.
-    k_half2 : float
-        k2/2 for component 2 V scaling.
     Isat1 : float
         Saturation, component 1.
     Isat2 : float
         Saturation, component 2.
     precision : str
         "single" or "double".
-    axes : tuple
-        FFT axes.
+    plan : tuple
+        FFT axes (MLX has no plan objects).
     omega : float or None
         Rabi coupling (half). None to skip.
+    unnorm_ifft : bool
+        Accepted for signature compatibility with the other fused
+        backends and ignored: MLX always normalizes its inverse FFT.
 
     Returns
     -------
     mx.array
         The propagated field.
     """
+    axes = plan
+    has_V = V1_scaled is not None
     has_omega = omega is not None and precision == "single"
-    key = (precision, V is not None, has_omega, axes)
+    key = (precision, has_V, has_omega, axes)
     if key not in _SPLIT_STEP_COUPLED_CACHE:
         _SPLIT_STEP_COUPLED_CACHE[key] = _make_split_step_coupled(
-            precision, V is not None, has_omega, axes
+            precision, has_V, has_omega, axes
         )
     fn = _SPLIT_STEP_COUPLED_CACHE[key]
     dz_mx = _to_mx(dz)
@@ -1307,39 +1302,37 @@ def split_step_coupled(
     Isat1_mx = _to_mx(Isat1)
     Isat2_mx = _to_mx(Isat2)
 
-    if V is not None and has_omega:
+    if has_V and has_omega:
         cos_val = _to_mx(float(mx.cos(_to_mx(omega * dz))))
         sin_val = _to_mx(float(mx.sin(_to_mx(omega * dz))))
         return fn(
             A,
             propagator,
-            V,
+            V1_scaled,
+            V2_scaled,
             dz_mx,
             a1_mx,
             a2_mx,
             g11_mx,
             g12_mx,
             g22_mx,
-            _to_mx(k_half1),
-            _to_mx(k_half2),
             Isat1_mx,
             Isat2_mx,
             cos_val,
             sin_val,
         )
-    if V is not None:
+    if has_V:
         return fn(
             A,
             propagator,
-            V,
+            V1_scaled,
+            V2_scaled,
             dz_mx,
             a1_mx,
             a2_mx,
             g11_mx,
             g12_mx,
             g22_mx,
-            _to_mx(k_half1),
-            _to_mx(k_half2),
             Isat1_mx,
             Isat2_mx,
         )
@@ -1440,11 +1433,13 @@ def _make_rk4_rhs_coupled(has_V, axes):
 _RK4_RHS_COUPLED_CACHE: dict[tuple, object] = {}
 
 
-def rk4_rhs_coupled(
+def rk4_rhs_coupled_fused(
     A_in: mx.array,
-    propagator: mx.array,
+    k: mx.array,
     V1: mx.array | None,
     V2: mx.array | None,
+    propagator: mx.array,
+    plan: tuple,
     alpha1: float,
     alpha2: float,
     g11: float,
@@ -1452,7 +1447,7 @@ def rk4_rhs_coupled(
     g22: float,
     Isat1: float,
     Isat2: float,
-    axes: tuple,
+    unnorm_ifft: bool = False,
 ) -> mx.array:
     """Execute fused coupled RK4 RHS for MLX (nl_length == 0 only).
 
@@ -1460,12 +1455,18 @@ def rk4_rhs_coupled(
     ----------
     A_in : mx.array
         Input field (2, ...), not modified.
-    propagator : mx.array
-        RK4 propagator (dispersion operator).
+    k : mx.array
+        Output buffer. Accepted for signature compatibility with the
+        other fused backends and unused: MLX is functional, so the
+        result is returned as a new array.
     V1 : mx.array or None
         Pre-scaled potential, component 1.
     V2 : mx.array or None
         Pre-scaled potential, component 2.
+    propagator : mx.array
+        RK4 propagator (dispersion operator).
+    plan : tuple
+        FFT axes (MLX has no plan objects).
     alpha1 : float
         Half-loss, component 1.
     alpha2 : float
@@ -1480,14 +1481,16 @@ def rk4_rhs_coupled(
         Saturation, component 1.
     Isat2 : float
         Saturation, component 2.
-    axes : tuple
-        FFT axes.
+    unnorm_ifft : bool
+        Accepted for signature compatibility and ignored: MLX always
+        normalizes its inverse FFT.
 
     Returns
     -------
     mx.array
         The RHS result.
     """
+    axes = plan
     has_V = V1 is not None
     key = (has_V, axes)
     if key not in _RK4_RHS_COUPLED_CACHE:

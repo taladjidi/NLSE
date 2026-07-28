@@ -52,7 +52,19 @@ class _VkFFTPlan:
 
 
 class OpenCLBackend(Backend):
-    """OpenCL backend using PyOpenCL and VkFFT."""
+    """OpenCL backend using PyOpenCL and VkFFT.
+
+    Fuses aggressively: OpenCL has no equivalent of CUDA graph capture, so
+    each avoided dispatch is a real saving.
+    """
+
+    has_linear_step = True
+    supports_unnormalized_ifft = True
+    has_fused_split_step = True
+    has_fused_rk4_rhs = True
+    has_fused_rk4_stage_update = True
+    has_fused_coupled_split_step = True
+    has_fused_coupled_rk4_rhs = True
 
     def __init__(self):
         self._context = cl.create_some_context(interactive=False)

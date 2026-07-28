@@ -315,9 +315,8 @@ class CNLSE(NLSE):
             V_scaled = V * k_half
             V2_scaled = V * k2_half
 
-        # CL fused fast path: zero component copies
-        if hasattr(kernels, "rk4_rhs_coupled_fused") and self.nl_length == 0:
-            N_sq = int(A_in.size) // 2
+        # Fused fast path (CL, MLX): zero component copies
+        if self._backend.has_fused_coupled_rk4_rhs and self.nl_length == 0:
             prop_fft = getattr(self, "_propagator_fft", None)
             return kernels.rk4_rhs_coupled_fused(
                 A_in,
@@ -326,7 +325,6 @@ class CNLSE(NLSE):
                 V2_scaled,
                 prop_fft if prop_fft is not None else propagator,
                 plans[0],
-                N_sq,
                 alpha_half,
                 alpha2_half,
                 g11,
@@ -335,23 +333,6 @@ class CNLSE(NLSE):
                 Isat1,
                 Isat2,
                 unnorm_ifft=(prop_fft is not None),
-            )
-
-        # MLX fused fast path: zero component copies
-        if hasattr(kernels, "rk4_rhs_coupled") and self.nl_length == 0:
-            return kernels.rk4_rhs_coupled(
-                A_in,
-                propagator,
-                V_scaled,
-                V2_scaled,
-                alpha_half,
-                alpha2_half,
-                g11,
-                g12,
-                g22,
-                Isat1,
-                Isat2,
-                plans[0],
             )
 
         if self._backend.name == "MLX":
@@ -572,9 +553,8 @@ class CNLSE(NLSE):
 
         kernels = self._backend.kernels
 
-        # CL fused fast path: zero component copies
-        if hasattr(kernels, "split_step_coupled_fused") and self.nl_length == 0:
-            N_sq = int(A.size) // 2
+        # Fused fast path (CL, MLX): zero component copies
+        if self._backend.has_fused_coupled_split_step and self.nl_length == 0:
             dz = self.delta_z / 2 if precision == "double" else self.delta_z
             prop_fft = getattr(self, "_propagator_fft", None)
             omega_half = (
@@ -587,7 +567,6 @@ class CNLSE(NLSE):
                 prop_fft if prop_fft is not None else propagator,
                 V_scaled,
                 V2_scaled,
-                N_sq,
                 dz,
                 alpha_half,
                 alpha2_half,
@@ -600,35 +579,6 @@ class CNLSE(NLSE):
                 plans[0],
                 omega=omega_half,
                 unnorm_ifft=(prop_fft is not None),
-            )
-
-        # MLX fused fast path: zero component copies
-        if hasattr(kernels, "split_step_coupled") and self.nl_length == 0:
-            dz = self.delta_z / 2 if precision == "double" else self.delta_z
-            k_half = getattr(self, "_k_half", np.float32(self.k / 2))
-            k2_half = getattr(self, "_k2_half", np.float32(self.k2 / 2))
-            omega_half = (
-                self.omega / 2
-                if (precision == "single" and self.omega is not None)
-                else None
-            )
-            return kernels.split_step_coupled(
-                A,
-                propagator,
-                V,
-                dz,
-                alpha_half,
-                alpha2_half,
-                g11,
-                g12,
-                g22,
-                k_half,
-                k2_half,
-                Isat_conv,
-                Isat_conv2,
-                precision,
-                plans[0],
-                omega=omega_half,
             )
 
         # First half-step (double precision only)

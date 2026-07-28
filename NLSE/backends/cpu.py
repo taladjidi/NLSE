@@ -17,7 +17,12 @@ pyfftw.interfaces.cache.enable()
 
 
 class CPUBackend(Backend):
-    """CPU backend using NumPy and pyFFTW."""
+    """CPU backend using NumPy and pyFFTW.
+
+    Provides no fused entry points: pyFFTW plans are driven from Python and
+    the numba kernels are already single-pass, so there is no launch
+    overhead to amortize.
+    """
 
     @property
     def name(self) -> str:

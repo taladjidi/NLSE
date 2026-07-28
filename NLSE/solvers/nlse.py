@@ -458,7 +458,7 @@ class NLSE:
             The propagated field.
         """
         kernels = self._backend.kernels
-        if hasattr(kernels, "linear_step"):
+        if self._backend.has_linear_step:
             prop_fft = getattr(self, "_propagator_fft", None)
             if prop_fft is not None:
                 return kernels.linear_step(A, prop_fft, plans[0], unnorm_ifft=True)
@@ -511,8 +511,9 @@ class NLSE:
         if V_scaled is None and V is not None:
             V_scaled = V * k_half
 
-        # CL fused fast path (nl_length == 0 only)
-        if hasattr(kernels, "split_step_fused") and self.nl_length == 0:
+        # Fused fast path (CL, MLX). Not eligible with a nonlocal kernel,
+        # which needs the convolution between |A|^2 and the nonlinear step.
+        if self._backend.has_fused_split_step and self.nl_length == 0:
             dz = self.delta_z / 2 if precision == "double" else self.delta_z
             prop_fft = getattr(self, "_propagator_fft", None)
             return kernels.split_step_fused(
@@ -526,22 +527,6 @@ class NLSE:
                 precision,
                 plans[0],
                 unnorm_ifft=(prop_fft is not None),
-            )
-
-        # MLX fused fast path (nl_length == 0 only)
-        if hasattr(kernels, "split_step") and self.nl_length == 0:
-            dz = self.delta_z / 2 if precision == "double" else self.delta_z
-            return kernels.split_step(
-                A,
-                propagator,
-                V,
-                dz,
-                alpha_half,
-                g,
-                k_half,
-                Isat_conv,
-                precision,
-                plans[0],
             )
 
         # First half-step (only for precision == "double")
@@ -675,8 +660,8 @@ class NLSE:
         if V_scaled is None and V is not None:
             V_scaled = V * k_half
 
-        # CL fused fast path: out-of-place FFT eliminates buffer copy
-        if hasattr(kernels, "rk4_rhs_fused") and self.nl_length == 0:
+        # Fused fast path: out-of-place FFT eliminates the buffer copy
+        if self._backend.has_fused_rk4_rhs and self.nl_length == 0:
             prop_fft = getattr(self, "_propagator_fft", None)
             return kernels.rk4_rhs_fused(
                 A_in,
@@ -746,20 +731,22 @@ class NLSE:
         """
         kernels = self._backend.kernels
 
-        # MLX fused fast path (nl_length == 0, single-component only)
-        if hasattr(kernels, "split_step_rk4") and self.nl_length == 0 and A.ndim == 2:
+        # Whole-step fused fast path (MLX), single component only
+        if self._backend.has_fused_rk4_step and self.nl_length == 0 and A.ndim == 2:
             alpha_half = getattr(self, "_alpha_half", self.alpha / 2)
             g = getattr(self, "_g", self.k / 2 * self.n2 * c * epsilon_0)
             k_half = getattr(self, "_k_half", np.float32(self.k / 2))
             Isat_conv = getattr(self, "_Isat_conv", 2 * self.I_sat / (epsilon_0 * c))
-            return kernels.split_step_rk4(
+            V_scaled = getattr(self, "_V_scaled", None)
+            if V_scaled is None and V is not None:
+                V_scaled = V * k_half
+            return kernels.split_step_rk4_fused(
                 A,
                 propagator,
-                V,
+                V_scaled,
                 self.delta_z,
                 alpha_half,
                 g,
-                k_half,
                 Isat_conv,
                 plans[0],
             )
@@ -771,8 +758,7 @@ class NLSE:
         acc = self._rk4_acc
         h = self.delta_z
 
-        # Use fused stage kernels when available (CL backend)
-        has_fused = hasattr(kernels, "rk4_set_and_axpy")
+        has_fused = self._backend.has_fused_rk4_stage_update
 
         # Stage 1: k1 = f(A)
         k = self._RK4_rhs(A, k, V, propagator, plans)
@@ -1021,12 +1007,7 @@ class NLSE:
         Must be called whenever ``self.propagator`` changes, otherwise the
         fused kernels keep using a propagator derived from the previous one.
         """
-        kernels = self._backend.kernels
-        if (
-            hasattr(kernels, "linear_step")
-            and self.propagator is not None
-            and self._backend.name in ("CUPY", "CL")
-        ):
+        if self._backend.supports_unnormalized_ifft and self.propagator is not None:
             N_fft = 1
             for ax in self._last_axes:
                 N_fft *= self.propagator.shape[ax]
