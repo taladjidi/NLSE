@@ -44,7 +44,7 @@ class CPUBackend(Backend):
         """Convert to contiguous array."""
         return np.ascontiguousarray(array)
 
-    def build_fft(
+    def _build_fft(
         self,
         shape: tuple,
         axes: tuple,

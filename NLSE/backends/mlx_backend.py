@@ -67,7 +67,7 @@ class MLXBackend(Backend):
             array = array.astype(np.float32)
         return mx.array(array)
 
-    def build_fft(
+    def _build_fft(
         self,
         shape: tuple,
         axes: tuple,

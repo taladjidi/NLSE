@@ -374,8 +374,7 @@ class NLSE:
         The kinetic term is deliberately absent, and that is the real
         difference from ``_rk4_max_dz``. Split-step applies the linear part
         exactly in Fourier space, so a purely linear problem is solved exactly
-        at any step size (verified to 4e-14) and dispersion cannot limit
-        accuracy on its own. RK4 approximates the whole right-hand side, so
+        at any step size, and dispersion cannot limit accuracy on its own. RK4 approximates the whole right-hand side, so
         for it the kinetic term binds like everything else.
 
         Parameters
