@@ -516,11 +516,7 @@ class TestMethodAndOrder:
 
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_rk4(self, benchmark, backend):
-        """Benchmark the RK4 integrator.
-
-        No potential: RK4's step limit ignores V, so a potential makes this
-        diverge rather than benchmark anything. See _rk4_max_dz.
-        """
+        """Benchmark the RK4 integrator without a potential."""
         skip_if_backend_unavailable(backend)
         simu = _solver(backend, N)
         E_in = _field(simu, N)
@@ -529,6 +525,29 @@ class TestMethodAndOrder:
             lambda: simu.out_field(
                 E_in, z=1e-3, verbose=False, plot=False, method="RK4"
             ),
+        )
+
+    @pytest.mark.parametrize("backend", BACKENDS)
+    def test_rk4_with_a_potential(self, benchmark, backend):
+        """Benchmark RK4 under a potential.
+
+        A potential dominates RK4's stability bound, so the step collapses
+        and this is far slower than the same run without one. That gap is
+        the point: it is what makes split_step the better choice whenever a
+        potential is strong, and it should be visible rather than folklore.
+        """
+        skip_if_backend_unavailable(backend)
+        probe = _solver(backend, N)
+        XX, YY = np.meshgrid(probe.X, probe.Y)
+        V = (1e-6 * np.exp(-(XX**2 + YY**2) / (1e-3) ** 2)).astype(PRECISION_REAL)
+        simu = _solver(backend, N, V=V)
+        E_in = _field(simu, N)
+        _timed(
+            benchmark,
+            lambda: simu.out_field(
+                E_in, z=1e-5, verbose=False, plot=False, method="RK4"
+            ),
+            rounds=5,
         )
 
 

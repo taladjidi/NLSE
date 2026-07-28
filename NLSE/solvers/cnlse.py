@@ -189,14 +189,22 @@ class CNLSE(NLSE):
         )
         return np.array([propagator1, propagator2])
 
-    def _rk4_max_dz(self) -> float:
-        """Compute the maximum stable RK4 step size for both components."""
+    def _rk4_dispersion_rate(self) -> float:
+        """Return the dispersion eigenvalue magnitude of the faster component."""
         K_sq = 0.5 * (self.Kxx**2 + self.Kyy**2)
-        k_min = min(self.k, self.k2)
-        D_max = float(np.max(K_sq / k_min))
-        if D_max == 0:
-            return np.inf
-        return 2.83 / D_max
+        return float(np.max(K_sq / min(self.k, self.k2)))
+
+    def _rk4_potential_rate(self) -> float:
+        """Return the largest potential rate across both components.
+
+        The two components see the potential scaled by their own k, so the
+        step has to satisfy whichever is more restrictive.
+        """
+        rate = super()._rk4_potential_rate()
+        V2_scaled = self._as_host_array(getattr(self, "_V2_scaled", None))
+        if V2_scaled is not None:
+            rate = max(rate, float(np.max(np.abs(V2_scaled))))
+        return rate
 
     def _split_step_max_dz(self, A: np.ndarray) -> float:
         """Compute the maximum split-step dz for coupled components."""

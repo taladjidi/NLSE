@@ -113,15 +113,12 @@ class GPE(NLSE):
             np.complex64
         )
 
-    def _rk4_max_dz(self) -> float:
-        """Compute the maximum stable RK4 step size for GPE.
+    def _rk4_dispersion_rate(self) -> float:
+        """Return the GPE dispersion eigenvalue magnitude.
 
         The GPE dispersion operator is hbar*K^2/(2m), unlike NLSE's K^2/(2k).
         """
-        D_max = float(np.max(0.5 * hbar * (self.Kxx**2 + self.Kyy**2) / self.m))
-        if D_max == 0:
-            return np.inf
-        return 2.83 / D_max
+        return float(np.max(0.5 * hbar * (self.Kxx**2 + self.Kyy**2) / self.m))
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot a field for monitoring.

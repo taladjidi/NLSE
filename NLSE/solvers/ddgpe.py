@@ -266,8 +266,8 @@ class DDGPE(CNLSE):
         ).astype(np.complex64)
         return np.array([prop1, prop2])
 
-    def _rk4_max_dz(self) -> float:
-        """Compute the maximum stable RK4 step size for DDGPE.
+    def _rk4_dispersion_rate(self) -> float:
+        """Return the DDGPE dispersion eigenvalue magnitude.
 
         Use the actual polariton dispersion eigenvalues instead of K^2/(2k).
         """
@@ -281,10 +281,7 @@ class DDGPE(CNLSE):
                 )
             )
         )
-        D_max = max(D_exc, D_cav)
-        if D_max == 0:
-            return np.inf
-        return 2.83 / D_max
+        return max(D_exc, D_cav)
 
     def _prepare_output_array(self, E_in: np.ndarray, normalize: bool) -> np.ndarray:
         """Prepare the output array depending on __BACKEND__.

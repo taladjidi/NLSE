@@ -88,12 +88,9 @@ class NLSE_1d(NLSE):
         """Compute the raw 1D dispersion operator for RK4."""
         return (-1j * 0.5 * self.Kx**2 / self.k).astype(np.complex64)
 
-    def _rk4_max_dz(self) -> float:
-        """Compute the maximum stable RK4 step size for 1D."""
-        D_max = float(np.max(0.5 * self.Kx**2 / self.k))
-        if D_max == 0:
-            return np.inf
-        return 2.83 / D_max
+    def _rk4_dispersion_rate(self) -> float:
+        """Return the 1D dispersion eigenvalue magnitude."""
+        return float(np.max(0.5 * self.Kx**2 / self.k))
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot a field for monitoring.

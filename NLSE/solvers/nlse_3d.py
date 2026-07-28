@@ -144,17 +144,14 @@ class NLSE_3d(NLSE):
         prop_temporal = (-1j * self.D0 / 2 * self.Omega**2).astype(np.complex64)
         return prop_spatial + prop_temporal
 
-    def _rk4_max_dz(self) -> float:
-        """Compute the maximum stable RK4 step size for 3D.
+    def _rk4_dispersion_rate(self) -> float:
+        """Return the 3D dispersion eigenvalue magnitude.
 
         Include both spatial K^2/(2k) and temporal D0/2*Omega^2 dispersion.
         """
         D_spatial = 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k
         D_temporal = abs(self.D0) / 2 * self.Omega**2
-        D_max = float(np.max(D_spatial + D_temporal))
-        if D_max == 0:
-            return np.inf
-        return 2.83 / D_max
+        return float(np.max(D_spatial + D_temporal))
 
     def _prepare_output_array(
         self, E_in: np.ndarray, normalize: bool

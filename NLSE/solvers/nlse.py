@@ -30,6 +30,10 @@ pyfftw.config.NUM_THREADS = multiprocessing.cpu_count()
 pyfftw.config.PLANNER_EFFORT = "FFTW_MEASURE"
 pyfftw.interfaces.cache.enable()
 
+# Explicit RK4 is stable for |lambda * dz| up to ~2*sqrt(2) along the
+# imaginary axis. Every solver's step limit is derived from it.
+RK4_STABILITY_RADIUS = 2.83
+
 
 class NLSE:
     """A class to solve NLSE."""
@@ -228,18 +232,110 @@ class NLSE:
         """Compute the raw dispersion operator for RK4 (no caching)."""
         return (-1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k).astype(np.complex64)
 
-    def _rk4_max_dz(self) -> float:
+    def _rk4_dispersion_rate(self) -> float:
+        """Return the largest eigenvalue magnitude of the dispersion operator.
+
+        Only the linear part: the terms that vary per solver. Subclasses
+        override this alone; the stability limit itself is assembled in
+        ``_rk4_max_dz``, which is the same for all of them.
+
+        Returns
+        -------
+        float
+            ``max K^2 / (2 k)`` over the grid.
+        """
+        return float(np.max(0.5 * (self.Kxx**2 + self.Kyy**2) / self.k))
+
+    def _rk4_potential_rate(self) -> float:
+        """Return the largest eigenvalue magnitude contributed by V.
+
+        Split-step applies V exactly, through the exponential, so V never
+        limits its step. RK4 evaluates the whole right-hand side explicitly,
+        so V enters its stability condition like any other term — and it is
+        usually the largest one by orders of magnitude, because V is scaled
+        by k/2 ~ 4e6.
+
+        The magnitude is used, so an absorbing (complex) potential counts
+        its gain/loss part as well as its phase part.
+
+        Returns
+        -------
+        float
+            ``max |V k / 2|``, or 0 when there is no potential.
+        """
+        V_scaled = self._as_host_array(getattr(self, "_V_scaled", None))
+        if V_scaled is None:
+            return 0.0
+        return float(np.max(np.abs(V_scaled)))
+
+    def _nonlinear_rate(self, A: np.ndarray) -> float:
+        """Return the peak nonlinear rate ``g |A|^2 sat`` over the field.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            Normalized field (possibly on device).
+
+        Returns
+        -------
+        float
+            The largest nonlinear rate, reduced over a batch.
+        """
+        A_np = self._backend.to_numpy(A)
+        I_peak = float(np.max(np.abs(A_np) ** 2))
+        g = self._as_host_array(getattr(self, "_g", None))
+        if g is None:
+            g = self._as_host_array(self.k / 2 * self.n2 * c * epsilon_0)
+        g = np.abs(g)
+        Isat = self._as_host_array(getattr(self, "_Isat_conv", None))
+        if Isat is None:
+            Isat = self._as_host_array(2 * self.I_sat / (epsilon_0 * c))
+        # Batched runs carry one value per simulation. The step has to be
+        # small enough for the fastest of them, so reduce with max.
+        return float(np.max(g * I_peak / (1 + I_peak / Isat)))
+
+    def _rk4_loss_rate(self) -> float:
+        """Return the eigenvalue magnitude contributed by linear loss."""
+        alpha_half = self._as_host_array(getattr(self, "_alpha_half", self.alpha / 2))
+        return float(np.max(np.abs(alpha_half)))
+
+    def _rk4_max_dz(self, A: np.ndarray | None = None) -> float:
         """Compute the maximum stable step size for explicit RK4.
 
-        The RK4 stability region for purely imaginary eigenvalues has
-        radius ~2.83. The largest eigenvalue of the dispersion operator
-        is K_max^2 / (2*k). Returns the maximum dz that keeps the
-        scheme within the stability region.
+        RK4's stability region reaches ~2.83 along the imaginary axis, so the
+        step is bounded by ``2.83 / |lambda|`` for the largest eigenvalue of
+        the whole right-hand side. That is every term RK4 evaluates
+        explicitly, not just dispersion: the potential, the nonlinearity and
+        the loss all belong in it, and their operator norms add.
+
+        This used to count dispersion alone, which is almost never the
+        largest. With a potential it is wrong by orders of magnitude — V is
+        scaled by k/2 — so RK4 ran far outside its stability region and
+        diverged to NaN for any potential at all. The nonlinear term is
+        typically ten times dispersion too, so the old limit was too
+        generous even without one.
+
+        Parameters
+        ----------
+        A : np.ndarray, optional
+            Normalized field. The nonlinear term depends on its intensity,
+            so it is included only when the field is known.
+
+        Returns
+        -------
+        float
+            Largest stable step, or infinity if every rate vanishes.
         """
-        D_max = float(np.max(0.5 * (self.Kxx**2 + self.Kyy**2) / self.k))
-        if D_max == 0:
+        rate = (
+            self._rk4_dispersion_rate()
+            + self._rk4_potential_rate()
+            + self._rk4_loss_rate()
+        )
+        if A is not None:
+            rate += self._nonlinear_rate(A)
+        if rate == 0:
             return np.inf
-        return 2.83 / D_max
+        return RK4_STABILITY_RADIUS / rate
 
     def _split_step_max_dz(self, A: np.ndarray) -> float:
         """Compute the maximum step size for split-step accuracy.
@@ -255,18 +351,7 @@ class NLSE:
         A : np.ndarray
             Normalized field (possibly on device).
         """
-        A_np = self._backend.to_numpy(A)
-        I_peak = float(np.max(np.abs(A_np) ** 2))
-        g = self._as_host_array(getattr(self, "_g", None))
-        if g is None:
-            g = self._as_host_array(self.k / 2 * self.n2 * c * epsilon_0)
-        g = np.abs(g)
-        Isat = self._as_host_array(getattr(self, "_Isat_conv", None))
-        if Isat is None:
-            Isat = self._as_host_array(2 * self.I_sat / (epsilon_0 * c))
-        # Batched runs carry one value per simulation. The step has to be
-        # small enough for the fastest of them, so reduce with max.
-        nl_rate = float(np.max(g * I_peak / (1 + I_peak / Isat)))
+        nl_rate = self._nonlinear_rate(A)
         if nl_rate == 0:
             return np.inf
         return np.pi / nl_rate
@@ -313,15 +398,28 @@ class NLSE:
             Complex dtype of the field, so a rebuilt propagator matches it.
         """
         if method == "RK4":
-            max_dz = self._rk4_max_dz()
+            max_dz = self._rk4_max_dz(A)
             label = "RK4 stability"
+            # Stability is not accuracy. At the edge of the region the scheme
+            # merely stops diverging; a potential is scaled by k/2, so a step
+            # that is stable can still turn a large phase per step into a
+            # large error. Split-step applies V through the exponential and
+            # has no such limit, which is usually the better answer.
+            extra = (
+                " This is a stability bound, not an accuracy one: a smaller "
+                "delta_z may still be needed. split_step applies the "
+                "potential exactly and is not limited this way."
+                if self._rk4_potential_rate() > self._rk4_dispersion_rate()
+                else ""
+            )
         else:
             max_dz = self._split_step_max_dz(A)
             label = "split-step accuracy"
+            extra = ""
         if self.delta_z > max_dz:
             warnings.warn(
                 f"delta_z={self.delta_z:.2e} exceeds {label} limit "
-                f"({max_dz:.2e}). Reducing to {0.9 * max_dz:.2e}.",
+                f"({max_dz:.2e}). Reducing to {0.9 * max_dz:.2e}.{extra}",
                 stacklevel=2,
             )
             self.delta_z = 0.9 * max_dz

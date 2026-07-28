@@ -468,3 +468,103 @@ class TestPrecomputedConstants:
             atol=1e-4 * float(np.max(np.abs(expected))),
             err_msg=f"Changing {attr} between runs was not picked up",
         )
+
+
+class TestRK4StepLimit:
+    """RK4's step limit must cover every term it evaluates explicitly.
+
+    Split-step applies the potential through the exponential, so V never
+    limits its step. RK4 evaluates the whole right-hand side, so V enters its
+    stability condition — and V is scaled by k/2 ~ 4e6, which makes it the
+    dominant term by orders of magnitude whenever there is one.
+
+    The limit used to count dispersion alone. RK4 therefore ran far outside
+    its stability region for any potential at all and diverged to NaN, which
+    made absorbing potentials unusable with RK4.
+    """
+
+    @staticmethod
+    def ring(simu, amplitude=1.0):
+        """Return a ring-shaped potential."""
+        r = np.sqrt(simu.XX**2 + simu.YY**2)
+        return (amplitude * np.exp(-((r - 2e-3) ** 2) / (3e-4) ** 2)).astype(np.float32)
+
+    @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+    def test_rk4_with_a_potential_does_not_diverge(self, backend_name):
+        """RK4 under a potential must converge, not return NaN."""
+        simu = make_solver(backend=backend_name)
+        V = self.ring(simu)
+        simu = make_solver(V=V, backend=backend_name)
+        simu.delta_z = 1e-4
+        E = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(PRECISION_COMPLEX)
+
+        with pytest.warns(UserWarning, match="RK4 stability"):
+            out = simu.out_field(
+                E.copy(), 2e-4, verbose=False, plot=False, method="RK4"
+            )
+        assert np.all(np.isfinite(np.asarray(as_numpy(simu, out)))), (
+            f"{backend_name}: RK4 under a potential diverged. The step limit "
+            f"is not accounting for V."
+        )
+
+    def test_the_potential_dominates_the_limit(self):
+        """The limit must be set by V when V is the largest term."""
+        simu = make_solver()
+        V = self.ring(simu)
+        simu = make_solver(V=V)
+        simu._precompute_step_constants(V, "single")
+
+        dispersion = simu._rk4_dispersion_rate()
+        potential = simu._rk4_potential_rate()
+        assert potential > 100 * dispersion, (
+            "precondition: this potential should dominate dispersion"
+        )
+        assert simu._rk4_max_dz() < 10 / potential, (
+            f"the step limit {simu._rk4_max_dz():.3e} ignores a potential "
+            f"whose rate is {potential:.3e}"
+        )
+
+    def test_a_potential_only_tightens_the_limit(self):
+        """Adding a potential must never loosen the step limit."""
+        bare = make_solver()
+        V = self.ring(bare)
+        bare._precompute_step_constants(None, "single")
+
+        with_V = make_solver(V=V)
+        with_V._precompute_step_constants(V, "single")
+
+        assert with_V._rk4_max_dz() < bare._rk4_max_dz(), (
+            "a potential must make the RK4 step limit more restrictive"
+        )
+
+    def test_an_absorbing_potential_counts_too(self):
+        """A complex V limits the step by its magnitude, not its real part.
+
+        Its imaginary part is gain/loss, which is just as much part of the
+        eigenvalue as the phase is. Taking only the real part would let an
+        absorbing potential run unstable.
+        """
+        simu = make_solver()
+        ring = self.ring(simu)
+        purely_imaginary = (1j * ring).astype(np.complex64)
+
+        absorbing = make_solver(V=purely_imaginary)
+        absorbing._precompute_step_constants(purely_imaginary, "single")
+        real = make_solver(V=ring)
+        real._precompute_step_constants(ring, "single")
+
+        np.testing.assert_allclose(
+            absorbing._rk4_potential_rate(),
+            real._rk4_potential_rate(),
+            rtol=1e-6,
+            err_msg="an absorbing potential must constrain the step as much "
+            "as the equivalent real one",
+        )
+
+    def test_no_potential_leaves_the_limit_to_the_other_terms(self):
+        """Without V the limit still has to be finite and positive."""
+        simu = make_solver()
+        simu._precompute_step_constants(None, "single")
+        assert simu._rk4_potential_rate() == 0.0
+        limit = simu._rk4_max_dz()
+        assert np.isfinite(limit) and limit > 0
