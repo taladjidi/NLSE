@@ -118,11 +118,19 @@ class NLSE:
             self.window = window
         else:
             self.window = [window, window]
-        Dn = self.n2 * self.power / min(self.window) ** 2
-        z_nl = 1 / (self.k * abs(Dn))
-        if not isinstance(z_nl, (int, float)):
-            # z_nl might be an array - extract scalar
-            z_nl = float(np.min(z_nl))
+        # Coerce through numpy so that n2 == 0 yields inf rather than raising,
+        # and so batched (array) parameters work the same way.
+        Dn = np.asarray(self.n2 * self.power / min(self.window) ** 2, dtype=float)
+        with np.errstate(divide="ignore"):
+            z_nl = float(np.min(1.0 / (self.k * np.abs(Dn))))
+        if not np.isfinite(z_nl):
+            # n2 == 0: the problem is linear and has no nonlinear length
+            # scale. Fall back to the shorter of the diffraction length over
+            # the window and the medium length, so the default step stays
+            # finite and still resolves the propagation.
+            z_nl = self.k * min(self.window) ** 2
+            if self.L > 0:
+                z_nl = min(z_nl, float(self.L))
         self.delta_z = 5e-3 * z_nl
         # transverse coordinate
         self.X, self.delta_X = np.linspace(
@@ -285,6 +293,9 @@ class NLSE:
             # Send only the new propagator to device
             if self._backend.is_device_backend:
                 self.propagator = self._backend.from_numpy(self.propagator)
+            # The fused CUPY/CL linear step reads _propagator_fft in
+            # preference to propagator, so it has to follow the rebuild.
+            self._update_propagator_fft()
 
     def _build_propagator(self, precision: str = "single") -> np.ndarray:
         """Build the linear propagation matrix with caching.
@@ -935,9 +946,18 @@ class NLSE:
             self._V_scaled = V * self._k_half
         else:
             self._V_scaled = None
-        # Unnormalized IFFT: absorb 1/N into the propagator so
-        # linear_step can skip the separate normalization multiply.
-        # Supported by CUPY (cuFFT) and CL (VkFFT norm=0).
+        self._update_propagator_fft()
+
+    def _update_propagator_fft(self) -> None:
+        """Derive the pre-normalized propagator used by fused linear steps.
+
+        Absorbs the 1/N of the inverse FFT into the propagator so that
+        ``linear_step`` can skip a separate normalization multiply. Only
+        CUPY (cuFFT) and CL (VkFFT norm=0) expose an unnormalized IFFT.
+
+        Must be called whenever ``self.propagator`` changes, otherwise the
+        fused kernels keep using a propagator derived from the previous one.
+        """
         kernels = self._backend.kernels
         if (
             hasattr(kernels, "linear_step")
@@ -1023,12 +1043,15 @@ class NLSE:
             np.complex64,
             np.complex128,
         ], "Type mismatch, E_in should be complex64 or complex128"
-        # define propagator if not already done
-        if self.propagator is None:
-            if method == "RK4":
-                self.propagator = self._build_propagator_rk4()
-            else:
-                self.propagator = self._build_propagator(precision=precision)
+        # Rebuild the propagator on every call. It depends on delta_z (and on
+        # k, the grid and the precision), any of which the caller may have
+        # changed since the last run, so it cannot be built once and kept.
+        # _build_propagator is cache-backed, so an unchanged configuration
+        # returns the previously computed array rather than recomputing it.
+        if method == "RK4":
+            self.propagator = self._build_propagator_rk4()
+        else:
+            self.propagator = self._build_propagator(precision=precision)
         if self._backend.is_device_backend:
             self._send_arrays_to_gpu()
         V = self.V
