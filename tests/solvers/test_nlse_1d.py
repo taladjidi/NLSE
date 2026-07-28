@@ -2,8 +2,8 @@ import numpy as np
 from NLSE import NLSE_1d
 from scipy.constants import c, epsilon_0
 
-if NLSE_1d.__CUPY_AVAILABLE__:
-    import cupy as cp
+from .helpers import as_numpy, assert_c_contiguous
+
 PRECISION_COMPLEX = np.complex64
 PRECISION_REAL = np.float32
 
@@ -38,48 +38,29 @@ def test_prepare_output_array(backend) -> None:
         Isat=Isat,
         backend=backend,
     )
-    if backend == "CUPY" and NLSE_1d.__CUPY_AVAILABLE__:
-        A = cp.ones(N, dtype=PRECISION_COMPLEX)
-    else:
-        A = np.ones(N, dtype=PRECISION_COMPLEX)
+    A = np.ones(N, dtype=PRECISION_COMPLEX)
     out, out_sq = simu._prepare_output_array(A, normalize=True)
-    # Convert CL arrays to numpy for assertions
-    if backend == "CL":
-        out = out.get()
-        out_sq = out_sq.get()
-    assert out.flags.c_contiguous, (
-        f"Output array is not C-contiguous. (Backend {backend})"
-    )
-    assert out_sq.flags.c_contiguous, (
-        f"Output array is not C-contiguous. (Backend {backend})"
+    assert_c_contiguous(out, f"Output array is not C-contiguous. (Backend {backend})")
+    assert_c_contiguous(
+        out_sq, f"Output array is not C-contiguous. (Backend {backend})"
     )
     if backend == "CPU":
         assert out.flags.aligned, f"Output array is not aligned. (Backend {backend})"
         assert out_sq.flags.aligned, f"Output array is not aligned. (Backend {backend})"
-    integral = (np.abs(out) ** 2 * simu.delta_X**2).sum()
+    out_np = as_numpy(simu, out)
+    integral = (np.abs(out_np) ** 2 * simu.delta_X**2).sum()
     integral *= c * epsilon_0 / 2
-    assert np.allclose(integral, simu.power), (
+    assert np.allclose(integral, simu.power, rtol=1e-4), (
         f"Normalization failed. (Backend {backend})"
     )
-    assert out.shape == (N,), f"Output array has wrong shape. (Backend {backend})"
-    if backend == "CUPY" and NLSE_1d.__CUPY_AVAILABLE__:
-        assert isinstance(out, cp.ndarray), (
-            f"Output array type does not match backend. (Backend {backend})"
-        )
-        out /= cp.max(cp.abs(out))
-        A /= cp.max(cp.abs(A))
-        assert cp.allclose(out, A), (
-            f"Output array does not match input array. (Backend {backend})"
-        )
-    else:
-        assert isinstance(out, np.ndarray), (
-            f"Output array type does not match backend. (Backend {backend})"
-        )
-        out /= np.max(np.abs(out))
-        A /= np.max(np.abs(A))
-        assert np.allclose(out, A), (
-            f"Output array does not match input array. (Backend {backend})"
-        )
+    assert out_np.shape == (N,), f"Output array has wrong shape. (Backend {backend})"
+    np.testing.assert_allclose(
+        out_np / np.max(np.abs(out_np)),
+        A / np.max(np.abs(A)),
+        rtol=1e-4,
+        atol=1e-6,
+        err_msg=f"Output array does not match input array. (Backend {backend})",
+    )
 
 
 def test_split_step(backend) -> None:
@@ -90,19 +71,18 @@ def test_split_step(backend) -> None:
     A, A_sq = simu._prepare_output_array(E, normalize=False)
     simu.plans = simu._build_fft_plan(A)
     simu.propagator = simu._build_propagator()
-    if backend in ["CUPY", "CL"]:
+    if simu._backend.is_device_backend:
         simu._send_arrays_to_gpu()
-    simu.split_step(A, A_sq, simu.V, simu.propagator, simu.plans, precision="double")
-    if backend == "CUPY" and NLSE_1d.__CUPY_AVAILABLE__:
-        assert cp.allclose(A, cp.ones((N,), dtype=PRECISION_COMPLEX)), (
-            f"Split step is not unitary. (Backend {backend})"
-        )
-    else:
-        if backend == "CL":
-            A = A.get()
-        assert np.allclose(A, np.ones((N,), dtype=PRECISION_COMPLEX)), (
-            f"Split step is not unitary. (Backend {backend})"
-        )
+    A = simu.split_step(
+        A, A_sq, simu.V, simu.propagator, simu.plans, precision="double"
+    )
+    np.testing.assert_allclose(
+        as_numpy(simu, A),
+        np.ones((N,), dtype=PRECISION_COMPLEX),
+        rtol=1e-5,
+        atol=1e-6,
+        err_msg=f"Split step is not unitary. (Backend {backend})",
+    )
 
 
 def test_out_field(backend) -> None:

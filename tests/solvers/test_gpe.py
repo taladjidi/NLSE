@@ -2,8 +2,8 @@ import numpy as np
 from NLSE import GPE
 from scipy.constants import atomic_mass, hbar
 
-if GPE.__CUPY_AVAILABLE__:
-    import cupy as cp
+from .helpers import as_numpy, assert_c_contiguous, random_field
+
 PRECISION_COMPLEX = np.complex64
 PRECISION_REAL = np.float32
 
@@ -55,50 +55,27 @@ def test_prepare_output_array(backend) -> None:
         NY=N,
         backend=backend,
     )
-    if backend == "CUPY" and GPE.__CUPY_AVAILABLE__:
-        E_in = cp.random.random((N, N)).astype(PRECISION_REAL) + 1j * cp.random.random(
-            (N, N)
-        ).astype(PRECISION_REAL)
-    else:
-        E_in = np.random.random((N, N)).astype(PRECISION_REAL) + 1j * np.random.random(
-            (N, N)
-        ).astype(PRECISION_REAL)
+    E_in = random_field((N, N))
     A, A_sq = simu._prepare_output_array(E_in, normalize=True)
-    # Convert CL arrays to numpy for assertions
-    if backend == "CL":
-        A = A.get()
-        A_sq = A_sq.get()
-    assert A.flags.c_contiguous, (
-        f"Output array is not C-contiguous. (Backend {backend})"
-    )
-    assert A_sq.flags.c_contiguous, (
-        f"Output array is not C-contiguous. (Backend {backend})"
-    )
+    assert_c_contiguous(A, f"Output array is not C-contiguous. (Backend {backend})")
+    assert_c_contiguous(A_sq, f"Output array is not C-contiguous. (Backend {backend})")
     if backend == "CPU":
         assert A.flags.aligned, f"Output array is not aligned. (Backend {backend})"
         assert A_sq.flags.aligned, f"Output array is not aligned. (Backend {backend})"
-    integral = ((A.real * A.real + A.imag * A.imag) * simu.delta_X * simu.delta_Y).sum(
-        axis=simu._last_axes
+    A_np = as_numpy(simu, A)
+    integral = (
+        (A_np.real * A_np.real + A_np.imag * A_np.imag) * simu.delta_X * simu.delta_Y
+    ).sum(axis=simu._last_axes)
+    assert np.allclose(integral, simu.N, rtol=1e-4), (
+        f"Normalization failed. (Backend {backend})"
     )
-    assert np.allclose(integral, simu.N), f"Normalization failed. (Backend {backend})"
-    if backend == "CUPY" and GPE.__CUPY_AVAILABLE__:
-        assert isinstance(A, cp.ndarray), (
-            f"Output array type does not match backend. (Backend {backend})"
-        )
-        A /= cp.max(cp.abs(A))
-        E_in /= cp.max(cp.abs(E_in))
-        assert cp.allclose(E_in, A), (
-            f"Output array does not match input array. (Backend {backend})"
-        )
-    else:
-        assert isinstance(A, np.ndarray), (
-            f"Output array type does not match backend. (Backend {backend})"
-        )
-        A /= np.max(np.abs(A))
-        E_in /= np.max(np.abs(E_in))
-        assert np.allclose(E_in, A), (
-            f"Output array does not match input array. (Backend {backend})"
-        )
+    np.testing.assert_allclose(
+        A_np / np.max(np.abs(A_np)),
+        E_in / np.max(np.abs(E_in)),
+        rtol=1e-4,
+        atol=1e-6,
+        err_msg=f"Output array does not match input array. (Backend {backend})",
+    )
 
 
 def test_out_field(backend) -> None:

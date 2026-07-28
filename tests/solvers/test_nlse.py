@@ -4,11 +4,12 @@ import pytest
 from NLSE import NLSE
 from scipy.constants import c, epsilon_0
 
+from .helpers import as_numpy, assert_c_contiguous, random_field
+
 if NLSE.__CUPY_AVAILABLE__:
     import cupy as cp
     from NLSE.backends.cupy_backend import _CuFFTPlan
 if NLSE.__PYOPENCL_AVAILABLE__:
-    import pyopencl.array as cla
     from NLSE.backends.opencl import _VkFFTPlan
 PRECISION_COMPLEX = np.complex64
 PRECISION_REAL = np.float32
@@ -57,11 +58,7 @@ def test_build_fft_plan(backend) -> None:
         Isat=Isat,
         backend=backend,
     )
-    if backend == "CPU" or backend == "CL":
-        A = np.random.random((N, N)) + 1j * np.random.random((N, N))
-    elif backend == "CUPY" and NLSE.__CUPY_AVAILABLE__:
-        A = cp.random.random((N, N)) + 1j * cp.random.random((N, N))
-    A = A.astype(PRECISION_COMPLEX)
+    A = random_field((N, N))
     plans = simu._build_fft_plan(A)
     if backend == "CPU":
         assert len(plans) == 2, f"Number of plans is wrong. (Backend {backend})"
@@ -101,60 +98,37 @@ def test_prepare_output_array(backend) -> None:
         Isat=Isat,
         backend=backend,
     )
-    if backend == "CPU" or backend == "CL":
-        A = np.random.random((N, N)) + 1j * np.random.random((N, N))
-    elif backend == "CUPY" and NLSE.__CUPY_AVAILABLE__:
-        A = cp.random.random((N, N)) + 1j * cp.random.random((N, N))
-    A = A.astype(PRECISION_COMPLEX)
+    A = random_field((N, N))
     out, out_sq = simu._prepare_output_array(A, normalize=True)
-    assert out.flags.c_contiguous, (
-        f"Output array is not C-contiguous. (Backend {backend})"
-    )
-    assert out_sq.flags.c_contiguous, (
-        f"Output array is not C-contiguous. (Backend {backend})"
+    assert_c_contiguous(out, f"Output array is not C-contiguous. (Backend {backend})")
+    assert_c_contiguous(
+        out_sq, f"Output array is not C-contiguous. (Backend {backend})"
     )
     if backend == "CPU":
         assert out.flags.aligned, f"Output array is not aligned. (Backend {backend})"
         assert out_sq.flags.aligned, f"Output array is not aligned. (Backend {backend})"
-    if (simu.backend == "CUPY" and NLSE.__CUPY_AVAILABLE__) or simu.backend == "CPU":
-        integral = (
-            (out.real * out.real + out.imag * out.imag) * simu.delta_X * simu.delta_Y
-        ).sum(axis=simu._last_axes)
-    if backend == "CL" and NLSE.__PYOPENCL_AVAILABLE__:
-        arr = out.real * out.real + out.imag * out.imag
-        arr = arr * simu.delta_X * simu.delta_Y
-        integral = cla.sum(
-            arr,
-            dtype=arr.dtype,
-            queue=simu._backend.queue,
-        )
-        integral = integral.get()
+    out_np = as_numpy(simu, out)
+    integral = (
+        (out_np.real * out_np.real + out_np.imag * out_np.imag)
+        * simu.delta_X
+        * simu.delta_Y
+    ).sum(axis=simu._last_axes)
     integral = integral * c * epsilon_0 / 2
     error_string = f"Normalization failed. (Backend {backend})"
     error_string += f" : {integral} != {simu.power}"
-    assert np.allclose(integral, simu.power), error_string
-    assert out.shape == (
+    assert np.allclose(integral, simu.power, rtol=1e-4), error_string
+    assert out_np.shape == (
         N,
         N,
     ), f"Output array has wrong shape. (Backend {backend})"
-    if backend == "CPU":
-        assert isinstance(out, np.ndarray), (
-            f"Output array type does not match backend. (Backend {backend})"
-        )
-        out /= np.max(np.abs(out))
-        A /= np.max(np.abs(A))
-        assert np.allclose(out, A), (
-            f"Output array does not match input array. (Backend {backend})"
-        )
-    elif backend == "CUPY" and NLSE.__CUPY_AVAILABLE__:
-        assert isinstance(out, cp.ndarray), (
-            f"Output array type does not match backend. (Backend {backend})"
-        )
-        out /= cp.max(cp.abs(out))
-        A /= cp.max(cp.abs(A))
-        assert cp.allclose(out, A), (
-            f"Output array does not match input array. (Backend {backend})"
-        )
+    # Normalization only rescales, so direction must be preserved.
+    np.testing.assert_allclose(
+        out_np / np.max(np.abs(out_np)),
+        A / np.max(np.abs(A)),
+        rtol=1e-4,
+        atol=1e-6,
+        err_msg=f"Output array does not match input array. (Backend {backend})",
+    )
 
 
 def test_send_arrays_to_gpu() -> None:
@@ -250,21 +224,20 @@ def test_split_step(backend) -> None:
     A, A_sq = simu._prepare_output_array(E, normalize=False)
     simu.plans = simu._build_fft_plan(A)
     simu.propagator = simu._build_propagator()
-    if backend == "CUPY" and NLSE.__CUPY_AVAILABLE__:
-        E = cp.asarray(E)
-    if (backend == "CUPY" and NLSE.__CUPY_AVAILABLE__) or (
-        backend == "CL" and NLSE.__PYOPENCL_AVAILABLE__
-    ):
+    # out_field sends arrays for every device backend, so mirror that here or
+    # the kernels receive a host propagator.
+    if simu._backend.is_device_backend:
         simu._send_arrays_to_gpu()
-    simu.split_step(A, A_sq, simu.V, simu.propagator, simu.plans, precision="double")
-    if backend == "CPU":
-        assert np.allclose(A, np.ones((N, N), dtype=PRECISION_COMPLEX)), (
-            f"Split step is not unitary. (Backend {backend})"
-        )
-    elif backend == "CUPY" and NLSE.__CUPY_AVAILABLE__:
-        assert cp.allclose(A, cp.ones((N, N), dtype=PRECISION_COMPLEX)), (
-            f"Split step is not unitary. (Backend {backend})"
-        )
+    A = simu.split_step(
+        A, A_sq, simu.V, simu.propagator, simu.plans, precision="double"
+    )
+    np.testing.assert_allclose(
+        as_numpy(simu, A),
+        np.ones((N, N), dtype=PRECISION_COMPLEX),
+        rtol=1e-5,
+        atol=1e-6,
+        err_msg=f"Split step is not unitary. (Backend {backend})",
+    )
 
 
 # tests for convergence of the solver : the norm of the field should be

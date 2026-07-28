@@ -2,16 +2,15 @@
 
 import numpy as np
 import pytest
-from NLSE import NLSE
+from NLSE.backends import list_available_backends
 
 PRECISION_COMPLEX = np.complex64
 PRECISION_REAL = np.float32
 
-AVAILABLE_BACKENDS = ["CPU"]
-if NLSE.__CUPY_AVAILABLE__:
-    AVAILABLE_BACKENDS.append("CUPY")
-if NLSE.__PYOPENCL_AVAILABLE__:
-    AVAILABLE_BACKENDS.append("CL")
+# Ask the backend registry rather than rebuilding the list by hand: the
+# hand-rolled version checked only CUPY and PYOPENCL, so the MLX solver
+# paths were never exercised here.
+AVAILABLE_BACKENDS = list_available_backends()
 
 
 @pytest.fixture(params=AVAILABLE_BACKENDS)

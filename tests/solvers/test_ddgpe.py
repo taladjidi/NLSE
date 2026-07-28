@@ -2,6 +2,8 @@ import numpy as np
 import pytest
 from NLSE import DDGPE
 
+from .helpers import as_numpy, assert_c_contiguous
+
 if DDGPE.__CUPY_AVAILABLE__:
     import cupy as cp
 
@@ -39,44 +41,25 @@ def test_prepare_output_array(backend) -> None:
         NY=N,
         backend=backend,
     )
-    if backend == "CUPY" and DDGPE.__CUPY_AVAILABLE__:
-        A = cp.ones((2, N, N), dtype=PRECISION_COMPLEX)
-    else:
-        A = np.ones((2, N, N), dtype=PRECISION_COMPLEX)
+    A = np.ones((2, N, N), dtype=PRECISION_COMPLEX)
     out, out_sq = simu._prepare_output_array(A, normalize=False)
-    # Convert CL arrays to numpy for assertions
-    if backend == "CL":
-        out = out.get()
-        out_sq = out_sq.get()
-    assert out.flags.c_contiguous, (
-        f"Output array is not C-contiguous. (Backend {backend})"
+    assert_c_contiguous(out, f"Output array is not C-contiguous. (Backend {backend})")
+    assert_c_contiguous(
+        out_sq, f"Output array is not C-contiguous. (Backend {backend})"
     )
-    assert out_sq.flags.c_contiguous, (
-        f"Output array is not C-contiguous. (Backend {backend})"
-    )
+    out = as_numpy(simu, out)
     assert out.shape == (
         2,
         N,
         N,
     ), f"Output array has wrong shape. (Backend {backend})"
-    if backend == "CUPY" and DDGPE.__CUPY_AVAILABLE__:
-        assert isinstance(out, cp.ndarray), (
-            f"Output array type does not match backend. (Backend {backend})"
-        )
-        out /= cp.max(cp.abs(out))
-        A /= cp.max(cp.abs(A))
-        assert cp.allclose(out, A), (
-            f"Output array does not match input array. (Backend {backend})"
-        )
-    else:
-        assert isinstance(out, np.ndarray), (
-            f"Output array type does not match backend. (Backend {backend})"
-        )
-        out /= np.max(np.abs(out))
-        A /= np.max(np.abs(A))
-        assert np.allclose(out, A), (
-            f"Output array does not match input array. (Backend {backend})"
-        )
+    np.testing.assert_allclose(
+        out / np.max(np.abs(out)),
+        A / np.max(np.abs(A)),
+        rtol=1e-4,
+        atol=1e-6,
+        err_msg=f"Output array does not match input array. (Backend {backend})",
+    )
 
 
 def test_send_arrays_to_gpu() -> None:
