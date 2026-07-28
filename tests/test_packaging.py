@@ -16,6 +16,30 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
+# bdist_wheel stages into build/lib/ and copies over whatever a previous build
+# left there rather than starting clean, so files from an older checkout get
+# zipped into the wheel. This is local build detritus, not a configuration
+# problem: excluding build* from packages.find does nothing, because
+# packages.find never looks there.
+STALE_BUILD_DIR = PROJECT_ROOT / "build" / "lib" / "NLSE"
+
+
+def _cause_hint() -> str:
+    """Return a hint distinguishing local build detritus from a config bug."""
+    if STALE_BUILD_DIR.exists():
+        leftovers = sorted(p.name for p in STALE_BUILD_DIR.glob("*.py"))
+        return (
+            f"\n\n{STALE_BUILD_DIR} exists and contains {leftovers}. "
+            f"bdist_wheel stages through build/lib/ without clearing it "
+            f"first, so those files end up in the wheel. Delete the "
+            f"directory and rebuild:\n    rm -rf {PROJECT_ROOT / 'build'}"
+        )
+    return (
+        "\n\nNo stale build/lib/NLSE was found, so this is a real packaging "
+        "configuration problem rather than leftovers from an earlier build."
+    )
+
+
 # Kernel templates read at runtime via Path(__file__).parent / ... .read_text().
 # Every one of these must survive packaging or the matching backend dies with
 # FileNotFoundError on a non-editable install.
@@ -110,9 +134,8 @@ def test_kernel_templates_are_packaged(wheel_contents, data_file):
 def test_stale_flat_layout_modules_are_not_packaged(wheel_contents, stale_module):
     """Pre-2.3 flat-layout modules must not be collected into the wheel."""
     assert stale_module not in wheel_contents, (
-        f"{stale_module} was collected into the wheel, most likely from "
-        f"build/lib/NLSE/. It shadows the current implementation. Exclude "
-        f"build* in [tool.setuptools.packages.find]."
+        f"{stale_module} was collected into the wheel, where it shadows the "
+        f"current implementation in NLSE/solvers/ or NLSE/kernels/." + _cause_hint()
     )
 
 
@@ -127,4 +150,4 @@ def test_wheel_top_level_modules_match_source(wheel_contents):
         "NLSE/__init__.py",
         "NLSE/utils.py",
         "NLSE/callbacks.py",
-    }, f"unexpected top-level modules in wheel: {sorted(top_level)}"
+    }, f"unexpected top-level modules in wheel: {sorted(top_level)}" + _cause_hint()
