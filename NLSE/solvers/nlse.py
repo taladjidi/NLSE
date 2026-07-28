@@ -203,13 +203,18 @@ class NLSE:
             self._convolution = signal.oaconvolve
         # CL backend doesn't have convolution yet
 
-    def _propagator_cache_key(self, precision: str) -> tuple:
+    def _propagator_cache_key(self, dtype: np.dtype) -> tuple:
         """Return cache key for the split-step propagator."""
-        return (self.NX, self.NY, float(self.delta_z), precision, float(self.k))
+        return (
+            self.NX,
+            self.NY,
+            float(self.delta_z),
+            np.dtype(dtype).str,
+            float(self.k),
+        )
 
-    def _compute_propagator(self, precision: str) -> np.ndarray:
+    def _compute_propagator(self, dtype: np.dtype) -> np.ndarray:
         """Compute the linear propagation matrix (no caching)."""
-        dtype = np.complex128 if precision == "double" else np.complex64
         return np.exp(
             -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k * self.delta_z,
             dtype=dtype,
@@ -290,7 +295,9 @@ class NLSE:
             return np.asarray(value)
         return np.asarray(self._backend.to_numpy(value))
 
-    def _enforce_step_limit(self, A: np.ndarray, method: str, precision: str) -> None:
+    def _enforce_step_limit(
+        self, A: np.ndarray, method: str, precision: str, dtype: np.dtype
+    ) -> None:
         """Cap delta_z to the stability/accuracy limit for the chosen method.
 
         Parameters
@@ -300,7 +307,10 @@ class NLSE:
         method : str
             Integration method ("split_step" or "RK4").
         precision : str
-            "single" or "double".
+            Order of the split-step: "single" applies the nonlinear step
+            once per step, "double" splits it around the linear step.
+        dtype : np.dtype
+            Complex dtype of the field, so a rebuilt propagator matches it.
         """
         if method == "RK4":
             max_dz = self._rk4_max_dz()
@@ -320,7 +330,7 @@ class NLSE:
             if method == "RK4":
                 self.propagator = self._build_propagator_rk4()
             else:
-                self.propagator = self._build_propagator(precision=precision)
+                self.propagator = self._build_propagator(dtype=dtype)
             # Send only the new propagator to device
             if self._backend.is_device_backend:
                 self.propagator = self._backend.from_numpy(self.propagator)
@@ -328,23 +338,49 @@ class NLSE:
             # preference to propagator, so it has to follow the rebuild.
             self._update_propagator_fft()
 
-    def _build_propagator(self, precision: str = "single") -> np.ndarray:
+    @staticmethod
+    def _field_dtype(E_in: np.ndarray) -> np.dtype:
+        """Return the complex dtype the propagator has to match.
+
+        The propagator multiplies the field, so the two must share a dtype.
+        The GPU kernels select single or double precision from the *field*,
+        then index the propagator with it: a complex128 propagator against a
+        complex64 field was read as pairs of float32 and came back NaN.
+
+        Parameters
+        ----------
+        E_in : np.ndarray
+            Input field, on the host or on a device.
+
+        Returns
+        -------
+        np.dtype
+            ``complex128`` if the field is double precision, else
+            ``complex64``.
+        """
+        return (
+            np.dtype(np.complex128)
+            if np.dtype(getattr(E_in, "dtype", np.complex64)).itemsize == 16
+            else np.dtype(np.complex64)
+        )
+
+    def _build_propagator(self, dtype: np.dtype = np.complex64) -> np.ndarray:
         """Build the linear propagation matrix with caching.
 
         Parameters
         ----------
-        precision : str
-            "single" or "double" precision for the split step propagator.
+        dtype : np.dtype
+            Complex dtype of the field the propagator will multiply.
 
         Returns
         -------
         np.ndarray
             The propagator matrix.
         """
-        cache_key = self._propagator_cache_key(precision)
+        cache_key = self._propagator_cache_key(dtype)
         if cache_key in self._propagator_cache:
             return self._propagator_cache[cache_key]
-        propagator = self._compute_propagator(precision)
+        propagator = self._compute_propagator(dtype)
         self._propagator_cache[cache_key] = propagator
         return propagator
 
@@ -530,8 +566,10 @@ class NLSE:
         plans : list
             List of FFT plan objects from backend.
         precision : str, optional
-            Single or double application of
-            the nonlinear propagation step. Defaults to "single".
+            Order of the split step: "single" applies the nonlinear step
+            once, "double" splits it around the linear step. Not the
+            floating-point width, which follows the field. Defaults to
+            "single".
 
         Returns
         -------
@@ -1008,7 +1046,8 @@ class NLSE:
         V : np.ndarray or None
             Potential field.
         precision : str
-            "single" or "double" — used to select scalar dtype.
+            Order of the split step ("single" or "double"), used here only
+            to pick the width of the precomputed scalar constants.
         """
         fp = np.float32 if precision == "single" else np.float64
         alpha_half = self.alpha / 2
@@ -1089,9 +1128,14 @@ class NLSE:
         plot : bool, optional
             Plots the results. Defaults to False.
         precision : str, optional
-            Does a "double" or a "single" application
-            of the nonlinear term. This leads to a dz (single) or dz^3
-            (double) precision. Defaults to "single".
+            Order of the split step, *not* the floating-point width. Does a
+            "single" or a "double" application of the nonlinear term, giving
+            O(dz) or O(dz^3) accuracy. Defaults to "single".
+
+            The floating-point width comes from ``E_in``: pass a complex128
+            field for float64 arithmetic, on a device that supports it. The
+            propagator is built to match, because the kernels select their
+            precision from the field and then read the propagator with it.
         method : str, optional
             Integration method: "split_step" or "RK4".
             Defaults to "split_step".
@@ -1130,10 +1174,11 @@ class NLSE:
         # changed since the last run, so it cannot be built once and kept.
         # _build_propagator is cache-backed, so an unchanged configuration
         # returns the previously computed array rather than recomputing it.
+        field_dtype = self._field_dtype(E_in)
         if method == "RK4":
             self.propagator = self._build_propagator_rk4()
         else:
-            self.propagator = self._build_propagator(precision=precision)
+            self.propagator = self._build_propagator(dtype=field_dtype)
         if self._backend.is_device_backend:
             self._send_arrays_to_gpu()
         V = self.V
@@ -1141,7 +1186,7 @@ class NLSE:
         self.plans = self._build_fft_plan(A)
         self._allocate_rk4_buffers(A, method)
         self._precompute_step_constants(V, precision)
-        self._enforce_step_limit(A, method, precision)
+        self._enforce_step_limit(A, method, precision, field_dtype)
         if verbose:
             pbar = tqdm.tqdm(
                 total=100,

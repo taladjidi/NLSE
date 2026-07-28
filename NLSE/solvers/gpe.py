@@ -86,13 +86,18 @@ class GPE(NLSE):
         # GPE uses quantum units (Hz), not optical (W), so norm_constant is 1.0
         self._norm_constant = np.float32(1.0)
 
-    def _propagator_cache_key(self, precision: str) -> tuple:
+    def _propagator_cache_key(self, dtype: np.dtype) -> tuple:
         """Return cache key for GPE propagator."""
-        return (self.NX, self.NY, float(self.delta_t), precision, float(self.m))
+        return (
+            self.NX,
+            self.NY,
+            float(self.delta_t),
+            np.dtype(dtype).str,
+            float(self.m),
+        )
 
-    def _compute_propagator(self, precision: str) -> np.ndarray:
+    def _compute_propagator(self, dtype: np.dtype) -> np.ndarray:
         """Compute the GPE linear propagation matrix."""
-        dtype = np.complex128 if precision == "double" else np.complex64
         return np.exp(
             -1j * 0.5 * hbar * (self.Kxx**2 + self.Kyy**2) / self.m * self.delta_t,
             dtype=dtype,

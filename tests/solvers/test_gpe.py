@@ -27,7 +27,7 @@ def test_build_propagator(backend) -> None:
         NY=N,
         backend=backend,
     )
-    prop = simu_gpe._build_propagator(precision="single")
+    prop = simu_gpe._build_propagator(dtype=np.complex64)
     expected = np.exp(
         -1j
         * 0.5

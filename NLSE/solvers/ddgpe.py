@@ -210,22 +210,21 @@ class DDGPE(CNLSE):
         self._gamma_half = fp(self.gamma / 2)
         self._gamma2_half = fp(self.gamma2 / 2)
 
-    def _propagator_cache_key(self, precision: str) -> tuple:
+    def _propagator_cache_key(self, dtype: np.dtype) -> tuple:
         """Return cache key for DDGPE propagator."""
         return (
             self.NX,
             self.NY,
             float(self.delta_z),
-            precision,
+            np.dtype(dtype).str,
             float(self.omega_exc),
             float(self.omega_cav),
             float(self.omega_pump),
             float(self.k_z),
         )
 
-    def _compute_propagator(self, precision: str) -> np.ndarray:
+    def _compute_propagator(self, dtype: np.dtype) -> np.ndarray:
         """Compute the DDGPE polariton propagation matrices."""
-        dtype = np.complex128 if precision == "double" else np.complex64
         propagator1 = np.exp(
             -1j
             * (self.omega_exc * (1 + 0 * self.Kxx**2) - self.omega_pump)

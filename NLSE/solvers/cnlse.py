@@ -169,21 +169,20 @@ class CNLSE(NLSE):
                 A[:] = E
         return A, A_sq
 
-    def _propagator_cache_key(self, precision: str) -> tuple:
+    def _propagator_cache_key(self, dtype: np.dtype) -> tuple:
         """Return cache key for coupled propagator."""
         return (
             self.NX,
             self.NY,
             float(self.delta_z),
-            precision,
+            np.dtype(dtype).str,
             float(self.k),
             float(self.k2),
         )
 
-    def _compute_propagator(self, precision: str) -> np.ndarray:
+    def _compute_propagator(self, dtype: np.dtype) -> np.ndarray:
         """Compute the coupled linear propagation matrices."""
-        dtype = np.complex128 if precision == "double" else np.complex64
-        propagator1 = super()._compute_propagator(precision)
+        propagator1 = super()._compute_propagator(dtype)
         propagator2 = np.exp(
             -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k2 * self.delta_z,
             dtype=dtype,

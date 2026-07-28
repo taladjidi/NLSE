@@ -197,15 +197,6 @@ def test_retrieve_arrays_from_gpu() -> None:
 
 
 def test_split_step(backend) -> None:
-    # Skip OpenCL if double precision is not supported
-    if backend == "CL":
-        from NLSE.utils import __PYOPENCL_DOUBLE_SUPPORT__
-
-        if not __PYOPENCL_DOUBLE_SUPPORT__:
-            pytest.skip(
-                "OpenCL backend does not support double precision on this device"
-            )
-
     simu = NLSE(
         alpha,
         power,
@@ -243,15 +234,6 @@ def test_split_step(backend) -> None:
 # tests for convergence of the solver : the norm of the field should be
 #  conserved
 def test_out_field(backend) -> None:
-    # Skip OpenCL if double precision is not supported
-    if backend == "CL":
-        from NLSE.utils import __PYOPENCL_DOUBLE_SUPPORT__
-
-        if not __PYOPENCL_DOUBLE_SUPPORT__:
-            pytest.skip(
-                "OpenCL backend does not support double precision on this device"
-            )
-
     E = np.ones((N, N), dtype=PRECISION_COMPLEX)
     simu = NLSE(
         0,
