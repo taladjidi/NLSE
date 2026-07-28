@@ -33,9 +33,10 @@ __kernel void square_mod_nl_prop_fused(
 }
 
 // FUSED: square_mod + nl_prop (with potential)
+// {{VBLOCK}}
 __kernel void square_mod_nl_prop_v_fused(
     __global {{FP2_TYPE}}* A,
-    __global const {{FP_TYPE}}* V,
+    __global const V_T* V,
     const {{FP_TYPE}} dz,
     const {{FP_TYPE}} alpha,
     const {{FP_TYPE}} g,
@@ -49,8 +50,8 @@ __kernel void square_mod_nl_prop_v_fused(
 
     // Apply nonlinear propagation immediately
     {{FP_TYPE}} sat = 1.0{{FP_SUFFIX}} / (1.0{{FP_SUFFIX}} + A_sq_val / Isat);
-    {{FP_TYPE}} arg_real = -alpha * sat * dz;
-    {{FP_TYPE}} arg_imag = (g * A_sq_val * sat + V[idx - (int)get_global_offset(0)]) * dz;
+    {{FP_TYPE}} arg_real = -(alpha * sat V_LOSS(V, idx - (int)get_global_offset(0))) * dz;
+    {{FP_TYPE}} arg_imag = (g * A_sq_val * sat + V_RE(V, idx - (int)get_global_offset(0))) * dz;
     {{FP_TYPE}} exp_real_part = exp(arg_real);
     {{FP_TYPE}} cos_imag, sin_imag;
     sin_imag = sincos(arg_imag, &cos_imag);
@@ -61,6 +62,7 @@ __kernel void square_mod_nl_prop_v_fused(
         A_val.x * exp_arg.y + A_val.y * exp_arg.x
     );
 }
+// {{END_VBLOCK}}
 
 // Propagator multiplication (replaces slow PyOpenCL array expression)
 __kernel void apply_propagator(
@@ -116,10 +118,11 @@ __kernel void nl_prop_without_v_fused(
 }
 
 // Nonlinear propagation with potential
+// {{VBLOCK}}
 __kernel void nl_prop_fused(
     __global {{FP2_TYPE}}* A,
     __global const {{FP_TYPE}}* A_sq,
-    __global const {{FP_TYPE}}* V,
+    __global const V_T* V,
     const {{FP_TYPE}} dz,
     const {{FP_TYPE}} alpha,
     const {{FP_TYPE}} g,
@@ -127,8 +130,8 @@ __kernel void nl_prop_fused(
 ) {
     int idx = get_global_id(0);
     {{FP_TYPE}} sat = 1.0{{FP_SUFFIX}} / (1.0{{FP_SUFFIX}} + A_sq[idx] / Isat);
-    {{FP_TYPE}} arg_real = -alpha * sat * dz;
-    {{FP_TYPE}} arg_imag = (g * A_sq[idx] * sat + V[idx - (int)get_global_offset(0)]) * dz;
+    {{FP_TYPE}} arg_real = -(alpha * sat V_LOSS(V, idx - (int)get_global_offset(0))) * dz;
+    {{FP_TYPE}} arg_imag = (g * A_sq[idx] * sat + V_RE(V, idx - (int)get_global_offset(0))) * dz;
     {{FP_TYPE}} exp_real_part = exp(arg_real);
     {{FP_TYPE}} cos_imag, sin_imag;
     sin_imag = sincos(arg_imag, &cos_imag);
@@ -139,13 +142,15 @@ __kernel void nl_prop_fused(
         A_val.x * exp_arg.y + A_val.y * exp_arg.x
     );
 }
+// {{END_VBLOCK}}
 
 // Coupled nonlinear propagation with potential (for CNLSE, DDGPE)
+// {{VBLOCK}}
 __kernel void nl_prop_c_fused(
     __global {{FP2_TYPE}}* A1,
     __global const {{FP_TYPE}}* A_sq_1,
     __global const {{FP_TYPE}}* A_sq_2,
-    __global const {{FP_TYPE}}* V,
+    __global const V_T* V,
     const {{FP_TYPE}} dz,
     const {{FP_TYPE}} alpha,
     const {{FP_TYPE}} g11,
@@ -155,8 +160,8 @@ __kernel void nl_prop_c_fused(
 ) {
     int idx = get_global_id(0);
     {{FP_TYPE}} sat = 1.0{{FP_SUFFIX}} / (1.0{{FP_SUFFIX}} + A_sq_1[idx] / Isat1 + A_sq_2[idx] / Isat2);
-    {{FP_TYPE}} arg_real = -alpha * sat * dz;
-    {{FP_TYPE}} arg_imag = (g11 * A_sq_1[idx] * sat + g12 * A_sq_2[idx] * sat + V[idx]) * dz;
+    {{FP_TYPE}} arg_real = -(alpha * sat V_LOSS(V, idx)) * dz;
+    {{FP_TYPE}} arg_imag = (g11 * A_sq_1[idx] * sat + g12 * A_sq_2[idx] * sat + V_RE(V, idx)) * dz;
     {{FP_TYPE}} exp_real_part = exp(arg_real);
     {{FP_TYPE}} cos_imag, sin_imag;
     sin_imag = sincos(arg_imag, &cos_imag);
@@ -167,6 +172,7 @@ __kernel void nl_prop_c_fused(
         A1_val.x * exp_arg.y + A1_val.y * exp_arg.x
     );
 }
+// {{END_VBLOCK}}
 
 // Coupled nonlinear propagation without potential (for CNLSE, DDGPE)
 __kernel void nl_prop_c_without_v_fused(
@@ -248,11 +254,12 @@ __kernel void rk4_nl_rhs_fused(
 }
 
 // RK4 NL RHS with potential
+// {{VBLOCK}}
 __kernel void rk4_nl_rhs_v_fused(
     __global {{FP2_TYPE}}* A_prop,
     __global const {{FP2_TYPE}}* A,
     __global const {{FP_TYPE}}* A_sq,
-    __global const {{FP_TYPE}}* V,
+    __global const V_T* V,
     const {{FP_TYPE}} alpha,
     const {{FP_TYPE}} g,
     const {{FP_TYPE}} Isat
@@ -260,14 +267,15 @@ __kernel void rk4_nl_rhs_v_fused(
     int idx = get_global_id(0);
     {{FP_TYPE}} sat = 1.0{{FP_SUFFIX}} / (1.0{{FP_SUFFIX}} + A_sq[idx] / Isat);
     // coeff = -alpha*sat + 1j*(g*A_sq*sat + V)
-    {{FP_TYPE}} coeff_r = -alpha * sat;
-    {{FP_TYPE}} coeff_i = g * A_sq[idx] * sat + V[idx - (int)get_global_offset(0)];
+    {{FP_TYPE}} coeff_r = -(alpha * sat V_LOSS(V, idx - (int)get_global_offset(0)));
+    {{FP_TYPE}} coeff_i = g * A_sq[idx] * sat + V_RE(V, idx - (int)get_global_offset(0));
     {{FP2_TYPE}} A_val = A[idx];
     {{FP_TYPE}} contrib_r = coeff_r * A_val.x - coeff_i * A_val.y;
     {{FP_TYPE}} contrib_i = coeff_r * A_val.y + coeff_i * A_val.x;
     {{FP2_TYPE}} A_prop_val = A_prop[idx];
     A_prop[idx] = ({{FP2_TYPE}})(A_prop_val.x + contrib_r, A_prop_val.y + contrib_i);
 }
+// {{END_VBLOCK}}
 
 // FUSED: |A|^2 + RK4 NL RHS without potential
 __kernel void square_mod_rk4_nl_rhs_fused(
@@ -290,10 +298,11 @@ __kernel void square_mod_rk4_nl_rhs_fused(
 }
 
 // FUSED: |A|^2 + RK4 NL RHS with potential
+// {{VBLOCK}}
 __kernel void square_mod_rk4_nl_rhs_v_fused(
     __global {{FP2_TYPE}}* A_prop,
     __global const {{FP2_TYPE}}* A,
-    __global const {{FP_TYPE}}* V,
+    __global const V_T* V,
     const {{FP_TYPE}} alpha,
     const {{FP_TYPE}} g,
     const {{FP_TYPE}} Isat
@@ -302,13 +311,14 @@ __kernel void square_mod_rk4_nl_rhs_v_fused(
     {{FP2_TYPE}} A_val = A[idx];
     {{FP_TYPE}} A_sq_val = A_val.x * A_val.x + A_val.y * A_val.y;
     {{FP_TYPE}} sat = 1.0{{FP_SUFFIX}} / (1.0{{FP_SUFFIX}} + A_sq_val / Isat);
-    {{FP_TYPE}} coeff_r = -alpha * sat;
-    {{FP_TYPE}} coeff_i = g * A_sq_val * sat + V[idx - (int)get_global_offset(0)];
+    {{FP_TYPE}} coeff_r = -(alpha * sat V_LOSS(V, idx - (int)get_global_offset(0)));
+    {{FP_TYPE}} coeff_i = g * A_sq_val * sat + V_RE(V, idx - (int)get_global_offset(0));
     {{FP_TYPE}} contrib_r = coeff_r * A_val.x - coeff_i * A_val.y;
     {{FP_TYPE}} contrib_i = coeff_r * A_val.y + coeff_i * A_val.x;
     {{FP2_TYPE}} A_prop_val = A_prop[idx];
     A_prop[idx] = ({{FP2_TYPE}})(A_prop_val.x + contrib_r, A_prop_val.y + contrib_i);
 }
+// {{END_VBLOCK}}
 
 // Coupled RK4 NL RHS without potential
 // Interaction NOT multiplied by A_orig (matches CNLSE RK4 math)
@@ -337,12 +347,13 @@ __kernel void rk4_nl_rhs_c_fused(
 }
 
 // Coupled RK4 NL RHS with potential
+// {{VBLOCK}}
 __kernel void rk4_nl_rhs_c_v_fused(
     __global {{FP2_TYPE}}* A_prop,
     __global const {{FP2_TYPE}}* A_orig,
     __global const {{FP_TYPE}}* A_sq_1,
     __global const {{FP_TYPE}}* A_sq_2,
-    __global const {{FP_TYPE}}* V,
+    __global const V_T* V,
     const {{FP_TYPE}} alpha,
     const {{FP_TYPE}} g11,
     const {{FP_TYPE}} g12,
@@ -354,8 +365,8 @@ __kernel void rk4_nl_rhs_c_v_fused(
     // NL coefficient: (1j*interact - alpha*sat + 1j*V) * A_orig
     {{FP_TYPE}} interact_i = (g11 * A_sq_1[idx] + g12 * A_sq_2[idx]) * sat;
     {{FP2_TYPE}} A_val = A_orig[idx];
-    {{FP_TYPE}} coeff_r = -alpha * sat;
-    {{FP_TYPE}} coeff_i = interact_i + V[idx];
+    {{FP_TYPE}} coeff_r = -(alpha * sat V_LOSS(V, idx));
+    {{FP_TYPE}} coeff_i = interact_i + V_RE(V, idx);
     {{FP_TYPE}} nl_r = coeff_r * A_val.x - coeff_i * A_val.y;
     {{FP_TYPE}} nl_i = coeff_r * A_val.y + coeff_i * A_val.x;
     {{FP2_TYPE}} A_prop_val = A_prop[idx];
@@ -364,6 +375,7 @@ __kernel void rk4_nl_rhs_c_v_fused(
         A_prop_val.y + nl_i
     );
 }
+// {{END_VBLOCK}}
 
 // FUSED RK4 stage update: acc = k, out = A + c * k  (used for stage 1)
 // Combines the copy-to-acc and axpy-to-A_tmp into a single kernel launch.
@@ -422,10 +434,11 @@ __kernel void rabi_coupling(
 // The saturation factor 1/(1 + |A1|^2/Isat1 + |A2|^2/Isat2) is computed once.
 
 // Coupled NL propagation with potential on interleaved (2, N_sq) array
+// {{VBLOCK}}
 __kernel void coupled_nl_prop_c_v(
     __global {{FP2_TYPE}}* A,
-    __global const {{FP_TYPE}}* V1,
-    __global const {{FP_TYPE}}* V2,
+    __global const V_T* V1,
+    __global const V_T* V2,
     const int N_sq,
     const {{FP_TYPE}} dz,
     const {{FP_TYPE}} alpha1,
@@ -444,8 +457,8 @@ __kernel void coupled_nl_prop_c_v(
     {{FP_TYPE}} sat = 1.0{{FP_SUFFIX}} / (1.0{{FP_SUFFIX}} + sq1 / Isat1 + sq2 / Isat2);
 
     // Component 1
-    {{FP_TYPE}} r1 = -alpha1 * sat * dz;
-    {{FP_TYPE}} i1 = (g11 * sq1 * sat + g12 * sq2 * sat + V1[idx]) * dz;
+    {{FP_TYPE}} r1 = -(alpha1 * sat V_LOSS(V1, idx)) * dz;
+    {{FP_TYPE}} i1 = (g11 * sq1 * sat + g12 * sq2 * sat + V_RE(V1, idx)) * dz;
     {{FP_TYPE}} e1r = exp(r1);
     {{FP_TYPE}} c1, s1;
     s1 = sincos(i1, &c1);
@@ -455,8 +468,8 @@ __kernel void coupled_nl_prop_c_v(
     );
 
     // Component 2
-    {{FP_TYPE}} r2 = -alpha2 * sat * dz;
-    {{FP_TYPE}} i2 = (g22 * sq2 * sat + g12 * sq1 * sat + V2[idx]) * dz;
+    {{FP_TYPE}} r2 = -(alpha2 * sat V_LOSS(V2, idx)) * dz;
+    {{FP_TYPE}} i2 = (g22 * sq2 * sat + g12 * sq1 * sat + V_RE(V2, idx)) * dz;
     {{FP_TYPE}} e2r = exp(r2);
     {{FP_TYPE}} c2, s2;
     s2 = sincos(i2, &c2);
@@ -465,6 +478,7 @@ __kernel void coupled_nl_prop_c_v(
         a2.x * e2r * s2 + a2.y * e2r * c2
     );
 }
+// {{END_VBLOCK}}
 
 // Coupled NL propagation without potential on interleaved (2, N_sq) array
 __kernel void coupled_nl_prop_c(
@@ -511,11 +525,12 @@ __kernel void coupled_nl_prop_c(
 
 // Coupled RK4 NL RHS with potential on interleaved (2, N_sq) arrays
 // k += NL(A_orig) for both components
+// {{VBLOCK}}
 __kernel void coupled_rk4_nl_rhs_c_v(
     __global {{FP2_TYPE}}* k,
     __global const {{FP2_TYPE}}* A_orig,
-    __global const {{FP_TYPE}}* V1,
-    __global const {{FP_TYPE}}* V2,
+    __global const V_T* V1,
+    __global const V_T* V2,
     const int N_sq,
     const {{FP_TYPE}} alpha1,
     const {{FP_TYPE}} alpha2,
@@ -534,8 +549,8 @@ __kernel void coupled_rk4_nl_rhs_c_v(
 
     // Component 1: k += (1j*interact - alpha1*sat + 1j*V1) * a1
     {{FP_TYPE}} interact1_i = (g11 * sq1 + g12 * sq2) * sat;
-    {{FP_TYPE}} coeff1_r = -alpha1 * sat;
-    {{FP_TYPE}} coeff1_i = interact1_i + V1[idx];
+    {{FP_TYPE}} coeff1_r = -(alpha1 * sat V_LOSS(V1, idx));
+    {{FP_TYPE}} coeff1_i = interact1_i + V_RE(V1, idx);
     {{FP_TYPE}} nl1_r = coeff1_r * a1.x - coeff1_i * a1.y;
     {{FP_TYPE}} nl1_i = coeff1_r * a1.y + coeff1_i * a1.x;
     {{FP2_TYPE}} k1_val = k[idx];
@@ -543,13 +558,14 @@ __kernel void coupled_rk4_nl_rhs_c_v(
 
     // Component 2: same structure with swapped params
     {{FP_TYPE}} interact2_i = (g22 * sq2 + g12 * sq1) * sat;
-    {{FP_TYPE}} coeff2_r = -alpha2 * sat;
-    {{FP_TYPE}} coeff2_i = interact2_i + V2[idx];
+    {{FP_TYPE}} coeff2_r = -(alpha2 * sat V_LOSS(V2, idx));
+    {{FP_TYPE}} coeff2_i = interact2_i + V_RE(V2, idx);
     {{FP_TYPE}} nl2_r = coeff2_r * a2.x - coeff2_i * a2.y;
     {{FP_TYPE}} nl2_i = coeff2_r * a2.y + coeff2_i * a2.x;
     {{FP2_TYPE}} k2_val = k[idx + N_sq];
     k[idx + N_sq] = ({{FP2_TYPE}})(k2_val.x + nl2_r, k2_val.y + nl2_i);
 }
+// {{END_VBLOCK}}
 
 // Coupled RK4 NL RHS without potential on interleaved (2, N_sq) arrays
 __kernel void coupled_rk4_nl_rhs_c(

@@ -475,8 +475,44 @@ class NLSE:
     _gpu_array_attrs = ("V", "nl_profile", "propagator")
     _gpu_param_attrs = ("power", "n2", "alpha", "I_sat")
 
-    def _send_arrays_to_gpu(self) -> None:
-        """Send arrays to device using backend."""
+    @staticmethod
+    def _potential_dtype(V: np.ndarray, field_dtype: np.dtype) -> np.dtype:
+        """Return the dtype a potential must take for a given field.
+
+        The width follows the field, exactly as the propagator's does: the
+        kernels pick their single- or double-precision variant from the field
+        and then read V with it. Whether V is complex follows V itself — a
+        complex potential is an absorbing (or amplifying) one, its imaginary
+        part entering as gain/loss, and that has to survive the transfer.
+        Casting it to a real dtype silently deleted the absorption.
+
+        Parameters
+        ----------
+        V : np.ndarray
+            Potential, real or complex.
+        field_dtype : np.dtype
+            Complex dtype of the field V will act on.
+
+        Returns
+        -------
+        np.dtype
+            ``float32``/``float64`` for a real V, ``complex64``/
+            ``complex128`` for a complex one.
+        """
+        single = np.dtype(field_dtype).itemsize == 8
+        if np.iscomplexobj(V):
+            return np.dtype(np.complex64 if single else np.complex128)
+        return np.dtype(np.float32 if single else np.float64)
+
+    def _send_arrays_to_gpu(self, field_dtype: np.dtype = np.complex64) -> None:
+        """Send arrays to device using backend.
+
+        Parameters
+        ----------
+        field_dtype : np.dtype
+            Complex dtype of the field, so the potential is transferred at a
+            matching width rather than always as float32.
+        """
         if not self._backend.is_device_backend:
             return
         for attr in self._gpu_array_attrs:
@@ -484,7 +520,9 @@ class NLSE:
             if val is None:
                 continue
             if attr == "V":
-                val = np.ascontiguousarray(val, dtype=np.float32)
+                val = np.ascontiguousarray(
+                    val, dtype=self._potential_dtype(val, field_dtype)
+                )
             setattr(self, attr, self._backend.from_numpy(val))
         if not self._backend.broadcasts_parameters_natively:
             # The kernels take one simulation's scalar value per launch, so a
@@ -1180,7 +1218,7 @@ class NLSE:
         else:
             self.propagator = self._build_propagator(dtype=field_dtype)
         if self._backend.is_device_backend:
-            self._send_arrays_to_gpu()
+            self._send_arrays_to_gpu(field_dtype)
         V = self.V
         A, A_sq = self._prepare_output_array(E_in, normalize)
         self.plans = self._build_fft_plan(A)
