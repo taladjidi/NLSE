@@ -423,3 +423,245 @@ class TestCoupledSolverBenchmark:
         result = benchmark.pedantic(propagate, rounds=10, warmup_rounds=2)
         assert result.shape == (2, N, N)
         assert np.all(np.isfinite(result))
+
+
+# ── Coverage of the axes the benchmarks above leave out ──────────────────────
+#
+# Those cover one grid size, one method, one precision and no potential. The
+# groups below sweep the axes that actually change the cost, so a regression
+# in any of them shows up as a number rather than as a surprise in a user's
+# run. They are deliberately one axis at a time: a full cross product is
+# thousands of cases and nobody would run it.
+
+
+def _solver(backend, n, V=None, **overrides):
+    """Build an NLSE at a given grid size, with an optional potential."""
+    params = {
+        "alpha": alpha,
+        "power": power,
+        "window": window,
+        "n2": n2,
+        "V": V,
+        "L": L,
+        "NX": n,
+        "NY": n,
+        "Isat": Isat,
+        "backend": backend,
+    }
+    params.update(overrides)
+    return NLSE(**params)
+
+
+def _field(simu, n, count=None, dtype=PRECISION_COMPLEX):
+    """Return a Gaussian input, optionally batched over `count` simulations."""
+    XX, YY = np.meshgrid(simu.X, simu.Y)
+    env = np.exp(-(XX**2 + YY**2) / waist**2).astype(dtype)
+    if count is None:
+        return env
+    return np.broadcast_to(env, (count, n, n)).copy()
+
+
+def _timed(benchmark, fn, rounds=10):
+    """Run a benchmark and assert the result is usable."""
+    result = benchmark.pedantic(fn, rounds=rounds, warmup_rounds=2)
+    assert np.all(np.isfinite(np.asarray(result))), "benchmark produced NaN"
+    return result
+
+
+@pytest.mark.benchmark(group="grid-scaling")
+class TestGridScaling:
+    """Cost against grid size.
+
+    FFT cost is O(N^2 log N) in the number of points, so a backend that
+    looks good at 64 can lose at 1024 and vice versa. One size hides that.
+    """
+
+    @pytest.mark.parametrize("n", [64, 128, 256, 512])
+    @pytest.mark.parametrize("backend", BACKENDS)
+    def test_nlse_2d_scaling(self, benchmark, backend, n):
+        """Benchmark NLSE 2D across grid sizes."""
+        skip_if_backend_unavailable(backend)
+        simu = _solver(backend, n)
+        E_in = _field(simu, n)
+        rounds = 10 if n <= 256 else 5
+        _timed(
+            benchmark,
+            lambda: simu.out_field(E_in, z=1e-3, verbose=False, plot=False),
+            rounds=rounds,
+        )
+
+
+@pytest.mark.benchmark(group="methods")
+class TestMethodAndOrder:
+    """split_step against RK4, and the two split-step orders.
+
+    precision="double" splits the nonlinear step around the linear one, so
+    it costs a second nonlinear application per step; RK4 is four stages.
+    Neither was benchmarked.
+    """
+
+    @pytest.mark.parametrize("precision", ["single", "double"])
+    @pytest.mark.parametrize("backend", BACKENDS)
+    def test_split_step_order(self, benchmark, backend, precision):
+        """Benchmark both split-step orders."""
+        skip_if_backend_unavailable(backend)
+        simu = _solver(backend, N)
+        E_in = _field(simu, N)
+        _timed(
+            benchmark,
+            lambda: simu.out_field(
+                E_in, z=1e-3, verbose=False, plot=False, precision=precision
+            ),
+        )
+
+    @pytest.mark.parametrize("backend", BACKENDS)
+    def test_rk4(self, benchmark, backend):
+        """Benchmark the RK4 integrator.
+
+        No potential: RK4's step limit ignores V, so a potential makes this
+        diverge rather than benchmark anything. See _rk4_max_dz.
+        """
+        skip_if_backend_unavailable(backend)
+        simu = _solver(backend, N)
+        E_in = _field(simu, N)
+        _timed(
+            benchmark,
+            lambda: simu.out_field(
+                E_in, z=1e-3, verbose=False, plot=False, method="RK4"
+            ),
+        )
+
+
+@pytest.mark.benchmark(group="potential")
+class TestPotential:
+    """No potential against a real one against a complex one.
+
+    A complex V takes a separate kernel that loads twice the data. The point
+    of benchmarking all three is to confirm the real path is not paying for
+    the complex one existing.
+    """
+
+    @pytest.mark.parametrize("kind", ["none", "real", "complex"])
+    @pytest.mark.parametrize("backend", BACKENDS)
+    def test_potential_kind(self, benchmark, backend, kind):
+        """Benchmark propagation under each kind of potential."""
+        skip_if_backend_unavailable(backend)
+        probe = _solver(backend, N)
+        XX, YY = np.meshgrid(probe.X, probe.Y)
+        ring = np.exp(-((np.sqrt(XX**2 + YY**2) - 1e-3) ** 2) / (2e-4) ** 2)
+        V = {
+            "none": None,
+            "real": (1e-4 * ring).astype(PRECISION_REAL),
+            "complex": (1e-4 * ring + 1j * 1e-5 * ring).astype(PRECISION_COMPLEX),
+        }[kind]
+        simu = _solver(backend, N, V=V)
+        E_in = _field(simu, N)
+        _timed(
+            benchmark, lambda: simu.out_field(E_in, z=1e-3, verbose=False, plot=False)
+        )
+
+
+@pytest.mark.benchmark(group="batching")
+class TestBatching:
+    """Cost against batch size.
+
+    Broadcasting exists to make a parameter sweep cheaper than N separate
+    runs. That claim is worth measuring: CPU and CL loop over the batch per
+    kernel launch, so their gain is only in the FFTs, while CUPY and MLX
+    broadcast inside the kernels.
+    """
+
+    @pytest.mark.parametrize("count", [1, 2, 4, 8])
+    @pytest.mark.parametrize("backend", BACKENDS)
+    def test_batched_n2_sweep(self, benchmark, backend, count):
+        """Benchmark a batched parameter sweep."""
+        skip_if_backend_unavailable(backend)
+        n2_batch = np.linspace(n2, 2 * n2, count).reshape(count, 1, 1)
+        simu = _solver(backend, N, n2=n2_batch)
+        E_in = _field(simu, N, count=count)
+        _timed(
+            benchmark, lambda: simu.out_field(E_in, z=1e-3, verbose=False, plot=False)
+        )
+
+
+@pytest.mark.benchmark(group="float-width")
+class TestFloatWidth:
+    """complex64 against complex128 fields.
+
+    The field's dtype now drives the propagator's and the potential's, so
+    double precision is a real end-to-end fp64 run rather than a mixed one.
+    Skipped where the device has no fp64.
+    """
+
+    @pytest.mark.parametrize("backend", BACKENDS)
+    def test_double_precision_field(self, benchmark, backend):
+        """Benchmark a genuine fp64 propagation."""
+        skip_if_backend_unavailable(backend)
+        simu = _solver(backend, N)
+        if not simu._backend.supports_double_precision():
+            pytest.skip(f"{backend} has no fp64")
+        E_in = _field(simu, N, dtype=np.complex128)
+        _timed(
+            benchmark, lambda: simu.out_field(E_in, z=1e-3, verbose=False, plot=False)
+        )
+
+
+@pytest.mark.benchmark(group="kernels-backend")
+class TestKernelsAcrossBackends:
+    """The individual kernels, on every backend rather than only CPU.
+
+    The kernel group above imports the CPU implementations directly, so a
+    change to a GPU kernel is invisible to it. These go through the backend's
+    own kernel object.
+    """
+
+    @pytest.mark.parametrize("backend", BACKENDS)
+    def test_square_mod_nl_prop(self, benchmark, backend):
+        """Benchmark the fused intensity + nonlinear step."""
+        skip_if_backend_unavailable(backend)
+        from NLSE.backends import get_backend
+
+        be = get_backend(backend)
+        A = be.from_numpy(_random_field_2d())
+
+        def run():
+            be.kernels.square_mod_nl_prop(A, dz, alpha_k, g_k, Isat_k)
+            return be.to_numpy(A)
+
+        _timed(benchmark, run, rounds=20)
+
+    @pytest.mark.parametrize("kind", ["real", "complex"])
+    @pytest.mark.parametrize("backend", BACKENDS)
+    def test_square_mod_nl_prop_v(self, benchmark, backend, kind):
+        """Benchmark the potential kernel, real against complex V."""
+        skip_if_backend_unavailable(backend)
+        from NLSE.backends import get_backend
+
+        be = get_backend(backend)
+        A = be.from_numpy(_random_field_2d())
+        V_host = _random_real_2d()
+        V = be.from_numpy(
+            V_host if kind == "real" else V_host.astype(PRECISION_COMPLEX)
+        )
+
+        def run():
+            be.kernels.square_mod_nl_prop_v(A, V, dz, alpha_k, g_k, Isat_k)
+            return be.to_numpy(A)
+
+        _timed(benchmark, run, rounds=20)
+
+    @pytest.mark.parametrize("backend", BACKENDS)
+    def test_apply_propagator(self, benchmark, backend):
+        """Benchmark the propagator multiply, the bandwidth-bound case."""
+        skip_if_backend_unavailable(backend)
+        from NLSE.backends import get_backend
+
+        be = get_backend(backend)
+        A = be.from_numpy(_random_field_2d())
+        prop = be.from_numpy(_random_field_2d(seed=7))
+
+        def run():
+            be.kernels.apply_propagator(A, prop)
+            return be.to_numpy(A)
+
+        _timed(benchmark, run, rounds=20)

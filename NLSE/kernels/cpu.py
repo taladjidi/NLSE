@@ -667,11 +667,18 @@ def _rk4_nl_rhs_c_v(
 
 
 def _batch_len(args, scalar_positions):
-    """Return the batch size implied by the scalar parameters, or 0."""
+    """Return the batch size implied by the scalar parameters, or 0.
+
+    Any array-valued parameter means the loop is needed, including a batch of
+    exactly one. Requiring more than one element let a ``(1, 1, 1)`` parameter
+    through as a raw array, which is the very thing numba cannot type:
+    ``No implementation of function imul found for signature
+    (complex64, array(complex128, 3d, C))``.
+    """
     n = 0
     for i in scalar_positions:
         value = args[i]
-        if isinstance(value, np.ndarray) and value.ndim > 0 and value.size > 1:
+        if isinstance(value, np.ndarray) and value.ndim > 0:
             n = max(n, value.shape[0])
     return n
 

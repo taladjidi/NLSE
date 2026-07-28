@@ -28,6 +28,11 @@ AVAILABLE_BACKENDS = list_available_backends()
 
 N = 32
 COUNT = 3
+# A batch of one is the edge case: a (1, 1, 1) parameter used to slip past the
+# "is this batched?" test on CPU and CL because it holds a single element, and
+# reached numba as a raw array ("No implementation of function imul found for
+# signature (complex64, array(complex128, 3d, C))").
+BATCH_SIZES = [1, 2, 3]
 WAIST = 2.23e-3
 WINDOW = 4 * WAIST
 Z = 1e-3
@@ -209,4 +214,38 @@ def test_every_available_backend_is_covered():
         got = propagate(batched, np.broadcast_to(field, (COUNT, N, N)), "split_step")
         assert got.shape == (COUNT, N, N), (
             f"{backend_name} does not broadcast: got {got.shape}"
+        )
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+@pytest.mark.parametrize("count", BATCH_SIZES)
+@pytest.mark.parametrize("with_potential", [False, True], ids=["no_V", "shared_V"])
+def test_any_batch_size_matches_individual_runs(backend_name, count, with_potential):
+    """Every batch size must work, including one.
+
+    A batch of one is not a curiosity: it is what a sweep degenerates to at
+    the ends of a scan, and what a caller writes when parametrising code that
+    sometimes has a single value.
+
+    The no-potential case is the one that matters. With a shared V the batch
+    is inferred from the grid being smaller than the field, which hides a
+    broken parameter test; with V=None only the parameter can reveal it.
+    """
+    V, field = grids(backend_name)
+    if not with_potential:
+        V = None
+    values = np.linspace(N2_VALUES[0], N2_VALUES[-1], count)
+    batched = make_solver(backend_name, values.reshape(count, 1, 1), 0.0, V)
+    got = propagate(batched, np.broadcast_to(field, (count, N, N)), "split_step")
+
+    assert got.shape == (count, N, N)
+    for index, value in enumerate(values):
+        alone = make_solver(backend_name, float(value), 0.0, V)
+        expected = propagate(alone, field, "split_step")
+        np.testing.assert_allclose(
+            got[index],
+            expected,
+            rtol=1e-4,
+            atol=1e-5 * float(np.max(np.abs(expected))),
+            err_msg=f"{backend_name}: batch of {count}, slice {index} differs",
         )

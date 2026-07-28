@@ -66,8 +66,12 @@ def _check_double_support(context):
 
 
 def _is_batched_param(value):
-    """Return True if a physical parameter carries a per-simulation axis."""
-    return isinstance(value, np.ndarray) and value.ndim > 0 and value.size > 1
+    """Return True if a physical parameter carries a per-simulation axis.
+
+    A batch of one still counts: the value has to be unwrapped to a scalar
+    before it can be passed to a kernel, whatever the batch size.
+    """
+    return isinstance(value, np.ndarray) and value.ndim > 0
 
 
 def _param_batch_len(params):
