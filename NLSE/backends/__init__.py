@@ -8,6 +8,7 @@ from .cpu import CPUBackend
 __all__ = [
     "Backend",
     "CPUBackend",
+    "clear_backend_cache",
     "get_backend",
     "get_optimal_backend",
     "list_available_backends",
@@ -70,8 +71,33 @@ def get_optimal_backend(
     return get_fastest_backend(grid_size, force_benchmark)
 
 
+# One backend instance per resolved name, shared by every solver.
+#
+# A backend owns a device connection, not per-simulation state: nothing
+# assigns to its attributes, and its kernels are compiled once and cached on
+# it. Handing out a fresh one per solver therefore bought nothing and cost a
+# whole OpenCL context and command queue each time, none of which are ever
+# released. A parameter sweep that builds a solver per point ran the process
+# out of file descriptors ("OSError: [Errno 24] Too many open files"), which
+# surfaces as every later test erroring in setup rather than as anything to
+# do with the solver that leaked.
+_BACKEND_CACHE: dict[str, Backend] = {}
+
+
+def clear_backend_cache() -> None:
+    """Drop the cached backend instances.
+
+    Only useful to a test that needs a device connection rebuilt; ordinary
+    code should let the cache do its job.
+    """
+    _BACKEND_CACHE.clear()
+
+
 def get_backend(name: str, grid_size: tuple = (2048, 2048)) -> Backend:
     """Get backend instance by name.
+
+    Instances are cached per backend name, so repeated calls hand back the
+    same object rather than opening another device context.
 
     Parameters
     ----------
@@ -103,22 +129,29 @@ def get_backend(name: str, grid_size: tuple = (2048, 2048)) -> Backend:
         if not _QUIET:
             print(f"Auto-selected FFT backend: {name}")
 
+    # Validate before consulting the cache, so an unavailable backend raises
+    # the same way whether or not something asked for it earlier.
+    build: type[Backend]
     if name == "CPU":
-        return CPUBackend()
+        build = CPUBackend
     elif name == "CUPY":
         if not _CUPY_AVAILABLE:
             raise ValueError("CUPY backend not available - install cupy")
-        return CUPYBackend()
+        build = CUPYBackend
     elif name == "CL":
         if not _OPENCL_AVAILABLE:
             raise ValueError("OpenCL backend not available - install pyopencl")
-        return OpenCLBackend()
+        build = OpenCLBackend
     elif name == "MLX":
         if not _MLX_AVAILABLE:
             raise ValueError("MLX backend not available - install mlx")
-        return MLXBackend()
+        build = MLXBackend
     else:
         raise ValueError(f"Unknown backend: {name}")
+
+    if name not in _BACKEND_CACHE:
+        _BACKEND_CACHE[name] = build()
+    return _BACKEND_CACHE[name]
 
 
 def list_available_backends() -> list[str]:

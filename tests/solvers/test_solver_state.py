@@ -8,8 +8,17 @@ state has to be refreshed rather than silently reused.
 import numpy as np
 import pytest
 from NLSE import NLSE
+from NLSE.backends import get_backend, list_available_backends
+
+from .helpers import as_numpy
 
 PRECISION_COMPLEX = np.complex64
+
+AVAILABLE_BACKENDS = list_available_backends()
+# Backends whose solvers bypass apply_propagator for the fused linear step.
+LINEAR_STEP_BACKENDS = [
+    name for name in AVAILABLE_BACKENDS if get_backend(name).has_linear_step
+]
 
 N = 64
 n2 = -1.6e-9
@@ -274,6 +283,165 @@ class TestNonlinearityCutoff:
         )
 
 
+class TestStepLimitWithBatchedParameters:
+    """The step limiter must cope with per-simulation parameter arrays.
+
+    Broadcasting a parameter across a batch makes the precomputed constants
+    arrays rather than scalars, so any scalar comparison inside the limiter
+    raises "truth value of an array is ambiguous".
+    """
+
+    @staticmethod
+    def batched_n2(count=3):
+        """Return an n2 array shaped for broadcasting over a batch."""
+        n2_arr = np.zeros((count, 1, 1))
+        n2_arr[:, 0, 0] = np.linspace(-1.6e-9, -1e-10, count)
+        return n2_arr
+
+    def batched_input(self, simu, count=3):
+        """Return a batched input field matching the solver grid."""
+        env = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2)
+        return (np.ones((count, N, N)) * env).astype(PRECISION_COMPLEX)
+
+    def test_split_step_max_dz_returns_a_scalar(self):
+        """A batched g must reduce to one scalar step limit."""
+        simu = make_solver(n2=self.batched_n2())
+        E = self.batched_input(simu)
+        simu._precompute_step_constants(None, "single")
+        max_dz = simu._split_step_max_dz(E)
+        assert np.isscalar(max_dz) or np.ndim(max_dz) == 0, (
+            f"step limit must be a scalar, got {type(max_dz)} / {max_dz!r}"
+        )
+        assert max_dz > 0
+
+    def test_split_step_max_dz_takes_the_most_restrictive(self):
+        """The limit must come from the largest nonlinear rate in the batch."""
+        simu = make_solver(n2=self.batched_n2())
+        E = self.batched_input(simu)
+        simu._precompute_step_constants(None, "single")
+        batched = simu._split_step_max_dz(E)
+
+        # The strongest n2 in the batch alone must give the same limit.
+        strongest = make_solver(n2=float(np.min(self.batched_n2()[:, 0, 0])))
+        strongest._precompute_step_constants(None, "single")
+        single = strongest._split_step_max_dz(E[0])
+
+        np.testing.assert_allclose(
+            batched,
+            single,
+            rtol=1e-6,
+            err_msg="batched limit is not the most restrictive of the batch",
+        )
+
+    @pytest.mark.parametrize("backend_name", list_available_backends())
+    def test_batched_run_matches_individual_runs(self, backend_name):
+        """Each slice of a batched run must equal running that case alone.
+
+        Broadcasting is what makes a parameter sweep cheap, so the batch has
+        to be equivalent to the individual runs, not merely finite. The
+        earlier failure was silent: apply_propagator indexed a shared
+        propagator with the batched field's flat index, so every slice after
+        the first came back as NaN or garbage.
+        """
+        # Keep the run short and the step well inside the accuracy limit, so
+        # the limiter clamps nothing. It reduces over the batch, so a batched
+        # run and a weak individual one would otherwise take different steps
+        # and differ by discretisation error rather than by a bug.
+        z = 1e-3
+        values = self.batched_n2()[:, 0, 0]
+        batched = make_solver(n2=self.batched_n2(), backend=backend_name)
+        potential = (
+            -1e-4 * np.exp(-(batched.XX**2 + batched.YY**2) / (70e-6) ** 2)
+        ).astype(np.float32)
+        batched = make_solver(n2=self.batched_n2(), V=potential, backend=backend_name)
+        batched.delta_z = 1e-4
+        one_field = np.exp(-(batched.XX**2 + batched.YY**2) / waist**2).astype(
+            PRECISION_COMPLEX
+        )
+
+        got = batched.out_field(
+            np.broadcast_to(one_field, (len(values), N, N)).copy(),
+            z,
+            verbose=False,
+            plot=False,
+        )
+        assert batched.delta_z == 1e-4, "the limiter clamped the batched step"
+        assert np.all(np.isfinite(as_numpy(batched, got))), (
+            "batched run produced non-finite values"
+        )
+
+        for index, value in enumerate(values):
+            alone = make_solver(n2=float(value), V=potential, backend=backend_name)
+            alone.delta_z = 1e-4
+            expected = alone.out_field(one_field.copy(), z, verbose=False, plot=False)
+            assert alone.delta_z == 1e-4, "the limiter clamped an individual step"
+            np.testing.assert_allclose(
+                np.asarray(as_numpy(batched, got))[index],
+                np.asarray(as_numpy(alone, expected)),
+                rtol=1e-4,
+                atol=1e-5 * float(np.max(np.abs(as_numpy(alone, expected)))),
+                err_msg=f"batch slice {index} (n2={value:.3e}) differs from the "
+                f"same simulation run on its own",
+            )
+
+    def test_shared_propagator_is_not_indexed_past_its_end(self):
+        """A batched field against a shared propagator must broadcast."""
+        from NLSE.kernels import cpu as cpu_kernels
+
+        field = (np.ones((3, 4, 4)) + 0j).astype(PRECISION_COMPLEX)
+        propagator = (np.full((4, 4), 2.0) + 0j).astype(PRECISION_COMPLEX)
+        out = cpu_kernels.apply_propagator(field.copy(), propagator)
+        np.testing.assert_allclose(
+            out,
+            np.full((3, 4, 4), 2.0, dtype=PRECISION_COMPLEX),
+            err_msg="propagator was not broadcast across the batch",
+        )
+
+    @pytest.mark.parametrize("backend_name", LINEAR_STEP_BACKENDS)
+    def test_linear_step_broadcasts_a_shared_propagator(self, backend_name):
+        """The fused linear step must broadcast like apply_propagator does.
+
+        Backends declaring has_linear_step never reach apply_propagator from
+        the solver, so fixing the batch handling there left linear_step
+        reading past the end of a shared propagator. Whether that shows up as
+        NaN depends on what the device allocator left behind, which is why it
+        looked like test-ordering flakiness rather than a plain out-of-bounds
+        read.
+        """
+        backend = get_backend(backend_name)
+        axes = (-2, -1)
+        rng = np.random.default_rng(0)
+        field = (rng.random((3, 8, 8)) + 1j * rng.random((3, 8, 8))).astype(
+            PRECISION_COMPLEX
+        )
+        propagator = (rng.random((8, 8)) + 1j * rng.random((8, 8))).astype(
+            PRECISION_COMPLEX
+        )
+        plans = backend.build_fft(field.shape, axes, field.dtype, array=field)
+
+        got = backend.to_numpy(
+            backend.kernels.linear_step(
+                backend.from_numpy(field.copy()),
+                backend.from_numpy(propagator),
+                plans[0],
+            )
+        )
+
+        expected = np.fft.ifftn(
+            np.fft.fftn(field, axes=axes) * propagator, axes=axes
+        ).astype(PRECISION_COMPLEX)
+        np.testing.assert_allclose(
+            got,
+            expected,
+            rtol=1e-4,
+            atol=1e-5 * float(np.max(np.abs(expected))),
+            err_msg=(
+                f"{backend_name}.linear_step did not broadcast a shared "
+                f"propagator across the batch"
+            ),
+        )
+
+
 class TestPrecomputedConstants:
     """Precomputed step constants must reflect the current parameters."""
 
@@ -300,3 +468,132 @@ class TestPrecomputedConstants:
             atol=1e-4 * float(np.max(np.abs(expected))),
             err_msg=f"Changing {attr} between runs was not picked up",
         )
+
+
+class TestStepLimitEnergies:
+    """Both limiters must weigh every term the integrator actually applies.
+
+    The rates are expectation values — the energy in each term, weighted by
+    where the field has support — rather than a maximum over the grid. A
+    maximum is a property of the grid, not of the solution: a tall potential
+    in a corner the field never reaches would otherwise set the step for a
+    run it has no effect on.
+
+    RK4 diverged to NaN under any potential because its limit counted the
+    dispersion alone, and V is scaled by k/2 ~ 4e6. Split-step omitted V
+    entirely, on the argument that it is applied exactly; exact is not free,
+    because what aliases is the phase the step imprints.
+    """
+
+    @staticmethod
+    def ring(simu, amplitude=1e-2):
+        """Return a ring-shaped potential."""
+        r = np.sqrt(simu.XX**2 + simu.YY**2)
+        return (amplitude * np.exp(-((r - 2e-3) ** 2) / (3e-4) ** 2)).astype(np.float32)
+
+    def prepared(self, V, backend="CPU"):
+        """Return a solver with its step constants and field ready."""
+        simu = make_solver(V=V, backend=backend)
+        E = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(PRECISION_COMPLEX)
+        simu._precompute_step_constants(V, "single")
+        A, _ = simu._prepare_output_array(E, True)
+        return simu, A
+
+    @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+    def test_rk4_with_a_potential_does_not_diverge(self, backend_name):
+        """RK4 under a potential must converge, not return NaN."""
+        probe = make_solver(backend=backend_name)
+        V = self.ring(probe)
+        simu = make_solver(V=V, backend=backend_name)
+        simu.delta_z = 1e-4
+        E = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(PRECISION_COMPLEX)
+        out = simu.out_field(E.copy(), 2e-4, verbose=False, plot=False, method="RK4")
+        assert np.all(np.isfinite(np.asarray(as_numpy(simu, out)))), (
+            f"{backend_name}: RK4 under a potential diverged. Its step limit "
+            f"is not accounting for V."
+        )
+
+    def test_the_potential_enters_both_limits(self):
+        """A potential must tighten the RK4 and the split-step limit alike."""
+        probe = make_solver()
+        V = self.ring(probe)
+        bare, A_bare = self.prepared(None)
+        with_V, A_V = self.prepared(V)
+
+        assert with_V._rk4_max_dz(A_V) < bare._rk4_max_dz(A_bare), (
+            "a potential must make the RK4 limit more restrictive"
+        )
+        assert with_V._split_step_max_dz(A_V) < bare._split_step_max_dz(A_bare), (
+            "a potential must make the split-step limit more restrictive; it "
+            "used to be ignored entirely because V is applied exactly"
+        )
+
+    def test_the_rates_are_energies_not_grid_maxima(self):
+        """A potential where the field is absent must barely count.
+
+        Two potentials of equal peak height, one on top of the beam and one
+        far outside it, would give the same limit under a max reduction. The
+        field-weighted rate distinguishes them, which is the whole point.
+        """
+        probe = make_solver()
+        r = np.sqrt(probe.XX**2 + probe.YY**2)
+        on_beam = np.exp(-(r**2) / (5e-4) ** 2)
+        far_away = np.exp(-((r - 4e-3) ** 2) / (2e-4) ** 2)
+        # Normalise so the peaks are exactly equal: the far ring is clipped by
+        # the window, and the point is to vary only where the potential sits.
+        on_beam = (1e-2 * on_beam / on_beam.max()).astype(np.float32)
+        far_away = (1e-2 * far_away / far_away.max()).astype(np.float32)
+        assert np.isclose(on_beam.max(), far_away.max()), "precondition: equal peaks"
+
+        near, A_near = self.prepared(on_beam)
+        far, A_far = self.prepared(far_away)
+        assert (
+            near._energy_rates(A_near)["potential"]
+            > 10 * far._energy_rates(A_far)["potential"]
+        ), (
+            "a potential outside the beam constrains the step as much as one "
+            "on top of it, so the rate is a grid maximum rather than an energy"
+        )
+
+    def test_split_step_ignores_dispersion_but_rk4_does_not(self):
+        """Only RK4 is limited by the kinetic term.
+
+        Split-step applies the linear part exactly in Fourier space, so a
+        purely linear problem is solved exactly at any step. RK4 approximates
+        it, so dispersion binds.
+        """
+        linear, A = self.prepared(None)
+        linear.n2 = 0.0
+        linear._precompute_step_constants(None, "single")
+        rates = linear._energy_rates(A)
+        assert rates["kinetic"] > 0, "precondition: dispersion is present"
+        assert linear._split_step_max_dz(A) == np.inf, (
+            "split-step must not be limited by dispersion alone"
+        )
+        assert np.isfinite(linear._rk4_max_dz(A)), (
+            "RK4 must still be limited by dispersion"
+        )
+
+    def test_absorption_counts_for_rk4_only(self):
+        """A purely absorbing V limits RK4 but imprints no phase.
+
+        Its imaginary part is gain/loss: RK4 approximates it, so it is part
+        of the eigenvalue, while split-step applies it exactly and only the
+        phase can alias.
+        """
+        probe = make_solver()
+        absorbing = (1j * self.ring(probe)).astype(np.complex64)
+        simu, A = self.prepared(absorbing)
+        rates = simu._energy_rates(A)
+
+        assert rates["potential"] == pytest.approx(0.0, abs=1e-9), (
+            "a purely imaginary V rotates no phase"
+        )
+        assert rates["loss"] > 0, "a purely imaginary V must count as loss"
+
+    def test_no_potential_leaves_a_finite_limit(self):
+        """Without V both limits still have to be finite and positive."""
+        simu, A = self.prepared(None)
+        assert simu._energy_rates(A)["potential"] == 0.0
+        for limit in (simu._rk4_max_dz(A), simu._split_step_max_dz(A)):
+            assert np.isfinite(limit) and limit > 0

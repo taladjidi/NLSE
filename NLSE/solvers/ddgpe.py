@@ -210,22 +210,21 @@ class DDGPE(CNLSE):
         self._gamma_half = fp(self.gamma / 2)
         self._gamma2_half = fp(self.gamma2 / 2)
 
-    def _propagator_cache_key(self, precision: str) -> tuple:
+    def _propagator_cache_key(self, dtype: np.dtype) -> tuple:
         """Return cache key for DDGPE propagator."""
         return (
             self.NX,
             self.NY,
             float(self.delta_z),
-            precision,
+            np.dtype(dtype).str,
             float(self.omega_exc),
             float(self.omega_cav),
             float(self.omega_pump),
             float(self.k_z),
         )
 
-    def _compute_propagator(self, precision: str) -> np.ndarray:
+    def _compute_propagator(self, dtype: np.dtype) -> np.ndarray:
         """Compute the DDGPE polariton propagation matrices."""
-        dtype = np.complex128 if precision == "double" else np.complex64
         propagator1 = np.exp(
             -1j
             * (self.omega_exc * (1 + 0 * self.Kxx**2) - self.omega_pump)
@@ -267,25 +266,18 @@ class DDGPE(CNLSE):
         ).astype(np.complex64)
         return np.array([prop1, prop2])
 
-    def _rk4_max_dz(self) -> float:
-        """Compute the maximum stable RK4 step size for DDGPE.
+    def _dispersion_operator(self) -> np.ndarray:
+        """Return the DDGPE polariton dispersion eigenvalues.
 
-        Use the actual polariton dispersion eigenvalues instead of K^2/(2k).
+        Use the actual polariton branches instead of K^2/(2k). The exciton
+        branch is flat, so the larger of the two is taken pointwise.
         """
         D_exc = abs(self.omega_exc - self.omega_pump)
-        D_cav = float(
-            np.max(
-                np.abs(
-                    self.omega_cav
-                    * np.sqrt(1 + (self.Kxx**2 + self.Kyy**2) / self.k_z**2)
-                    - self.omega_pump
-                )
-            )
+        D_cav = np.abs(
+            self.omega_cav * np.sqrt(1 + (self.Kxx**2 + self.Kyy**2) / self.k_z**2)
+            - self.omega_pump
         )
-        D_max = max(D_exc, D_cav)
-        if D_max == 0:
-            return np.inf
-        return 2.83 / D_max
+        return np.maximum(D_exc, D_cav)
 
     def _prepare_output_array(self, E_in: np.ndarray, normalize: bool) -> np.ndarray:
         """Prepare the output array depending on __BACKEND__.

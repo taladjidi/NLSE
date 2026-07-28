@@ -30,6 +30,10 @@ pyfftw.config.NUM_THREADS = multiprocessing.cpu_count()
 pyfftw.config.PLANNER_EFFORT = "FFTW_MEASURE"
 pyfftw.interfaces.cache.enable()
 
+# Explicit RK4 is stable for |lambda * dz| up to ~2*sqrt(2) along the
+# imaginary axis. Every solver's step limit is derived from it.
+RK4_STABILITY_RADIUS = 2.83
+
 
 class NLSE:
     """A class to solve NLSE."""
@@ -203,13 +207,18 @@ class NLSE:
             self._convolution = signal.oaconvolve
         # CL backend doesn't have convolution yet
 
-    def _propagator_cache_key(self, precision: str) -> tuple:
+    def _propagator_cache_key(self, dtype: np.dtype) -> tuple:
         """Return cache key for the split-step propagator."""
-        return (self.NX, self.NY, float(self.delta_z), precision, float(self.k))
+        return (
+            self.NX,
+            self.NY,
+            float(self.delta_z),
+            np.dtype(dtype).str,
+            float(self.k),
+        )
 
-    def _compute_propagator(self, precision: str) -> np.ndarray:
+    def _compute_propagator(self, dtype: np.dtype) -> np.ndarray:
         """Compute the linear propagation matrix (no caching)."""
-        dtype = np.complex128 if precision == "double" else np.complex64
         return np.exp(
             -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k * self.delta_z,
             dtype=dtype,
@@ -223,43 +232,195 @@ class NLSE:
         """Compute the raw dispersion operator for RK4 (no caching)."""
         return (-1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k).astype(np.complex64)
 
-    def _rk4_max_dz(self) -> float:
+    def _dispersion_operator(self) -> np.ndarray:
+        """Return the dispersion eigenvalues on the Fourier grid.
+
+        The linear part of the right-hand side, as an array rather than one
+        number, so the limiters can weight it by where the field actually has
+        spectral weight. Subclasses override this alone.
+
+        Returns
+        -------
+        np.ndarray
+            ``K^2 / (2 k)`` over the Fourier grid.
+        """
+        return 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k
+
+    def _energy_rates(self, A: np.ndarray) -> dict[str, float]:
+        """Return the phase rate each term contributes, weighted by the field.
+
+        Each entry is an expectation value, ``<psi|O|psi> / <psi|psi>``: the
+        kinetic term over the spectral density, the rest over the intensity.
+        That is the rate at which a term rotates the field's phase, so
+        multiplying by dz gives the phase it adds in one step — the energy in
+        that term, in the units the step limits are written in.
+
+        This is what the limiters reduce with, rather than ``max`` over each
+        operator. A maximum is a property of the grid, not of the solution: a
+        tall potential in a corner the field never reaches, or a high-K corner
+        with no spectral weight, would set the step for a run it has no effect
+        on. Weighting by the field follows the physics instead.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            Field, possibly on a device.
+
+        Returns
+        -------
+        dict
+            ``kinetic``, ``potential``, ``interaction`` and ``loss`` rates.
+        """
+        A_np = np.asarray(self._backend.to_numpy(A))
+        weight = np.abs(A_np) ** 2
+        total = float(np.sum(weight))
+        zero = {"kinetic": 0.0, "potential": 0.0, "interaction": 0.0, "loss": 0.0}
+        if total == 0:
+            return zero
+
+        spectrum = np.abs(np.fft.fftn(A_np, axes=self._last_axes)) ** 2
+        spectral_total = float(np.sum(spectrum))
+        dispersion = np.asarray(self._dispersion_operator())
+        kinetic = (
+            float(np.sum(spectrum * dispersion) / spectral_total)
+            if spectral_total > 0
+            else 0.0
+        )
+
+        # Only the real part of V rotates the phase; its imaginary part is
+        # gain or loss and belongs with the losses.
+        V_scaled = self._as_host_array(getattr(self, "_V_scaled", None))
+        if V_scaled is None:
+            potential = absorption = 0.0
+        else:
+            potential = float(np.sum(weight * np.real(V_scaled)) / total)
+            absorption = float(np.sum(weight * np.abs(np.imag(V_scaled))) / total)
+
+        g = self._as_host_array(getattr(self, "_g", None))
+        if g is None:
+            g = self._as_host_array(self.k / 2 * self.n2 * c * epsilon_0)
+        Isat = self._as_host_array(getattr(self, "_Isat_conv", None))
+        if Isat is None:
+            Isat = self._as_host_array(2 * self.I_sat / (epsilon_0 * c))
+        # Batched runs carry one value per simulation; the step has to satisfy
+        # the fastest of them, so reduce with max after weighting.
+        mean_intensity = float(np.sum(weight * weight / (1 + weight / Isat)) / total)
+        interaction = float(np.max(np.abs(g) * mean_intensity))
+
+        alpha_half = self._as_host_array(getattr(self, "_alpha_half", self.alpha / 2))
+        loss = float(np.max(np.abs(alpha_half))) + absorption
+        return {
+            "kinetic": abs(kinetic),
+            "potential": abs(potential),
+            "interaction": interaction,
+            "loss": loss,
+        }
+
+    def _rk4_max_dz(self, A: np.ndarray | None = None) -> float:
         """Compute the maximum stable step size for explicit RK4.
 
-        The RK4 stability region for purely imaginary eigenvalues has
-        radius ~2.83. The largest eigenvalue of the dispersion operator
-        is K_max^2 / (2*k). Returns the maximum dz that keeps the
-        scheme within the stability region.
+        RK4's stability region reaches ~2.83 along the imaginary axis, so the
+        step is bounded by ``2.83 / |lambda|`` for the right-hand side it
+        integrates. Every term it evaluates explicitly belongs in that
+        eigenvalue — dispersion, potential, interaction and loss — and they
+        add.
+
+        This used to count dispersion alone, which is almost never the
+        largest. With a potential it was wrong by orders of magnitude, since V
+        is scaled by k/2, so RK4 ran outside its stability region and diverged
+        to NaN for any potential at all.
+
+        The absorption of a complex potential counts here, unlike in
+        ``_split_step_max_dz``: split-step applies it exactly through the
+        exponential, whereas RK4 approximates it, so it is as much part of the
+        eigenvalue as the phase is.
+
+        Parameters
+        ----------
+        A : np.ndarray, optional
+            Field. Without it the field-weighted rates cannot be formed, so a
+            conservative grid maximum is used instead.
+
+        Returns
+        -------
+        float
+            Largest stable step, or infinity if every rate vanishes.
         """
-        D_max = float(np.max(0.5 * (self.Kxx**2 + self.Kyy**2) / self.k))
-        if D_max == 0:
+        if A is None:
+            rate = float(np.max(np.abs(self._dispersion_operator())))
+            V_scaled = self._as_host_array(getattr(self, "_V_scaled", None))
+            if V_scaled is not None:
+                rate += float(np.max(np.abs(V_scaled)))
+        else:
+            rate = sum(self._energy_rates(A).values())
+        if rate == 0:
             return np.inf
-        return 2.83 / D_max
+        return RK4_STABILITY_RADIUS / rate
 
     def _split_step_max_dz(self, A: np.ndarray) -> float:
         """Compute the maximum step size for split-step accuracy.
 
-        Ensure the intensity-dependent nonlinear phase per step stays
-        below pi to avoid phase aliasing. Only the Kerr term
-        ``g * |A|^2 * sat`` is considered because it varies with the
-        field and causes splitting error. The potential V is applied
-        exactly via the exponential and does not limit accuracy.
+        Keep the phase imprinted in one real-space step below pi. The kernels
+        put the potential and the interaction in the same exponent —
+        ``arg_imag = (g |A|^2 sat + V) dz`` — so both contribute, and their
+        energies add.
+
+        The potential used to be left out, on the grounds that it is applied
+        exactly through the exponential. Exact is not free: what matters is
+        the phase the step imprints, however exactly it was computed. Since V
+        is scaled by k/2 ~ 4e6, omitting it made the limit meaningless for
+        anything with a potential.
+
+        The kinetic term is deliberately absent, and that is the real
+        difference from ``_rk4_max_dz``. Split-step applies the linear part
+        exactly in Fourier space, so a purely linear problem is solved exactly
+        at any step size (verified to 4e-14) and dispersion cannot limit
+        accuracy on its own. RK4 approximates the whole right-hand side, so
+        for it the kinetic term binds like everything else.
 
         Parameters
         ----------
         A : np.ndarray
             Normalized field (possibly on device).
-        """
-        A_np = self._backend.to_numpy(A)
-        I_peak = float(np.max(np.abs(A_np) ** 2))
-        g = abs(getattr(self, "_g", self.k / 2 * self.n2 * c * epsilon_0))
-        Isat = getattr(self, "_Isat_conv", 2 * self.I_sat / (epsilon_0 * c))
-        nl_rate = g * I_peak / (1 + I_peak / Isat)
-        if nl_rate == 0:
-            return np.inf
-        return np.pi / nl_rate
 
-    def _enforce_step_limit(self, A: np.ndarray, method: str, precision: str) -> None:
+        Returns
+        -------
+        float
+            Largest step keeping the real-space phase per step below pi.
+        """
+        rates = self._energy_rates(A)
+        phase_rate = rates["potential"] + rates["interaction"]
+        if phase_rate == 0:
+            return np.inf
+        return np.pi / phase_rate
+
+    def _as_host_array(self, value: Any) -> Any:
+        """Return a parameter as a host numpy array, or None if unset.
+
+        Parameters are scalars for an ordinary run, but arrays for a batched
+        one, and _send_arrays_to_gpu may have moved those arrays onto the
+        device. Callers that need to compare or reduce them have to bring
+        them back first.
+
+        Parameters
+        ----------
+        value : Any
+            Scalar, numpy array, or device array.
+
+        Returns
+        -------
+        np.ndarray or None
+            The value on the host, or None if it was None.
+        """
+        if value is None:
+            return None
+        if isinstance(value, np.ndarray) or np.isscalar(value):
+            return np.asarray(value)
+        return np.asarray(self._backend.to_numpy(value))
+
+    def _enforce_step_limit(
+        self, A: np.ndarray, method: str, precision: str, dtype: np.dtype
+    ) -> None:
         """Cap delta_z to the stability/accuracy limit for the chosen method.
 
         Parameters
@@ -269,18 +430,35 @@ class NLSE:
         method : str
             Integration method ("split_step" or "RK4").
         precision : str
-            "single" or "double".
+            Order of the split-step: "single" applies the nonlinear step
+            once per step, "double" splits it around the linear step.
+        dtype : np.dtype
+            Complex dtype of the field, so a rebuilt propagator matches it.
         """
         if method == "RK4":
-            max_dz = self._rk4_max_dz()
+            rates = self._energy_rates(A)
+            max_dz = self._rk4_max_dz(A)
             label = "RK4 stability"
+            # Stability is not accuracy. At the edge of the region the scheme
+            # merely stops diverging; a potential is scaled by k/2, so a step
+            # that is stable can still turn a large phase per step into a
+            # large error. Split-step applies V through the exponential and
+            # has no such limit, which is usually the better answer.
+            extra = (
+                " This is a stability bound, not an accuracy one: a smaller "
+                "delta_z may still be needed. split_step applies the "
+                "potential exactly and is not limited this way."
+                if rates["potential"] + rates["loss"] > rates["kinetic"]
+                else ""
+            )
         else:
             max_dz = self._split_step_max_dz(A)
             label = "split-step accuracy"
+            extra = ""
         if self.delta_z > max_dz:
             warnings.warn(
                 f"delta_z={self.delta_z:.2e} exceeds {label} limit "
-                f"({max_dz:.2e}). Reducing to {0.9 * max_dz:.2e}.",
+                f"({max_dz:.2e}). Reducing to {0.9 * max_dz:.2e}.{extra}",
                 stacklevel=2,
             )
             self.delta_z = 0.9 * max_dz
@@ -289,7 +467,7 @@ class NLSE:
             if method == "RK4":
                 self.propagator = self._build_propagator_rk4()
             else:
-                self.propagator = self._build_propagator(precision=precision)
+                self.propagator = self._build_propagator(dtype=dtype)
             # Send only the new propagator to device
             if self._backend.is_device_backend:
                 self.propagator = self._backend.from_numpy(self.propagator)
@@ -297,23 +475,49 @@ class NLSE:
             # preference to propagator, so it has to follow the rebuild.
             self._update_propagator_fft()
 
-    def _build_propagator(self, precision: str = "single") -> np.ndarray:
+    @staticmethod
+    def _field_dtype(E_in: np.ndarray) -> np.dtype:
+        """Return the complex dtype the propagator has to match.
+
+        The propagator multiplies the field, so the two must share a dtype.
+        The GPU kernels select single or double precision from the *field*,
+        then index the propagator with it: a complex128 propagator against a
+        complex64 field was read as pairs of float32 and came back NaN.
+
+        Parameters
+        ----------
+        E_in : np.ndarray
+            Input field, on the host or on a device.
+
+        Returns
+        -------
+        np.dtype
+            ``complex128`` if the field is double precision, else
+            ``complex64``.
+        """
+        return (
+            np.dtype(np.complex128)
+            if np.dtype(getattr(E_in, "dtype", np.complex64)).itemsize == 16
+            else np.dtype(np.complex64)
+        )
+
+    def _build_propagator(self, dtype: np.dtype = np.complex64) -> np.ndarray:
         """Build the linear propagation matrix with caching.
 
         Parameters
         ----------
-        precision : str
-            "single" or "double" precision for the split step propagator.
+        dtype : np.dtype
+            Complex dtype of the field the propagator will multiply.
 
         Returns
         -------
         np.ndarray
             The propagator matrix.
         """
-        cache_key = self._propagator_cache_key(precision)
+        cache_key = self._propagator_cache_key(dtype)
         if cache_key in self._propagator_cache:
             return self._propagator_cache[cache_key]
-        propagator = self._compute_propagator(precision)
+        propagator = self._compute_propagator(dtype)
         self._propagator_cache[cache_key] = propagator
         return propagator
 
@@ -408,8 +612,44 @@ class NLSE:
     _gpu_array_attrs = ("V", "nl_profile", "propagator")
     _gpu_param_attrs = ("power", "n2", "alpha", "I_sat")
 
-    def _send_arrays_to_gpu(self) -> None:
-        """Send arrays to device using backend."""
+    @staticmethod
+    def _potential_dtype(V: np.ndarray, field_dtype: np.dtype) -> np.dtype:
+        """Return the dtype a potential must take for a given field.
+
+        The width follows the field, exactly as the propagator's does: the
+        kernels pick their single- or double-precision variant from the field
+        and then read V with it. Whether V is complex follows V itself — a
+        complex potential is an absorbing (or amplifying) one, its imaginary
+        part entering as gain/loss, and that has to survive the transfer.
+        Casting it to a real dtype silently deleted the absorption.
+
+        Parameters
+        ----------
+        V : np.ndarray
+            Potential, real or complex.
+        field_dtype : np.dtype
+            Complex dtype of the field V will act on.
+
+        Returns
+        -------
+        np.dtype
+            ``float32``/``float64`` for a real V, ``complex64``/
+            ``complex128`` for a complex one.
+        """
+        single = np.dtype(field_dtype).itemsize == 8
+        if np.iscomplexobj(V):
+            return np.dtype(np.complex64 if single else np.complex128)
+        return np.dtype(np.float32 if single else np.float64)
+
+    def _send_arrays_to_gpu(self, field_dtype: np.dtype = np.complex64) -> None:
+        """Send arrays to device using backend.
+
+        Parameters
+        ----------
+        field_dtype : np.dtype
+            Complex dtype of the field, so the potential is transferred at a
+            matching width rather than always as float32.
+        """
         if not self._backend.is_device_backend:
             return
         for attr in self._gpu_array_attrs:
@@ -417,8 +657,15 @@ class NLSE:
             if val is None:
                 continue
             if attr == "V":
-                val = np.ascontiguousarray(val, dtype=np.float32)
+                val = np.ascontiguousarray(
+                    val, dtype=self._potential_dtype(val, field_dtype)
+                )
             setattr(self, attr, self._backend.from_numpy(val))
+        if not self._backend.broadcasts_parameters_natively:
+            # The kernels take one simulation's scalar value per launch, so a
+            # batched parameter is picked apart on the host and never reaches
+            # the device as an array.
+            return
         for attr in self._gpu_param_attrs:
             val = getattr(self, attr)
             if isinstance(val, np.ndarray):
@@ -433,6 +680,8 @@ class NLSE:
             if val is None:
                 continue
             setattr(self, attr, self._backend.to_numpy(val))
+        if not self._backend.broadcasts_parameters_natively:
+            return
         for attr in self._gpu_param_attrs:
             val = getattr(self, attr)
             if not isinstance(val, (int, float)):
@@ -458,7 +707,7 @@ class NLSE:
             The propagated field.
         """
         kernels = self._backend.kernels
-        if hasattr(kernels, "linear_step"):
+        if self._backend.has_linear_step:
             prop_fft = getattr(self, "_propagator_fft", None)
             if prop_fft is not None:
                 return kernels.linear_step(A, prop_fft, plans[0], unnorm_ifft=True)
@@ -492,8 +741,10 @@ class NLSE:
         plans : list
             List of FFT plan objects from backend.
         precision : str, optional
-            Single or double application of
-            the nonlinear propagation step. Defaults to "single".
+            Order of the split step: "single" applies the nonlinear step
+            once, "double" splits it around the linear step. Not the
+            floating-point width, which follows the field. Defaults to
+            "single".
 
         Returns
         -------
@@ -511,8 +762,9 @@ class NLSE:
         if V_scaled is None and V is not None:
             V_scaled = V * k_half
 
-        # CL fused fast path (nl_length == 0 only)
-        if hasattr(kernels, "split_step_fused") and self.nl_length == 0:
+        # Fused fast path (CL, MLX). Not eligible with a nonlocal kernel,
+        # which needs the convolution between |A|^2 and the nonlinear step.
+        if self._backend.has_fused_split_step and self.nl_length == 0:
             dz = self.delta_z / 2 if precision == "double" else self.delta_z
             prop_fft = getattr(self, "_propagator_fft", None)
             return kernels.split_step_fused(
@@ -526,22 +778,6 @@ class NLSE:
                 precision,
                 plans[0],
                 unnorm_ifft=(prop_fft is not None),
-            )
-
-        # MLX fused fast path (nl_length == 0 only)
-        if hasattr(kernels, "split_step") and self.nl_length == 0:
-            dz = self.delta_z / 2 if precision == "double" else self.delta_z
-            return kernels.split_step(
-                A,
-                propagator,
-                V,
-                dz,
-                alpha_half,
-                g,
-                k_half,
-                Isat_conv,
-                precision,
-                plans[0],
             )
 
         # First half-step (only for precision == "double")
@@ -675,8 +911,8 @@ class NLSE:
         if V_scaled is None and V is not None:
             V_scaled = V * k_half
 
-        # CL fused fast path: out-of-place FFT eliminates buffer copy
-        if hasattr(kernels, "rk4_rhs_fused") and self.nl_length == 0:
+        # Fused fast path: out-of-place FFT eliminates the buffer copy
+        if self._backend.has_fused_rk4_rhs and self.nl_length == 0:
             prop_fft = getattr(self, "_propagator_fft", None)
             return kernels.rk4_rhs_fused(
                 A_in,
@@ -746,20 +982,22 @@ class NLSE:
         """
         kernels = self._backend.kernels
 
-        # MLX fused fast path (nl_length == 0, single-component only)
-        if hasattr(kernels, "split_step_rk4") and self.nl_length == 0 and A.ndim == 2:
+        # Whole-step fused fast path (MLX), single component only
+        if self._backend.has_fused_rk4_step and self.nl_length == 0 and A.ndim == 2:
             alpha_half = getattr(self, "_alpha_half", self.alpha / 2)
             g = getattr(self, "_g", self.k / 2 * self.n2 * c * epsilon_0)
             k_half = getattr(self, "_k_half", np.float32(self.k / 2))
             Isat_conv = getattr(self, "_Isat_conv", 2 * self.I_sat / (epsilon_0 * c))
-            return kernels.split_step_rk4(
+            V_scaled = getattr(self, "_V_scaled", None)
+            if V_scaled is None and V is not None:
+                V_scaled = V * k_half
+            return kernels.split_step_rk4_fused(
                 A,
                 propagator,
-                V,
+                V_scaled,
                 self.delta_z,
                 alpha_half,
                 g,
-                k_half,
                 Isat_conv,
                 plans[0],
             )
@@ -771,8 +1009,7 @@ class NLSE:
         acc = self._rk4_acc
         h = self.delta_z
 
-        # Use fused stage kernels when available (CL backend)
-        has_fused = hasattr(kernels, "rk4_set_and_axpy")
+        has_fused = self._backend.has_fused_rk4_stage_update
 
         # Stage 1: k1 = f(A)
         k = self._RK4_rhs(A, k, V, propagator, plans)
@@ -984,7 +1221,8 @@ class NLSE:
         V : np.ndarray or None
             Potential field.
         precision : str
-            "single" or "double" — used to select scalar dtype.
+            Order of the split step ("single" or "double"), used here only
+            to pick the width of the precomputed scalar constants.
         """
         fp = np.float32 if precision == "single" else np.float64
         alpha_half = self.alpha / 2
@@ -1021,12 +1259,7 @@ class NLSE:
         Must be called whenever ``self.propagator`` changes, otherwise the
         fused kernels keep using a propagator derived from the previous one.
         """
-        kernels = self._backend.kernels
-        if (
-            hasattr(kernels, "linear_step")
-            and self.propagator is not None
-            and self._backend.name in ("CUPY", "CL")
-        ):
+        if self._backend.supports_unnormalized_ifft and self.propagator is not None:
             N_fft = 1
             for ax in self._last_axes:
                 N_fft *= self.propagator.shape[ax]
@@ -1070,9 +1303,14 @@ class NLSE:
         plot : bool, optional
             Plots the results. Defaults to False.
         precision : str, optional
-            Does a "double" or a "single" application
-            of the nonlinear term. This leads to a dz (single) or dz^3
-            (double) precision. Defaults to "single".
+            Order of the split step, *not* the floating-point width. Does a
+            "single" or a "double" application of the nonlinear term, giving
+            O(dz) or O(dz^3) accuracy. Defaults to "single".
+
+            The floating-point width comes from ``E_in``: pass a complex128
+            field for float64 arithmetic, on a device that supports it. The
+            propagator is built to match, because the kernels select their
+            precision from the field and then read the propagator with it.
         method : str, optional
             Integration method: "split_step" or "RK4".
             Defaults to "split_step".
@@ -1111,18 +1349,19 @@ class NLSE:
         # changed since the last run, so it cannot be built once and kept.
         # _build_propagator is cache-backed, so an unchanged configuration
         # returns the previously computed array rather than recomputing it.
+        field_dtype = self._field_dtype(E_in)
         if method == "RK4":
             self.propagator = self._build_propagator_rk4()
         else:
-            self.propagator = self._build_propagator(precision=precision)
+            self.propagator = self._build_propagator(dtype=field_dtype)
         if self._backend.is_device_backend:
-            self._send_arrays_to_gpu()
+            self._send_arrays_to_gpu(field_dtype)
         V = self.V
         A, A_sq = self._prepare_output_array(E_in, normalize)
         self.plans = self._build_fft_plan(A)
         self._allocate_rk4_buffers(A, method)
         self._precompute_step_constants(V, precision)
-        self._enforce_step_limit(A, method, precision)
+        self._enforce_step_limit(A, method, precision, field_dtype)
         if verbose:
             pbar = tqdm.tqdm(
                 total=100,

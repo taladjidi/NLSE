@@ -86,13 +86,18 @@ class GPE(NLSE):
         # GPE uses quantum units (Hz), not optical (W), so norm_constant is 1.0
         self._norm_constant = np.float32(1.0)
 
-    def _propagator_cache_key(self, precision: str) -> tuple:
+    def _propagator_cache_key(self, dtype: np.dtype) -> tuple:
         """Return cache key for GPE propagator."""
-        return (self.NX, self.NY, float(self.delta_t), precision, float(self.m))
+        return (
+            self.NX,
+            self.NY,
+            float(self.delta_t),
+            np.dtype(dtype).str,
+            float(self.m),
+        )
 
-    def _compute_propagator(self, precision: str) -> np.ndarray:
+    def _compute_propagator(self, dtype: np.dtype) -> np.ndarray:
         """Compute the GPE linear propagation matrix."""
-        dtype = np.complex128 if precision == "double" else np.complex64
         return np.exp(
             -1j * 0.5 * hbar * (self.Kxx**2 + self.Kyy**2) / self.m * self.delta_t,
             dtype=dtype,
@@ -108,15 +113,12 @@ class GPE(NLSE):
             np.complex64
         )
 
-    def _rk4_max_dz(self) -> float:
-        """Compute the maximum stable RK4 step size for GPE.
+    def _dispersion_operator(self) -> np.ndarray:
+        """Return the GPE dispersion eigenvalues.
 
         The GPE dispersion operator is hbar*K^2/(2m), unlike NLSE's K^2/(2k).
         """
-        D_max = float(np.max(0.5 * hbar * (self.Kxx**2 + self.Kyy**2) / self.m))
-        if D_max == 0:
-            return np.inf
-        return 2.83 / D_max
+        return 0.5 * hbar * (self.Kxx**2 + self.Kyy**2) / self.m
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot a field for monitoring.

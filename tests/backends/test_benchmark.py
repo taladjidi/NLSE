@@ -10,15 +10,21 @@ from NLSE.utils import get_benchmark_cache_path, get_cache_dir
 
 
 class TestCacheDir:
-    """Test that cache directory lives inside the NLSE package."""
+    """Test that the cache directory lives outside the installed package."""
 
-    def test_cache_dir_inside_package(self):
-        """Cache dir should be under the NLSE package directory."""
+    def test_cache_dir_outside_package(self):
+        """Cache dir must not be under the NLSE package directory.
+
+        It used to be <package>/.cache, which fails on a read-only install
+        and, on uninstall, leaves a directory behind that Python then
+        imports as an empty namespace package.
+        """
         import NLSE
 
-        package_dir = Path(NLSE.__file__).parent
-        cache_dir = get_cache_dir()
-        assert cache_dir == package_dir / ".cache"
+        package_dir = Path(NLSE.__file__).resolve().parent
+        cache_dir = get_cache_dir().resolve()
+        assert cache_dir != package_dir
+        assert package_dir not in cache_dir.parents
 
     def test_cache_dir_created(self):
         """get_cache_dir() should create the directory if needed."""

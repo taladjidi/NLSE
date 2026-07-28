@@ -71,7 +71,7 @@ def test_send_arrays_to_gpu() -> None:
         gamma_s = 0 * 0.07 / h_bar
         omega_s = 5.07 / h_bar
         g_s = 1e-2 / h_bar
-        V = np.random.random((N, N)) + 1j * np.random.random((N, N))
+        V = 1e-4 * np.random.random((N, N)).astype(np.float32)
         simu = DDGPE(
             gamma_s,
             puiss,
@@ -131,7 +131,7 @@ def test_retrieve_arrays_from_gpu() -> None:
         gamma_s = 0 * 0.07 / h_bar
         g_s = 1e-2 / h_bar
         omega_s = 5.07 / h_bar
-        V = np.random.random((N, N)) + 1j * np.random.random((N, N))
+        V = 1e-4 * np.random.random((N, N)).astype(np.float32)
         simu = DDGPE(
             gamma_s,
             puiss,

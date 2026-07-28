@@ -72,13 +72,12 @@ class NLSE_1d(NLSE):
         # Override normalization factor for 1D (delta_X^2 instead of delta_X * delta_Y)
         self._norm_grid_factor = np.float32(self.delta_X**2)
 
-    def _propagator_cache_key(self, precision: str) -> tuple:
+    def _propagator_cache_key(self, dtype: np.dtype) -> tuple:
         """Return cache key for 1D propagator."""
-        return (self.NX, float(self.delta_z), precision, float(self.k))
+        return (self.NX, float(self.delta_z), np.dtype(dtype).str, float(self.k))
 
-    def _compute_propagator(self, precision: str) -> np.ndarray:
+    def _compute_propagator(self, dtype: np.dtype) -> np.ndarray:
         """Compute the 1D linear propagation matrix."""
-        dtype = np.complex128 if precision == "double" else np.complex64
         return np.exp(-1j * 0.5 * (self.Kx**2) / self.k * self.delta_z, dtype=dtype)
 
     def _propagator_rk4_cache_key(self) -> tuple:
@@ -89,12 +88,9 @@ class NLSE_1d(NLSE):
         """Compute the raw 1D dispersion operator for RK4."""
         return (-1j * 0.5 * self.Kx**2 / self.k).astype(np.complex64)
 
-    def _rk4_max_dz(self) -> float:
-        """Compute the maximum stable RK4 step size for 1D."""
-        D_max = float(np.max(0.5 * self.Kx**2 / self.k))
-        if D_max == 0:
-            return np.inf
-        return 2.83 / D_max
+    def _dispersion_operator(self) -> np.ndarray:
+        """Return the 1D dispersion eigenvalues."""
+        return 0.5 * self.Kx**2 / self.k
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot a field for monitoring.

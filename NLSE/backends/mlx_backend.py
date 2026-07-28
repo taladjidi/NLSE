@@ -22,7 +22,19 @@ _NUMPY_TO_MLX_DTYPE = {
 
 
 class MLXBackend(Backend):
-    """MLX backend for Apple Silicon GPU acceleration."""
+    """MLX backend for Apple Silicon GPU acceleration.
+
+    Fuses via mx.compile, which traces a whole step into one graph. MLX
+    always normalizes its inverse FFT, so the 1/N cannot be folded into
+    the propagator.
+    """
+
+    has_linear_step = True
+    has_fused_split_step = True
+    broadcasts_parameters_natively = True
+    has_fused_rk4_step = True
+    has_fused_coupled_split_step = True
+    has_fused_coupled_rk4_rhs = True
 
     @property
     def name(self) -> str:

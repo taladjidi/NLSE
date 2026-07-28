@@ -297,7 +297,7 @@ class TestCPUCorrectness:
             backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
-        simu.V = 1e4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2)
+        simu.V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
 
         E_out = simu.out_field(E_in, L, verbose=False, plot=False)
@@ -848,8 +848,21 @@ class TestCNLSEvsReferenceExtended:
             err_msg=f"CNLSE {backend} with omega does not match CPU reference",
         )
 
-    def test_coupled_propagation_double_precision(self, backend):
-        """CNLSE double precision matches CPU reference."""
+    def test_coupled_propagation_double_split_step(self, backend):
+        """CNLSE with the double-order split step matches the CPU reference.
+
+        precision="double" is the *splitting order* — the nonlinear step is
+        applied around the linear one rather than once per step. It is not
+        float64, and with a complex64 field it needs no fp64 support, so
+        every backend runs it.
+
+        This used to skip twice over: once for backends reporting no fp64,
+        which was irrelevant to a complex64 field, and once when the result
+        came back NaN, blamed on a "driver limitation". The NaN was really a
+        dtype mismatch — precision="double" built a complex128 propagator for
+        a complex64 field, and the GPU kernels pick single or double
+        precision from the field, then read the propagator with it.
+        """
         n12 = 0.5e-9
         NX = NY = 64
 
@@ -866,9 +879,6 @@ class TestCNLSEvsReferenceExtended:
             Isat=Isat,
             backend=backend,
         )
-        if not simu_test._backend.supports_double_precision():
-            pytest.skip(f"{backend} does not support double precision")
-
         simu_ref = CNLSE(
             alpha,
             power,
@@ -895,8 +905,10 @@ class TestCNLSEvsReferenceExtended:
             E_in.copy(), L, verbose=False, plot=False, precision="double"
         )
 
-        if np.any(np.isnan(E_test)):
-            pytest.skip(f"{backend} double precision produces NaN (driver limitation)")
+        assert not np.any(np.isnan(E_test)), (
+            f"{backend} returned NaN: the propagator dtype no longer matches "
+            f"the field, so the kernels are reading it at the wrong width"
+        )
 
         np.testing.assert_allclose(
             E_test,
@@ -1311,7 +1323,7 @@ class TestNLSEPropagator:
             Isat=Isat,
             backend="CPU",
         )
-        prop = simu._build_propagator(precision="double")
+        prop = simu._build_propagator(dtype=np.complex128)
         assert prop.dtype == np.complex128
 
     def test_propagator_rk4(self):
@@ -1359,7 +1371,7 @@ class TestNLSESplitStep:
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
-        prop = simu._build_propagator(precision="double")
+        prop = simu._build_propagator(dtype=np.complex128)
 
         simu.split_step(A, A_sq, None, prop, plans, precision="double")
         assert np.isfinite(A).all(), "Double precision split step produced NaN/Inf"
@@ -1379,11 +1391,11 @@ class TestNLSESplitStep:
             backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
-        V = 1e4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
+        V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
-        prop = simu._build_propagator(precision="double")
+        prop = simu._build_propagator(dtype=np.complex128)
 
         simu.split_step(A, A_sq, V, prop, plans, precision="double")
         assert np.isfinite(A).all()
@@ -1403,7 +1415,7 @@ class TestNLSESplitStep:
             backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
-        V = 1e4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
+        V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
@@ -1453,7 +1465,7 @@ class TestNLSESplitStep:
             backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
-        V = 1e4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
+        V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
@@ -1481,7 +1493,7 @@ class TestNLSESplitStep:
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
-        prop = simu._build_propagator(precision="double")
+        prop = simu._build_propagator(dtype=np.complex128)
 
         simu.split_step(A, A_sq, None, prop, plans, precision="double")
         assert np.isfinite(A).all()
@@ -1532,7 +1544,7 @@ class TestNLSERK4:
             backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
-        V = 1e2 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
+        V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, _A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
@@ -1715,7 +1727,7 @@ class TestCNLSERK4:
             backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
-        V = 1e2 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
+        V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
         E_in = np.zeros((2, S, S), dtype=PRECISION_COMPLEX)
         E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
         E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
@@ -1921,7 +1933,7 @@ class TestNLSEOutField:
             backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
-        simu.V = 1e4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
+        simu.V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
 
         E_out = simu.out_field(E_in, L, verbose=False, plot=False, precision="double")
@@ -2059,7 +2071,7 @@ class TestCNLSEExtended:
             backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
-        simu.V = 1e4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
+        simu.V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
         E_in = np.zeros((2, S, S), dtype=PRECISION_COMPLEX)
         E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
         E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
@@ -2085,7 +2097,7 @@ class TestCNLSEExtended:
             backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
-        simu.V = 1e4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
+        simu.V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
         E_in = np.zeros((2, S, S), dtype=PRECISION_COMPLEX)
         E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
         E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
@@ -2229,7 +2241,7 @@ class TestCNLSEExtended:
             backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
-        simu.V = 1e4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
+        simu.V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
         E_in = np.zeros((2, S, S), dtype=PRECISION_COMPLEX)
         E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
         E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
@@ -2357,3 +2369,69 @@ class TestPlotField:
         E_out = simu.out_field(E_in, L, verbose=False, plot=True)
         assert np.isfinite(E_out).all()
         plt.close("all")
+
+
+@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
+class TestPropagatorMatchesFieldDtype:
+    """The propagator must carry the same dtype as the field it multiplies.
+
+    The GPU kernels select their single- or double-precision variant from the
+    *field*, then index the propagator with that same variant. A complex128
+    propagator against a complex64 field is therefore read as pairs of
+    float32: CUPY returned NaN and it was written off as a driver limitation,
+    and Apple OpenCL, which has no fp64 at all, could not even build the
+    propagator.
+
+    The cause was `precision`, which meant two things at once: the split-step
+    order (what the docstring documents) and the propagator's float width.
+    Only the first is `precision` now; the width follows the input field.
+    """
+
+    def test_propagator_follows_a_single_precision_field(self, backend):
+        """A complex64 field must not produce a complex128 propagator."""
+        simu = NLSE(
+            alpha, power, window, n2, None, L, NX=64, NY=64, Isat=Isat, backend=backend
+        )
+        E = np.ones((64, 64), dtype=np.complex64)
+        simu.out_field(E, L, verbose=False, plot=False, precision="double")
+        prop = simu.propagator
+        prop = prop if isinstance(prop, np.ndarray) else simu._backend.to_numpy(prop)
+        assert np.asarray(prop).dtype == np.complex64, (
+            f"{backend}: precision='double' built a "
+            f"{np.asarray(prop).dtype} propagator for a complex64 field. The "
+            f"kernels read it at the field's width, so it comes back NaN."
+        )
+
+    def test_precision_double_needs_no_fp64(self, backend):
+        """The double-order split step must run on a device without fp64.
+
+        precision="double" is the splitting order, not float64. Requiring
+        fp64 for it made every fp64-less backend skip tests it could run.
+        """
+        simu = NLSE(
+            alpha, power, window, n2, None, L, NX=64, NY=64, Isat=Isat, backend=backend
+        )
+        E = np.exp(-(simu.XX**2 + simu.YY**2) / (2.23e-3) ** 2).astype(np.complex64)
+        out = simu.out_field(E.copy(), L, verbose=False, plot=False, precision="double")
+        out = out if isinstance(out, np.ndarray) else simu._backend.to_numpy(out)
+        assert np.all(np.isfinite(np.asarray(out))), (
+            f"{backend}: the double-order split step produced non-finite "
+            f"values on a complex64 field"
+        )
+
+    def test_a_double_precision_field_gets_a_double_propagator(self, backend):
+        """Real fp64: a complex128 field must get a complex128 propagator."""
+        simu = NLSE(
+            alpha, power, window, n2, None, L, NX=64, NY=64, Isat=Isat, backend=backend
+        )
+        if not simu._backend.supports_double_precision():
+            pytest.skip(f"{backend} has no fp64, so a complex128 field cannot run")
+        E = np.ones((64, 64), dtype=np.complex128)
+        simu.out_field(E, L, verbose=False, plot=False, precision="double")
+        prop = simu.propagator
+        prop = prop if isinstance(prop, np.ndarray) else simu._backend.to_numpy(prop)
+        assert np.asarray(prop).dtype == np.complex128, (
+            f"{backend}: a complex128 field got a "
+            f"{np.asarray(prop).dtype} propagator, losing the precision the "
+            f"caller asked for"
+        )

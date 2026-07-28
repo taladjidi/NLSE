@@ -5,11 +5,15 @@ Supports both single (float32/complex64) and double (float64/complex128) precisi
 on devices that support double precision.
 """
 
+import re
 from pathlib import Path
 
 import numpy as np
 import pyopencl as cl
 from pyopencl import array as cla
+
+# Suffix of the twin that takes a complex (absorbing) potential.
+COMPLEX_V_SUFFIX = "_cv"
 
 # Module-level cache for compiled programs
 # Key: (context_hash, precision) -> Value: compiled cl.Program
@@ -36,6 +40,58 @@ def _check_double_support(context):
     return True
 
 
+# Broadcasting a batch of simulations over OpenCL.
+#
+# The kernels take scalar physical parameters and address every array with one
+# flat global id, so a batch runs one launch per simulation: the kernel gets
+# that simulation's scalar values, and ``global_offset`` places the launch on
+# its slice of the field.
+#
+# The offset is used rather than a slice of the field because a ``cla.Array``
+# slice starts at an offset from its buffer and ``.data`` refuses to hand such
+# an array to a kernel. ``get_global_id`` therefore still returns the index
+# into the whole batched field, and a grid shared by the batch (the potential,
+# the propagator) is addressed as ``grid[idx - get_global_offset(0)]``.
+#
+# The built-in matters, rather than passing the same number as an argument.
+# ``get_global_id(0) - get_global_offset(0)`` is by definition the zero-based
+# index within this launch, so the compiler can still prove it contiguous and
+# keep its wide loads. The alternatives all defeat that and cost roughly 3x on
+# the bandwidth-bound kernels: an ``int`` argument the compiler cannot see
+# through, an ``idx % n_grid`` wrap, or moving the batch onto a second NDRange
+# dimension. This form is the only one that is free when unbatched.
+#
+# This mirrors ``_broadcast_batch`` in kernels/cpu.py: the loop is over
+# simulations (a handful) and each launch still covers a whole grid.
+
+
+def _is_batched_param(value):
+    """Return True if a physical parameter carries a per-simulation axis.
+
+    A batch of one still counts: the value has to be unwrapped to a scalar
+    before it can be passed to a kernel, whatever the batch size.
+    """
+    return isinstance(value, np.ndarray) and value.ndim > 0
+
+
+def _param_batch_len(params):
+    """Return the number of simulations the parameters imply, or 0."""
+    n = 0
+    for value in params:
+        if _is_batched_param(value):
+            n = max(n, value.shape[0])
+    return n
+
+
+def _pick_param(value, b):
+    """Take simulation b's value from a possibly-batched parameter."""
+    if _is_batched_param(value):
+        return value.reshape(value.shape[0], -1)[b, 0]
+    if isinstance(value, np.ndarray):
+        return value.reshape(-1)[0]
+    return value
+
+
 def _load_kernel_template():
     """Load OpenCL kernel template from file.
 
@@ -47,6 +103,66 @@ def _load_kernel_template():
     """
     template_path = Path(__file__).parent / "cl_source" / "kernels.cl"
     return template_path.read_text()
+
+
+_VBLOCK = re.compile(r"// \{\{VBLOCK\}\}\n(.*?)\n// \{\{END_VBLOCK\}\}", re.DOTALL)
+
+# Real-V and complex-V spellings of the three things a V-reading kernel needs:
+# the argument type, the phase (real part of V) and the gain/loss (imaginary
+# part). V_LOSS expands to nothing in the real case, so the real kernels are
+# byte-for-byte the arithmetic they had before complex V existed.
+_V_REAL_MACROS = """#define V_T {{FP_TYPE}}
+#define V_RE(v, i) ((v)[i])
+#define V_LOSS(v, i)
+"""
+_V_COMPLEX_MACROS = """#define V_T {{FP2_TYPE}}
+#define V_RE(v, i) ((v)[i].x)
+#define V_LOSS(v, i) + (v)[i].y
+"""
+_V_UNDEF = "#undef V_T\n#undef V_RE\n#undef V_LOSS\n"
+
+
+def _expand_v_blocks(source):
+    """Emit a real-V and a complex-V twin of every kernel marked VBLOCK.
+
+    A complex potential is an absorbing one: its imaginary part is gain or
+    loss, entering the real part of the exponent rather than the phase. The
+    kernels take V as a bare pointer, so a real and a complex V cannot share
+    one entry point; the complex twin takes ``{{FP2_TYPE}}*`` and is suffixed
+    ``_cv``.
+
+    Twins rather than one kernel that branches, so a real V — overwhelmingly
+    the common case — pays nothing: no wider load, no extra register, and the
+    same instruction stream it had before.
+
+    Parameters
+    ----------
+    source : str
+        Kernel source containing VBLOCK-marked kernels.
+
+    Returns
+    -------
+    str
+        Source with each marked block replaced by both twins.
+    """
+
+    def expand(match):
+        block = match.group(1)
+        renamed = re.sub(
+            r"(__kernel void )(\w+)\(", r"\1\2" + COMPLEX_V_SUFFIX + "(", block, count=1
+        )
+        return (
+            _V_REAL_MACROS
+            + block
+            + "\n"
+            + _V_UNDEF
+            + _V_COMPLEX_MACROS
+            + renamed
+            + "\n"
+            + _V_UNDEF
+        )
+
+    return _VBLOCK.sub(expand, source)
 
 
 def _get_kernel_source(precision="single"):
@@ -77,7 +193,7 @@ def _get_kernel_source(precision="single"):
         raise ValueError(f"precision must be 'single' or 'double', got {precision}")
 
     # Load template and substitute placeholders
-    template = _load_kernel_template()
+    template = _expand_v_blocks(_load_kernel_template())
     source = template.replace("{{FP_TYPE}}", fp_type)
     source = source.replace("{{FP2_TYPE}}", fp2_type)
     source = source.replace("{{FP_SUFFIX}}", fp_suffix)
@@ -240,9 +356,95 @@ class OpenCLKernels:
                 "rabi_coupling_interleaved": cl.Kernel(
                     program, "rabi_coupling_interleaved"
                 ),
+                "nl_prop_cv": cl.Kernel(program, "nl_prop_fused_cv"),
+                "nl_prop_c_cv": cl.Kernel(program, "nl_prop_c_fused_cv"),
+                "square_mod_nl_prop_v_cv": cl.Kernel(
+                    program, "square_mod_nl_prop_v_fused_cv"
+                ),
+                "rk4_nl_rhs_v_cv": cl.Kernel(program, "rk4_nl_rhs_v_fused_cv"),
+                "square_mod_rk4_nl_rhs_v_cv": cl.Kernel(
+                    program, "square_mod_rk4_nl_rhs_v_fused_cv"
+                ),
+                "rk4_nl_rhs_c_v_cv": cl.Kernel(program, "rk4_nl_rhs_c_v_fused_cv"),
+                "coupled_nl_prop_c_v_cv": cl.Kernel(program, "coupled_nl_prop_c_v_cv"),
+                "coupled_rk4_nl_rhs_c_v_cv": cl.Kernel(
+                    program, "coupled_rk4_nl_rhs_c_v_cv"
+                ),
             }
 
         return self._kernels[precision]
+
+    def _launches(self, A, params=(), grid=None):
+        """Yield one launch per simulation, or a single launch when unbatched.
+
+        Parameters
+        ----------
+        A : cla.Array
+            The field the launches cover.
+        params : tuple
+            Physical parameters, any of which may carry a per-simulation
+            leading axis.
+        grid : cla.Array or None
+            A grid-shaped array the kernel indexes alongside the field. When
+            it is smaller than the field, the field carries a batch axis the
+            grid does not, which needs per-simulation launches even if every
+            parameter is scalar.
+
+        Yields
+        ------
+        tuple
+            ``(offset, global_size, local_size, params)``. ``offset`` is both
+            the launch's global offset and the amount the kernel subtracts to
+            address the shared grid; it is 0 for an unbatched run.
+        """
+        n = _param_batch_len(params)
+        if n == 0 and grid is not None and int(grid.size) < int(A.size):
+            n = int(A.size) // int(grid.size)
+        if n <= 1:
+            size = int(A.size)
+            yield 0, (size,), self._local_size(size), tuple(params)
+            return
+        size = int(A.size) // n
+        local = self._local_size(size)
+        for b in range(n):
+            yield (
+                b * size,
+                (size,),
+                local,
+                tuple(_pick_param(p, b) for p in params),
+            )
+
+    @staticmethod
+    def _v_variant(kernels, name, V):
+        """Return the kernel matching this potential's realness.
+
+        A complex V is an absorbing potential: its imaginary part is gain or
+        loss. The two cases cannot share an entry point because V is a bare
+        pointer, so each has its own compiled kernel and a real V keeps the
+        exact instruction stream it always had.
+
+        Parameters
+        ----------
+        kernels : dict
+            Compiled kernels for this precision.
+        name : str
+            Base kernel key.
+        V : cla.Array or None
+            The potential.
+
+        Returns
+        -------
+        cl.Kernel
+            The real-V or complex-V kernel.
+        """
+        if V is not None and V.dtype.kind == "c":
+            return kernels[name + COMPLEX_V_SUFFIX]
+        return kernels[name]
+
+    @staticmethod
+    def _offset(offset):
+        """Return the global_offset argument, or None when there is none."""
+        return (offset,) if offset else None
 
     def linear_step(self, A, propagator, plan, unnorm_ifft=False):
         """Fused linear propagation: FFT + propagator multiply + IFFT.
@@ -265,10 +467,7 @@ class OpenCLKernels:
             The propagated field A.
         """
         plan.fft(A, A)
-        kernels = self._get_kernels(A.dtype)
-        kernels["apply_propagator"](
-            self.queue, (int(A.size),), None, A.data, propagator.data
-        )
+        self.apply_propagator(A, propagator)
         if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
             plan.ifft_unnorm(A, A)
         else:
@@ -310,20 +509,21 @@ class OpenCLKernels:
             The modified field array A.
         """
         kernels = self._get_kernels(A.dtype)
-        global_size = (int(A.size),)
-        dz_c, alpha_c, g_c, Isat_c = self._cast_params(A.dtype, dz, alpha, g, Isat)
-        kernels["nl_prop"](
-            self.queue,
-            global_size,
-            None,
-            A.data,
-            A_sq.data,
-            V.data,
-            dz_c,
-            alpha_c,
-            g_c,
-            Isat_c,
-        )
+        for offset, gs, ls, params in self._launches(A, (dz, alpha, g, Isat), V):
+            dz_c, alpha_c, g_c, Isat_c = self._cast_params(A.dtype, *params)
+            self._v_variant(kernels, "nl_prop", V)(
+                self.queue,
+                gs,
+                ls,
+                A.data,
+                A_sq.data,
+                V.data,
+                dz_c,
+                alpha_c,
+                g_c,
+                Isat_c,
+                global_offset=self._offset(offset),
+            )
         return A
 
     def nl_prop_without_V(
@@ -358,11 +558,20 @@ class OpenCLKernels:
             The modified field array A.
         """
         kernels = self._get_kernels(A.dtype)
-        global_size = (int(A.size),)
-        dz_c, alpha_c, g_c, Isat_c = self._cast_params(A.dtype, dz, alpha, g, Isat)
-        kernels["nl_prop_without_v"](
-            self.queue, global_size, None, A.data, A_sq.data, dz_c, alpha_c, g_c, Isat_c
-        )
+        for offset, gs, ls, params in self._launches(A, (dz, alpha, g, Isat)):
+            dz_c, alpha_c, g_c, Isat_c = self._cast_params(A.dtype, *params)
+            kernels["nl_prop_without_v"](
+                self.queue,
+                gs,
+                ls,
+                A.data,
+                A_sq.data,
+                dz_c,
+                alpha_c,
+                g_c,
+                Isat_c,
+                global_offset=self._offset(offset),
+            )
         return A
 
     def nl_prop_c(
@@ -412,7 +621,7 @@ class OpenCLKernels:
         global_size = (int(A1.size),)
 
         params = self._cast_params(A1.dtype, dz, alpha, g11, g12, Isat1, Isat2)
-        kernels["nl_prop_c"](
+        self._v_variant(kernels, "nl_prop_c", V)(
             self.queue,
             global_size,
             None,
@@ -522,11 +731,19 @@ class OpenCLKernels:
             The modified field array A.
         """
         kernels = self._get_kernels(A.dtype)
-        global_size = (int(A.size),)
-        dz_c, alpha_c, g_c, Isat_c = self._cast_params(A.dtype, dz, alpha, g, Isat)
-        kernels["square_mod_nl_prop"](
-            self.queue, global_size, None, A.data, dz_c, alpha_c, g_c, Isat_c
-        )
+        for offset, gs, ls, params in self._launches(A, (dz, alpha, g, Isat)):
+            dz_c, alpha_c, g_c, Isat_c = self._cast_params(A.dtype, *params)
+            kernels["square_mod_nl_prop"](
+                self.queue,
+                gs,
+                ls,
+                A.data,
+                dz_c,
+                alpha_c,
+                g_c,
+                Isat_c,
+                global_offset=self._offset(offset),
+            )
         return A
 
     def square_mod_nl_prop_v(
@@ -561,11 +778,20 @@ class OpenCLKernels:
             The modified field array A.
         """
         kernels = self._get_kernels(A.dtype)
-        global_size = (int(A.size),)
-        dz_c, alpha_c, g_c, Isat_c = self._cast_params(A.dtype, dz, alpha, g, Isat)
-        kernels["square_mod_nl_prop_v"](
-            self.queue, global_size, None, A.data, V.data, dz_c, alpha_c, g_c, Isat_c
-        )
+        for offset, gs, ls, params in self._launches(A, (dz, alpha, g, Isat), V):
+            dz_c, alpha_c, g_c, Isat_c = self._cast_params(A.dtype, *params)
+            self._v_variant(kernels, "square_mod_nl_prop_v", V)(
+                self.queue,
+                gs,
+                ls,
+                A.data,
+                V.data,
+                dz_c,
+                alpha_c,
+                g_c,
+                Isat_c,
+                global_offset=self._offset(offset),
+            )
         return A
 
     def apply_propagator(self, A: cla.Array, propagator: cla.Array) -> cla.Array:
@@ -584,10 +810,15 @@ class OpenCLKernels:
             The modified field array A.
         """
         kernels = self._get_kernels(A.dtype)
-        global_size = (int(A.size),)
-        kernels["apply_propagator"](
-            self.queue, global_size, None, A.data, propagator.data
-        )
+        for offset, gs, ls, _ in self._launches(A, grid=propagator):
+            kernels["apply_propagator"](
+                self.queue,
+                gs,
+                ls,
+                A.data,
+                propagator.data,
+                global_offset=self._offset(offset),
+            )
         return A
 
     def rabi_coupling(
@@ -830,10 +1061,17 @@ class OpenCLKernels:
             The modified A_prop.
         """
         kernels = self._get_kernels(A.dtype)
-        params = self._cast_params(A.dtype, alpha, g, Isat)
-        kernels["rk4_nl_rhs"](
-            self.queue, (int(A.size),), None, A_prop.data, A.data, A_sq.data, *params
-        )
+        for offset, gs, ls, values in self._launches(A, (alpha, g, Isat)):
+            kernels["rk4_nl_rhs"](
+                self.queue,
+                gs,
+                ls,
+                A_prop.data,
+                A.data,
+                A_sq.data,
+                *self._cast_params(A.dtype, *values),
+                global_offset=self._offset(offset),
+            )
         return A_prop
 
     def rk4_nl_rhs_v(
@@ -871,17 +1109,18 @@ class OpenCLKernels:
             The modified A_prop.
         """
         kernels = self._get_kernels(A.dtype)
-        params = self._cast_params(A.dtype, alpha, g, Isat)
-        kernels["rk4_nl_rhs_v"](
-            self.queue,
-            (int(A.size),),
-            None,
-            A_prop.data,
-            A.data,
-            A_sq.data,
-            V.data,
-            *params,
-        )
+        for offset, gs, ls, values in self._launches(A, (alpha, g, Isat), V):
+            self._v_variant(kernels, "rk4_nl_rhs_v", V)(
+                self.queue,
+                gs,
+                ls,
+                A_prop.data,
+                A.data,
+                A_sq.data,
+                V.data,
+                *self._cast_params(A.dtype, *values),
+                global_offset=self._offset(offset),
+            )
         return A_prop
 
     def square_mod_rk4_nl_rhs(
@@ -913,10 +1152,16 @@ class OpenCLKernels:
             The modified A_prop.
         """
         kernels = self._get_kernels(A.dtype)
-        params = self._cast_params(A.dtype, alpha, g, Isat)
-        kernels["square_mod_rk4_nl_rhs"](
-            self.queue, (int(A.size),), None, A_prop.data, A.data, *params
-        )
+        for offset, gs, ls, values in self._launches(A, (alpha, g, Isat)):
+            kernels["square_mod_rk4_nl_rhs"](
+                self.queue,
+                gs,
+                ls,
+                A_prop.data,
+                A.data,
+                *self._cast_params(A.dtype, *values),
+                global_offset=self._offset(offset),
+            )
         return A_prop
 
     def square_mod_rk4_nl_rhs_v(
@@ -951,10 +1196,17 @@ class OpenCLKernels:
             The modified A_prop.
         """
         kernels = self._get_kernels(A.dtype)
-        params = self._cast_params(A.dtype, alpha, g, Isat)
-        kernels["square_mod_rk4_nl_rhs_v"](
-            self.queue, (int(A.size),), None, A_prop.data, A.data, V.data, *params
-        )
+        for offset, gs, ls, values in self._launches(A, (alpha, g, Isat), V):
+            self._v_variant(kernels, "square_mod_rk4_nl_rhs_v", V)(
+                self.queue,
+                gs,
+                ls,
+                A_prop.data,
+                A.data,
+                V.data,
+                *self._cast_params(A.dtype, *values),
+                global_offset=self._offset(offset),
+            )
         return A_prop
 
     def rk4_nl_rhs_c(
@@ -1056,7 +1308,7 @@ class OpenCLKernels:
         """
         kernels = self._get_kernels(A_orig.dtype)
         params = self._cast_params(A_orig.dtype, alpha, g11, g12, Isat1, Isat2)
-        kernels["rk4_nl_rhs_c_v"](
+        self._v_variant(kernels, "rk4_nl_rhs_c_v", V)(
             self.queue,
             (int(A_orig.size),),
             None,
@@ -1127,69 +1379,30 @@ class OpenCLKernels:
         cla.Array
             The propagated field A.
         """
-        kerns = self._get_kernels(A.dtype)
-        gs = (int(A.size),)
-        ls = self._local_size(A.size)
-        dz_c, alpha_c, g_c, Isat_c = self._cast_params(A.dtype, dz, alpha, g, Isat)
+
+        # Delegates the nonlinear halves and the propagator multiply to the
+        # single-kernel methods so the batch handling lives in one place.
+        # Each is still a direct kernel launch: nothing returns to the solver.
+        def nonlinear(step):
+            if V_scaled is not None:
+                self.square_mod_nl_prop_v(A, V_scaled, step, alpha, g, Isat)
+            else:
+                self.square_mod_nl_prop(A, step, alpha, g, Isat)
 
         # Double precision: NL half-step before linear step
         if precision == "double":
-            if V_scaled is not None:
-                kerns["square_mod_nl_prop_v"](
-                    self.queue,
-                    gs,
-                    ls,
-                    A.data,
-                    V_scaled.data,
-                    dz_c,
-                    alpha_c,
-                    g_c,
-                    Isat_c,
-                )
-            else:
-                kerns["square_mod_nl_prop"](
-                    self.queue,
-                    gs,
-                    ls,
-                    A.data,
-                    dz_c,
-                    alpha_c,
-                    g_c,
-                    Isat_c,
-                )
+            nonlinear(dz)
 
         # Linear step: FFT → propagator multiply → IFFT
         plan.fft(A, A)
-        kerns["apply_propagator"](self.queue, gs, ls, A.data, propagator.data)
+        self.apply_propagator(A, propagator)
         if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
             plan.ifft_unnorm(A, A)
         else:
             plan.ifft(A, A)
 
         # Nonlinear step
-        if V_scaled is not None:
-            kerns["square_mod_nl_prop_v"](
-                self.queue,
-                gs,
-                ls,
-                A.data,
-                V_scaled.data,
-                dz_c,
-                alpha_c,
-                g_c,
-                Isat_c,
-            )
-        else:
-            kerns["square_mod_nl_prop"](
-                self.queue,
-                gs,
-                ls,
-                A.data,
-                dz_c,
-                alpha_c,
-                g_c,
-                Isat_c,
-            )
+        nonlinear(dz)
         return A
 
     def rk4_rhs_fused(
@@ -1236,16 +1449,11 @@ class OpenCLKernels:
         cla.Array
             The modified buffer k.
         """
-        kerns = self._get_kernels(A_in.dtype)
-        gs = (int(A_in.size),)
-        ls = self._local_size(A_in.size)
-        alpha_c, g_c, Isat_c = self._cast_params(A_in.dtype, alpha, g, Isat)
-
         # Out-of-place FFT: A_in → k (eliminates buffer copy)
         plan.fft_oop(A_in, k)
 
         # Apply propagator to k
-        kerns["apply_propagator"](self.queue, gs, ls, k.data, propagator.data)
+        self.apply_propagator(k, propagator)
 
         # IFFT k in-place
         if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
@@ -1255,24 +1463,9 @@ class OpenCLKernels:
 
         # Nonlinear RHS: k = k + NL(A_in)
         if V_scaled is not None:
-            kerns["square_mod_rk4_nl_rhs_v"](
-                self.queue,
-                gs,
-                ls,
-                k.data,
-                A_in.data,
-                V_scaled.data,
-                *[alpha_c, g_c, Isat_c],
-            )
+            self.square_mod_rk4_nl_rhs_v(k, A_in, V_scaled, alpha, g, Isat)
         else:
-            kerns["square_mod_rk4_nl_rhs"](
-                self.queue,
-                gs,
-                ls,
-                k.data,
-                A_in.data,
-                *[alpha_c, g_c, Isat_c],
-            )
+            self.square_mod_rk4_nl_rhs(k, A_in, alpha, g, Isat)
         return k
 
     # ── Fused interleaved coupled methods ────────────────────────────────────
@@ -1283,7 +1476,6 @@ class OpenCLKernels:
         propagator: cla.Array,
         V1: cla.Array | None,
         V2: cla.Array | None,
-        N_sq: int,
         dz: float,
         alpha1: float,
         alpha2: float,
@@ -1309,8 +1501,6 @@ class OpenCLKernels:
             Pre-scaled potential for component 1.
         V2 : cla.Array or None
             Pre-scaled potential for component 2.
-        N_sq : int
-            Number of elements per component.
         dz : float
             Nonlinear step size (full for single, half for double).
         alpha1 : float
@@ -1342,6 +1532,8 @@ class OpenCLKernels:
             The propagated field A.
         """
         kerns = self._get_kernels(A.dtype)
+        # Interleaved (2, N_sq) layout: one thread per component element.
+        N_sq = int(A.size) // 2
         gs = (N_sq,)
         ls = self._local_size(N_sq)
         N_sq_i = np.int32(N_sq)
@@ -1352,7 +1544,7 @@ class OpenCLKernels:
         # Double precision: NL half-step before linear
         if precision == "double":
             if V1 is not None:
-                kerns["coupled_nl_prop_c_v"](
+                self._v_variant(kerns, "coupled_nl_prop_c_v", V1)(
                     self.queue,
                     gs,
                     ls,
@@ -1384,7 +1576,7 @@ class OpenCLKernels:
 
         # Nonlinear step
         if V1 is not None:
-            kerns["coupled_nl_prop_c_v"](
+            self._v_variant(kerns, "coupled_nl_prop_c_v", V1)(
                 self.queue,
                 gs,
                 ls,
@@ -1429,7 +1621,6 @@ class OpenCLKernels:
         V2: cla.Array | None,
         propagator: cla.Array,
         plan,
-        N_sq: int,
         alpha1: float,
         alpha2: float,
         g11: float,
@@ -1455,8 +1646,6 @@ class OpenCLKernels:
             Pre-computed propagator.
         plan : VkFFT plan
             Pre-built FFT plan (must support fft_oop).
-        N_sq : int
-            Number of elements per component.
         alpha1 : float
             Half-loss, component 1.
         alpha2 : float
@@ -1480,6 +1669,8 @@ class OpenCLKernels:
             The modified buffer k.
         """
         kerns = self._get_kernels(A_in.dtype)
+        # Interleaved (2, N_sq) layout: one thread per component element.
+        N_sq = int(A_in.size) // 2
         gs_full = (int(A_in.size),)
         ls_full = self._local_size(A_in.size)
         gs = (N_sq,)
@@ -1503,7 +1694,7 @@ class OpenCLKernels:
             A_in.dtype, alpha1, alpha2, g11, g12, g22, Isat1, Isat2
         )
         if V1 is not None:
-            kerns["coupled_rk4_nl_rhs_c_v"](
+            self._v_variant(kerns, "coupled_rk4_nl_rhs_c_v", V1)(
                 self.queue,
                 gs,
                 ls,

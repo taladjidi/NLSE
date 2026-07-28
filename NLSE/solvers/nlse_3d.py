@@ -116,22 +116,21 @@ class NLSE_3d(NLSE):
         # Override normalization factor for 3D (includes delta_T)
         self._norm_grid_factor = np.float32(self.delta_X * self.delta_Y * self.delta_T)
 
-    def _propagator_cache_key(self, precision: str) -> tuple:
+    def _propagator_cache_key(self, dtype: np.dtype) -> tuple:
         """Return cache key for 3D propagator."""
         return (
             self.NX,
             self.NY,
             self.NZ,
             float(self.delta_z),
-            precision,
+            np.dtype(dtype).str,
             float(self.k),
             float(self.D0),
         )
 
-    def _compute_propagator(self, precision: str) -> np.ndarray:
+    def _compute_propagator(self, dtype: np.dtype) -> np.ndarray:
         """Compute the 3D linear propagation matrix (spatial + temporal)."""
-        dtype = np.complex128 if precision == "double" else np.complex64
-        prop_2d = super()._compute_propagator(precision)
+        prop_2d = super()._compute_propagator(dtype)
         prop_t = np.exp(-1j * self.D0 / 2 * self.Omega**2, dtype=dtype)
         return prop_2d * prop_t
 
@@ -145,17 +144,15 @@ class NLSE_3d(NLSE):
         prop_temporal = (-1j * self.D0 / 2 * self.Omega**2).astype(np.complex64)
         return prop_spatial + prop_temporal
 
-    def _rk4_max_dz(self) -> float:
-        """Compute the maximum stable RK4 step size for 3D.
+    def _dispersion_operator(self) -> np.ndarray:
+        """Return the 3D dispersion eigenvalues.
 
         Include both spatial K^2/(2k) and temporal D0/2*Omega^2 dispersion.
         """
-        D_spatial = 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k
-        D_temporal = abs(self.D0) / 2 * self.Omega**2
-        D_max = float(np.max(D_spatial + D_temporal))
-        if D_max == 0:
-            return np.inf
-        return 2.83 / D_max
+        return (
+            0.5 * (self.Kxx**2 + self.Kyy**2) / self.k
+            + abs(self.D0) / 2 * self.Omega**2
+        )
 
     def _prepare_output_array(
         self, E_in: np.ndarray, normalize: bool

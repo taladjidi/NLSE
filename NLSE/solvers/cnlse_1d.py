@@ -107,13 +107,27 @@ class CNLSE_1d(CNLSE):
 
         return A1, A2
 
-    def _propagator_cache_key(self, precision: str) -> tuple:
-        """Return cache key for 1D coupled propagator."""
-        return (self.NX, float(self.delta_z), precision, float(self.k), float(self.k2))
+    def _dispersion_operator(self) -> np.ndarray:
+        """Return the 1D coupled dispersion eigenvalues.
 
-    def _compute_propagator(self, precision: str) -> np.ndarray:
+        CNLSE's is built from the 2D Fourier grid, which is the wrong shape
+        here. It went unnoticed while only the maximum was taken; weighting
+        by the field needs the operator itself, on the right grid.
+        """
+        return 0.5 * self.Kx**2 / min(self.k, self.k2)
+
+    def _propagator_cache_key(self, dtype: np.dtype) -> tuple:
+        """Return cache key for 1D coupled propagator."""
+        return (
+            self.NX,
+            float(self.delta_z),
+            np.dtype(dtype).str,
+            float(self.k),
+            float(self.k2),
+        )
+
+    def _compute_propagator(self, dtype: np.dtype) -> np.ndarray:
         """Compute the 1D coupled linear propagation matrices."""
-        dtype = np.complex128 if precision == "double" else np.complex64
         propagator1 = np.exp(
             -1j * 0.5 * (self.Kx**2) / self.k * self.delta_z, dtype=dtype
         )

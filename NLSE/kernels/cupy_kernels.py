@@ -7,10 +7,14 @@ placeholders, compile once via cp.RawModule, cache, and invoke directly.
 Supports both single (float32/complex64) and double (float64/complex128) precision.
 """
 
+import re
 from pathlib import Path
 
 import cupy as cp
 import numpy as np
+
+# Suffix of the twin that takes a complex (absorbing) potential.
+COMPLEX_V_SUFFIX = "_cv"
 
 # Module-level cache: precision string -> compiled cp.RawModule
 _COMPILED_MODULES = {}
@@ -28,6 +32,65 @@ def _load_kernel_template():
     """
     template_path = Path(__file__).parent / "cuda_source" / "kernels.cu"
     return template_path.read_text()
+
+
+_VBLOCK = re.compile(r"// \{\{VBLOCK\}\}\n(.*?)\n// \{\{END_VBLOCK\}\}", re.DOTALL)
+
+# Real-V and complex-V spellings of what a V-reading kernel needs: the
+# argument type, the phase (real part of V) and the gain/loss (imaginary
+# part). V_LOSS expands to nothing in the real case, so a real V keeps the
+# exact arithmetic it had before complex potentials existed.
+_V_REAL_MACROS = """#define V_T {{FP_TYPE}}
+#define V_RE(v, i) ((v)[i])
+#define V_LOSS(v, i)
+"""
+_V_COMPLEX_MACROS = """#define V_T {{FP2_TYPE}}
+#define V_RE(v, i) ((v)[i].x)
+#define V_LOSS(v, i) + (v)[i].y
+"""
+_V_UNDEF = "#undef V_T\n#undef V_RE\n#undef V_LOSS\n"
+
+
+def _expand_v_blocks(source):
+    """Emit a real-V and a complex-V twin of every kernel marked VBLOCK.
+
+    A complex potential is an absorbing one: its imaginary part is gain or
+    loss and belongs in the real part of the exponent, not the phase. V is a
+    bare pointer, so real and complex cannot share an entry point; the
+    complex twin takes ``{{FP2_TYPE}}*`` and is suffixed ``_cv``. Twins
+    rather than a branch, so a real V pays nothing.
+
+    Parameters
+    ----------
+    source : str
+        Kernel source containing VBLOCK-marked kernels.
+
+    Returns
+    -------
+    str
+        Source with each marked block replaced by both twins.
+    """
+
+    def expand(match):
+        block = match.group(1)
+        renamed = re.sub(
+            r"(__global__ void )(\w+)\(",
+            r"\1\2" + COMPLEX_V_SUFFIX + "(",
+            block,
+            count=1,
+        )
+        return (
+            _V_REAL_MACROS
+            + block
+            + "\n"
+            + _V_UNDEF
+            + _V_COMPLEX_MACROS
+            + renamed
+            + "\n"
+            + _V_UNDEF
+        )
+
+    return _VBLOCK.sub(expand, source)
 
 
 def _get_kernel_source(precision="single"):
@@ -56,7 +119,7 @@ def _get_kernel_source(precision="single"):
     else:
         raise ValueError(f"precision must be 'single' or 'double', got {precision}")
 
-    template = _load_kernel_template()
+    template = _expand_v_blocks(_load_kernel_template())
     source = template.replace("{{FP_TYPE}}", fp_type)
     source = source.replace("{{FP2_TYPE}}", fp2_type)
     source = source.replace("{{FP_SUFFIX}}", fp_suffix)
@@ -107,20 +170,67 @@ class CUDAKernels:
         self._kernels = {}
 
     @staticmethod
-    def _has_array_params(*values):
-        """Check if any parameter is an array (broadcasting mode).
+    def _needs_broadcast(params=(), A=None, grids=()):
+        """Check whether the raw kernels must be bypassed for this call.
+
+        The raw CUDA kernels take scalar parameters and index every array
+        with one flat id, so two situations force the cp.fuse fallback, which
+        broadcasts natively:
+
+        a parameter that is an array — one value per simulation, which cannot
+        be passed as a scalar; and a grid with fewer axes than the field — a
+        potential or propagator shared by a batch, which the flat index would
+        read past the end of.
+
+        These were two predicates called in pairs at six sites, which made it
+        easy to add a call site with only one of them. A batch does not need
+        a batched parameter: several initial conditions under identical
+        physics leave every parameter scalar and put the extra axis on the
+        field alone.
 
         Parameters
         ----------
-        values : float or array-like
-            Parameters to check.
+        params : tuple
+            Physical parameters, any of which may be batched.
+        A : cp.ndarray, optional
+            The field. Only needed when there are grids to compare against.
+        grids : tuple
+            Grid-shaped arrays the kernel indexes alongside the field.
 
         Returns
         -------
         bool
-            True if any parameter has ndim > 0 (is an array).
+            True if the fused fallback is required.
         """
-        return any(getattr(v, "ndim", 0) > 0 for v in values)
+        if any(getattr(v, "ndim", 0) > 0 for v in params):
+            return True
+        return any(g is not None and g.ndim < A.ndim for g in grids)
+
+    @staticmethod
+    def _v_variant(kernels, name, V):
+        """Return the kernel matching this potential's realness.
+
+        A complex V is an absorbing potential: its imaginary part is gain or
+        loss. V is a bare pointer, so the two cases have separate compiled
+        kernels and a real V keeps the instruction stream it always had.
+
+        Parameters
+        ----------
+        kernels : dict
+            Compiled kernels for this precision.
+        name : str
+            Base kernel key.
+        V : cp.ndarray or None
+            The potential.
+
+        Returns
+        -------
+        cp.RawKernel
+            The real-V or complex-V kernel.
+        """
+        if V is not None and V.dtype.kind == "c":
+            return kernels[name + COMPLEX_V_SUFFIX]
+        return kernels[name]
 
     def _get_kernels(self, dtype):
         """Get compiled kernel functions for given dtype, compiling if needed.
@@ -170,6 +280,16 @@ class CUDAKernels:
                 ),
                 "rk4_nl_rhs_c": module.get_function("rk4_nl_rhs_c_fused"),
                 "rk4_nl_rhs_c_v": module.get_function("rk4_nl_rhs_c_v_fused"),
+                "nl_prop_cv": module.get_function("nl_prop_fused_cv"),
+                "nl_prop_c_cv": module.get_function("nl_prop_c_fused_cv"),
+                "square_mod_nl_prop_v_cv": module.get_function(
+                    "square_mod_nl_prop_v_fused_cv"
+                ),
+                "rk4_nl_rhs_v_cv": module.get_function("rk4_nl_rhs_v_fused_cv"),
+                "square_mod_rk4_nl_rhs_v_cv": module.get_function(
+                    "square_mod_rk4_nl_rhs_v_fused_cv"
+                ),
+                "rk4_nl_rhs_c_v_cv": module.get_function("rk4_nl_rhs_c_v_fused_cv"),
             }
 
         return self._kernels[precision]
@@ -235,7 +355,15 @@ class CUDAKernels:
         cp.ndarray
             The modified field array A.
         """
-        if self._has_array_params(alpha, g, Isat):
+        if self._needs_broadcast(
+            (
+                alpha,
+                g,
+                Isat,
+            ),
+            A,
+            (V,),
+        ):
             from .cupy import nl_prop as _fused
 
             return _fused(A, A_sq, dz, alpha, V, g, Isat)
@@ -243,7 +371,16 @@ class CUDAKernels:
         N = int(A.size)
         dz_c, alpha_c, g_c, Isat_c = self._cast(A.dtype, dz, alpha, g, Isat)
         self._launch(
-            kernels["nl_prop"], N, A, A_sq, V, dz_c, alpha_c, g_c, Isat_c, np.int32(N)
+            self._v_variant(kernels, "nl_prop", V),
+            N,
+            A,
+            A_sq,
+            V,
+            dz_c,
+            alpha_c,
+            g_c,
+            Isat_c,
+            np.int32(N),
         )
         return A
 
@@ -270,7 +407,13 @@ class CUDAKernels:
         cp.ndarray
             The modified field array A.
         """
-        if self._has_array_params(alpha, g, Isat):
+        if self._needs_broadcast(
+            (
+                alpha,
+                g,
+                Isat,
+            )
+        ):
             from .cupy import nl_prop_without_V as _fused
 
             return _fused(A, A_sq, dz, alpha, g, Isat)
@@ -321,7 +464,17 @@ class CUDAKernels:
         cp.ndarray
             The modified field array A1.
         """
-        if self._has_array_params(alpha, g11, g12, Isat1, Isat2):
+        if self._needs_broadcast(
+            (
+                alpha,
+                g11,
+                g12,
+                Isat1,
+                Isat2,
+            ),
+            A1,
+            (V,),
+        ):
             from .cupy import nl_prop_c as _fused
 
             return _fused(A1, A_sq_1, A_sq_2, dz, alpha, V, g11, g12, Isat1, Isat2)
@@ -329,7 +482,14 @@ class CUDAKernels:
         N = int(A1.size)
         params = self._cast(A1.dtype, dz, alpha, g11, g12, Isat1, Isat2)
         self._launch(
-            kernels["nl_prop_c"], N, A1, A_sq_1, A_sq_2, V, *params, np.int32(N)
+            self._v_variant(kernels, "nl_prop_c", V),
+            N,
+            A1,
+            A_sq_1,
+            A_sq_2,
+            V,
+            *params,
+            np.int32(N),
         )
         return A1
 
@@ -364,7 +524,15 @@ class CUDAKernels:
         cp.ndarray
             The modified field array A1.
         """
-        if self._has_array_params(alpha, g11, g12, Isat1, Isat2):
+        if self._needs_broadcast(
+            (
+                alpha,
+                g11,
+                g12,
+                Isat1,
+                Isat2,
+            )
+        ):
             from .cupy import nl_prop_without_V_c as _fused
 
             return _fused(A1, A_sq_1, A_sq_2, dz, alpha, g11, g12, Isat1, Isat2)
@@ -423,7 +591,13 @@ class CUDAKernels:
         cp.ndarray
             The modified field array A.
         """
-        if self._has_array_params(alpha, g, Isat):
+        if self._needs_broadcast(
+            (
+                alpha,
+                g,
+                Isat,
+            )
+        ):
             from .cupy import square_mod_nl_prop as _fused
 
             return _fused(A, dz, alpha, g, Isat)
@@ -465,7 +639,15 @@ class CUDAKernels:
         cp.ndarray
             The modified field array A.
         """
-        if self._has_array_params(alpha, g, Isat):
+        if self._needs_broadcast(
+            (
+                alpha,
+                g,
+                Isat,
+            ),
+            A,
+            (V,),
+        ):
             from .cupy import square_mod_nl_prop_v as _fused
 
             return _fused(A, V, dz, alpha, g, Isat)
@@ -473,7 +655,7 @@ class CUDAKernels:
         N = int(A.size)
         dz_c, alpha_c, g_c, Isat_c = self._cast(A.dtype, dz, alpha, g, Isat)
         self._launch(
-            kernels["square_mod_nl_prop_v"],
+            self._v_variant(kernels, "square_mod_nl_prop_v", V),
             N,
             A,
             V,
@@ -505,10 +687,11 @@ class CUDAKernels:
         cp.ndarray
             The propagated field A.
         """
-        kernels = self._get_kernels(A.dtype)
-        N = int(A.size)
         plan.fft(A, A)
-        self._launch(kernels["apply_propagator"], N, A, propagator, np.int32(N))
+        # Goes through apply_propagator rather than launching the kernel here,
+        # so the batched case (a field with an extra axis against a propagator
+        # shared by the whole batch) is handled in one place.
+        self.apply_propagator(A, propagator)
         if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
             plan.ifft_unnorm(A, A)
         else:
@@ -531,6 +714,22 @@ class CUDAKernels:
             The modified field array A.
         """
         kernels = self._get_kernels(A.dtype)
+        if A.ndim > propagator.ndim:
+            # Batched field against a propagator shared by the whole batch.
+            # The kernel indexes both with the same flat index, so launching
+            # over the full field reads past the end of the propagator and
+            # returns NaN and garbage for every slice after the first.
+            for index in range(A.shape[0]):
+                component = A[index]
+                size = int(component.size)
+                self._launch(
+                    kernels["apply_propagator"],
+                    size,
+                    component,
+                    propagator,
+                    np.int32(size),
+                )
+            return A
         N = int(A.size)
         self._launch(kernels["apply_propagator"], N, A, propagator, np.int32(N))
         return A
@@ -635,7 +834,13 @@ class CUDAKernels:
         cp.ndarray
             The modified A_prop.
         """
-        if self._has_array_params(alpha, g, Isat):
+        if self._needs_broadcast(
+            (
+                alpha,
+                g,
+                Isat,
+            )
+        ):
             from .cupy import rk4_nl_rhs as _fused
 
             return _fused(A_prop, A, A_sq, alpha, g, Isat)
@@ -670,7 +875,15 @@ class CUDAKernels:
         cp.ndarray
             The modified A_prop.
         """
-        if self._has_array_params(alpha, g, Isat):
+        if self._needs_broadcast(
+            (
+                alpha,
+                g,
+                Isat,
+            ),
+            A,
+            (V,),
+        ):
             from .cupy import rk4_nl_rhs_v as _fused
 
             return _fused(A_prop, A, A_sq, V, alpha, g, Isat)
@@ -678,7 +891,14 @@ class CUDAKernels:
         N = int(A.size)
         params = self._cast(A.dtype, alpha, g, Isat)
         self._launch(
-            kernels["rk4_nl_rhs_v"], N, A_prop, A, A_sq, V, *params, np.int32(N)
+            self._v_variant(kernels, "rk4_nl_rhs_v", V),
+            N,
+            A_prop,
+            A,
+            A_sq,
+            V,
+            *params,
+            np.int32(N),
         )
         return A_prop
 
@@ -703,7 +923,13 @@ class CUDAKernels:
         cp.ndarray
             The modified A_prop.
         """
-        if self._has_array_params(alpha, g, Isat):
+        if self._needs_broadcast(
+            (
+                alpha,
+                g,
+                Isat,
+            )
+        ):
             from .cupy import square_mod_rk4_nl_rhs as _fused
 
             return _fused(A_prop, A, alpha, g, Isat)
@@ -738,7 +964,15 @@ class CUDAKernels:
         cp.ndarray
             The modified A_prop.
         """
-        if self._has_array_params(alpha, g, Isat):
+        if self._needs_broadcast(
+            (
+                alpha,
+                g,
+                Isat,
+            ),
+            A,
+            (V,),
+        ):
             from .cupy import square_mod_rk4_nl_rhs_v as _fused
 
             return _fused(A_prop, A, V, alpha, g, Isat)
@@ -746,7 +980,13 @@ class CUDAKernels:
         N = int(A.size)
         params = self._cast(A.dtype, alpha, g, Isat)
         self._launch(
-            kernels["square_mod_rk4_nl_rhs_v"], N, A_prop, A, V, *params, np.int32(N)
+            self._v_variant(kernels, "square_mod_rk4_nl_rhs_v", V),
+            N,
+            A_prop,
+            A,
+            V,
+            *params,
+            np.int32(N),
         )
         return A_prop
 
@@ -781,7 +1021,15 @@ class CUDAKernels:
         cp.ndarray
             The modified A_prop.
         """
-        if self._has_array_params(alpha, g11, g12, Isat1, Isat2):
+        if self._needs_broadcast(
+            (
+                alpha,
+                g11,
+                g12,
+                Isat1,
+                Isat2,
+            )
+        ):
             from .cupy import rk4_nl_rhs_c as _fused
 
             return _fused(A_prop, A_orig, A_sq_1, A_sq_2, alpha, g11, g12, Isat1, Isat2)
@@ -833,7 +1081,17 @@ class CUDAKernels:
         cp.ndarray
             The modified A_prop.
         """
-        if self._has_array_params(alpha, g11, g12, Isat1, Isat2):
+        if self._needs_broadcast(
+            (
+                alpha,
+                g11,
+                g12,
+                Isat1,
+                Isat2,
+            ),
+            A_prop,
+            (V,),
+        ):
             from .cupy import rk4_nl_rhs_c_v as _fused
 
             return _fused(
@@ -843,7 +1101,7 @@ class CUDAKernels:
         N = int(A_orig.size)
         params = self._cast(A_orig.dtype, alpha, g11, g12, Isat1, Isat2)
         self._launch(
-            kernels["rk4_nl_rhs_c_v"],
+            self._v_variant(kernels, "rk4_nl_rhs_c_v", V),
             N,
             A_prop,
             A_orig,

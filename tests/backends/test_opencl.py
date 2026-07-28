@@ -286,3 +286,104 @@ class TestOptimizedKernelPerformance:
             backend.queue.finish()
 
         benchmark(run_optimized)
+
+
+class TestSharedGridBroadcast:
+    """A grid shared by a batch is addressed with the launch's global offset.
+
+    The kernels index the field with a flat global id, so a batched run
+    launches once per simulation and places each launch with global_offset.
+    A shared potential or propagator is then read at
+    ``idx - get_global_offset(0)``.
+
+    The built-in is load-bearing: it is by definition the zero-based index
+    within the launch, so the compiler keeps the wide loads it would use for
+    a plain ``grid[idx]``. Passing the same number as an int argument defeats
+    that and costs several times the runtime on the bandwidth-bound kernels,
+    which shows up as a regression on unbatched propagations. These tests
+    exist so that a future edit cannot quietly swap it back.
+    """
+
+    SHARED_GRID_KERNELS = [
+        "apply_propagator",
+        "nl_prop_fused",
+        "square_mod_nl_prop_v_fused",
+        "rk4_nl_rhs_v_fused",
+        "square_mod_rk4_nl_rhs_v_fused",
+    ]
+
+    def test_shared_grid_reads_use_the_launch_offset(self):
+        """Every kernel reading a shared grid must subtract the offset."""
+        import re
+
+        from NLSE.kernels.cl import _get_kernel_source
+
+        source = _get_kernel_source("single")
+        assert "{{" not in source, "unsubstituted placeholder left in the source"
+        bodies = dict(re.findall(r"__kernel void (\w+)\((.*?)\n\}", source, re.DOTALL))
+        for name in self.SHARED_GRID_KERNELS:
+            assert "get_global_offset(0)" in bodies[name], (
+                f"{name} indexes its shared grid without the launch offset, so "
+                f"a batched run reads the wrong slice"
+            )
+
+    def test_no_kernel_takes_an_offset_argument(self):
+        """The offset must come from the built-in, never from an argument.
+
+        An int argument the compiler cannot see through costs the wide loads,
+        which slows the unbatched path down substantially.
+        """
+        from NLSE.kernels.cl import _get_kernel_source
+
+        source = _get_kernel_source("single")
+        assert "grid_offset" not in source, (
+            "a kernel takes the offset as an argument; use "
+            "get_global_offset(0) so the index stays provably contiguous"
+        )
+
+    def test_a_shared_grid_broadcasts_across_the_batch(self):
+        """The batched launches must reproduce a numpy broadcast exactly."""
+        from NLSE.backends.opencl import OpenCLBackend
+        from NLSE.kernels.cl import OpenCLKernels
+        from pyopencl import array as cla
+
+        backend = OpenCLBackend()
+        kernels = OpenCLKernels(backend.context, backend.queue)
+
+        count, n = 3, 64
+        rng = np.random.default_rng(0)
+        field = (rng.random((count, n, n)) + 1j * rng.random((count, n, n))).astype(
+            np.complex64
+        )
+        propagator = (rng.random((n, n)) + 1j * rng.random((n, n))).astype(np.complex64)
+
+        A = cla.to_device(backend.queue, field.copy())
+        kernels.apply_propagator(A, cla.to_device(backend.queue, propagator))
+
+        np.testing.assert_allclose(
+            A.get(),
+            field * propagator,
+            rtol=1e-6,
+            err_msg="a shared propagator was not broadcast across the batch",
+        )
+
+    def test_an_unbatched_run_is_a_single_launch(self):
+        """No batch axis means one launch at offset 0, as before broadcasting."""
+        from NLSE.backends.opencl import OpenCLBackend
+        from NLSE.kernels.cl import OpenCLKernels
+        from pyopencl import array as cla
+
+        backend = OpenCLBackend()
+        kernels = OpenCLKernels(backend.context, backend.queue)
+        n = 64
+        A = cla.to_device(backend.queue, np.ones((n, n), dtype=np.complex64))
+        grid = cla.to_device(backend.queue, np.ones((n, n), dtype=np.complex64))
+
+        launches = list(kernels._launches(A, grid=grid))
+        assert len(launches) == 1, (
+            f"an unbatched field produced {len(launches)} launches; it must "
+            f"stay a single whole-field launch"
+        )
+        offset, global_size, _, _ = launches[0]
+        assert offset == 0
+        assert global_size == (n * n,)

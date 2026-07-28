@@ -169,53 +169,83 @@ class CNLSE(NLSE):
                 A[:] = E
         return A, A_sq
 
-    def _propagator_cache_key(self, precision: str) -> tuple:
+    def _propagator_cache_key(self, dtype: np.dtype) -> tuple:
         """Return cache key for coupled propagator."""
         return (
             self.NX,
             self.NY,
             float(self.delta_z),
-            precision,
+            np.dtype(dtype).str,
             float(self.k),
             float(self.k2),
         )
 
-    def _compute_propagator(self, precision: str) -> np.ndarray:
+    def _compute_propagator(self, dtype: np.dtype) -> np.ndarray:
         """Compute the coupled linear propagation matrices."""
-        dtype = np.complex128 if precision == "double" else np.complex64
-        propagator1 = super()._compute_propagator(precision)
+        propagator1 = super()._compute_propagator(dtype)
         propagator2 = np.exp(
             -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k2 * self.delta_z,
             dtype=dtype,
         )
         return np.array([propagator1, propagator2])
 
-    def _rk4_max_dz(self) -> float:
-        """Compute the maximum stable RK4 step size for both components."""
-        K_sq = 0.5 * (self.Kxx**2 + self.Kyy**2)
-        k_min = min(self.k, self.k2)
-        D_max = float(np.max(K_sq / k_min))
-        if D_max == 0:
-            return np.inf
-        return 2.83 / D_max
+    def _dispersion_operator(self) -> np.ndarray:
+        """Return the dispersion eigenvalues of the faster component."""
+        return 0.5 * (self.Kxx**2 + self.Kyy**2) / min(self.k, self.k2)
 
-    def _split_step_max_dz(self, A: np.ndarray) -> float:
-        """Compute the maximum split-step dz for coupled components."""
-        A_np = self._backend.to_numpy(A)
-        I1_peak = float(np.max(np.abs(A_np[0]) ** 2))
-        I2_peak = float(np.max(np.abs(A_np[1]) ** 2))
-        g11 = abs(getattr(self, "_g11", self.k / 2 * self.n2 * c * epsilon_0))
-        g12 = abs(getattr(self, "_g12", self.k / 2 * self.n12 * c * epsilon_0))
-        g22 = abs(getattr(self, "_g22", self.k2 / 2 * self.n22 * c * epsilon_0))
-        Isat1 = getattr(self, "_Isat_conv", 2 * self.I_sat / (epsilon_0 * c))
-        Isat2 = getattr(self, "_Isat_conv2", 2 * self.I_sat2 / (epsilon_0 * c))
-        sat = 1 / (1 + I1_peak / Isat1 + I2_peak / Isat2)
-        nl_rate_1 = (g11 * I1_peak + g12 * I2_peak) * sat
-        nl_rate_2 = (g22 * I2_peak + g12 * I1_peak) * sat
-        nl_rate = max(nl_rate_1, nl_rate_2)
-        if nl_rate == 0:
-            return np.inf
-        return np.pi / nl_rate
+    def _energy_rates(self, A: np.ndarray) -> dict[str, float]:
+        """Return the phase rates for the coupled system.
+
+        Each component carries its own potential and its own pair of
+        couplings, so both are evaluated and the more restrictive one sets
+        the step. The intensities are means weighted by each component's own
+        density, matching how the base class forms its rates.
+        """
+        rates = super()._energy_rates(A)
+        A_np = np.asarray(self._backend.to_numpy(A))
+        w1 = np.abs(A_np[0]) ** 2
+        w2 = np.abs(A_np[1]) ** 2
+        t1, t2 = float(np.sum(w1)), float(np.sum(w2))
+        if t1 == 0 and t2 == 0:
+            return rates
+
+        def mean(weight, total, field):
+            return float(np.sum(weight * field) / total) if total > 0 else 0.0
+
+        # Each component sees the potential scaled by its own k.
+        V1_scaled = self._as_host_array(getattr(self, "_V_scaled", None))
+        V2_scaled = self._as_host_array(getattr(self, "_V2_scaled", None))
+        potential = 0.0
+        for weight, total, V in ((w1, t1, V1_scaled), (w2, t2, V2_scaled)):
+            if V is not None:
+                potential = max(potential, abs(mean(weight, total, np.real(V))))
+        rates["potential"] = potential
+
+        if getattr(self, "_g11", None) is None:
+            g11 = self.k / 2 * self.n2 * c * epsilon_0
+            g12 = self.k / 2 * self.n12 * c * epsilon_0
+            g22 = self.k2 / 2 * self.n22 * c * epsilon_0
+        else:
+            g11, g12, g22 = self._g11, self._g12, self._g22
+        if getattr(self, "_Isat_conv", None) is None:
+            Isat1 = 2 * self.I_sat / (epsilon_0 * c)
+            Isat2 = 2 * self.I_sat2 / (epsilon_0 * c)
+        else:
+            Isat1, Isat2 = self._Isat_conv, self._Isat_conv2
+        g11 = np.abs(self._as_host_array(g11))
+        g12 = np.abs(self._as_host_array(g12))
+        g22 = np.abs(self._as_host_array(g22))
+        Isat1 = self._as_host_array(Isat1)
+        Isat2 = self._as_host_array(Isat2)
+
+        I1, I2 = mean(w1, t1, w1), mean(w2, t2, w2)
+        sat = 1 / (1 + I1 / Isat1 + I2 / Isat2)
+        # Batched runs carry one value per simulation; reduce with max so the
+        # step satisfies the fastest component of the fastest simulation.
+        rates["interaction"] = float(
+            np.max(np.maximum((g11 * I1 + g12 * I2) * sat, (g22 * I2 + g12 * I1) * sat))
+        )
+        return rates
 
     def _propagator_rk4_cache_key(self) -> tuple:
         """Return cache key for coupled RK4 dispersion operator."""
@@ -315,9 +345,8 @@ class CNLSE(NLSE):
             V_scaled = V * k_half
             V2_scaled = V * k2_half
 
-        # CL fused fast path: zero component copies
-        if hasattr(kernels, "rk4_rhs_coupled_fused") and self.nl_length == 0:
-            N_sq = int(A_in.size) // 2
+        # Fused fast path (CL, MLX): zero component copies
+        if self._backend.has_fused_coupled_rk4_rhs and self.nl_length == 0:
             prop_fft = getattr(self, "_propagator_fft", None)
             return kernels.rk4_rhs_coupled_fused(
                 A_in,
@@ -326,7 +355,6 @@ class CNLSE(NLSE):
                 V2_scaled,
                 prop_fft if prop_fft is not None else propagator,
                 plans[0],
-                N_sq,
                 alpha_half,
                 alpha2_half,
                 g11,
@@ -335,23 +363,6 @@ class CNLSE(NLSE):
                 Isat1,
                 Isat2,
                 unnorm_ifft=(prop_fft is not None),
-            )
-
-        # MLX fused fast path: zero component copies
-        if hasattr(kernels, "rk4_rhs_coupled") and self.nl_length == 0:
-            return kernels.rk4_rhs_coupled(
-                A_in,
-                propagator,
-                V_scaled,
-                V2_scaled,
-                alpha_half,
-                alpha2_half,
-                g11,
-                g12,
-                g22,
-                Isat1,
-                Isat2,
-                plans[0],
             )
 
         if self._backend.name == "MLX":
@@ -572,9 +583,8 @@ class CNLSE(NLSE):
 
         kernels = self._backend.kernels
 
-        # CL fused fast path: zero component copies
-        if hasattr(kernels, "split_step_coupled_fused") and self.nl_length == 0:
-            N_sq = int(A.size) // 2
+        # Fused fast path (CL, MLX): zero component copies
+        if self._backend.has_fused_coupled_split_step and self.nl_length == 0:
             dz = self.delta_z / 2 if precision == "double" else self.delta_z
             prop_fft = getattr(self, "_propagator_fft", None)
             omega_half = (
@@ -587,7 +597,6 @@ class CNLSE(NLSE):
                 prop_fft if prop_fft is not None else propagator,
                 V_scaled,
                 V2_scaled,
-                N_sq,
                 dz,
                 alpha_half,
                 alpha2_half,
@@ -600,35 +609,6 @@ class CNLSE(NLSE):
                 plans[0],
                 omega=omega_half,
                 unnorm_ifft=(prop_fft is not None),
-            )
-
-        # MLX fused fast path: zero component copies
-        if hasattr(kernels, "split_step_coupled") and self.nl_length == 0:
-            dz = self.delta_z / 2 if precision == "double" else self.delta_z
-            k_half = getattr(self, "_k_half", np.float32(self.k / 2))
-            k2_half = getattr(self, "_k2_half", np.float32(self.k2 / 2))
-            omega_half = (
-                self.omega / 2
-                if (precision == "single" and self.omega is not None)
-                else None
-            )
-            return kernels.split_step_coupled(
-                A,
-                propagator,
-                V,
-                dz,
-                alpha_half,
-                alpha2_half,
-                g11,
-                g12,
-                g22,
-                k_half,
-                k2_half,
-                Isat_conv,
-                Isat_conv2,
-                precision,
-                plans[0],
-                omega=omega_half,
             )
 
         # First half-step (double precision only)
