@@ -266,22 +266,18 @@ class DDGPE(CNLSE):
         ).astype(np.complex64)
         return np.array([prop1, prop2])
 
-    def _rk4_dispersion_rate(self) -> float:
-        """Return the DDGPE dispersion eigenvalue magnitude.
+    def _dispersion_operator(self) -> np.ndarray:
+        """Return the DDGPE polariton dispersion eigenvalues.
 
-        Use the actual polariton dispersion eigenvalues instead of K^2/(2k).
+        Use the actual polariton branches instead of K^2/(2k). The exciton
+        branch is flat, so the larger of the two is taken pointwise.
         """
         D_exc = abs(self.omega_exc - self.omega_pump)
-        D_cav = float(
-            np.max(
-                np.abs(
-                    self.omega_cav
-                    * np.sqrt(1 + (self.Kxx**2 + self.Kyy**2) / self.k_z**2)
-                    - self.omega_pump
-                )
-            )
+        D_cav = np.abs(
+            self.omega_cav * np.sqrt(1 + (self.Kxx**2 + self.Kyy**2) / self.k_z**2)
+            - self.omega_pump
         )
-        return max(D_exc, D_cav)
+        return np.maximum(D_exc, D_cav)
 
     def _prepare_output_array(self, E_in: np.ndarray, normalize: bool) -> np.ndarray:
         """Prepare the output array depending on __BACKEND__.

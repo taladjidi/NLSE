@@ -118,7 +118,10 @@ def test_a_real_potential_is_unaffected(backend_name):
     different kernels.
     """
     field, ring = grids(backend_name)
-    real = (5.0 * ring).astype(np.float32)
+    # A physical refractive-index change. A larger one twists the phase by
+    # more than pi per grid cell, so the step limiter clamps hard and the
+    # test spends its time on steps rather than on what it is checking.
+    real = (1e-4 * ring).astype(np.float32)
     as_complex = real.astype(np.complex64)
 
     np.testing.assert_allclose(

@@ -144,14 +144,15 @@ class NLSE_3d(NLSE):
         prop_temporal = (-1j * self.D0 / 2 * self.Omega**2).astype(np.complex64)
         return prop_spatial + prop_temporal
 
-    def _rk4_dispersion_rate(self) -> float:
-        """Return the 3D dispersion eigenvalue magnitude.
+    def _dispersion_operator(self) -> np.ndarray:
+        """Return the 3D dispersion eigenvalues.
 
         Include both spatial K^2/(2k) and temporal D0/2*Omega^2 dispersion.
         """
-        D_spatial = 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k
-        D_temporal = abs(self.D0) / 2 * self.Omega**2
-        return float(np.max(D_spatial + D_temporal))
+        return (
+            0.5 * (self.Kxx**2 + self.Kyy**2) / self.k
+            + abs(self.D0) / 2 * self.Omega**2
+        )
 
     def _prepare_output_array(
         self, E_in: np.ndarray, normalize: bool

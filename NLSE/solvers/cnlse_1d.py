@@ -107,6 +107,15 @@ class CNLSE_1d(CNLSE):
 
         return A1, A2
 
+    def _dispersion_operator(self) -> np.ndarray:
+        """Return the 1D coupled dispersion eigenvalues.
+
+        CNLSE's is built from the 2D Fourier grid, which is the wrong shape
+        here. It went unnoticed while only the maximum was taken; weighting
+        by the field needs the operator itself, on the right grid.
+        """
+        return 0.5 * self.Kx**2 / min(self.k, self.k2)
+
     def _propagator_cache_key(self, dtype: np.dtype) -> tuple:
         """Return cache key for 1D coupled propagator."""
         return (

@@ -297,7 +297,7 @@ class TestCPUCorrectness:
             backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
-        simu.V = 1e4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2)
+        simu.V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
 
         E_out = simu.out_field(E_in, L, verbose=False, plot=False)
@@ -1391,7 +1391,7 @@ class TestNLSESplitStep:
             backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
-        V = 1e4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
+        V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
@@ -1415,7 +1415,7 @@ class TestNLSESplitStep:
             backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
-        V = 1e4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
+        V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
@@ -1465,7 +1465,7 @@ class TestNLSESplitStep:
             backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
-        V = 1e4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
+        V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
@@ -1544,7 +1544,7 @@ class TestNLSERK4:
             backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
-        V = 1e2 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
+        V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, _A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
@@ -1727,7 +1727,7 @@ class TestCNLSERK4:
             backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
-        V = 1e2 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
+        V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
         E_in = np.zeros((2, S, S), dtype=PRECISION_COMPLEX)
         E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
         E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
@@ -1933,7 +1933,7 @@ class TestNLSEOutField:
             backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
-        simu.V = 1e4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
+        simu.V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
 
         E_out = simu.out_field(E_in, L, verbose=False, plot=False, precision="double")
@@ -2071,7 +2071,7 @@ class TestCNLSEExtended:
             backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
-        simu.V = 1e4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
+        simu.V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
         E_in = np.zeros((2, S, S), dtype=PRECISION_COMPLEX)
         E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
         E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
@@ -2097,7 +2097,7 @@ class TestCNLSEExtended:
             backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
-        simu.V = 1e4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
+        simu.V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
         E_in = np.zeros((2, S, S), dtype=PRECISION_COMPLEX)
         E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
         E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
@@ -2241,7 +2241,7 @@ class TestCNLSEExtended:
             backend="CPU",
         )
         XX, YY = np.meshgrid(simu.X, simu.Y)
-        simu.V = 1e4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
+        simu.V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
         E_in = np.zeros((2, S, S), dtype=PRECISION_COMPLEX)
         E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
         E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)

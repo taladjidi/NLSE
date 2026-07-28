@@ -470,101 +470,130 @@ class TestPrecomputedConstants:
         )
 
 
-class TestRK4StepLimit:
-    """RK4's step limit must cover every term it evaluates explicitly.
+class TestStepLimitEnergies:
+    """Both limiters must weigh every term the integrator actually applies.
 
-    Split-step applies the potential through the exponential, so V never
-    limits its step. RK4 evaluates the whole right-hand side, so V enters its
-    stability condition — and V is scaled by k/2 ~ 4e6, which makes it the
-    dominant term by orders of magnitude whenever there is one.
+    The rates are expectation values — the energy in each term, weighted by
+    where the field has support — rather than a maximum over the grid. A
+    maximum is a property of the grid, not of the solution: a tall potential
+    in a corner the field never reaches would otherwise set the step for a
+    run it has no effect on.
 
-    The limit used to count dispersion alone. RK4 therefore ran far outside
-    its stability region for any potential at all and diverged to NaN, which
-    made absorbing potentials unusable with RK4.
+    RK4 diverged to NaN under any potential because its limit counted the
+    dispersion alone, and V is scaled by k/2 ~ 4e6. Split-step omitted V
+    entirely, on the argument that it is applied exactly; exact is not free,
+    because what aliases is the phase the step imprints.
     """
 
     @staticmethod
-    def ring(simu, amplitude=1.0):
+    def ring(simu, amplitude=1e-2):
         """Return a ring-shaped potential."""
         r = np.sqrt(simu.XX**2 + simu.YY**2)
         return (amplitude * np.exp(-((r - 2e-3) ** 2) / (3e-4) ** 2)).astype(np.float32)
 
+    def prepared(self, V, backend="CPU"):
+        """Return a solver with its step constants and field ready."""
+        simu = make_solver(V=V, backend=backend)
+        E = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(PRECISION_COMPLEX)
+        simu._precompute_step_constants(V, "single")
+        A, _ = simu._prepare_output_array(E, True)
+        return simu, A
+
     @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
     def test_rk4_with_a_potential_does_not_diverge(self, backend_name):
         """RK4 under a potential must converge, not return NaN."""
-        simu = make_solver(backend=backend_name)
-        V = self.ring(simu)
+        probe = make_solver(backend=backend_name)
+        V = self.ring(probe)
         simu = make_solver(V=V, backend=backend_name)
         simu.delta_z = 1e-4
         E = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(PRECISION_COMPLEX)
-
-        with pytest.warns(UserWarning, match="RK4 stability"):
-            out = simu.out_field(
-                E.copy(), 2e-4, verbose=False, plot=False, method="RK4"
-            )
+        out = simu.out_field(E.copy(), 2e-4, verbose=False, plot=False, method="RK4")
         assert np.all(np.isfinite(np.asarray(as_numpy(simu, out)))), (
-            f"{backend_name}: RK4 under a potential diverged. The step limit "
+            f"{backend_name}: RK4 under a potential diverged. Its step limit "
             f"is not accounting for V."
         )
 
-    def test_the_potential_dominates_the_limit(self):
-        """The limit must be set by V when V is the largest term."""
-        simu = make_solver()
-        V = self.ring(simu)
-        simu = make_solver(V=V)
-        simu._precompute_step_constants(V, "single")
+    def test_the_potential_enters_both_limits(self):
+        """A potential must tighten the RK4 and the split-step limit alike."""
+        probe = make_solver()
+        V = self.ring(probe)
+        bare, A_bare = self.prepared(None)
+        with_V, A_V = self.prepared(V)
 
-        dispersion = simu._rk4_dispersion_rate()
-        potential = simu._rk4_potential_rate()
-        assert potential > 100 * dispersion, (
-            "precondition: this potential should dominate dispersion"
+        assert with_V._rk4_max_dz(A_V) < bare._rk4_max_dz(A_bare), (
+            "a potential must make the RK4 limit more restrictive"
         )
-        assert simu._rk4_max_dz() < 10 / potential, (
-            f"the step limit {simu._rk4_max_dz():.3e} ignores a potential "
-            f"whose rate is {potential:.3e}"
+        assert with_V._split_step_max_dz(A_V) < bare._split_step_max_dz(A_bare), (
+            "a potential must make the split-step limit more restrictive; it "
+            "used to be ignored entirely because V is applied exactly"
         )
 
-    def test_a_potential_only_tightens_the_limit(self):
-        """Adding a potential must never loosen the step limit."""
-        bare = make_solver()
-        V = self.ring(bare)
-        bare._precompute_step_constants(None, "single")
+    def test_the_rates_are_energies_not_grid_maxima(self):
+        """A potential where the field is absent must barely count.
 
-        with_V = make_solver(V=V)
-        with_V._precompute_step_constants(V, "single")
-
-        assert with_V._rk4_max_dz() < bare._rk4_max_dz(), (
-            "a potential must make the RK4 step limit more restrictive"
-        )
-
-    def test_an_absorbing_potential_counts_too(self):
-        """A complex V limits the step by its magnitude, not its real part.
-
-        Its imaginary part is gain/loss, which is just as much part of the
-        eigenvalue as the phase is. Taking only the real part would let an
-        absorbing potential run unstable.
+        Two potentials of equal peak height, one on top of the beam and one
+        far outside it, would give the same limit under a max reduction. The
+        field-weighted rate distinguishes them, which is the whole point.
         """
-        simu = make_solver()
-        ring = self.ring(simu)
-        purely_imaginary = (1j * ring).astype(np.complex64)
+        probe = make_solver()
+        r = np.sqrt(probe.XX**2 + probe.YY**2)
+        on_beam = np.exp(-(r**2) / (5e-4) ** 2)
+        far_away = np.exp(-((r - 4e-3) ** 2) / (2e-4) ** 2)
+        # Normalise so the peaks are exactly equal: the far ring is clipped by
+        # the window, and the point is to vary only where the potential sits.
+        on_beam = (1e-2 * on_beam / on_beam.max()).astype(np.float32)
+        far_away = (1e-2 * far_away / far_away.max()).astype(np.float32)
+        assert np.isclose(on_beam.max(), far_away.max()), "precondition: equal peaks"
 
-        absorbing = make_solver(V=purely_imaginary)
-        absorbing._precompute_step_constants(purely_imaginary, "single")
-        real = make_solver(V=ring)
-        real._precompute_step_constants(ring, "single")
-
-        np.testing.assert_allclose(
-            absorbing._rk4_potential_rate(),
-            real._rk4_potential_rate(),
-            rtol=1e-6,
-            err_msg="an absorbing potential must constrain the step as much "
-            "as the equivalent real one",
+        near, A_near = self.prepared(on_beam)
+        far, A_far = self.prepared(far_away)
+        assert (
+            near._energy_rates(A_near)["potential"]
+            > 10 * far._energy_rates(A_far)["potential"]
+        ), (
+            "a potential outside the beam constrains the step as much as one "
+            "on top of it, so the rate is a grid maximum rather than an energy"
         )
 
-    def test_no_potential_leaves_the_limit_to_the_other_terms(self):
-        """Without V the limit still has to be finite and positive."""
-        simu = make_solver()
-        simu._precompute_step_constants(None, "single")
-        assert simu._rk4_potential_rate() == 0.0
-        limit = simu._rk4_max_dz()
-        assert np.isfinite(limit) and limit > 0
+    def test_split_step_ignores_dispersion_but_rk4_does_not(self):
+        """Only RK4 is limited by the kinetic term.
+
+        Split-step applies the linear part exactly in Fourier space, so a
+        purely linear problem is solved exactly at any step. RK4 approximates
+        it, so dispersion binds.
+        """
+        linear, A = self.prepared(None)
+        linear.n2 = 0.0
+        linear._precompute_step_constants(None, "single")
+        rates = linear._energy_rates(A)
+        assert rates["kinetic"] > 0, "precondition: dispersion is present"
+        assert linear._split_step_max_dz(A) == np.inf, (
+            "split-step must not be limited by dispersion alone"
+        )
+        assert np.isfinite(linear._rk4_max_dz(A)), (
+            "RK4 must still be limited by dispersion"
+        )
+
+    def test_absorption_counts_for_rk4_only(self):
+        """A purely absorbing V limits RK4 but imprints no phase.
+
+        Its imaginary part is gain/loss: RK4 approximates it, so it is part
+        of the eigenvalue, while split-step applies it exactly and only the
+        phase can alias.
+        """
+        probe = make_solver()
+        absorbing = (1j * self.ring(probe)).astype(np.complex64)
+        simu, A = self.prepared(absorbing)
+        rates = simu._energy_rates(A)
+
+        assert rates["potential"] == pytest.approx(0.0, abs=1e-9), (
+            "a purely imaginary V rotates no phase"
+        )
+        assert rates["loss"] > 0, "a purely imaginary V must count as loss"
+
+    def test_no_potential_leaves_a_finite_limit(self):
+        """Without V both limits still have to be finite and positive."""
+        simu, A = self.prepared(None)
+        assert simu._energy_rates(A)["potential"] == 0.0
+        for limit in (simu._rk4_max_dz(A), simu._split_step_max_dz(A)):
+            assert np.isfinite(limit) and limit > 0

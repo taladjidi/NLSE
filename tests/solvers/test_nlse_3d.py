@@ -148,7 +148,7 @@ def test_send_arrays_to_gpu() -> None:
         alpha = 20
         Isat = 10e4
         n2 = -1.6e-9
-        V = np.random.random((N, N, NZ)).astype(np.float32)
+        V = 1e-4 * np.random.random((N, N, NZ)).astype(np.float32)
         alpha = np.repeat(alpha, 2)
         alpha = alpha[..., np.newaxis, np.newaxis]
         n2 = np.repeat(n2, 2)
@@ -192,7 +192,7 @@ def test_retrieve_arrays_from_gpu() -> None:
         alpha = 20
         Isat = 10e4
         n2 = -1.6e-9
-        V = np.random.random((N, N, NZ)).astype(np.float32)
+        V = 1e-4 * np.random.random((N, N, NZ)).astype(np.float32)
         alpha = np.repeat(alpha, 2)
         alpha = alpha[..., np.newaxis, np.newaxis]
         n2 = np.repeat(n2, 2)

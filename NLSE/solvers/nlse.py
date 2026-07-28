@@ -232,107 +232,127 @@ class NLSE:
         """Compute the raw dispersion operator for RK4 (no caching)."""
         return (-1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k).astype(np.complex64)
 
-    def _rk4_dispersion_rate(self) -> float:
-        """Return the largest eigenvalue magnitude of the dispersion operator.
+    def _dispersion_operator(self) -> np.ndarray:
+        """Return the dispersion eigenvalues on the Fourier grid.
 
-        Only the linear part: the terms that vary per solver. Subclasses
-        override this alone; the stability limit itself is assembled in
-        ``_rk4_max_dz``, which is the same for all of them.
-
-        Returns
-        -------
-        float
-            ``max K^2 / (2 k)`` over the grid.
-        """
-        return float(np.max(0.5 * (self.Kxx**2 + self.Kyy**2) / self.k))
-
-    def _rk4_potential_rate(self) -> float:
-        """Return the largest eigenvalue magnitude contributed by V.
-
-        Split-step applies V exactly, through the exponential, so V never
-        limits its step. RK4 evaluates the whole right-hand side explicitly,
-        so V enters its stability condition like any other term — and it is
-        usually the largest one by orders of magnitude, because V is scaled
-        by k/2 ~ 4e6.
-
-        The magnitude is used, so an absorbing (complex) potential counts
-        its gain/loss part as well as its phase part.
+        The linear part of the right-hand side, as an array rather than one
+        number, so the limiters can weight it by where the field actually has
+        spectral weight. Subclasses override this alone.
 
         Returns
         -------
-        float
-            ``max |V k / 2|``, or 0 when there is no potential.
+        np.ndarray
+            ``K^2 / (2 k)`` over the Fourier grid.
         """
-        V_scaled = self._as_host_array(getattr(self, "_V_scaled", None))
-        if V_scaled is None:
-            return 0.0
-        return float(np.max(np.abs(V_scaled)))
+        return 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k
 
-    def _nonlinear_rate(self, A: np.ndarray) -> float:
-        """Return the peak nonlinear rate ``g |A|^2 sat`` over the field.
+    def _energy_rates(self, A: np.ndarray) -> dict[str, float]:
+        """Return the phase rate each term contributes, weighted by the field.
+
+        Each entry is an expectation value, ``<psi|O|psi> / <psi|psi>``: the
+        kinetic term over the spectral density, the rest over the intensity.
+        That is the rate at which a term rotates the field's phase, so
+        multiplying by dz gives the phase it adds in one step — the energy in
+        that term, in the units the step limits are written in.
+
+        This is what the limiters reduce with, rather than ``max`` over each
+        operator. A maximum is a property of the grid, not of the solution: a
+        tall potential in a corner the field never reaches, or a high-K corner
+        with no spectral weight, would set the step for a run it has no effect
+        on. Weighting by the field follows the physics instead.
 
         Parameters
         ----------
         A : np.ndarray
-            Normalized field (possibly on device).
+            Field, possibly on a device.
 
         Returns
         -------
-        float
-            The largest nonlinear rate, reduced over a batch.
+        dict
+            ``kinetic``, ``potential``, ``interaction`` and ``loss`` rates.
         """
-        A_np = self._backend.to_numpy(A)
-        I_peak = float(np.max(np.abs(A_np) ** 2))
+        A_np = np.asarray(self._backend.to_numpy(A))
+        weight = np.abs(A_np) ** 2
+        total = float(np.sum(weight))
+        zero = {"kinetic": 0.0, "potential": 0.0, "interaction": 0.0, "loss": 0.0}
+        if total == 0:
+            return zero
+
+        spectrum = np.abs(np.fft.fftn(A_np, axes=self._last_axes)) ** 2
+        spectral_total = float(np.sum(spectrum))
+        dispersion = np.asarray(self._dispersion_operator())
+        kinetic = (
+            float(np.sum(spectrum * dispersion) / spectral_total)
+            if spectral_total > 0
+            else 0.0
+        )
+
+        # Only the real part of V rotates the phase; its imaginary part is
+        # gain or loss and belongs with the losses.
+        V_scaled = self._as_host_array(getattr(self, "_V_scaled", None))
+        if V_scaled is None:
+            potential = absorption = 0.0
+        else:
+            potential = float(np.sum(weight * np.real(V_scaled)) / total)
+            absorption = float(np.sum(weight * np.abs(np.imag(V_scaled))) / total)
+
         g = self._as_host_array(getattr(self, "_g", None))
         if g is None:
             g = self._as_host_array(self.k / 2 * self.n2 * c * epsilon_0)
-        g = np.abs(g)
         Isat = self._as_host_array(getattr(self, "_Isat_conv", None))
         if Isat is None:
             Isat = self._as_host_array(2 * self.I_sat / (epsilon_0 * c))
-        # Batched runs carry one value per simulation. The step has to be
-        # small enough for the fastest of them, so reduce with max.
-        return float(np.max(g * I_peak / (1 + I_peak / Isat)))
+        # Batched runs carry one value per simulation; the step has to satisfy
+        # the fastest of them, so reduce with max after weighting.
+        mean_intensity = float(np.sum(weight * weight / (1 + weight / Isat)) / total)
+        interaction = float(np.max(np.abs(g) * mean_intensity))
 
-    def _rk4_loss_rate(self) -> float:
-        """Return the eigenvalue magnitude contributed by linear loss."""
         alpha_half = self._as_host_array(getattr(self, "_alpha_half", self.alpha / 2))
-        return float(np.max(np.abs(alpha_half)))
+        loss = float(np.max(np.abs(alpha_half))) + absorption
+        return {
+            "kinetic": abs(kinetic),
+            "potential": abs(potential),
+            "interaction": interaction,
+            "loss": loss,
+        }
 
     def _rk4_max_dz(self, A: np.ndarray | None = None) -> float:
         """Compute the maximum stable step size for explicit RK4.
 
         RK4's stability region reaches ~2.83 along the imaginary axis, so the
-        step is bounded by ``2.83 / |lambda|`` for the largest eigenvalue of
-        the whole right-hand side. That is every term RK4 evaluates
-        explicitly, not just dispersion: the potential, the nonlinearity and
-        the loss all belong in it, and their operator norms add.
+        step is bounded by ``2.83 / |lambda|`` for the right-hand side it
+        integrates. Every term it evaluates explicitly belongs in that
+        eigenvalue — dispersion, potential, interaction and loss — and they
+        add.
 
         This used to count dispersion alone, which is almost never the
-        largest. With a potential it is wrong by orders of magnitude — V is
-        scaled by k/2 — so RK4 ran far outside its stability region and
-        diverged to NaN for any potential at all. The nonlinear term is
-        typically ten times dispersion too, so the old limit was too
-        generous even without one.
+        largest. With a potential it was wrong by orders of magnitude, since V
+        is scaled by k/2, so RK4 ran outside its stability region and diverged
+        to NaN for any potential at all.
+
+        The absorption of a complex potential counts here, unlike in
+        ``_split_step_max_dz``: split-step applies it exactly through the
+        exponential, whereas RK4 approximates it, so it is as much part of the
+        eigenvalue as the phase is.
 
         Parameters
         ----------
         A : np.ndarray, optional
-            Normalized field. The nonlinear term depends on its intensity,
-            so it is included only when the field is known.
+            Field. Without it the field-weighted rates cannot be formed, so a
+            conservative grid maximum is used instead.
 
         Returns
         -------
         float
             Largest stable step, or infinity if every rate vanishes.
         """
-        rate = (
-            self._rk4_dispersion_rate()
-            + self._rk4_potential_rate()
-            + self._rk4_loss_rate()
-        )
-        if A is not None:
-            rate += self._nonlinear_rate(A)
+        if A is None:
+            rate = float(np.max(np.abs(self._dispersion_operator())))
+            V_scaled = self._as_host_array(getattr(self, "_V_scaled", None))
+            if V_scaled is not None:
+                rate += float(np.max(np.abs(V_scaled)))
+        else:
+            rate = sum(self._energy_rates(A).values())
         if rate == 0:
             return np.inf
         return RK4_STABILITY_RADIUS / rate
@@ -340,21 +360,39 @@ class NLSE:
     def _split_step_max_dz(self, A: np.ndarray) -> float:
         """Compute the maximum step size for split-step accuracy.
 
-        Ensure the intensity-dependent nonlinear phase per step stays
-        below pi to avoid phase aliasing. Only the Kerr term
-        ``g * |A|^2 * sat`` is considered because it varies with the
-        field and causes splitting error. The potential V is applied
-        exactly via the exponential and does not limit accuracy.
+        Keep the phase imprinted in one real-space step below pi. The kernels
+        put the potential and the interaction in the same exponent —
+        ``arg_imag = (g |A|^2 sat + V) dz`` — so both contribute, and their
+        energies add.
+
+        The potential used to be left out, on the grounds that it is applied
+        exactly through the exponential. Exact is not free: what matters is
+        the phase the step imprints, however exactly it was computed. Since V
+        is scaled by k/2 ~ 4e6, omitting it made the limit meaningless for
+        anything with a potential.
+
+        The kinetic term is deliberately absent, and that is the real
+        difference from ``_rk4_max_dz``. Split-step applies the linear part
+        exactly in Fourier space, so a purely linear problem is solved exactly
+        at any step size (verified to 4e-14) and dispersion cannot limit
+        accuracy on its own. RK4 approximates the whole right-hand side, so
+        for it the kinetic term binds like everything else.
 
         Parameters
         ----------
         A : np.ndarray
             Normalized field (possibly on device).
+
+        Returns
+        -------
+        float
+            Largest step keeping the real-space phase per step below pi.
         """
-        nl_rate = self._nonlinear_rate(A)
-        if nl_rate == 0:
+        rates = self._energy_rates(A)
+        phase_rate = rates["potential"] + rates["interaction"]
+        if phase_rate == 0:
             return np.inf
-        return np.pi / nl_rate
+        return np.pi / phase_rate
 
     def _as_host_array(self, value: Any) -> Any:
         """Return a parameter as a host numpy array, or None if unset.
@@ -398,6 +436,7 @@ class NLSE:
             Complex dtype of the field, so a rebuilt propagator matches it.
         """
         if method == "RK4":
+            rates = self._energy_rates(A)
             max_dz = self._rk4_max_dz(A)
             label = "RK4 stability"
             # Stability is not accuracy. At the edge of the region the scheme
@@ -409,7 +448,7 @@ class NLSE:
                 " This is a stability bound, not an accuracy one: a smaller "
                 "delta_z may still be needed. split_step applies the "
                 "potential exactly and is not limited this way."
-                if self._rk4_potential_rate() > self._rk4_dispersion_rate()
+                if rates["potential"] + rates["loss"] > rates["kinetic"]
                 else ""
             )
         else:

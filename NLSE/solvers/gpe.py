@@ -113,12 +113,12 @@ class GPE(NLSE):
             np.complex64
         )
 
-    def _rk4_dispersion_rate(self) -> float:
-        """Return the GPE dispersion eigenvalue magnitude.
+    def _dispersion_operator(self) -> np.ndarray:
+        """Return the GPE dispersion eigenvalues.
 
         The GPE dispersion operator is hbar*K^2/(2m), unlike NLSE's K^2/(2k).
         """
-        return float(np.max(0.5 * hbar * (self.Kxx**2 + self.Kyy**2) / self.m))
+        return 0.5 * hbar * (self.Kxx**2 + self.Kyy**2) / self.m
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot a field for monitoring.

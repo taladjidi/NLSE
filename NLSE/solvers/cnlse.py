@@ -189,10 +189,9 @@ class CNLSE(NLSE):
         )
         return np.array([propagator1, propagator2])
 
-    def _rk4_dispersion_rate(self) -> float:
-        """Return the dispersion eigenvalue magnitude of the faster component."""
-        K_sq = 0.5 * (self.Kxx**2 + self.Kyy**2)
-        return float(np.max(K_sq / min(self.k, self.k2)))
+    def _dispersion_operator(self) -> np.ndarray:
+        """Return the dispersion eigenvalues of the faster component."""
+        return 0.5 * (self.Kxx**2 + self.Kyy**2) / min(self.k, self.k2)
 
     def _rk4_potential_rate(self) -> float:
         """Return the largest potential rate across both components.
@@ -205,6 +204,25 @@ class CNLSE(NLSE):
         if V2_scaled is not None:
             rate = max(rate, float(np.max(np.abs(V2_scaled))))
         return rate
+
+    def _energy_rates(self, A: np.ndarray) -> dict[str, float]:
+        """Return the phase rates, taking the more restrictive component.
+
+        The two components scale the potential by their own k, so whichever
+        rotates the phase faster is the one that sets the step.
+        """
+        rates = super()._energy_rates(A)
+        V2_scaled = self._as_host_array(getattr(self, "_V2_scaled", None))
+        if V2_scaled is not None:
+            A_np = np.asarray(self._backend.to_numpy(A))
+            weight = np.abs(A_np) ** 2
+            total = float(np.sum(weight))
+            if total > 0:
+                rates["potential"] = max(
+                    rates["potential"],
+                    abs(float(np.sum(weight * np.real(V2_scaled)) / total)),
+                )
+        return rates
 
     def _split_step_max_dz(self, A: np.ndarray) -> float:
         """Compute the maximum split-step dz for coupled components."""
@@ -233,6 +251,9 @@ class CNLSE(NLSE):
         nl_rate_1 = (g11 * I1_peak + g12 * I2_peak) * sat
         nl_rate_2 = (g22 * I2_peak + g12 * I1_peak) * sat
         nl_rate = float(np.max(np.maximum(nl_rate_1, nl_rate_2)))
+        # The potentials share the exponent with the interaction, so they
+        # bound the step in the same way.
+        nl_rate += self._energy_rates(A)["potential"]
         if nl_rate == 0:
             return np.inf
         return np.pi / nl_rate
