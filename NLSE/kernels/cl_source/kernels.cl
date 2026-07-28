@@ -50,7 +50,7 @@ __kernel void square_mod_nl_prop_v_fused(
     // Apply nonlinear propagation immediately
     {{FP_TYPE}} sat = 1.0{{FP_SUFFIX}} / (1.0{{FP_SUFFIX}} + A_sq_val / Isat);
     {{FP_TYPE}} arg_real = -alpha * sat * dz;
-    {{FP_TYPE}} arg_imag = (g * A_sq_val * sat + V[idx]) * dz;
+    {{FP_TYPE}} arg_imag = (g * A_sq_val * sat + V[idx - (int)get_global_offset(0)]) * dz;
     {{FP_TYPE}} exp_real_part = exp(arg_real);
     {{FP_TYPE}} cos_imag, sin_imag;
     sin_imag = sincos(arg_imag, &cos_imag);
@@ -69,7 +69,7 @@ __kernel void apply_propagator(
 ) {
     int idx = get_global_id(0);
     {{FP2_TYPE}} A_val = A[idx];
-    {{FP2_TYPE}} prop_val = propagator[idx];
+    {{FP2_TYPE}} prop_val = propagator[idx - (int)get_global_offset(0)];
 
     // Complex multiplication: A *= propagator
     A[idx] = ({{FP2_TYPE}})(
@@ -128,7 +128,7 @@ __kernel void nl_prop_fused(
     int idx = get_global_id(0);
     {{FP_TYPE}} sat = 1.0{{FP_SUFFIX}} / (1.0{{FP_SUFFIX}} + A_sq[idx] / Isat);
     {{FP_TYPE}} arg_real = -alpha * sat * dz;
-    {{FP_TYPE}} arg_imag = (g * A_sq[idx] * sat + V[idx]) * dz;
+    {{FP_TYPE}} arg_imag = (g * A_sq[idx] * sat + V[idx - (int)get_global_offset(0)]) * dz;
     {{FP_TYPE}} exp_real_part = exp(arg_real);
     {{FP_TYPE}} cos_imag, sin_imag;
     sin_imag = sincos(arg_imag, &cos_imag);
@@ -261,7 +261,7 @@ __kernel void rk4_nl_rhs_v_fused(
     {{FP_TYPE}} sat = 1.0{{FP_SUFFIX}} / (1.0{{FP_SUFFIX}} + A_sq[idx] / Isat);
     // coeff = -alpha*sat + 1j*(g*A_sq*sat + V)
     {{FP_TYPE}} coeff_r = -alpha * sat;
-    {{FP_TYPE}} coeff_i = g * A_sq[idx] * sat + V[idx];
+    {{FP_TYPE}} coeff_i = g * A_sq[idx] * sat + V[idx - (int)get_global_offset(0)];
     {{FP2_TYPE}} A_val = A[idx];
     {{FP_TYPE}} contrib_r = coeff_r * A_val.x - coeff_i * A_val.y;
     {{FP_TYPE}} contrib_i = coeff_r * A_val.y + coeff_i * A_val.x;
@@ -303,7 +303,7 @@ __kernel void square_mod_rk4_nl_rhs_v_fused(
     {{FP_TYPE}} A_sq_val = A_val.x * A_val.x + A_val.y * A_val.y;
     {{FP_TYPE}} sat = 1.0{{FP_SUFFIX}} / (1.0{{FP_SUFFIX}} + A_sq_val / Isat);
     {{FP_TYPE}} coeff_r = -alpha * sat;
-    {{FP_TYPE}} coeff_i = g * A_sq_val * sat + V[idx];
+    {{FP_TYPE}} coeff_i = g * A_sq_val * sat + V[idx - (int)get_global_offset(0)];
     {{FP_TYPE}} contrib_r = coeff_r * A_val.x - coeff_i * A_val.y;
     {{FP_TYPE}} contrib_i = coeff_r * A_val.y + coeff_i * A_val.x;
     {{FP2_TYPE}} A_prop_val = A_prop[idx];

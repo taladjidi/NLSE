@@ -61,6 +61,13 @@ class Backend(ABC):
     #     g11, g12, g22, Isat1, Isat2, unnorm_ifft=False)
     has_fused_coupled_rk4_rhs = False
 
+    # A batched physical parameter can be handed to the kernels as a device
+    # array and broadcast inside them (CUPY's cp.fuse kernels, MLX's traced
+    # graphs). Backends that leave this False take one simulation's scalar
+    # value per launch instead, so their batched parameters must stay on the
+    # host: CPU loops in _broadcast_batch, CL loops with global_offset.
+    broadcasts_parameters_natively = False
+
     @property
     @abstractmethod
     def name(self) -> str:

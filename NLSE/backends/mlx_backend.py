@@ -31,6 +31,7 @@ class MLXBackend(Backend):
 
     has_linear_step = True
     has_fused_split_step = True
+    broadcasts_parameters_natively = True
     has_fused_rk4_step = True
     has_fused_coupled_split_step = True
     has_fused_coupled_rk4_rhs = True

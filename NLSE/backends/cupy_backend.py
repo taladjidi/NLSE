@@ -56,6 +56,7 @@ class CUPYBackend(Backend):
 
     has_linear_step = True
     supports_unnormalized_ifft = True
+    broadcasts_parameters_natively = True
 
     @property
     def name(self) -> str:

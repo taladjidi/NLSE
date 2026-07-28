@@ -450,6 +450,11 @@ class NLSE:
             if attr == "V":
                 val = np.ascontiguousarray(val, dtype=np.float32)
             setattr(self, attr, self._backend.from_numpy(val))
+        if not self._backend.broadcasts_parameters_natively:
+            # The kernels take one simulation's scalar value per launch, so a
+            # batched parameter is picked apart on the host and never reaches
+            # the device as an array.
+            return
         for attr in self._gpu_param_attrs:
             val = getattr(self, attr)
             if isinstance(val, np.ndarray):
@@ -464,6 +469,8 @@ class NLSE:
             if val is None:
                 continue
             setattr(self, attr, self._backend.to_numpy(val))
+        if not self._backend.broadcasts_parameters_natively:
+            return
         for attr in self._gpu_param_attrs:
             val = getattr(self, attr)
             if not isinstance(val, (int, float)):
