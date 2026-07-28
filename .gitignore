@@ -37,3 +37,10 @@ NLSE/kernels/metal_native/
 .ruff_cache/
 .pytest_cache/
 NLSE/.cache/
+
+# Scripts in examples/ write their timings and figures to the current working
+# directory, so running them from the repo root drops output here.
+*.npy
+benchmarks.svg
+benchmarks_*.npy
+vortex_precession.svg

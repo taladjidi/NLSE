@@ -31,7 +31,7 @@ simu = NLSE(
     NX=N,
     NY=N,
     Isat=Isat,
-    backend="CPU",
+    backend="MLX",
 )
 cs = np.sqrt(abs(n2) * intensity) / (1 + intensity / Isat)
 delta_n = abs(n2) * intensity / (1 + intensity / Isat) ** 2
@@ -51,7 +51,7 @@ def callback_samples(sim, A, z, i):
         E_samples[i // save_every] = A.copy()
 
 
-sizes = [128, 256, 512, 1024, 2048, 4196, 8192]
+sizes = [128, 256, 512, 1024, 2048, 4096, 8192]
 navg = 10
 ts = np.zeros((len(sizes), navg))
 for i, n in enumerate(sizes):
@@ -66,7 +66,7 @@ for i, n in enumerate(sizes):
         NX=n,
         NY=n,
         Isat=Isat,
-        backend="CUPY",
+        backend="MLX",
     )
     simu.delta_z = z_nl / 6
     # Add a vortex phase
