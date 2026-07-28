@@ -78,7 +78,7 @@ class CUPYBackend(Backend):
         """Transfer from CPU to GPU."""
         return cp.asarray(array, dtype=array.dtype)
 
-    def build_fft(
+    def _build_fft(
         self,
         shape: tuple,
         axes: tuple,

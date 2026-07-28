@@ -6,6 +6,30 @@ from typing import Any
 import numpy as np
 
 
+def _dtype_key(dtype: Any) -> str:
+    """Return a stable cache key for a dtype.
+
+    Normalised through numpy where possible, so ``np.complex64`` and
+    ``np.dtype("complex64")`` map to one entry. MLX passes its own dtype
+    objects, which numpy cannot interpret, so those fall back to their
+    string form.
+
+    Parameters
+    ----------
+    dtype : Any
+        A numpy dtype, a numpy scalar type, or a backend's own dtype.
+
+    Returns
+    -------
+    str
+        Key identifying the dtype.
+    """
+    try:
+        return np.dtype(dtype).str
+    except TypeError:
+        return str(dtype)
+
+
 class Backend(ABC):
     """Abstract base class for compute backends.
 
@@ -152,14 +176,14 @@ class Backend(ABC):
         pass
 
     @abstractmethod
-    def build_fft(
+    def _build_fft(
         self,
         shape: tuple,
         axes: tuple,
         dtype: np.dtype,
         array: np.ndarray | None = None,
     ) -> Any:
-        """Build FFT plan for this backend.
+        """Construct an FFT plan. Called once per distinct transform.
 
         Parameters
         ----------
@@ -169,6 +193,9 @@ class Backend(ABC):
             Axes to transform
         dtype : np.dtype
             Data type
+        array : np.ndarray or None
+            An array of that shape and dtype, when the backend can plan
+            better with a concrete one.
 
         Returns
         -------
@@ -177,6 +204,66 @@ class Backend(ABC):
 
         """
         pass
+
+    def build_fft(
+        self,
+        shape: tuple,
+        axes: tuple,
+        dtype: np.dtype,
+        array: np.ndarray | None = None,
+    ) -> Any:
+        """Return the FFT plan for this transform, building it once.
+
+        A plan depends only on the shape, the axes and the dtype, so it is
+        built once and reused. Planning is expensive: the CPU backend
+        reloads FFTW wisdom from disk and times a roundtrip to validate it,
+        and VkFFT compiles its own kernels.
+
+        The cache lives on the backend, and backends are shared per name, so
+        a parameter sweep that builds a solver per point plans once rather
+        than once per point.
+
+        Parameters
+        ----------
+        shape : tuple
+            Array shape
+        axes : tuple
+            Axes to transform
+        dtype : np.dtype
+            Data type
+        array : np.ndarray or None
+            An array of that shape and dtype, used only when the plan has to
+            be built.
+
+        Returns
+        -------
+        Any
+            FFT plan object
+
+        """
+        key = (tuple(shape), tuple(axes), _dtype_key(dtype))
+        if key not in self._fft_plan_cache:
+            self._fft_plan_cache[key] = self._build_fft(shape, axes, dtype, array)
+        return self._fft_plan_cache[key]
+
+    @property
+    def _fft_plan_cache(self) -> dict:
+        """Return this backend's plan cache, creating it on first use.
+
+        A property rather than an __init__ assignment because the backends
+        do not share a constructor.
+        """
+        if not hasattr(self, "_fft_plans"):
+            self._fft_plans: dict = {}
+        return self._fft_plans
+
+    def clear_fft_plans(self) -> None:
+        """Drop every cached FFT plan.
+
+        Only useful to a test, or to reclaim the device memory the plans
+        hold when a long-lived process changes grid size for good.
+        """
+        self._fft_plan_cache.clear()
 
     @abstractmethod
     def fft(self, array: Any, plan: Any) -> Any:

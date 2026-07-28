@@ -21,33 +21,55 @@ class _VkFFTPlan:
     Matches _CuFFTPlan so that OpenCLKernels.linear_step can call
     plan.fft(A, A) / plan.ifft(A, A) / plan.ifft_unnorm(A, A)
     without knowing which FFT library is behind it.
+
+    The three apps are built on first use. Each compiles its own kernels,
+    and a given run needs at most two: the unnormalized one only where the
+    1/N is folded into the propagator, the out-of-place one only for RK4.
     """
 
-    __slots__ = ("_app", "_app_oop", "_app_unnorm")
+    __slots__ = ("_app", "_app_oop", "_app_unnorm", "_spec")
 
     def __init__(self, shape, dtype, queue, axes, ndim):
-        self._app = VkFFTApp(shape, dtype, queue=queue, axes=axes, ndim=ndim)
-        self._app_unnorm = VkFFTApp(
-            shape, dtype, queue=queue, axes=axes, ndim=ndim, norm=0
-        )
-        self._app_oop = VkFFTApp(
-            shape, dtype, queue=queue, axes=axes, ndim=ndim, inplace=False
-        )
+        self._spec = {
+            "shape": shape,
+            "dtype": dtype,
+            "queue": queue,
+            "axes": axes,
+            "ndim": ndim,
+        }
+        self._app = None
+        self._app_unnorm = None
+        self._app_oop = None
+
+    def _make(self, **extra):
+        """Build a VkFFTApp for this plan's transform."""
+        return VkFFTApp(**self._spec, **extra)
+
+    @property
+    def app(self):
+        """Return the in-place, normalized app."""
+        if self._app is None:
+            self._app = self._make()
+        return self._app
 
     def fft(self, a, out):
         """Forward FFT (in-place when a is out)."""
-        return self._app.fft(a, out)
+        return self.app.fft(a, out)
 
     def fft_oop(self, src, dest):
         """Out-of-place forward FFT (src is not modified)."""
+        if self._app_oop is None:
+            self._app_oop = self._make(inplace=False)
         return self._app_oop.fft(src, dest)
 
     def ifft(self, a, out):
         """Inverse FFT (normalized by 1/N)."""
-        return self._app.ifft(a, out)
+        return self.app.ifft(a, out)
 
     def ifft_unnorm(self, a, out):
         """Inverse FFT without 1/N normalization."""
+        if self._app_unnorm is None:
+            self._app_unnorm = self._make(norm=0)
         return self._app_unnorm.ifft(a, out)
 
 
@@ -101,7 +123,7 @@ class OpenCLBackend(Backend):
         """Transfer from CPU to OpenCL device."""
         return cla.to_device(self._queue, array)
 
-    def build_fft(
+    def _build_fft(
         self,
         shape: tuple,
         axes: tuple,
