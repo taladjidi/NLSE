@@ -9,6 +9,7 @@ path against the repository and therefore cannot catch a missing
 import shutil
 import subprocess
 import sys
+import tarfile
 import zipfile
 from pathlib import Path
 
@@ -118,6 +119,85 @@ def wheel_contents(tmp_path_factory) -> list[str]:
     assert len(wheels) == 1, f"expected exactly one wheel, got {wheels}"
     with zipfile.ZipFile(wheels[0]) as zf:
         return zf.namelist()
+
+
+@pytest.fixture(scope="module")
+def sdist_build(tmp_path_factory):
+    """Build an sdist and then a wheel from it; return (sdist names, wheel names).
+
+    Exercises the path a source install takes. It is separate from the
+    in-tree wheel build because the failure modes differ: anything the
+    build itself needs (the in-tree PEP 517 backend named by
+    ``backend-path``) must be inside the sdist, and nothing in the source
+    tree can substitute for it.
+    """
+    pytest.importorskip("setuptools", reason="setuptools needed to build")
+    if not shutil.which("uv"):
+        pytest.skip("uv is needed to build an sdist and a wheel from it")
+
+    outdir = tmp_path_factory.mktemp("sdist")
+    result = subprocess.run(
+        ["uv", "build", "--out-dir", str(outdir), str(PROJECT_ROOT)],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        pytest.fail(
+            "building an sdist and then a wheel from it failed. If this is "
+            "ModuleNotFoundError for the build backend, the backend named by "
+            "build-system.backend-path is missing from the sdist; add it in "
+            f"MANIFEST.in.\n{result.stdout}\n{result.stderr}"
+        )
+
+    sdists = list(outdir.glob("*.tar.gz"))
+    wheels = list(outdir.glob("*.whl"))
+    assert len(sdists) == 1, f"expected one sdist, got {sdists}"
+    assert len(wheels) == 1, f"expected one wheel, got {wheels}"
+    with tarfile.open(sdists[0]) as tf:
+        sdist_names = tf.getnames()
+    with zipfile.ZipFile(wheels[0]) as zf:
+        wheel_names = zf.namelist()
+    return sdist_names, wheel_names
+
+
+def test_sdist_carries_the_build_backend(sdist_build):
+    """The in-tree PEP 517 backend must ship in the sdist."""
+    sdist_names, _ = sdist_build
+    assert any("build_backend/nlse_build.py" in n for n in sdist_names), (
+        "build_backend/nlse_build.py is not in the sdist, so building a wheel "
+        "from it fails with ModuleNotFoundError: No module named 'nlse_build'."
+    )
+
+
+@pytest.mark.parametrize("data_file", REQUIRED_DATA_FILES)
+def test_sdist_carries_the_kernel_templates(sdist_build, data_file):
+    """Kernel templates must survive the sdist too, not just the wheel."""
+    sdist_names, _ = sdist_build
+    assert any(n.endswith(data_file) for n in sdist_names), (
+        f"{data_file} is missing from the sdist, so a source install would "
+        f"produce a package whose backend cannot load its kernels."
+    )
+
+
+def test_wheel_built_from_sdist_is_clean(sdist_build):
+    """A wheel built via the sdist must have the same contents as a direct one."""
+    _, wheel_names = sdist_build
+    top_level = {
+        n
+        for n in wheel_names
+        if n.startswith("NLSE/") and n.count("/") == 1 and n.endswith(".py")
+    }
+    assert top_level == {
+        "NLSE/__init__.py",
+        "NLSE/utils.py",
+        "NLSE/callbacks.py",
+    }, f"unexpected top-level modules via the sdist path: {sorted(top_level)}"
+
+
+def test_build_backend_is_not_shipped_inside_the_package(wheel_contents):
+    """The build backend is build-time only and must not land in the wheel."""
+    leaked = [n for n in wheel_contents if "build_backend" in n or "nlse_build" in n]
+    assert not leaked, f"build backend leaked into the installed package: {leaked}"
 
 
 @pytest.mark.parametrize("data_file", REQUIRED_DATA_FILES)

@@ -1,6 +1,11 @@
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
+# Thin wrapper over setuptools.build_meta that clears the build/ staging
+# directory first. setuptools copies sources over whatever an earlier build
+# left there, so a stale build/lib/ silently ships old modules in the wheel.
+# See build_backend/nlse_build.py.
+build-backend = "nlse_build"
+backend-path = ["build_backend"]
 
 [project]
 name = "NLSE"
