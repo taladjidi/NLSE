@@ -69,7 +69,6 @@ class OpenCLBackend(Backend):
     def __init__(self):
         self._context = cl.create_some_context(interactive=False)
         self._queue = cl.CommandQueue(self._context)
-        self._vkfft_apps = {}
         self._kernels = None
 
     @property
