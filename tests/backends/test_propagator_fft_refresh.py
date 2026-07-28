@@ -46,8 +46,15 @@ def make_solver(backend, **kwargs):
 
 
 def to_numpy(simu, array):
-    """Bring a possibly-device array back to numpy."""
-    return simu._backend.to_numpy(array) if array is not None else None
+    """Bring a possibly-device array back to numpy.
+
+    After out_field, _retrieve_arrays_from_gpu has already pulled
+    ``propagator`` back to the host, while ``_propagator_fft`` is not in
+    _gpu_array_attrs and so is still on the device. Handle both.
+    """
+    if array is None or isinstance(array, np.ndarray):
+        return array
+    return simu._backend.to_numpy(array)
 
 
 @pytest.mark.skipif(
