@@ -36,6 +36,38 @@ def _check_double_support(context):
     return True
 
 
+def _reject_batched_field(A, propagator):
+    """Refuse a batched field against a propagator shared by the batch.
+
+    The OpenCL kernels index the field and the propagator with the same flat
+    global id, so a ``(B, NY, NX)`` field against an ``(NY, NX)`` propagator
+    reads past the end of the propagator buffer for every slice after the
+    first. That returns garbage rather than faulting. CUDA fixes this by
+    launching once per slice, which OpenCL cannot do: a ``cla.Array`` slice
+    starts at an offset from its buffer and ``.data`` refuses to hand such an
+    array to a kernel.
+
+    Parameters
+    ----------
+    A : cla.Array
+        Complex field array.
+    propagator : cla.Array
+        Propagator array.
+
+    Raises
+    ------
+    NotImplementedError
+        If the field carries a batch axis the propagator does not.
+    """
+    if A.ndim > propagator.ndim:
+        raise NotImplementedError(
+            "The OpenCL backend does not implement broadcasting: a batched "
+            f"field of shape {tuple(A.shape)} against a propagator of shape "
+            f"{tuple(propagator.shape)} would read past the end of the "
+            "propagator. Use the CPU or CUPY backend for batched runs."
+        )
+
+
 def _load_kernel_template():
     """Load OpenCL kernel template from file.
 
@@ -265,10 +297,7 @@ class OpenCLKernels:
             The propagated field A.
         """
         plan.fft(A, A)
-        kernels = self._get_kernels(A.dtype)
-        kernels["apply_propagator"](
-            self.queue, (int(A.size),), None, A.data, propagator.data
-        )
+        self.apply_propagator(A, propagator)
         if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
             plan.ifft_unnorm(A, A)
         else:
@@ -583,6 +612,7 @@ class OpenCLKernels:
         cla.Array
             The modified field array A.
         """
+        _reject_batched_field(A, propagator)
         kernels = self._get_kernels(A.dtype)
         global_size = (int(A.size),)
         kernels["apply_propagator"](
@@ -1159,6 +1189,7 @@ class OpenCLKernels:
                 )
 
         # Linear step: FFT → propagator multiply → IFFT
+        _reject_batched_field(A, propagator)
         plan.fft(A, A)
         kerns["apply_propagator"](self.queue, gs, ls, A.data, propagator.data)
         if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
@@ -1242,6 +1273,7 @@ class OpenCLKernels:
         alpha_c, g_c, Isat_c = self._cast_params(A_in.dtype, alpha, g, Isat)
 
         # Out-of-place FFT: A_in → k (eliminates buffer copy)
+        _reject_batched_field(k, propagator)
         plan.fft_oop(A_in, k)
 
         # Apply propagator to k

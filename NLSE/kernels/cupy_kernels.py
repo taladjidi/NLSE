@@ -122,6 +122,30 @@ class CUDAKernels:
         """
         return any(getattr(v, "ndim", 0) > 0 for v in values)
 
+    @staticmethod
+    def _shares_grid_across_batch(A, *grids):
+        """Check whether a grid is shared by a batch the field carries.
+
+        A batch does not need a batched parameter: several initial conditions
+        under identical physics leave every parameter scalar and only the
+        field carries the extra axis. The raw kernels index the field and the
+        grid with the same flat index, so an ``(NY, NX)`` potential against a
+        ``(B, NY, NX)`` field reads past the end of the potential.
+
+        Parameters
+        ----------
+        A : cp.ndarray
+            The field array.
+        grids : cp.ndarray or None
+            Grid-shaped arrays the kernel indexes alongside the field.
+
+        Returns
+        -------
+        bool
+            True if any grid has fewer axes than the field.
+        """
+        return any(g is not None and g.ndim < A.ndim for g in grids)
+
     def _get_kernels(self, dtype):
         """Get compiled kernel functions for given dtype, compiling if needed.
 
@@ -235,7 +259,9 @@ class CUDAKernels:
         cp.ndarray
             The modified field array A.
         """
-        if self._has_array_params(alpha, g, Isat):
+        if self._has_array_params(alpha, g, Isat) or self._shares_grid_across_batch(
+            A, V
+        ):
             from .cupy import nl_prop as _fused
 
             return _fused(A, A_sq, dz, alpha, V, g, Isat)
@@ -321,7 +347,9 @@ class CUDAKernels:
         cp.ndarray
             The modified field array A1.
         """
-        if self._has_array_params(alpha, g11, g12, Isat1, Isat2):
+        if self._has_array_params(
+            alpha, g11, g12, Isat1, Isat2
+        ) or self._shares_grid_across_batch(A1, V):
             from .cupy import nl_prop_c as _fused
 
             return _fused(A1, A_sq_1, A_sq_2, dz, alpha, V, g11, g12, Isat1, Isat2)
@@ -465,7 +493,9 @@ class CUDAKernels:
         cp.ndarray
             The modified field array A.
         """
-        if self._has_array_params(alpha, g, Isat):
+        if self._has_array_params(alpha, g, Isat) or self._shares_grid_across_batch(
+            A, V
+        ):
             from .cupy import square_mod_nl_prop_v as _fused
 
             return _fused(A, V, dz, alpha, g, Isat)
@@ -505,10 +535,11 @@ class CUDAKernels:
         cp.ndarray
             The propagated field A.
         """
-        kernels = self._get_kernels(A.dtype)
-        N = int(A.size)
         plan.fft(A, A)
-        self._launch(kernels["apply_propagator"], N, A, propagator, np.int32(N))
+        # Goes through apply_propagator rather than launching the kernel here,
+        # so the batched case (a field with an extra axis against a propagator
+        # shared by the whole batch) is handled in one place.
+        self.apply_propagator(A, propagator)
         if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
             plan.ifft_unnorm(A, A)
         else:
@@ -686,7 +717,9 @@ class CUDAKernels:
         cp.ndarray
             The modified A_prop.
         """
-        if self._has_array_params(alpha, g, Isat):
+        if self._has_array_params(alpha, g, Isat) or self._shares_grid_across_batch(
+            A, V
+        ):
             from .cupy import rk4_nl_rhs_v as _fused
 
             return _fused(A_prop, A, A_sq, V, alpha, g, Isat)
@@ -754,7 +787,9 @@ class CUDAKernels:
         cp.ndarray
             The modified A_prop.
         """
-        if self._has_array_params(alpha, g, Isat):
+        if self._has_array_params(alpha, g, Isat) or self._shares_grid_across_batch(
+            A, V
+        ):
             from .cupy import square_mod_rk4_nl_rhs_v as _fused
 
             return _fused(A_prop, A, V, alpha, g, Isat)
@@ -849,7 +884,9 @@ class CUDAKernels:
         cp.ndarray
             The modified A_prop.
         """
-        if self._has_array_params(alpha, g11, g12, Isat1, Isat2):
+        if self._has_array_params(
+            alpha, g11, g12, Isat1, Isat2
+        ) or self._shares_grid_across_batch(A_prop, V):
             from .cupy import rk4_nl_rhs_c_v as _fused
 
             return _fused(

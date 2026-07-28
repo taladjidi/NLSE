@@ -685,6 +685,26 @@ def _pick_scalar(value, b):
     return value
 
 
+def _shared_grid_batch_len(args, scalar_positions):
+    """Return the batch size implied by the field alone, or 0.
+
+    A batch does not need a batched parameter: running several initial
+    conditions through identical physics leaves every parameter scalar and
+    only the field carries the extra axis. The kernels index the field and
+    any shared grid (a potential, a nonlinear profile) with the same flat
+    index, so that case has to be looped over too.
+    """
+    field = args[0]
+    if not isinstance(field, np.ndarray):
+        return 0
+    for i, value in enumerate(args):
+        if i in scalar_positions or not isinstance(value, np.ndarray):
+            continue
+        if 0 < value.ndim < field.ndim:
+            return field.shape[0]
+    return 0
+
+
 def _pick_field(value, b, batched_ndim):
     """Take simulation b's slice of a field, if the field is batched.
 
@@ -705,6 +725,8 @@ def _broadcast_batch(*scalar_positions, n_outputs=1):
         @functools.wraps(kernel)
         def wrapper(*args):
             n = _batch_len(args, positions)
+            if n == 0:
+                n = _shared_grid_batch_len(args, positions)
             if n == 0:
                 return kernel(*args)
             ndim = args[0].ndim

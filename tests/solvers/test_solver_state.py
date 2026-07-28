@@ -8,11 +8,17 @@ state has to be refreshed rather than silently reused.
 import numpy as np
 import pytest
 from NLSE import NLSE
-from NLSE.backends import list_available_backends
+from NLSE.backends import get_backend, list_available_backends
 
 from .helpers import as_numpy
 
 PRECISION_COMPLEX = np.complex64
+
+AVAILABLE_BACKENDS = list_available_backends()
+# Backends whose solvers bypass apply_propagator for the fused linear step.
+LINEAR_STEP_BACKENDS = [
+    name for name in AVAILABLE_BACKENDS if get_backend(name).has_linear_step
+]
 
 N = 64
 n2 = -1.6e-9
@@ -395,6 +401,150 @@ class TestStepLimitWithBatchedParameters:
             np.full((3, 4, 4), 2.0, dtype=PRECISION_COMPLEX),
             err_msg="propagator was not broadcast across the batch",
         )
+
+    @pytest.mark.parametrize("backend_name", LINEAR_STEP_BACKENDS)
+    def test_linear_step_broadcasts_a_shared_propagator(self, backend_name):
+        """The fused linear step must broadcast like apply_propagator does.
+
+        Backends declaring has_linear_step never reach apply_propagator from
+        the solver, so fixing the batch handling there left linear_step
+        reading past the end of a shared propagator. Whether that shows up as
+        NaN depends on what the device allocator left behind, which is why it
+        looked like test-ordering flakiness rather than a plain out-of-bounds
+        read.
+        """
+        if backend_name == "CL":
+            pytest.skip(
+                "CL cannot launch over a slice of a batched field: a cla.Array "
+                "slice starts at an offset and .data refuses it. It raises "
+                "instead, which test_cl_linear_step_rejects_a_batched_field pins"
+            )
+        backend = get_backend(backend_name)
+        axes = (-2, -1)
+        rng = np.random.default_rng(0)
+        field = (rng.random((3, 8, 8)) + 1j * rng.random((3, 8, 8))).astype(
+            PRECISION_COMPLEX
+        )
+        propagator = (rng.random((8, 8)) + 1j * rng.random((8, 8))).astype(
+            PRECISION_COMPLEX
+        )
+        plans = backend.build_fft(field.shape, axes, field.dtype, array=field)
+
+        got = backend.to_numpy(
+            backend.kernels.linear_step(
+                backend.from_numpy(field.copy()),
+                backend.from_numpy(propagator),
+                plans[0],
+            )
+        )
+
+        expected = np.fft.ifftn(
+            np.fft.fftn(field, axes=axes) * propagator, axes=axes
+        ).astype(PRECISION_COMPLEX)
+        np.testing.assert_allclose(
+            got,
+            expected,
+            rtol=1e-4,
+            atol=1e-5 * float(np.max(np.abs(expected))),
+            err_msg=(
+                f"{backend_name}.linear_step did not broadcast a shared "
+                f"propagator across the batch"
+            ),
+        )
+
+    @pytest.mark.skipif("CL" not in AVAILABLE_BACKENDS, reason="OpenCL not available")
+    def test_cl_linear_step_rejects_a_batched_field(self):
+        """CL must refuse a batched field rather than read out of bounds."""
+        backend = get_backend("CL")
+        axes = (-2, -1)
+        field = np.ones((3, 8, 8), dtype=PRECISION_COMPLEX)
+        propagator = np.ones((8, 8), dtype=PRECISION_COMPLEX)
+        plans = backend.build_fft(field.shape, axes, field.dtype, array=field)
+
+        with pytest.raises(
+            NotImplementedError, match="does not implement broadcasting"
+        ):
+            backend.kernels.linear_step(
+                backend.from_numpy(field),
+                backend.from_numpy(propagator),
+                plans[0],
+            )
+
+
+class TestFieldOnlyBatch:
+    """A batch does not have to carry a batched parameter.
+
+    Running several initial conditions through identical physics leaves every
+    parameter scalar and puts the extra axis on the field alone. The kernels
+    then index the field and any shared grid (the potential, the propagator)
+    with the same flat index, so the grid is read past its end for every
+    slice after the first.
+    """
+
+    @staticmethod
+    def potential(simu):
+        """Return a grid-shaped potential shared by the whole batch."""
+        return (-1e-4 * np.exp(-(simu.XX**2 + simu.YY**2) / (70e-6) ** 2)).astype(
+            np.float32
+        )
+
+    @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+    @pytest.mark.parametrize("precision", ["single", "double"])
+    def test_shared_potential_matches_the_individual_run(self, backend_name, precision):
+        """Every slice must equal the same simulation run on its own."""
+        if backend_name in ("CL", "MLX"):
+            pytest.skip(
+                f"{backend_name} does not implement broadcasting: its kernels "
+                f"take scalar parameters, so a batched run cannot be built yet"
+            )
+        z = 1e-3
+        count = 3
+        probe = make_solver(backend=backend_name)
+        V = self.potential(probe)
+
+        batched = make_solver(V=V, backend=backend_name)
+        batched.delta_z = 1e-4
+        one_field = np.exp(-(batched.XX**2 + batched.YY**2) / waist**2).astype(
+            PRECISION_COMPLEX
+        )
+        got = as_numpy(
+            batched,
+            batched.out_field(
+                np.broadcast_to(one_field, (count, N, N)).copy(),
+                z,
+                verbose=False,
+                plot=False,
+                precision=precision,
+            ),
+        )
+        assert np.all(np.isfinite(got)), (
+            "a field-only batch against a shared potential produced non-finite "
+            "values: the potential was indexed past its end"
+        )
+
+        alone = make_solver(V=V, backend=backend_name)
+        alone.delta_z = 1e-4
+        expected = np.asarray(
+            as_numpy(
+                alone,
+                alone.out_field(
+                    one_field.copy(),
+                    z,
+                    verbose=False,
+                    plot=False,
+                    precision=precision,
+                ),
+            )
+        )
+        for index in range(count):
+            np.testing.assert_allclose(
+                np.asarray(got)[index],
+                expected,
+                rtol=1e-4,
+                atol=1e-5 * float(np.max(np.abs(expected))),
+                err_msg=f"batch slice {index} differs from the same simulation "
+                f"run on its own",
+            )
 
 
 class TestPrecomputedConstants:
