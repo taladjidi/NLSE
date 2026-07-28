@@ -90,12 +90,60 @@ Other than this, the code relies on these libraries :
 - `scipy`
 - `matplotlib`
 
+### Troubleshooting a CUDA install
+
+These are problems we have actually hit on a recent CUDA toolchain. They are
+all in the surrounding libraries rather than in NLSE, so the symptoms can be
+confusing.
+
+**`pyvkfft` fails to build against CUDA 13.3 with a recent GCC.** `nvcc`
+supports host compilers only up to GCC 15, so on a system defaulting to GCC 16
+you have to point it at an older one:
+
+```bash
+NVCC_PREPEND_FLAGS='-ccbin /usr/bin/g++-15' uv pip install pyvkfft
+```
+
+CUDA 13.2 and later also fix a separate clash between glibc's `rsqrt` and
+`noexcept`, so older toolkits may need more work than this.
+
+**`cp.all` or `cp.sum` over a whole array raises `incomplete type
+"__nv_fp8_e8m0"`.** `cupy-cuda13x` is the right wheel for CUDA 13, but some
+builds ship bundled CCCL headers that do not compile against 13.3. Updating
+usually resolves it:
+
+```bash
+uv pip install -U cupy-cuda13x
+```
+
+NLSE's own reductions are all axis-wise and are unaffected either way, so this
+only bites your own analysis code.
+
+**`import NLSE` succeeds but `NLSE.__file__` is `None`.** Versions before 2.4
+wrote their cache inside the installed package. Uninstalling then left an empty
+`site-packages/NLSE/` directory behind, which Python imports as an empty
+namespace package. Delete it by hand:
+
+```bash
+rm -rf "$(python -c 'import site; print(site.getsitepackages()[0])')/NLSE"
+```
+
+The cache now lives outside the package, so this cannot recur.
+
 ## Tests
 
 Tests are included to check functionalities and benchmark performance.
 You can run all tests by using [`pytest`](https://docs.pytest.org/en/8.2.x/) at the root of the repo.
 It will test both CPU and GPU backends (if available).
 This can take some time !
+
+Install the dev extra first, and re-run it after pulling: the build backend
+moved to hatchling, and without it the packaging tests skip rather than fail,
+so a green run may be hiding them.
+
+```bash
+uv pip install -e ".[dev]"
+```
 
 The benchmarks can be run using [`examples/benchmarks.py`](examples/benchmarks.py) and compare a "naive" numpy implementation of the main solver loop to our solver.
 We also compare for the example of the vortex precession presented in [`FourierGPE.jl`](https://github.com/AshtonSBradley/FourierGPE.jl/blob/master/examples/2dvortexprecession.jl) to our solver.
