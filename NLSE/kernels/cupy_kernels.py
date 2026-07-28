@@ -531,6 +531,22 @@ class CUDAKernels:
             The modified field array A.
         """
         kernels = self._get_kernels(A.dtype)
+        if A.ndim > propagator.ndim:
+            # Batched field against a propagator shared by the whole batch.
+            # The kernel indexes both with the same flat index, so launching
+            # over the full field reads past the end of the propagator and
+            # returns NaN and garbage for every slice after the first.
+            for index in range(A.shape[0]):
+                component = A[index]
+                size = int(component.size)
+                self._launch(
+                    kernels["apply_propagator"],
+                    size,
+                    component,
+                    propagator,
+                    np.int32(size),
+                )
+            return A
         N = int(A.size)
         self._launch(kernels["apply_propagator"], N, A, propagator, np.int32(N))
         return A

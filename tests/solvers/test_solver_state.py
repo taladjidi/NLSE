@@ -8,6 +8,9 @@ state has to be refreshed rather than silently reused.
 import numpy as np
 import pytest
 from NLSE import NLSE
+from NLSE.backends import list_available_backends
+
+from .helpers import as_numpy
 
 PRECISION_COMPLEX = np.complex64
 
@@ -324,7 +327,8 @@ class TestStepLimitWithBatchedParameters:
             err_msg="batched limit is not the most restrictive of the batch",
         )
 
-    def test_batched_run_matches_individual_runs(self):
+    @pytest.mark.parametrize("backend_name", list_available_backends())
+    def test_batched_run_matches_individual_runs(self, backend_name):
         """Each slice of a batched run must equal running that case alone.
 
         Broadcasting is what makes a parameter sweep cheap, so the batch has
@@ -333,17 +337,22 @@ class TestStepLimitWithBatchedParameters:
         propagator with the batched field's flat index, so every slice after
         the first came back as NaN or garbage.
         """
+        if backend_name in ("CL", "MLX"):
+            pytest.skip(
+                f"{backend_name} does not implement broadcasting: its kernels "
+                f"take scalar parameters, so a batched run cannot be built yet"
+            )
         # Keep the run short and the step well inside the accuracy limit, so
         # the limiter clamps nothing. It reduces over the batch, so a batched
         # run and a weak individual one would otherwise take different steps
         # and differ by discretisation error rather than by a bug.
         z = 1e-3
         values = self.batched_n2()[:, 0, 0]
-        batched = make_solver(n2=self.batched_n2())
+        batched = make_solver(n2=self.batched_n2(), backend=backend_name)
         potential = (
             -1e-4 * np.exp(-(batched.XX**2 + batched.YY**2) / (70e-6) ** 2)
         ).astype(np.float32)
-        batched = make_solver(n2=self.batched_n2(), V=potential)
+        batched = make_solver(n2=self.batched_n2(), V=potential, backend=backend_name)
         batched.delta_z = 1e-4
         one_field = np.exp(-(batched.XX**2 + batched.YY**2) / waist**2).astype(
             PRECISION_COMPLEX
@@ -356,18 +365,20 @@ class TestStepLimitWithBatchedParameters:
             plot=False,
         )
         assert batched.delta_z == 1e-4, "the limiter clamped the batched step"
-        assert np.all(np.isfinite(got)), "batched run produced non-finite values"
+        assert np.all(np.isfinite(as_numpy(batched, got))), (
+            "batched run produced non-finite values"
+        )
 
         for index, value in enumerate(values):
-            alone = make_solver(n2=float(value), V=potential)
+            alone = make_solver(n2=float(value), V=potential, backend=backend_name)
             alone.delta_z = 1e-4
             expected = alone.out_field(one_field.copy(), z, verbose=False, plot=False)
             assert alone.delta_z == 1e-4, "the limiter clamped an individual step"
             np.testing.assert_allclose(
-                got[index],
-                expected,
+                np.asarray(as_numpy(batched, got))[index],
+                np.asarray(as_numpy(alone, expected)),
                 rtol=1e-4,
-                atol=1e-5 * float(np.max(np.abs(expected))),
+                atol=1e-5 * float(np.max(np.abs(as_numpy(alone, expected)))),
                 err_msg=f"batch slice {index} (n2={value:.3e}) differs from the "
                 f"same simulation run on its own",
             )
