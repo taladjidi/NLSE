@@ -204,15 +204,28 @@ class CNLSE(NLSE):
         A_np = self._backend.to_numpy(A)
         I1_peak = float(np.max(np.abs(A_np[0]) ** 2))
         I2_peak = float(np.max(np.abs(A_np[1]) ** 2))
-        g11 = abs(getattr(self, "_g11", self.k / 2 * self.n2 * c * epsilon_0))
-        g12 = abs(getattr(self, "_g12", self.k / 2 * self.n12 * c * epsilon_0))
-        g22 = abs(getattr(self, "_g22", self.k2 / 2 * self.n22 * c * epsilon_0))
-        Isat1 = getattr(self, "_Isat_conv", 2 * self.I_sat / (epsilon_0 * c))
-        Isat2 = getattr(self, "_Isat_conv2", 2 * self.I_sat2 / (epsilon_0 * c))
+        if getattr(self, "_g11", None) is None:
+            g11 = self.k / 2 * self.n2 * c * epsilon_0
+            g12 = self.k / 2 * self.n12 * c * epsilon_0
+            g22 = self.k2 / 2 * self.n22 * c * epsilon_0
+        else:
+            g11, g12, g22 = self._g11, self._g12, self._g22
+        if getattr(self, "_Isat_conv", None) is None:
+            Isat1 = 2 * self.I_sat / (epsilon_0 * c)
+            Isat2 = 2 * self.I_sat2 / (epsilon_0 * c)
+        else:
+            Isat1, Isat2 = self._Isat_conv, self._Isat_conv2
+        g11 = np.abs(self._as_host_array(g11))
+        g12 = np.abs(self._as_host_array(g12))
+        g22 = np.abs(self._as_host_array(g22))
+        Isat1 = self._as_host_array(Isat1)
+        Isat2 = self._as_host_array(Isat2)
         sat = 1 / (1 + I1_peak / Isat1 + I2_peak / Isat2)
+        # Batched runs carry one value per simulation; reduce with max so the
+        # step satisfies the fastest component of the fastest simulation.
         nl_rate_1 = (g11 * I1_peak + g12 * I2_peak) * sat
         nl_rate_2 = (g22 * I2_peak + g12 * I1_peak) * sat
-        nl_rate = max(nl_rate_1, nl_rate_2)
+        nl_rate = float(np.max(np.maximum(nl_rate_1, nl_rate_2)))
         if nl_rate == 0:
             return np.inf
         return np.pi / nl_rate

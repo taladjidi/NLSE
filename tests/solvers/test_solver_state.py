@@ -274,6 +274,77 @@ class TestNonlinearityCutoff:
         )
 
 
+class TestStepLimitWithBatchedParameters:
+    """The step limiter must cope with per-simulation parameter arrays.
+
+    Broadcasting a parameter across a batch makes the precomputed constants
+    arrays rather than scalars, so any scalar comparison inside the limiter
+    raises "truth value of an array is ambiguous".
+    """
+
+    @staticmethod
+    def batched_n2(count=3):
+        """Return an n2 array shaped for broadcasting over a batch."""
+        n2_arr = np.zeros((count, 1, 1))
+        n2_arr[:, 0, 0] = np.linspace(-1.6e-9, -1e-10, count)
+        return n2_arr
+
+    def batched_input(self, simu, count=3):
+        """Return a batched input field matching the solver grid."""
+        env = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2)
+        return (np.ones((count, N, N)) * env).astype(PRECISION_COMPLEX)
+
+    def test_split_step_max_dz_returns_a_scalar(self):
+        """A batched g must reduce to one scalar step limit."""
+        simu = make_solver(n2=self.batched_n2())
+        E = self.batched_input(simu)
+        simu._precompute_step_constants(None, "single")
+        max_dz = simu._split_step_max_dz(E)
+        assert np.isscalar(max_dz) or np.ndim(max_dz) == 0, (
+            f"step limit must be a scalar, got {type(max_dz)} / {max_dz!r}"
+        )
+        assert max_dz > 0
+
+    def test_split_step_max_dz_takes_the_most_restrictive(self):
+        """The limit must come from the largest nonlinear rate in the batch."""
+        simu = make_solver(n2=self.batched_n2())
+        E = self.batched_input(simu)
+        simu._precompute_step_constants(None, "single")
+        batched = simu._split_step_max_dz(E)
+
+        # The strongest n2 in the batch alone must give the same limit.
+        strongest = make_solver(n2=float(np.min(self.batched_n2()[:, 0, 0])))
+        strongest._precompute_step_constants(None, "single")
+        single = strongest._split_step_max_dz(E[0])
+
+        np.testing.assert_allclose(
+            batched,
+            single,
+            rtol=1e-6,
+            err_msg="batched limit is not the most restrictive of the batch",
+        )
+
+    def test_limiter_does_not_block_a_batched_run(self):
+        """The limiter must not be what stops a batched propagation.
+
+        Whole batched propagations are GPU-only: the numba kernels take
+        scalar parameters, so the CPU backend fails later in the kernel.
+        That limitation is expected and covered end-to-end by
+        tests/integration/test_broadcasting.py on CUPY. What must not
+        happen is failing earlier, in the backend-agnostic step limiter.
+        """
+        simu = make_solver(n2=self.batched_n2())
+        E = self.batched_input(simu)
+        simu.delta_z = 1e-4
+        try:
+            simu.out_field(E, 5e-4, verbose=False, plot=False)
+        except Exception as exc:
+            message = str(exc)
+            assert "truth value of an array" not in message, (
+                "the step limiter still rejects batched parameters: " + message
+            )
+
+
 class TestPrecomputedConstants:
     """Precomputed step constants must reflect the current parameters."""
 

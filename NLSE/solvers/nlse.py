@@ -252,12 +252,43 @@ class NLSE:
         """
         A_np = self._backend.to_numpy(A)
         I_peak = float(np.max(np.abs(A_np) ** 2))
-        g = abs(getattr(self, "_g", self.k / 2 * self.n2 * c * epsilon_0))
-        Isat = getattr(self, "_Isat_conv", 2 * self.I_sat / (epsilon_0 * c))
-        nl_rate = g * I_peak / (1 + I_peak / Isat)
+        g = self._as_host_array(getattr(self, "_g", None))
+        if g is None:
+            g = self._as_host_array(self.k / 2 * self.n2 * c * epsilon_0)
+        g = np.abs(g)
+        Isat = self._as_host_array(getattr(self, "_Isat_conv", None))
+        if Isat is None:
+            Isat = self._as_host_array(2 * self.I_sat / (epsilon_0 * c))
+        # Batched runs carry one value per simulation. The step has to be
+        # small enough for the fastest of them, so reduce with max.
+        nl_rate = float(np.max(g * I_peak / (1 + I_peak / Isat)))
         if nl_rate == 0:
             return np.inf
         return np.pi / nl_rate
+
+    def _as_host_array(self, value: Any) -> Any:
+        """Return a parameter as a host numpy array, or None if unset.
+
+        Parameters are scalars for an ordinary run, but arrays for a batched
+        one, and _send_arrays_to_gpu may have moved those arrays onto the
+        device. Callers that need to compare or reduce them have to bring
+        them back first.
+
+        Parameters
+        ----------
+        value : Any
+            Scalar, numpy array, or device array.
+
+        Returns
+        -------
+        np.ndarray or None
+            The value on the host, or None if it was None.
+        """
+        if value is None:
+            return None
+        if isinstance(value, np.ndarray) or np.isscalar(value):
+            return np.asarray(value)
+        return np.asarray(self._backend.to_numpy(value))
 
     def _enforce_step_limit(self, A: np.ndarray, method: str, precision: str) -> None:
         """Cap delta_z to the stability/accuracy limit for the chosen method.
