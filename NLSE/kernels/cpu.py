@@ -1,9 +1,11 @@
+import functools
+
 import numba
 import numpy as np
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
-def nl_prop(
+def _nl_prop(
     A: np.ndarray,
     A_sq: np.ndarray,
     dz: float,
@@ -44,7 +46,7 @@ def nl_prop(
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
-def nl_prop_without_V(
+def _nl_prop_without_V(
     A: np.ndarray,
     A_sq: np.ndarray,
     dz: float,
@@ -81,7 +83,7 @@ def nl_prop_without_V(
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
-def nl_prop_c(
+def _nl_prop_c(
     A1: np.ndarray,
     A_sq_1: np.ndarray,
     A_sq_2: np.ndarray,
@@ -136,7 +138,7 @@ def nl_prop_c(
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
-def nl_prop_without_V_c(
+def _nl_prop_without_V_c(
     A1: np.ndarray,
     A_sq_1: np.ndarray,
     A_sq_2: np.ndarray,
@@ -185,7 +187,7 @@ def nl_prop_without_V_c(
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
-def rabi_coupling(A1: np.ndarray, A2: np.ndarray, dz: float, omega: float) -> tuple:
+def _rabi_coupling(A1: np.ndarray, A2: np.ndarray, dz: float, omega: float) -> tuple:
     """Apply Rabi coupling term.
 
     Implement the Rabi hopping term, exchanging density between components.
@@ -262,7 +264,7 @@ def square_mod(A: np.ndarray, A_sq: np.ndarray) -> np.ndarray:
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
-def square_mod_nl_prop(
+def _square_mod_nl_prop(
     A: np.ndarray,
     dz: float,
     alpha: float,
@@ -294,7 +296,7 @@ def square_mod_nl_prop(
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
-def square_mod_nl_prop_v(
+def _square_mod_nl_prop_v(
     A: np.ndarray,
     V: np.ndarray,
     dz: float,
@@ -330,7 +332,7 @@ def square_mod_nl_prop_v(
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
-def apply_propagator(A: np.ndarray, propagator: np.ndarray) -> np.ndarray:
+def _apply_propagator(A: np.ndarray, propagator: np.ndarray) -> np.ndarray:
     """Multiply A by propagator in-place, avoiding numpy temporaries.
 
     Parameters
@@ -404,7 +406,7 @@ def rk4_accumulate(
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
-def rk4_nl_rhs(
+def _rk4_nl_rhs(
     A_prop: np.ndarray,
     A: np.ndarray,
     A_sq: np.ndarray,
@@ -439,7 +441,7 @@ def rk4_nl_rhs(
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
-def rk4_nl_rhs_v(
+def _rk4_nl_rhs_v(
     A_prop: np.ndarray,
     A: np.ndarray,
     A_sq: np.ndarray,
@@ -480,7 +482,7 @@ def rk4_nl_rhs_v(
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
-def square_mod_rk4_nl_rhs(
+def _square_mod_rk4_nl_rhs(
     A_prop: np.ndarray,
     A: np.ndarray,
     alpha: float,
@@ -512,7 +514,7 @@ def square_mod_rk4_nl_rhs(
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
-def square_mod_rk4_nl_rhs_v(
+def _square_mod_rk4_nl_rhs_v(
     A_prop: np.ndarray,
     A: np.ndarray,
     V: np.ndarray,
@@ -550,7 +552,7 @@ def square_mod_rk4_nl_rhs_v(
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
-def rk4_nl_rhs_c(
+def _rk4_nl_rhs_c(
     A_prop: np.ndarray,
     A_orig: np.ndarray,
     A_sq_1: np.ndarray,
@@ -597,7 +599,7 @@ def rk4_nl_rhs_c(
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
-def rk4_nl_rhs_c_v(
+def _rk4_nl_rhs_c_v(
     A_prop: np.ndarray,
     A_orig: np.ndarray,
     A_sq_1: np.ndarray,
@@ -647,3 +649,113 @@ def rk4_nl_rhs_c_v(
             + 1j * V_flat[i]
         ) * A_flat[i]
     return A_prop
+
+
+# ── Broadcasting over a batch of simulations ────────────────────────────────
+# The numba kernels take scalar physical parameters. Running a batch of
+# simulations at once broadcasts a parameter into an array with a leading
+# batch axis, which numba cannot type: it fails with "No implementation of
+# function imul found for signature (complex64, array(complex128, 3d, C))".
+#
+# Loop over the batch and call the compiled kernel once per slice. The loop
+# is over simulations (a handful), and each call still processes a whole
+# grid with the njit kernel, so this costs a few extra dispatches per step
+# rather than giving up numba. It also keeps the fields and the parameters
+# consistently sliced, which matters for apply_propagator: a batched field
+# against a shared propagator used to index past the end of the propagator
+# and silently return NaN and garbage for every slice after the first.
+
+
+def _batch_len(args, scalar_positions):
+    """Return the batch size implied by the scalar parameters, or 0."""
+    n = 0
+    for i in scalar_positions:
+        value = args[i]
+        if isinstance(value, np.ndarray) and value.ndim > 0 and value.size > 1:
+            n = max(n, value.shape[0])
+    return n
+
+
+def _pick_scalar(value, b):
+    """Take simulation b's value from a possibly-broadcast parameter."""
+    if isinstance(value, np.ndarray) and value.ndim > 0 and value.size > 1:
+        return value.reshape(value.shape[0], -1)[b, 0]
+    if isinstance(value, np.ndarray) and value.size == 1:
+        return value.reshape(-1)[0]
+    return value
+
+
+def _pick_field(value, b, batched_ndim):
+    """Take simulation b's slice of a field, if the field is batched.
+
+    Compares against the primary field's ndim rather than the leading
+    dimension, so a shared grid is never sliced just because its first axis
+    happens to equal the batch size.
+    """
+    if isinstance(value, np.ndarray) and value.ndim == batched_ndim:
+        return value[b]
+    return value
+
+
+def _broadcast_batch(*scalar_positions, n_outputs=1):
+    """Wrap an njit kernel so broadcast scalar parameters are looped over."""
+    positions = frozenset(scalar_positions)
+
+    def decorator(kernel):
+        @functools.wraps(kernel)
+        def wrapper(*args):
+            n = _batch_len(args, positions)
+            if n == 0:
+                return kernel(*args)
+            ndim = args[0].ndim
+            for b in range(n):
+                kernel(
+                    *[
+                        _pick_scalar(a, b)
+                        if i in positions
+                        else _pick_field(a, b, ndim)
+                        for i, a in enumerate(args)
+                    ]
+                )
+            return args[0] if n_outputs == 1 else tuple(args[:n_outputs])
+
+        return wrapper
+
+    return decorator
+
+
+def apply_propagator(A: np.ndarray, propagator: np.ndarray) -> np.ndarray:
+    """Multiply A by the propagator in-place, broadcasting over a batch.
+
+    Parameters
+    ----------
+    A : np.ndarray
+        The field array, modified in-place.
+    propagator : np.ndarray
+        The propagator, either matching A or shared across the batch.
+
+    Returns
+    -------
+    np.ndarray
+        The modified field array A.
+    """
+    if A.ndim > propagator.ndim:
+        for b in range(A.shape[0]):
+            _apply_propagator(A[b], propagator)
+        return A
+    return _apply_propagator(A, propagator)
+
+
+nl_prop = _broadcast_batch(2, 3, 5, 6)(_nl_prop)
+nl_prop_without_V = _broadcast_batch(2, 3, 4, 5)(_nl_prop_without_V)
+nl_prop_c = _broadcast_batch(3, 4, 6, 7, 8, 9)(_nl_prop_c)
+nl_prop_without_V_c = _broadcast_batch(3, 4, 5, 6, 7, 8)(_nl_prop_without_V_c)
+square_mod_nl_prop = _broadcast_batch(1, 2, 3, 4)(_square_mod_nl_prop)
+square_mod_nl_prop_v = _broadcast_batch(2, 3, 4, 5)(_square_mod_nl_prop_v)
+rk4_nl_rhs = _broadcast_batch(3, 4, 5)(_rk4_nl_rhs)
+rk4_nl_rhs_v = _broadcast_batch(4, 5, 6)(_rk4_nl_rhs_v)
+square_mod_rk4_nl_rhs = _broadcast_batch(2, 3, 4)(_square_mod_rk4_nl_rhs)
+square_mod_rk4_nl_rhs_v = _broadcast_batch(3, 4, 5)(_square_mod_rk4_nl_rhs_v)
+rk4_nl_rhs_c = _broadcast_batch(4, 5, 6, 7, 8)(_rk4_nl_rhs_c)
+rk4_nl_rhs_c_v = _broadcast_batch(5, 6, 7, 8, 9)(_rk4_nl_rhs_c_v)
+rabi_coupling = _broadcast_batch(2, 3, n_outputs=2)(_rabi_coupling)

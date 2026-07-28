@@ -324,25 +324,66 @@ class TestStepLimitWithBatchedParameters:
             err_msg="batched limit is not the most restrictive of the batch",
         )
 
-    def test_limiter_does_not_block_a_batched_run(self):
-        """The limiter must not be what stops a batched propagation.
+    def test_batched_run_matches_individual_runs(self):
+        """Each slice of a batched run must equal running that case alone.
 
-        Whole batched propagations are GPU-only: the numba kernels take
-        scalar parameters, so the CPU backend fails later in the kernel.
-        That limitation is expected and covered end-to-end by
-        tests/integration/test_broadcasting.py on CUPY. What must not
-        happen is failing earlier, in the backend-agnostic step limiter.
+        Broadcasting is what makes a parameter sweep cheap, so the batch has
+        to be equivalent to the individual runs, not merely finite. The
+        earlier failure was silent: apply_propagator indexed a shared
+        propagator with the batched field's flat index, so every slice after
+        the first came back as NaN or garbage.
         """
-        simu = make_solver(n2=self.batched_n2())
-        E = self.batched_input(simu)
-        simu.delta_z = 1e-4
-        try:
-            simu.out_field(E, 5e-4, verbose=False, plot=False)
-        except Exception as exc:
-            message = str(exc)
-            assert "truth value of an array" not in message, (
-                "the step limiter still rejects batched parameters: " + message
+        # Keep the run short and the step well inside the accuracy limit, so
+        # the limiter clamps nothing. It reduces over the batch, so a batched
+        # run and a weak individual one would otherwise take different steps
+        # and differ by discretisation error rather than by a bug.
+        z = 1e-3
+        values = self.batched_n2()[:, 0, 0]
+        batched = make_solver(n2=self.batched_n2())
+        potential = (
+            -1e-4 * np.exp(-(batched.XX**2 + batched.YY**2) / (70e-6) ** 2)
+        ).astype(np.float32)
+        batched = make_solver(n2=self.batched_n2(), V=potential)
+        batched.delta_z = 1e-4
+        one_field = np.exp(-(batched.XX**2 + batched.YY**2) / waist**2).astype(
+            PRECISION_COMPLEX
+        )
+
+        got = batched.out_field(
+            np.broadcast_to(one_field, (len(values), N, N)).copy(),
+            z,
+            verbose=False,
+            plot=False,
+        )
+        assert batched.delta_z == 1e-4, "the limiter clamped the batched step"
+        assert np.all(np.isfinite(got)), "batched run produced non-finite values"
+
+        for index, value in enumerate(values):
+            alone = make_solver(n2=float(value), V=potential)
+            alone.delta_z = 1e-4
+            expected = alone.out_field(one_field.copy(), z, verbose=False, plot=False)
+            assert alone.delta_z == 1e-4, "the limiter clamped an individual step"
+            np.testing.assert_allclose(
+                got[index],
+                expected,
+                rtol=1e-4,
+                atol=1e-5 * float(np.max(np.abs(expected))),
+                err_msg=f"batch slice {index} (n2={value:.3e}) differs from the "
+                f"same simulation run on its own",
             )
+
+    def test_shared_propagator_is_not_indexed_past_its_end(self):
+        """A batched field against a shared propagator must broadcast."""
+        from NLSE.kernels import cpu as cpu_kernels
+
+        field = (np.ones((3, 4, 4)) + 0j).astype(PRECISION_COMPLEX)
+        propagator = (np.full((4, 4), 2.0) + 0j).astype(PRECISION_COMPLEX)
+        out = cpu_kernels.apply_propagator(field.copy(), propagator)
+        np.testing.assert_allclose(
+            out,
+            np.full((3, 4, 4), 2.0, dtype=PRECISION_COMPLEX),
+            err_msg="propagator was not broadcast across the batch",
+        )
 
 
 class TestPrecomputedConstants:
