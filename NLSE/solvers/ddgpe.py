@@ -24,6 +24,9 @@ class DDGPE(CNLSE):
         "detuning",
         "omega_pump",
     )
+    # DDGPE.split_step reads self.g / self.g12 / self.g2 directly rather than
+    # the constants CNLSE precomputes, so they have to be zeroed as well.
+    _nonlinearity_attrs = (*CNLSE._nonlinearity_attrs, "g", "g12", "g2")
 
     def __init__(
         self,

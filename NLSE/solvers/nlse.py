@@ -849,8 +849,7 @@ class NLSE:
             The propagated field (may be a new object for functional backends).
         """
         n_steps = int(np.ceil(z / abs(self.delta_z)))
-        if z > self.L:
-            self.n2 = 0
+        n_steps_nl = self._nonlinear_step_count(z, n_steps)
 
         # Use a mutable container so the closure can update A for functional
         # backends (MLX) where kernels return new arrays.
@@ -874,19 +873,76 @@ class NLSE:
             and self.nl_length == 0
             and not isinstance(self.delta_z, complex)
         )
-        if can_use_fast_loop:
-            self._backend.execute_loop(_step, n_steps)
-        else:
-            self._loop_with_callbacks(
-                _step,
-                z,
-                callback,
-                callback_args,
-                state,
-                verbose,
-                pbar,
-            )
+        # Zeroing the nonlinearity mutates self, so restore it afterwards.
+        saved = {attr: getattr(self, attr) for attr in self._nonlinearity_attrs}
+        try:
+            if can_use_fast_loop:
+                # Two segments rather than a mid-loop switch: the constants are
+                # baked into the CUDA graph that execute_loop captures, so each
+                # segment needs its own capture.
+                self._backend.execute_loop(_step, n_steps_nl)
+                if n_steps > n_steps_nl:
+                    self._disable_nonlinearity(V, precision)
+                    self._backend.execute_loop(_step, n_steps - n_steps_nl)
+            else:
+                self._loop_with_callbacks(
+                    _step,
+                    z,
+                    callback,
+                    callback_args,
+                    state,
+                    verbose,
+                    pbar,
+                    z_switch=self.L if n_steps_nl < n_steps else None,
+                    V=V,
+                    precision=precision,
+                )
+        finally:
+            for attr, value in saved.items():
+                setattr(self, attr, value)
         return state[0]
+
+    # Attributes holding the nonlinear coupling. Zeroed once propagation
+    # leaves the medium, then re-derived by _precompute_step_constants.
+    # Subclasses extend this with their own coupling parameters.
+    _nonlinearity_attrs = ("n2",)
+
+    def _nonlinear_step_count(self, z: float, n_steps: int) -> int:
+        """Return how many of the n_steps fall inside the nonlinear medium.
+
+        Propagation past the medium length L continues linearly. Solvers that
+        do not model a finite medium leave L at 0, which disables the cutoff
+        entirely (GPE passes L=0, so every step stays nonlinear).
+
+        Parameters
+        ----------
+        z : float
+            Total propagation distance.
+        n_steps : int
+            Total number of steps for this run.
+
+        Returns
+        -------
+        int
+            Number of leading steps to run with the nonlinearity enabled.
+        """
+        if not self.L > 0 or z <= self.L:
+            return n_steps
+        return min(n_steps, int(np.ceil(self.L / abs(self.delta_z))))
+
+    def _disable_nonlinearity(self, V: np.ndarray | None, precision: str) -> None:
+        """Zero the nonlinear coupling and re-derive the step constants.
+
+        Parameters
+        ----------
+        V : np.ndarray or None
+            Potential field, needed to re-derive the scaled potential.
+        precision : str
+            "single" or "double".
+        """
+        for attr in self._nonlinearity_attrs:
+            setattr(self, attr, 0)
+        self._precompute_step_constants(V, precision)
 
     def _loop_with_callbacks(
         self,
@@ -897,11 +953,18 @@ class NLSE:
         state,
         verbose,
         pbar,
+        z_switch=None,
+        V=None,
+        precision="single",
     ):
         """Run propagation loop with per-step callbacks."""
         z_prop = 0.0
         i = 0
+        switched = False
         while abs(z_prop) < z:
+            if z_switch is not None and not switched and abs(z_prop) >= z_switch:
+                self._disable_nonlinearity(V, precision)
+                switched = True
             step_fn()
             if callback is not None:
                 self._run_callbacks(callback, callback_args, state[0], z, i)
@@ -1069,7 +1132,6 @@ class NLSE:
                 unit="%",
                 unit_scale=True,
             )
-        n2_old = self.n2
         if self._backend.name == "CUPY":
             start_gpu = cp.cuda.Event()
             end_gpu = cp.cuda.Event()
@@ -1117,7 +1179,7 @@ class NLSE:
                 )
             else:
                 print(f"\nTime spent to solve : {t_cpu} s (CPU)\n")
-        self.n2 = n2_old
+        # _run_propagation restores the nonlinear coupling itself.
         return_np_array = isinstance(E_in, np.ndarray)
         if self._backend.is_device_backend:
             if return_np_array:

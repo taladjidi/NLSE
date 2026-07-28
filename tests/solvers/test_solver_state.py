@@ -141,6 +141,139 @@ class TestLinearConstruction:
         )
 
 
+class TestNonlinearityCutoff:
+    """Propagation past the medium length L continues linearly."""
+
+    def test_beyond_L_differs_from_fully_nonlinear(self):
+        """Running past L must not be the same as staying nonlinear throughout."""
+        E = gaussian_input()
+        z = 4 * L
+
+        cut = make_solver(L=L)
+        cut.delta_z = L / 20
+        got = cut.out_field(E.copy(), z, verbose=False, plot=False)
+
+        never_cut = make_solver(L=10 * z)
+        never_cut.delta_z = L / 20
+        full = never_cut.out_field(E.copy(), z, verbose=False, plot=False)
+
+        assert not np.allclose(got, full, rtol=1e-3), (
+            "Propagating past L gave the same result as a fully nonlinear run: "
+            "the nonlinearity was never switched off."
+        )
+
+    def test_beyond_L_matches_two_stage_propagation(self):
+        """A run past L equals nonlinear-to-L followed by a linear run."""
+        E = gaussian_input()
+        dz = L / 20
+        z_total = 3 * L
+
+        one_shot = make_solver(L=L)
+        one_shot.delta_z = dz
+        got = one_shot.out_field(E.copy(), z_total, verbose=False, plot=False)
+
+        # Stage 1: nonlinear up to L. Stage 2: linear for the remainder,
+        # feeding stage 1's output back in unnormalized.
+        stage1 = make_solver(L=L)
+        stage1.delta_z = dz
+        mid = stage1.out_field(E.copy(), L, verbose=False, plot=False)
+        stage2 = make_solver(n2=0.0, L=L)
+        stage2.delta_z = dz
+        expected = stage2.out_field(
+            mid.astype(PRECISION_COMPLEX),
+            z_total - L,
+            verbose=False,
+            plot=False,
+            normalize=False,
+        )
+
+        np.testing.assert_allclose(
+            got,
+            expected,
+            rtol=1e-3,
+            atol=1e-3 * float(np.max(np.abs(expected))),
+            err_msg="Past-L propagation does not match nonlinear-then-linear",
+        )
+
+    def test_up_to_L_is_unaffected(self):
+        """Propagating only up to L must be untouched by the cutoff."""
+        E = gaussian_input()
+        cut = make_solver(L=L)
+        cut.delta_z = L / 20
+        got = cut.out_field(E.copy(), L, verbose=False, plot=False)
+
+        never_cut = make_solver(L=1e3 * L)
+        never_cut.delta_z = L / 20
+        expected = never_cut.out_field(E.copy(), L, verbose=False, plot=False)
+
+        np.testing.assert_allclose(
+            got, expected, rtol=1e-6, err_msg="z <= L should be fully nonlinear"
+        )
+
+    def test_callback_loop_cuts_off_at_the_same_place(self):
+        """The callback loop and the fast loop must agree past L.
+
+        They cut off differently: the fast loop splits into two execute_loop
+        segments, the callback loop switches mid-iteration on z_prop.
+        """
+        E = gaussian_input()
+        z = 3 * L
+
+        fast = make_solver(L=L)
+        fast.delta_z = L / 20
+        without_callback = fast.out_field(E.copy(), z, verbose=False, plot=False)
+
+        seen = []
+
+        def record(simu, A, z_, i):
+            seen.append(i)
+
+        slow = make_solver(L=L)
+        slow.delta_z = L / 20
+        with_callback = slow.out_field(
+            E.copy(), z, verbose=False, plot=False, callback=record
+        )
+
+        assert seen, "callback never fired"
+        np.testing.assert_allclose(
+            with_callback,
+            without_callback,
+            rtol=1e-5,
+            atol=1e-5 * float(np.max(np.abs(without_callback))),
+            err_msg="callback loop and fast loop disagree on the past-L cutoff",
+        )
+
+    def test_nonlinearity_restored_after_run(self):
+        """The coupling attributes must survive a past-L run unchanged."""
+        E = gaussian_input()
+        simu = make_solver(L=L)
+        simu.delta_z = L / 20
+        simu.out_field(E.copy(), 3 * L, verbose=False, plot=False)
+        assert simu.n2 == n2, "n2 was not restored after propagating past L"
+
+    def test_zero_L_disables_the_cutoff(self):
+        """L=0 means 'no finite medium', not 'everything is linear'.
+
+        GPE passes L=0, so a cutoff keyed on `z > L` alone would make every
+        GPE run fully linear.
+        """
+        E = gaussian_input()
+        simu = make_solver(L=0.0)
+        simu.delta_z = L / 20
+        got = simu.out_field(E.copy(), 2 * L, verbose=False, plot=False)
+
+        nonlinear = make_solver(L=1e3 * L)
+        nonlinear.delta_z = L / 20
+        expected = nonlinear.out_field(E.copy(), 2 * L, verbose=False, plot=False)
+
+        np.testing.assert_allclose(
+            got,
+            expected,
+            rtol=1e-6,
+            err_msg="L=0 must not switch the nonlinearity off",
+        )
+
+
 class TestPrecomputedConstants:
     """Precomputed step constants must reflect the current parameters."""
 

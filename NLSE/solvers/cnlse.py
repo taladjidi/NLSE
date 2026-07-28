@@ -16,6 +16,8 @@ class CNLSE(NLSE):
     """A class to solve the coupled NLSE."""
 
     _gpu_param_attrs = (*NLSE._gpu_param_attrs, "n22", "n12")
+    # Both intra- and inter-component couplings switch off past the medium.
+    _nonlinearity_attrs = (*NLSE._nonlinearity_attrs, "n12", "n22")
 
     def __init__(
         self,
