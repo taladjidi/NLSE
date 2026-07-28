@@ -44,6 +44,10 @@ dev = [
   "pytest-benchmark",
   "ruff",
   "mypy",
+  # Needed by tests/test_packaging.py, which builds a real wheel to verify
+  # package-data. Without these the test would silently skip.
+  "setuptools>=61.0",
+  "wheel",
 ]
 
 [project.urls]
@@ -57,7 +61,9 @@ include = ["NLSE*"]
 exclude = ["tests*"]
 
 [tool.setuptools.package-data]
-"NLSE.kernels" = ["cl_source/*.cl"]
+# Kernel templates are read at runtime with Path(__file__).parent / ... .read_text(),
+# so they must ship in the distribution or the backend fails with FileNotFoundError.
+"NLSE.kernels" = ["cl_source/*.cl", "cuda_source/*.cu"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

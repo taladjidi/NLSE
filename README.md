@@ -13,10 +13,20 @@ git clone https://github.com/Quantum-Optics-LKB/NLSE.git
 cd NLSE
 ```
 
-Then pip install the package:
+Then install the package. We recommend [uv](https://docs.astral.sh/uv/):
 
 ```bash
-pip install .
+uv pip install .
+```
+
+`pip install .` works just as well if you prefer it.
+
+Optional extras pull in the accelerated backends and the development tooling:
+
+```bash
+uv pip install ".[gpu]"      # CuPy, for Nvidia GPUs
+uv pip install ".[opencl]"   # PyOpenCL + pyvkfft, for OpenCL devices
+uv pip install -e ".[dev]"   # pytest, ruff, mypy
 ```
 
 ## Basic usage
@@ -50,13 +60,13 @@ simu.out_field(E_0, L, verbose=True, plot=True, precision="single")
 
 ### Supported platforms
 
-This code has been tested on the three main platforms: Linux, MacOs and Windows. The requirements are in the [`requirements.txt`](requirements.txt) at the root of the repo.
+This code has been tested on the three main platforms: Linux, MacOs and Windows. The requirements are declared in [`pyproject.toml`](pyproject.toml) at the root of the repo.
 
 ### GPU computing
 
 For optimal speed, this code uses your GPU (graphics card). For this, you need specific libraries. For Nvidia cards, you need a [CUDA](https://developer.nvidia.com/cuda-toolkit) install. For AMD cards, you need a [ROCm](https://rocmdocs.amd.com/en/latest/) install. Of course, you need to update your graphics driver to take full advantage of these. In any case we use [CuPy](cupy.dev) for the Python interface to these libraries.
 
-**The `cupy` dependency is not included in `setup.py` in order to not break installation on platforms that do not support it !**
+**The `cupy` dependency is not a required dependency in order to not break installation on platforms that do not support it !** It ships as the optional `gpu` extra: `uv pip install ".[gpu]"`.
 
 ### PyFFTW
 

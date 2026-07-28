@@ -6,6 +6,10 @@ jobs:
     name: Run tests
     steps:
       - uses: actions/checkout@v4
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -15,9 +19,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ocl-icd-opencl-dev pocl-opencl-icd
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev,opencl]"
+        run: uv pip install --system -e ".[dev,opencl]"
       - name: Test with pytest
-        run: |
-          pytest tests -m "not benchmark"
+        run: pytest tests -m "not benchmark"
