@@ -170,20 +170,41 @@ class CUDAKernels:
         self._kernels = {}
 
     @staticmethod
-    def _has_array_params(*values):
-        """Check if any parameter is an array (broadcasting mode).
+    def _needs_broadcast(params=(), A=None, grids=()):
+        """Check whether the raw kernels must be bypassed for this call.
+
+        The raw CUDA kernels take scalar parameters and index every array
+        with one flat id, so two situations force the cp.fuse fallback, which
+        broadcasts natively:
+
+        a parameter that is an array — one value per simulation, which cannot
+        be passed as a scalar; and a grid with fewer axes than the field — a
+        potential or propagator shared by a batch, which the flat index would
+        read past the end of.
+
+        These were two predicates called in pairs at six sites, which made it
+        easy to add a call site with only one of them. A batch does not need
+        a batched parameter: several initial conditions under identical
+        physics leave every parameter scalar and put the extra axis on the
+        field alone.
 
         Parameters
         ----------
-        values : float or array-like
-            Parameters to check.
+        params : tuple
+            Physical parameters, any of which may be batched.
+        A : cp.ndarray, optional
+            The field. Only needed when there are grids to compare against.
+        grids : tuple
+            Grid-shaped arrays the kernel indexes alongside the field.
 
         Returns
         -------
         bool
-            True if any parameter has ndim > 0 (is an array).
+            True if the fused fallback is required.
         """
-        return any(getattr(v, "ndim", 0) > 0 for v in values)
+        if any(getattr(v, "ndim", 0) > 0 for v in params):
+            return True
+        return any(g is not None and g.ndim < A.ndim for g in grids)
 
     @staticmethod
     def _v_variant(kernels, name, V):
@@ -210,30 +231,6 @@ class CUDAKernels:
         if V is not None and V.dtype.kind == "c":
             return kernels[name + COMPLEX_V_SUFFIX]
         return kernels[name]
-
-    @staticmethod
-    def _shares_grid_across_batch(A, *grids):
-        """Check whether a grid is shared by a batch the field carries.
-
-        A batch does not need a batched parameter: several initial conditions
-        under identical physics leave every parameter scalar and only the
-        field carries the extra axis. The raw kernels index the field and the
-        grid with the same flat index, so an ``(NY, NX)`` potential against a
-        ``(B, NY, NX)`` field reads past the end of the potential.
-
-        Parameters
-        ----------
-        A : cp.ndarray
-            The field array.
-        grids : cp.ndarray or None
-            Grid-shaped arrays the kernel indexes alongside the field.
-
-        Returns
-        -------
-        bool
-            True if any grid has fewer axes than the field.
-        """
-        return any(g is not None and g.ndim < A.ndim for g in grids)
 
     def _get_kernels(self, dtype):
         """Get compiled kernel functions for given dtype, compiling if needed.
@@ -358,8 +355,14 @@ class CUDAKernels:
         cp.ndarray
             The modified field array A.
         """
-        if self._has_array_params(alpha, g, Isat) or self._shares_grid_across_batch(
-            A, V
+        if self._needs_broadcast(
+            (
+                alpha,
+                g,
+                Isat,
+            ),
+            A,
+            (V,),
         ):
             from .cupy import nl_prop as _fused
 
@@ -404,7 +407,13 @@ class CUDAKernels:
         cp.ndarray
             The modified field array A.
         """
-        if self._has_array_params(alpha, g, Isat):
+        if self._needs_broadcast(
+            (
+                alpha,
+                g,
+                Isat,
+            )
+        ):
             from .cupy import nl_prop_without_V as _fused
 
             return _fused(A, A_sq, dz, alpha, g, Isat)
@@ -455,9 +464,17 @@ class CUDAKernels:
         cp.ndarray
             The modified field array A1.
         """
-        if self._has_array_params(
-            alpha, g11, g12, Isat1, Isat2
-        ) or self._shares_grid_across_batch(A1, V):
+        if self._needs_broadcast(
+            (
+                alpha,
+                g11,
+                g12,
+                Isat1,
+                Isat2,
+            ),
+            A1,
+            (V,),
+        ):
             from .cupy import nl_prop_c as _fused
 
             return _fused(A1, A_sq_1, A_sq_2, dz, alpha, V, g11, g12, Isat1, Isat2)
@@ -507,7 +524,15 @@ class CUDAKernels:
         cp.ndarray
             The modified field array A1.
         """
-        if self._has_array_params(alpha, g11, g12, Isat1, Isat2):
+        if self._needs_broadcast(
+            (
+                alpha,
+                g11,
+                g12,
+                Isat1,
+                Isat2,
+            )
+        ):
             from .cupy import nl_prop_without_V_c as _fused
 
             return _fused(A1, A_sq_1, A_sq_2, dz, alpha, g11, g12, Isat1, Isat2)
@@ -566,7 +591,13 @@ class CUDAKernels:
         cp.ndarray
             The modified field array A.
         """
-        if self._has_array_params(alpha, g, Isat):
+        if self._needs_broadcast(
+            (
+                alpha,
+                g,
+                Isat,
+            )
+        ):
             from .cupy import square_mod_nl_prop as _fused
 
             return _fused(A, dz, alpha, g, Isat)
@@ -608,8 +639,14 @@ class CUDAKernels:
         cp.ndarray
             The modified field array A.
         """
-        if self._has_array_params(alpha, g, Isat) or self._shares_grid_across_batch(
-            A, V
+        if self._needs_broadcast(
+            (
+                alpha,
+                g,
+                Isat,
+            ),
+            A,
+            (V,),
         ):
             from .cupy import square_mod_nl_prop_v as _fused
 
@@ -797,7 +834,13 @@ class CUDAKernels:
         cp.ndarray
             The modified A_prop.
         """
-        if self._has_array_params(alpha, g, Isat):
+        if self._needs_broadcast(
+            (
+                alpha,
+                g,
+                Isat,
+            )
+        ):
             from .cupy import rk4_nl_rhs as _fused
 
             return _fused(A_prop, A, A_sq, alpha, g, Isat)
@@ -832,8 +875,14 @@ class CUDAKernels:
         cp.ndarray
             The modified A_prop.
         """
-        if self._has_array_params(alpha, g, Isat) or self._shares_grid_across_batch(
-            A, V
+        if self._needs_broadcast(
+            (
+                alpha,
+                g,
+                Isat,
+            ),
+            A,
+            (V,),
         ):
             from .cupy import rk4_nl_rhs_v as _fused
 
@@ -874,7 +923,13 @@ class CUDAKernels:
         cp.ndarray
             The modified A_prop.
         """
-        if self._has_array_params(alpha, g, Isat):
+        if self._needs_broadcast(
+            (
+                alpha,
+                g,
+                Isat,
+            )
+        ):
             from .cupy import square_mod_rk4_nl_rhs as _fused
 
             return _fused(A_prop, A, alpha, g, Isat)
@@ -909,8 +964,14 @@ class CUDAKernels:
         cp.ndarray
             The modified A_prop.
         """
-        if self._has_array_params(alpha, g, Isat) or self._shares_grid_across_batch(
-            A, V
+        if self._needs_broadcast(
+            (
+                alpha,
+                g,
+                Isat,
+            ),
+            A,
+            (V,),
         ):
             from .cupy import square_mod_rk4_nl_rhs_v as _fused
 
@@ -960,7 +1021,15 @@ class CUDAKernels:
         cp.ndarray
             The modified A_prop.
         """
-        if self._has_array_params(alpha, g11, g12, Isat1, Isat2):
+        if self._needs_broadcast(
+            (
+                alpha,
+                g11,
+                g12,
+                Isat1,
+                Isat2,
+            )
+        ):
             from .cupy import rk4_nl_rhs_c as _fused
 
             return _fused(A_prop, A_orig, A_sq_1, A_sq_2, alpha, g11, g12, Isat1, Isat2)
@@ -1012,9 +1081,17 @@ class CUDAKernels:
         cp.ndarray
             The modified A_prop.
         """
-        if self._has_array_params(
-            alpha, g11, g12, Isat1, Isat2
-        ) or self._shares_grid_across_batch(A_prop, V):
+        if self._needs_broadcast(
+            (
+                alpha,
+                g11,
+                g12,
+                Isat1,
+                Isat2,
+            ),
+            A_prop,
+            (V,),
+        ):
             from .cupy import rk4_nl_rhs_c_v as _fused
 
             return _fused(

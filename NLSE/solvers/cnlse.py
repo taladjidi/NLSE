@@ -193,42 +193,34 @@ class CNLSE(NLSE):
         """Return the dispersion eigenvalues of the faster component."""
         return 0.5 * (self.Kxx**2 + self.Kyy**2) / min(self.k, self.k2)
 
-    def _rk4_potential_rate(self) -> float:
-        """Return the largest potential rate across both components.
-
-        The two components see the potential scaled by their own k, so the
-        step has to satisfy whichever is more restrictive.
-        """
-        rate = super()._rk4_potential_rate()
-        V2_scaled = self._as_host_array(getattr(self, "_V2_scaled", None))
-        if V2_scaled is not None:
-            rate = max(rate, float(np.max(np.abs(V2_scaled))))
-        return rate
-
     def _energy_rates(self, A: np.ndarray) -> dict[str, float]:
-        """Return the phase rates, taking the more restrictive component.
+        """Return the phase rates for the coupled system.
 
-        The two components scale the potential by their own k, so whichever
-        rotates the phase faster is the one that sets the step.
+        Each component carries its own potential and its own pair of
+        couplings, so both are evaluated and the more restrictive one sets
+        the step. The intensities are means weighted by each component's own
+        density, matching how the base class forms its rates.
         """
         rates = super()._energy_rates(A)
-        V2_scaled = self._as_host_array(getattr(self, "_V2_scaled", None))
-        if V2_scaled is not None:
-            A_np = np.asarray(self._backend.to_numpy(A))
-            weight = np.abs(A_np) ** 2
-            total = float(np.sum(weight))
-            if total > 0:
-                rates["potential"] = max(
-                    rates["potential"],
-                    abs(float(np.sum(weight * np.real(V2_scaled)) / total)),
-                )
-        return rates
+        A_np = np.asarray(self._backend.to_numpy(A))
+        w1 = np.abs(A_np[0]) ** 2
+        w2 = np.abs(A_np[1]) ** 2
+        t1, t2 = float(np.sum(w1)), float(np.sum(w2))
+        if t1 == 0 and t2 == 0:
+            return rates
 
-    def _split_step_max_dz(self, A: np.ndarray) -> float:
-        """Compute the maximum split-step dz for coupled components."""
-        A_np = self._backend.to_numpy(A)
-        I1_peak = float(np.max(np.abs(A_np[0]) ** 2))
-        I2_peak = float(np.max(np.abs(A_np[1]) ** 2))
+        def mean(weight, total, field):
+            return float(np.sum(weight * field) / total) if total > 0 else 0.0
+
+        # Each component sees the potential scaled by its own k.
+        V1_scaled = self._as_host_array(getattr(self, "_V_scaled", None))
+        V2_scaled = self._as_host_array(getattr(self, "_V2_scaled", None))
+        potential = 0.0
+        for weight, total, V in ((w1, t1, V1_scaled), (w2, t2, V2_scaled)):
+            if V is not None:
+                potential = max(potential, abs(mean(weight, total, np.real(V))))
+        rates["potential"] = potential
+
         if getattr(self, "_g11", None) is None:
             g11 = self.k / 2 * self.n2 * c * epsilon_0
             g12 = self.k / 2 * self.n12 * c * epsilon_0
@@ -245,18 +237,15 @@ class CNLSE(NLSE):
         g22 = np.abs(self._as_host_array(g22))
         Isat1 = self._as_host_array(Isat1)
         Isat2 = self._as_host_array(Isat2)
-        sat = 1 / (1 + I1_peak / Isat1 + I2_peak / Isat2)
+
+        I1, I2 = mean(w1, t1, w1), mean(w2, t2, w2)
+        sat = 1 / (1 + I1 / Isat1 + I2 / Isat2)
         # Batched runs carry one value per simulation; reduce with max so the
         # step satisfies the fastest component of the fastest simulation.
-        nl_rate_1 = (g11 * I1_peak + g12 * I2_peak) * sat
-        nl_rate_2 = (g22 * I2_peak + g12 * I1_peak) * sat
-        nl_rate = float(np.max(np.maximum(nl_rate_1, nl_rate_2)))
-        # The potentials share the exponent with the interaction, so they
-        # bound the step in the same way.
-        nl_rate += self._energy_rates(A)["potential"]
-        if nl_rate == 0:
-            return np.inf
-        return np.pi / nl_rate
+        rates["interaction"] = float(
+            np.max(np.maximum((g11 * I1 + g12 * I2) * sat, (g22 * I2 + g12 * I1) * sat))
+        )
+        return rates
 
     def _propagator_rk4_cache_key(self) -> tuple:
         """Return cache key for coupled RK4 dispersion operator."""
