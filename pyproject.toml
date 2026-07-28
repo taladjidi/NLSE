@@ -1,11 +1,6 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
-# Thin wrapper over setuptools.build_meta that clears the build/ staging
-# directory first. setuptools copies sources over whatever an earlier build
-# left there, so a stale build/lib/ silently ships old modules in the wheel.
-# See build_backend/nlse_build.py.
-build-backend = "nlse_build"
-backend-path = ["build_backend"]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "NLSE"
@@ -50,9 +45,8 @@ dev = [
   "ruff",
   "mypy",
   # Needed by tests/test_packaging.py, which builds a real wheel to verify
-  # package-data. Without these the test would silently skip.
-  "setuptools>=61.0",
-  "wheel",
+  # what ships. Without it the test would silently skip.
+  "hatchling",
 ]
 
 [project.urls]
@@ -60,15 +54,18 @@ Documentation = "https://nlse.readthedocs.io"
 Homepage = "https://github.com/Quantum-Optics-LKB/NLSE"
 Repository = "https://github.com/Quantum-Optics-LKB/NLSE"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["NLSE*"]
-exclude = ["tests*"]
+# hatchling builds straight from the source tree into the archive. There is no
+# build/lib staging directory to go stale and no egg-info file list to cache,
+# which is what made setuptools ship modules from an older layout. It also
+# includes non-Python files under the package, so the kernel templates that are
+# read at runtime need no separate package-data entry.
+[tool.hatch.build.targets.wheel]
+packages = ["NLSE"]
+exclude = ["*.pyc", "__pycache__", ".cache"]
 
-[tool.setuptools.package-data]
-# Kernel templates are read at runtime with Path(__file__).parent / ... .read_text(),
-# so they must ship in the distribution or the backend fails with FileNotFoundError.
-"NLSE.kernels" = ["cl_source/*.cl", "cuda_source/*.cu"]
+[tool.hatch.build.targets.sdist]
+include = ["NLSE", "tests", "README.md", "LICENSE", "pyproject.toml"]
+exclude = ["*.pyc", "__pycache__", ".cache"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

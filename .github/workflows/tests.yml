@@ -1,5 +1,9 @@
 on: [push]
 
+env:
+  # Keep the cache off the installed package; see NLSE.utils.get_cache_dir.
+  NLSE_CACHE_DIR: ${{ github.workspace }}/.nlse-cache
+
 jobs:
   tests:
     runs-on: ubuntu-latest

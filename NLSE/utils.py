@@ -1,4 +1,5 @@
 import os
+import sys
 import warnings
 from pathlib import Path
 
@@ -63,14 +64,35 @@ except Exception:
 
 
 def get_cache_dir() -> Path:
-    """Get NLSE cache directory within the library directory.
+    """Get the directory for cached FFTW wisdom and backend benchmarks.
+
+    Uses the platform cache location rather than the package directory.
+    Writing inside the installed package fails outright on a read-only or
+    system-wide install, and even when it succeeds it leaves the directory
+    behind on uninstall, because pip only removes files it recorded at
+    install time. What is left is a directory named after the package with
+    no ``__init__.py``, which Python then imports as a namespace package,
+    so ``import NLSE`` silently resolves to an empty module.
+
+    Set ``NLSE_CACHE_DIR`` to override, which CI does so it can cache a
+    known path across runs.
 
     Returns
     -------
     Path
-        <NLSE_package_dir>/.cache/
+        The cache directory, created if missing.
     """
-    cache_dir = Path(__file__).parent / ".cache"
+    override = os.environ.get("NLSE_CACHE_DIR")
+    if override:
+        cache_dir = Path(override)
+    elif sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local"
+        cache_dir = Path(base) / "NLSE" / "Cache"
+    elif sys.platform == "darwin":
+        cache_dir = Path.home() / "Library" / "Caches" / "NLSE"
+    else:
+        base = os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache"
+        cache_dir = Path(base) / "NLSE"
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
 

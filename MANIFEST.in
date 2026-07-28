@@ -1,9 +1,0 @@
-# The in-tree PEP 517 backend named by build-system.backend-path must ship in
-# the sdist, or building a wheel from the sdist fails with
-# ModuleNotFoundError: No module named 'nlse_build'.
-recursive-include build_backend *.py
-
-# Kernel templates read at runtime. Also covered by package-data, but keep the
-# sdist self-contained.
-recursive-include NLSE/kernels/cl_source *.cl
-recursive-include NLSE/kernels/cuda_source *.cu

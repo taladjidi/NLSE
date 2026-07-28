@@ -1,9 +1,8 @@
 """Tests that the built distribution contains what the package needs at runtime.
 
 These build a real wheel rather than inspecting the source tree, because an
-editable install (``pip install -e .``, which is what CI uses) resolves every
-path against the repository and therefore cannot catch a missing
-``package-data`` entry or a stray directory swept up by ``packages.find``.
+editable install (which is what CI uses) resolves every path against the
+repository and therefore cannot catch a file that fails to ship.
 """
 
 import shutil
@@ -17,28 +16,26 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# bdist_wheel stages into build/lib/ and copies over whatever a previous build
-# left there rather than starting clean, so files from an older checkout get
-# zipped into the wheel. This is local build detritus, not a configuration
-# problem: excluding build* from packages.find does nothing, because
-# packages.find never looks there.
+# setuptools staged builds through build/lib/ and copied sources over whatever
+# an earlier build left there, so a checkout that once held a different layout
+# kept shipping the old modules. hatchling builds straight from the source tree
+# and has no staging directory, so this cannot recur; the assertions below stay
+# as a backstop in case the build backend is ever changed back.
 STALE_BUILD_DIR = PROJECT_ROOT / "build" / "lib" / "NLSE"
 
 
 def _cause_hint() -> str:
-    """Return a hint distinguishing local build detritus from a config bug."""
+    """Return a hint about where unexpected wheel contents came from."""
     if STALE_BUILD_DIR.exists():
         leftovers = sorted(p.name for p in STALE_BUILD_DIR.glob("*.py"))
         return (
             f"\n\n{STALE_BUILD_DIR} exists and contains {leftovers}. "
-            f"bdist_wheel stages through build/lib/ without clearing it "
-            f"first, so those files end up in the wheel. Delete the "
-            f"directory and rebuild:\n    rm -rf {PROJECT_ROOT / 'build'}"
+            f"That directory is left over from setuptools and should be "
+            f"inert now, so if it is the source of these files the build "
+            f"backend has regressed. Delete it and rebuild:"
+            f"\n    rm -rf {PROJECT_ROOT / 'build'}"
         )
-    return (
-        "\n\nNo stale build/lib/NLSE was found, so this is a real packaging "
-        "configuration problem rather than leftovers from an earlier build."
-    )
+    return "\n\nNo stale build directory found; check the packaging config."
 
 
 # Kernel templates read at runtime via Path(__file__).parent / ... .read_text().
@@ -69,14 +66,12 @@ FORBIDDEN_STALE_MODULES = [
 def _build_wheel_command(outdir: Path) -> list[str]:
     """Return the command that builds a wheel straight from the source tree.
 
-    Prefers ``uv build --wheel`` and falls back to ``pip wheel``. Both stage
-    through ``build/lib/``, which is what makes them able to detect files left
-    behind there by an earlier build. Plain ``uv build`` is deliberately not
-    used: it builds the wheel from a freshly generated sdist and would mask
-    exactly that failure mode.
+    Prefers ``uv build --wheel`` and falls back to ``pip wheel``. Both build
+    the wheel directly from the source tree, which is the path an ordinary
+    ``pip install .`` takes; the sdist route is covered separately.
 
     ``--no-build-isolation`` keeps the build offline and deterministic; the
-    dev extra pins the setuptools/wheel it needs.
+    dev extra pins the hatchling it needs.
     """
     if shutil.which("uv"):
         return [
@@ -104,7 +99,7 @@ def _build_wheel_command(outdir: Path) -> list[str]:
 @pytest.fixture(scope="module")
 def wheel_contents(tmp_path_factory) -> list[str]:
     """Build a wheel from the project root and return its member names."""
-    pytest.importorskip("setuptools", reason="setuptools needed to build a wheel")
+    pytest.importorskip("hatchling", reason="hatchling needed to build a wheel")
 
     outdir = tmp_path_factory.mktemp("wheel")
     command = _build_wheel_command(outdir)
@@ -126,12 +121,11 @@ def sdist_build(tmp_path_factory):
     """Build an sdist and then a wheel from it; return (sdist names, wheel names).
 
     Exercises the path a source install takes. It is separate from the
-    in-tree wheel build because the failure modes differ: anything the
-    build itself needs (the in-tree PEP 517 backend named by
-    ``backend-path``) must be inside the sdist, and nothing in the source
-    tree can substitute for it.
+    in-tree wheel build because the failure modes differ: the sdist has to
+    be self-contained, and nothing in the source tree can stand in for a
+    file it forgot to include.
     """
-    pytest.importorskip("setuptools", reason="setuptools needed to build")
+    pytest.importorskip("hatchling", reason="hatchling needed to build")
     if not shutil.which("uv"):
         pytest.skip("uv is needed to build an sdist and a wheel from it")
 
@@ -143,10 +137,9 @@ def sdist_build(tmp_path_factory):
     )
     if result.returncode != 0:
         pytest.fail(
-            "building an sdist and then a wheel from it failed. If this is "
-            "ModuleNotFoundError for the build backend, the backend named by "
-            "build-system.backend-path is missing from the sdist; add it in "
-            f"MANIFEST.in.\n{result.stdout}\n{result.stderr}"
+            "building an sdist and then a wheel from it failed; the sdist is "
+            "probably missing something the build needs.\n"
+            f"{result.stdout}\n{result.stderr}"
         )
 
     sdists = list(outdir.glob("*.tar.gz"))
@@ -158,15 +151,6 @@ def sdist_build(tmp_path_factory):
     with zipfile.ZipFile(wheels[0]) as zf:
         wheel_names = zf.namelist()
     return sdist_names, wheel_names
-
-
-def test_sdist_carries_the_build_backend(sdist_build):
-    """The in-tree PEP 517 backend must ship in the sdist."""
-    sdist_names, _ = sdist_build
-    assert any("build_backend/nlse_build.py" in n for n in sdist_names), (
-        "build_backend/nlse_build.py is not in the sdist, so building a wheel "
-        "from it fails with ModuleNotFoundError: No module named 'nlse_build'."
-    )
 
 
 @pytest.mark.parametrize("data_file", REQUIRED_DATA_FILES)
@@ -192,12 +176,6 @@ def test_wheel_built_from_sdist_is_clean(sdist_build):
         "NLSE/utils.py",
         "NLSE/callbacks.py",
     }, f"unexpected top-level modules via the sdist path: {sorted(top_level)}"
-
-
-def test_build_backend_is_not_shipped_inside_the_package(wheel_contents):
-    """The build backend is build-time only and must not land in the wheel."""
-    leaked = [n for n in wheel_contents if "build_backend" in n or "nlse_build" in n]
-    assert not leaked, f"build backend leaked into the installed package: {leaked}"
 
 
 @pytest.mark.parametrize("data_file", REQUIRED_DATA_FILES)
@@ -231,3 +209,26 @@ def test_wheel_top_level_modules_match_source(wheel_contents):
         "NLSE/utils.py",
         "NLSE/callbacks.py",
     }, f"unexpected top-level modules in wheel: {sorted(top_level)}" + _cause_hint()
+
+
+def test_cache_dir_is_outside_the_installed_package(tmp_path, monkeypatch):
+    """The runtime cache must never be written inside the package directory.
+
+    Writing there fails on read-only installs, and on uninstall pip leaves
+    the runtime-created files behind. What remains is a directory named
+    after the package with no __init__.py, which Python imports as a
+    namespace package, so `import NLSE` resolves to an empty module.
+    """
+    import NLSE
+    from NLSE.utils import get_cache_dir
+
+    package_dir = Path(NLSE.__file__).resolve().parent
+
+    monkeypatch.delenv("NLSE_CACHE_DIR", raising=False)
+    cache_dir = get_cache_dir().resolve()
+    assert package_dir not in cache_dir.parents and cache_dir != package_dir, (
+        f"cache directory {cache_dir} is inside the installed package {package_dir}"
+    )
+
+    monkeypatch.setenv("NLSE_CACHE_DIR", str(tmp_path / "custom"))
+    assert get_cache_dir().resolve() == (tmp_path / "custom").resolve()
