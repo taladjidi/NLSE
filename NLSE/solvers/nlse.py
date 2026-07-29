@@ -2,10 +2,11 @@
 # @author: Tangui Aladjidi / Clara Piekarski
 """NLSE Main module."""
 
+import contextlib
 import multiprocessing
 import time
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import matplotlib.pyplot as plt
@@ -317,90 +318,87 @@ class NLSE:
         # Rebuilt below once delta_z is settled; drop the previous run's so
         # the transfer does not carry it.
         self.propagator = None
-        if self._backend.is_device_backend:
-            self._send_arrays_to_gpu(field_dtype)
-        V = self.V
-        A, A_sq = self._prepare_output_array(E_in, normalize)
-        self.plans = self._build_fft_plan(A)
-        self._allocate_rk4_buffers(A, method)
-        self._precompute_step_constants(V, precision)
+        with self._arrays_on_device(field_dtype):
+            V = self.V
+            A, A_sq = self._prepare_output_array(E_in, normalize)
+            self.plans = self._build_fft_plan(A)
+            self._allocate_rk4_buffers(A, method)
+            self._precompute_step_constants(V, precision)
 
-        # Settle the step before building anything that depends on it.
-        if delta_z is None:
-            delta_z = self._default_delta_z(A, method, z)
-        delta_z = self._capped_delta_z(delta_z, A, method)
+            # Settle the step before building anything that depends on it.
+            if delta_z is None:
+                delta_z = self._default_delta_z(A, method, z)
+            delta_z = self._capped_delta_z(delta_z, A, method)
 
-        # The propagator depends on delta_z, k, the grid and the precision,
-        # any of which may have changed since the last run. _build_propagator
-        # is cache-backed, so an unchanged configuration is not recomputed.
-        if method == "RK4":
-            self.propagator = self._build_propagator_rk4()
-        else:
-            self.propagator = self._build_propagator(field_dtype, delta_z)
-        self._send_propagator_to_gpu(field_dtype)
-        if verbose:
-            pbar = tqdm.tqdm(
-                total=100,
-                position=4,
-                desc="Propagation",
-                leave=False,
-                unit="%",
-                unit_scale=True,
-            )
-        if self._backend.name == "CUPY":
-            start_gpu = cp.cuda.Event()
-            end_gpu = cp.cuda.Event()
-            start_gpu.record()
-        t0 = time.perf_counter()
-        if type(delta_z) is complex:
-            print("Warning: imaginary time evolution !")
-
-        A = self._run_propagation(
-            A,
-            A_sq,
-            V,
-            z,
-            delta_z,
-            precision,
-            method,
-            callback,
-            callback_args,
-            verbose,
-            pbar if verbose else None,
-        )
-
-        if verbose:
-            pbar.n = 100
-            pbar.refresh()
-        # Synchronize device backends before timing
-        if self._backend.name == "CL":
-            self._backend.queue.finish()
-        elif self._backend.name == "MLX":
-            import mlx.core as mx
-
-            mx.eval(A)
-        t_cpu = time.perf_counter() - t0
-        if verbose:
-            pbar.close()
-
-        if self._backend.name == "CUPY":
-            end_gpu.record()
-            end_gpu.synchronize()
-            t_gpu = cp.cuda.get_elapsed_time(start_gpu, end_gpu)
-        if verbose:
-            if self._backend.name == "CUPY":
-                print(
-                    f"\nTime spent to solve : {t_gpu * 1e-3} s (GPU) /"
-                    f" {time.perf_counter() - t0} s (CPU)\n"
-                )
+            # The propagator depends on delta_z, k, the grid and the precision,
+            # any of which may have changed since the last run. _build_propagator
+            # is cache-backed, so an unchanged configuration is not recomputed.
+            if method == "RK4":
+                self.propagator = self._build_propagator_rk4()
             else:
-                print(f"\nTime spent to solve : {t_cpu} s (CPU)\n")
-        # _run_propagation restores the nonlinear coupling itself.
-        return_np_array = isinstance(E_in, np.ndarray)
-        if self._backend.is_device_backend:
-            if return_np_array:
+                self.propagator = self._build_propagator(field_dtype, delta_z)
+            self._send_propagator_to_gpu(field_dtype)
+            if verbose:
+                pbar = tqdm.tqdm(
+                    total=100,
+                    position=4,
+                    desc="Propagation",
+                    leave=False,
+                    unit="%",
+                    unit_scale=True,
+                )
+            if self._backend.name == "CUPY":
+                start_gpu = cp.cuda.Event()
+                end_gpu = cp.cuda.Event()
+                start_gpu.record()
+            t0 = time.perf_counter()
+            if type(delta_z) is complex:
+                print("Warning: imaginary time evolution !")
+
+            A = self._run_propagation(
+                A,
+                A_sq,
+                V,
+                z,
+                delta_z,
+                precision,
+                method,
+                callback,
+                callback_args,
+                verbose,
+                pbar if verbose else None,
+            )
+
+            if verbose:
+                pbar.n = 100
+                pbar.refresh()
+            # Synchronize device backends before timing
+            if self._backend.name == "CL":
+                self._backend.queue.finish()
+            elif self._backend.name == "MLX":
+                import mlx.core as mx
+
+                mx.eval(A)
+            t_cpu = time.perf_counter() - t0
+            if verbose:
+                pbar.close()
+
+            if self._backend.name == "CUPY":
+                end_gpu.record()
+                end_gpu.synchronize()
+                t_gpu = cp.cuda.get_elapsed_time(start_gpu, end_gpu)
+            if verbose:
+                if self._backend.name == "CUPY":
+                    print(
+                        f"\nTime spent to solve : {t_gpu * 1e-3} s (GPU) /"
+                        f" {time.perf_counter() - t0} s (CPU)\n"
+                    )
+                else:
+                    print(f"\nTime spent to solve : {t_cpu} s (CPU)\n")
+            # _run_propagation restores the nonlinear coupling itself.
+            return_np_array = isinstance(E_in, np.ndarray)
+            if self._backend.is_device_backend and return_np_array:
                 A = self._backend.to_numpy(A)
-            self._retrieve_arrays_from_gpu()
 
         if plot:
             self.plot_field(A, z)
@@ -1391,6 +1389,30 @@ class NLSE:
         if isinstance(value, np.ndarray) or np.isscalar(value):
             return np.asarray(value)
         return np.asarray(self._backend.to_numpy(value))
+
+    @contextlib.contextmanager
+    def _arrays_on_device(self, field_dtype: np.dtype) -> Iterator[None]:
+        """Hold the solver's arrays on the device for the duration of a run.
+
+        V, nl_profile, the propagator and any batched parameter are moved onto
+        the device and put back afterwards, on the way out of a failed run as
+        well as a finished one. Left there, they break the next run rather than
+        the one that failed: from_numpy is handed a device array.
+
+        Parameters
+        ----------
+        field_dtype : np.dtype
+            Complex dtype of the field, so V goes at a matching width.
+
+        Yields
+        ------
+        None
+        """
+        self._send_arrays_to_gpu(field_dtype)
+        try:
+            yield
+        finally:
+            self._retrieve_arrays_from_gpu()
 
     def _send_arrays_to_gpu(self, field_dtype: np.dtype = np.complex64) -> None:
         """Send arrays to device using backend.
