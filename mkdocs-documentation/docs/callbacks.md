@@ -19,6 +19,9 @@ def my_callback(simu, A, z, i, *args):
 | `i` | `int` | Current step number |
 | `*args` | any | Additional arguments passed via `callback_args` |
 
+A callback normally returns nothing. Returning a number asks the solver to
+**use that as the step** from here on; see `adapt_delta_z` below.
+
 ## Passing Callbacks to `out_field`
 
 ### Single callback
@@ -26,6 +29,7 @@ def my_callback(simu, A, z, i, *args):
 ```python
 E_out = simu.out_field(
     E_in, L,
+    delta_z=L / 1000,
     callback=my_callback,
     callback_args=(arg1, arg2),
 )
@@ -38,6 +42,7 @@ Pass a list of callbacks and a list of argument tuples:
 ```python
 E_out = simu.out_field(
     E_in, L,
+    delta_z=L / 1000,
     callback=[callback_a, callback_b],
     callback_args=[(args_a1, args_a2), (args_b1,)],
 )
@@ -58,13 +63,15 @@ Saves the full field every `save_every` steps into a pre-allocated array.
 ```python
 from NLSE import sample
 
-n_steps = int(L / simu.delta_z)
+delta_z = L / 1000          # divides L, so the run is exactly 1000 steps
+n_steps = int(L / delta_z)
 save_every = 100
 n_samples = n_steps // save_every + 1
 E_samples = np.zeros((n_samples, NY, NX), dtype=np.complex64)
 
 E_out = simu.out_field(
     E_in, L,
+    delta_z=delta_z,
     callback=sample,
     callback_args=(save_every, E_samples),
 )
@@ -78,12 +85,14 @@ Records the total intensity ($\sum |A|^2$) at regular intervals.
 ```python
 from NLSE import norm
 
-n_steps = int(L / simu.delta_z)
+delta_z = L / 1000          # divides L, so the run is exactly 1000 steps
+n_steps = int(L / delta_z)
 save_every = 50
 norms = np.zeros(n_steps // save_every + 1)
 
 E_out = simu.out_field(
     E_in, L,
+    delta_z=delta_z,
     callback=norm,
     callback_args=(save_every, norms),
 )
@@ -96,12 +105,14 @@ Evaluates the nonlinear refractive index change $\delta n = n_2 |E|^2 / (1 + |E|
 ```python
 from NLSE import evaluate_delta_n
 
-n_steps = int(L / simu.delta_z)
+delta_z = L / 1000          # divides L, so the run is exactly 1000 steps
+n_steps = int(L / delta_z)
 save_every = 100
 delta_n = np.zeros((n_steps // save_every + 1,) + (NY, NX))
 
 E_out = simu.out_field(
     E_in, L,
+    delta_z=delta_z,
     callback=evaluate_delta_n,
     callback_args=(save_every, delta_n),
 )
@@ -109,20 +120,43 @@ E_out = simu.out_field(
 
 ### `adapt_delta_z` -- Adaptive step sizing
 
-Dynamically adjusts the step size based on the nonlinear phase accumulated per step. Updates every `update_every` steps.
+Dynamically adjusts the step size based on the nonlinear phase accumulated per
+step. Updates every `update_every` steps.
+
+It changes the step by **returning** it. The solver rebuilds the linear
+propagator to match before taking the next step, so the two halves of a split
+step always advance by the same distance — assigning the step somewhere would
+leave the propagator built from the previous one, and the linear part would
+quietly advance by the wrong distance.
 
 ```python
+delta_z = L / 1000     # divides L: exactly 1000 steps
+
 from NLSE import adapt_delta_z
 
 delta_z_history = []
 
 E_out = simu.out_field(
     E_in, L,
+    delta_z=delta_z,
     callback=adapt_delta_z,
     callback_args=(100, delta_z_history),
 )
 # delta_z_history contains the step size at each step
 ```
+
+Writing your own adaptive callback, make sure it settles on a value rather than
+adjusting on every step: one that shrinks the step unconditionally will never
+reach the end of the propagation.
+
+```python
+def refine_past_halfway(simu, A, z, i, dz_fine):
+    """Switch to a finer step once past the middle of the medium."""
+    return dz_fine if z >= simu.L / 2 else None
+```
+
+`simu._current_delta_z` holds the step in force, for a callback that needs to
+see it.
 
 ## Writing Custom Callbacks
 

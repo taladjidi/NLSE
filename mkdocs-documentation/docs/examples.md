@@ -29,7 +29,7 @@ Example scripts are available in the [`examples/`](https://github.com/Quantum-Op
 | Example | Description |
 |---------|-------------|
 | [`callbacks.py`](https://github.com/Quantum-Optics-LKB/NLSE/tree/main/examples/callbacks.py) | Using callbacks for field sampling and adaptive step sizing |
-| [`broadcasting.py`](https://github.com/Quantum-Optics-LKB/NLSE/tree/main/examples/broadcasting.py) | Running parallel simulations via GPU broadcasting |
+| [`broadcasting.py`](https://github.com/Quantum-Optics-LKB/NLSE/tree/main/examples/broadcasting.py) | Running parallel simulations via broadcasting |
 | [`nonlocality.py`](https://github.com/Quantum-Optics-LKB/NLSE/tree/main/examples/nonlocality.py) | Non-local interactions with a diffusive kernel |
 | [`vortex_precession.py`](https://github.com/Quantum-Optics-LKB/NLSE/tree/main/examples/vortex_precession.py) | Vortex dynamics in a GPE simulation |
 

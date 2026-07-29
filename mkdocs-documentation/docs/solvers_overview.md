@@ -117,23 +117,54 @@ simu.V = my_potential
 
 For 2D solvers, the potential should have shape `(NY, NX)`. Set to `None` for free propagation.
 
-### Step Size
+#### Complex potentials
 
-The initial step size `delta_z` is automatically computed from the nonlinear parameters. You can override it:
+`V` may be complex. Its real part shifts the phase, as a refractive index
+change does; its **imaginary part is gain or loss**, entering the real part of
+the exponent rather than the phase. That is how an absorbing boundary is built:
 
 ```python
-simu.delta_z = 1e-5  # manual step size in meters
+import numpy as np
+from NLSE import NLSE
+
+waist = 2.23e-3
+simu = NLSE(alpha=0, power=1.05, window=4 * waist, n2=-1.6e-9, V=None,
+            L=10e-3, NX=256, NY=256, Isat=10e4)
+
+# A ring of loss around the beam, to stop light wrapping around the window
+r = np.hypot(simu.XX, simu.YY)
+absorber = 1j * 2e2 * np.exp(-((r - 2e-3) ** 2) / (3e-4) ** 2)
+simu.V = absorber.astype(np.complex64)
+
+E_in = np.exp(-r**2 / waist**2).astype(np.complex64)
+E_out = simu.out_field(E_in, 2e-3)
 ```
 
-The solver will automatically cap the step size to stability limits before propagation (see [Numerical Methods](numerical_methods.md)).
+Positive imaginary part removes power, negative adds it. The potential is
+transferred at the field's precision, so a `complex64` field carries a
+`complex64` potential and a `complex128` one carries `complex128`.
+
+### Step Size
+
+`delta_z` is an argument to `out_field`. Left out, the solver derives one from
+the field's energy; passed, it is used as given:
+
+```python
+E = simu.out_field(E_in, z, delta_z=1e-5)  # manual step size in meters
+```
+
+Either way the step is capped to the method's region of convergence before
+propagation, with a warning if that binds (see [Numerical Methods](numerical_methods.md)).
 
 ## Coupled Solvers (CNLSE, CNLSE_1d, DDGPE)
 
 Coupled solvers propagate two field components simultaneously. The input field has an extra leading dimension:
 
 ```python
+import numpy as np
 from NLSE import CNLSE
 
+waist, L = 2.23e-3, 10e-3
 simu = CNLSE(
     alpha=20, power=1.05, window=8e-3,
     n2=-1.6e-9, V=None, L=10e-3,
@@ -155,7 +186,11 @@ Setting coupling parameters to `None` disables the corresponding term for better
 
 ## Broadcasting (Parallel Simulations)
 
-On GPU backends (CUPY), you can run multiple simulations in parallel using NumPy broadcasting:
+You can run multiple simulations in parallel using NumPy broadcasting. This
+works on **every backend**. CUPY and MLX hand the batched parameters to their
+kernels and broadcast there; CPU and OpenCL take one simulation's values per
+launch and loop over the batch, so their gain over separate runs is in the
+FFTs rather than in the kernels.
 
 ```python
 # Propagate 10 different initial states
@@ -163,16 +198,18 @@ E_in = np.random.randn(10, NY, NX) + 1j * np.random.randn(10, NY, NX)
 E_out = simu.out_field(E_in, L)
 # E_out.shape == (10, NY, NX)
 
-# Scan over n2 values
-n2_values = np.linspace(-2e-9, -1e-9, 5).reshape(5, 1, 1)
-simu.n2 = n2_values
-E_in = np.ones((5, NY, NX)) * initial_field
+# Scan over n2 values, same initial state for each
+field = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(np.complex64)
+simu.n2 = np.linspace(-2e-9, -1e-9, 5).reshape(5, 1, 1)
+E_in = np.broadcast_to(field, (5, NY, NX)).copy()
 E_out = simu.out_field(E_in, L)
 
 # Grid search over two parameters
-simu.n2 = n2_array.reshape(N_n2, 1, 1, 1)
-simu.alpha = alpha_array.reshape(1, N_alpha, 1, 1)
+N_n2, N_alpha = 5, 3
+simu.n2 = np.linspace(-2e-9, -1e-9, N_n2).reshape(N_n2, 1, 1, 1)
+simu.alpha = np.linspace(0, 20, N_alpha).reshape(1, N_alpha, 1, 1)
 E_in = np.broadcast_to(field, (N_n2, N_alpha, NY, NX)).copy()
+E_out = simu.out_field(E_in, L)
 ```
 
 Array shapes must follow NumPy [broadcasting rules](https://numpy.org/doc/stable/user/basics.broadcasting.html).

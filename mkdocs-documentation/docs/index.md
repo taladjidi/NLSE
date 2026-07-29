@@ -40,7 +40,8 @@ L = 10e-3            # propagation distance (m)
 simu = NLSE(alpha=20, power=power, window=window, n2=n2, V=None, L=L,
             NX=N, NY=N, Isat=10e4)
 
-E_in = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2)
+# Complex: the field's width is what selects single or double precision.
+E_in = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(np.complex64)
 
 # Propagate
 E_out = simu.out_field(E_in, L, precision="single")

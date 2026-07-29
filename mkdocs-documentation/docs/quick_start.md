@@ -24,7 +24,8 @@ Isat = 10e4                  # saturation intensity (W/m^2)
 simu = NLSE(alpha, power, window, n2, V=None, L=L, NX=N, NY=N, Isat=Isat)
 
 # Define a Gaussian input field (values between 0 and 1, normalized internally)
-E_in = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2)
+# Complex: the field's width is what selects single or double precision.
+E_in = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(np.complex64)
 
 # Propagate and get the output field in V/m
 E_out = simu.out_field(E_in, L, precision="single")
@@ -45,7 +46,7 @@ L = 10e-3
 
 simu = NLSE_1d(alpha=20, power=power, window=window, n2=n2, V=None, L=L, NX=N)
 
-E_in = np.exp(-simu.X**2 / waist**2)
+E_in = np.exp(-simu.X**2 / waist**2).astype(np.complex64)
 E_out = simu.out_field(E_in, L, precision="single")
 ```
 
@@ -72,7 +73,7 @@ V = 0.5 * m * omega_trap**2 * (simu.XX**2 + simu.YY**2)
 simu.V = V
 
 # Gaussian initial state
-E_in = np.exp(-(simu.XX**2 + simu.YY**2) / (10e-6)**2)
+E_in = np.exp(-(simu.XX**2 + simu.YY**2) / (10e-6) ** 2).astype(np.complex64)
 E_out = simu.out_field(E_in, T, precision="single")
 ```
 
@@ -135,12 +136,14 @@ Monitor or modify the simulation during propagation:
 from NLSE import sample
 
 # Pre-allocate storage for sampled fields
-n_steps = int(L / simu.delta_z)
+delta_z = L / 1000          # divides L, so the run is exactly 1000 steps
+n_steps = int(L / delta_z)
 save_every = 100
 E_samples = np.zeros((n_steps // save_every + 1, N, N), dtype=np.complex64)
 
 E_out = simu.out_field(
     E_in, L,
+    delta_z=delta_z,
     precision="single",
     callback=sample,
     callback_args=(save_every, E_samples),

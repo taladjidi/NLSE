@@ -61,27 +61,44 @@ RK4 requires 4 FFT evaluations per step (vs 1 or 2 for split-step) but may allow
 
 ## Step Size
 
+$\delta z$ is an argument to `out_field`, not a property of the solver: the same
+medium can be propagated at different steps, and a step chosen for one run does
+not silently carry into the next.
+
 ### Automatic computation
 
-The initial step size $\delta z$ is automatically computed from the nonlinear parameters:
+Left to itself, the solver chooses a step that imprints a fixed phase per step
+— `DEFAULT_PHASE_PER_STEP`, 0.1 rad — against the energy the field actually
+carries in each term:
 
 $$
-\delta z = 5 \times 10^{-3} \cdot z_\text{NL}, \quad z_\text{NL} = \frac{1}{k_0 |\Delta n|}
+\delta z = \frac{0.1}{\sum_\text{terms} \langle\psi|\hat{O}|\psi\rangle / \langle\psi|\psi\rangle}
 $$
 
-where $\Delta n = n_2 P / w^2$ is the characteristic nonlinear index change.
+Those expectation values are the same quantities the stability and accuracy
+limits below are built from, so the default sits a fixed distance inside them
+rather than at an arbitrary fraction of a length scale. Terms that do not bind
+are left out: split-step applies the linear part exactly in Fourier space, so
+only the real-space terms enter its step, while RK4 approximates the whole
+right-hand side and takes all of them.
+
+Weighting by the field matters. A tall potential in a corner the beam never
+reaches, or a high-$K$ corner with no spectral weight, would otherwise set the
+step for a run it has no effect on.
 
 ### Manual override
 
-You can set the step size manually:
+Pass the step you want:
 
 ```python
-simu.delta_z = 1e-5  # in meters (or seconds for GPE/DDGPE)
+E = simu.out_field(E_in, z, delta_z=1e-5)  # in meters (or seconds for GPE/DDGPE)
 ```
 
 ### Automatic step limit enforcement
 
-Before propagation starts, the solver checks that $\delta z$ does not exceed stability or accuracy limits. If it does, $\delta z$ is automatically reduced to 90% of the limit and a warning is issued.
+A step you pass is used as given, and reduced only if it would leave the
+method's region of convergence — to 90% of the limit, with a warning naming
+which limit bound. A step the solver chose itself is already well inside.
 
 **Split-step limit**: The nonlinear phase per step must stay below $\pi$ to avoid phase aliasing:
 
@@ -89,21 +106,33 @@ $$
 \delta z_\text{max} = \frac{\pi}{g \cdot I_\text{peak} / (1 + I_\text{peak}/I_\text{sat})}
 $$
 
-where $g$ is the effective nonlinear coefficient and $I_\text{peak}$ is the peak field intensity.
+where $g$ is the effective nonlinear coefficient and the intensity is the
+field-weighted mean, not the peak: the limit follows the solution rather than
+the grid.
 
 **RK4 stability limit**: The purely imaginary eigenvalues of the dispersion operator must stay within the RK4 stability region (radius $\approx 2.83$):
 
 $$
-\delta z_\text{max} = \frac{2.83}{K_\text{max}^2 / (2k_0)}
+\delta z_\text{max} = \frac{2.83}{\sum_\text{terms} \langle\psi|\hat{O}|\psi\rangle / \langle\psi|\psi\rangle}
 $$
 
-where $K_\text{max}$ is the largest spatial frequency on the grid.
+Every term counts here, dispersion included, since RK4 approximates all of
+them. Counting dispersion alone made this wrong by orders of magnitude under a
+potential, which is scaled by $k_0/2$.
 
 ## Propagator Caching
 
-The linear propagator matrix $e^{-i \frac{K_x^2 + K_y^2}{2k_0} \delta z}$ is cached by `(grid_size, delta_z, k, precision)`. If you call `out_field` multiple times with the same parameters, the propagator is reused without recomputation.
+The linear propagator matrix $e^{-i \frac{K_x^2 + K_y^2}{2k_0} \delta z}$ is cached by `(grid_size, delta_z, k, precision)`, so calling `out_field` again with the same step reuses it.
 
-The cache is invalidated when any of these parameters change (e.g., when `adapt_delta_z` modifies the step size, or when switching precision).
+Every step size gets its own entry, which is what makes an adaptive callback cheap: when it changes the step, the propagator is rebuilt to match before the next step is taken, and a step seen before costs nothing.
+
+## Propagation distance
+
+The loop takes whole steps of $\delta z$ and then covers whatever is left at
+its own size, so a run lands on $z$ rather than up to a step past it. This is
+not a rounding detail: the error an overshoot leaves is the phase the medium
+imprints over the excess, and a step derived from the physics is an arbitrary
+real number that rarely divides $z$.
 
 ## Tips
 

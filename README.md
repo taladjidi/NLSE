@@ -34,6 +34,9 @@ uv pip install -e ".[dev]"   # pytest, ruff, mypy
 After installing `NLSE`, you can simply import one of the solvers and instantiate your problem as follows:
 
 ```python
+import numpy as np
+from NLSE import NLSE
+
 N = 2048 # number of points in solver
 n2 = -1.6e-9 # nonlinear index in m^2/W
 waist = 2.23e-3 # initial beam waist in m
