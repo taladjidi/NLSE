@@ -655,23 +655,24 @@ class CNLSE(NLSE):
         """
         A_plot = self._to_plot_array(A_plot, 3)
         fig, ax = plt.subplots(2, 2, layout="constrained", figsize=(10, 10))
-        fig.suptitle(rf"Field at $z$ = {z:.2e} m")
+        fig.suptitle(self._plot_title(z))
         ext_real = [
             np.min(self.X) * 1e3,
             np.max(self.X) * 1e3,
             np.min(self.Y) * 1e3,
             np.max(self.Y) * 1e3,
         ]
-        rho0 = np.abs(A_plot[0]) ** 2 * 1e-4 * c / 2 * epsilon_0
+        rho0 = np.abs(A_plot[0]) ** 2 * self._plot_density_scale
         phi0 = np.angle(A_plot[0])
-        rho1 = np.abs(A_plot[1]) ** 2 * 1e-4 * c / 2 * epsilon_0
+        rho1 = np.abs(A_plot[1]) ** 2 * self._plot_density_scale
         phi1 = np.angle(A_plot[1])
         # plot amplitudes and phases
         im0 = ax[0, 0].imshow(rho0, extent=ext_real)
-        ax[0, 0].set_title(r"$|\psi_1|^2$")
+        first, second = self._plot_components
+        ax[0, 0].set_title(rf"$|{first}|^2$")
         ax[0, 0].set_xlabel("x (mm)")
         ax[0, 0].set_ylabel("y (mm)")
-        fig.colorbar(im0, ax=ax[0, 0], shrink=0.6, label=r"Intensity $(W/cm^2)$")
+        fig.colorbar(im0, ax=ax[0, 0], shrink=0.6, label=self._plot_density_label)
         im1 = ax[0, 1].imshow(
             phi0,
             extent=ext_real,
@@ -679,15 +680,15 @@ class CNLSE(NLSE):
             vmin=-np.pi,
             vmax=np.pi,
         )
-        ax[0, 1].set_title(r"Phase $\mathrm{arg}(\psi_1)$")
+        ax[0, 1].set_title(rf"Phase $\mathrm{{arg}}({first})$")
         ax[0, 1].set_xlabel("x (mm)")
         ax[0, 1].set_ylabel("y (mm)")
         fig.colorbar(im1, ax=ax[0, 1], shrink=0.6, label="Phase (rad)")
         im2 = ax[1, 0].imshow(rho1, extent=ext_real)
-        ax[1, 0].set_title(r"$|\psi_2|^2$")
+        ax[1, 0].set_title(rf"$|{second}|^2$")
         ax[1, 0].set_xlabel("x (mm)")
         ax[1, 0].set_ylabel("y (mm)")
-        fig.colorbar(im2, ax=ax[1, 0], shrink=0.6, label=r"Intensity $(W/cm^2)$")
+        fig.colorbar(im2, ax=ax[1, 0], shrink=0.6, label=self._plot_density_label)
         im3 = ax[1, 1].imshow(
             phi1,
             extent=ext_real,
@@ -695,7 +696,7 @@ class CNLSE(NLSE):
             vmin=-np.pi,
             vmax=np.pi,
         )
-        ax[1, 1].set_title(r"Phase $\mathrm{arg}(\psi_2)$")
+        ax[1, 1].set_title(rf"Phase $\mathrm{{arg}}({second})$")
         ax[1, 1].set_xlabel("x (mm)")
         ax[1, 1].set_ylabel("y (mm)")
         fig.colorbar(im3, ax=ax[1, 1], shrink=0.6, label="Phase (rad)")

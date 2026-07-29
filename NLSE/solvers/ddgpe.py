@@ -1,6 +1,5 @@
 from collections.abc import Callable
 
-import matplotlib.pyplot as plt
 import numpy as np
 
 from ..utils import __BACKEND__, __CUPY_AVAILABLE__
@@ -13,6 +12,15 @@ if __CUPY_AVAILABLE__:
 
 class DDGPE(CNLSE):
     """A class to solve the 2D driven dissipative Gross-Pitaevskii equation."""
+
+    # A polariton density on a time axis, with the two components named for
+    # the exciton and the cavity. Everything else about the plot is CNLSE's.
+    _plot_density_scale = 1.0
+    _plot_density_label = "Density"
+    _plot_axis_symbol = "t"
+    _plot_axis_unit = "ps"
+    _plot_axis_format = "g"
+    _plot_components = (r"\psi_x", r"\psi_c")
 
     # Polariton physics on CNLSE's terms, sharing its storage. g carries the
     # sign: the two parametrisations write the interaction term opposite ways,
@@ -482,64 +490,6 @@ class DDGPE(CNLSE):
         A[0] = A1
         A[1] = A2
         return A
-
-    def plot_field(self, A_plot: np.ndarray, t: float) -> None:
-        """Plot the field for monitoring.
-
-        Parameters
-        ----------
-        A_plot : np.ndarray
-            The field.
-        t : float
-            The time at which the field was sampled.
-        """
-        A_plot = self._to_plot_array(A_plot, 3)
-        fig, ax = plt.subplots(2, 2, layout="constrained", figsize=(10, 10))
-        fig.suptitle(rf"Field at $t$ = {t:} ps")
-        ext_real = [
-            np.min(self.X) * 1e3,
-            np.max(self.X) * 1e3,
-            np.min(self.Y) * 1e3,
-            np.max(self.Y) * 1e3,
-        ]
-        rho0 = np.abs(A_plot[0]) ** 2
-        phi0 = np.angle(A_plot[0])
-        rho1 = np.abs(A_plot[1]) ** 2
-        phi1 = np.angle(A_plot[1])
-        # plot amplitudes and phases
-        im0 = ax[0, 0].imshow(rho0, extent=ext_real)
-        ax[0, 0].set_title(r"$|\psi_x|^2$")
-        ax[0, 0].set_xlabel("x (mm)")
-        ax[0, 0].set_ylabel("y (mm)")
-        fig.colorbar(im0, ax=ax[0, 0], shrink=0.6, label=r"Density")
-        im1 = ax[0, 1].imshow(
-            phi0,
-            extent=ext_real,
-            cmap="twilight_shifted",
-            vmin=-np.pi,
-            vmax=np.pi,
-        )
-        ax[0, 1].set_title(r"Phase $\mathrm{arg}(\psi_x)$")
-        ax[0, 1].set_xlabel("x (mm)")
-        ax[0, 1].set_ylabel("y (mm)")
-        fig.colorbar(im1, ax=ax[0, 1], shrink=0.6, label="Phase (rad)")
-        im2 = ax[1, 0].imshow(rho1, extent=ext_real)
-        ax[1, 0].set_title(r"$|\psi_c|^2$")
-        ax[1, 0].set_xlabel("x (mm)")
-        ax[1, 0].set_ylabel("y (mm)")
-        fig.colorbar(im2, ax=ax[1, 0], shrink=0.6, label=r"Density")
-        im3 = ax[1, 1].imshow(
-            phi1,
-            extent=ext_real,
-            cmap="twilight_shifted",
-            vmin=-np.pi,
-            vmax=np.pi,
-        )
-        ax[1, 1].set_title(r"Phase $\mathrm{arg}(\psi_c)$")
-        ax[1, 1].set_xlabel("x (mm)")
-        ax[1, 1].set_ylabel("y (mm)")
-        fig.colorbar(im3, ax=ax[1, 1], shrink=0.6, label="Phase (rad)")
-        plt.show()
 
     def out_field(
         self,

@@ -50,6 +50,17 @@ DEFAULT_MIN_STEPS = 10
 class NLSE:
     """A class to solve NLSE."""
 
+    # What plot_field draws and how it labels it. GPE and DDGPE integrate the
+    # same equation for a density rather than an optical intensity, and their
+    # axis is a time; stating the difference is enough, so they inherit the
+    # plotting itself rather than restating fifty lines of matplotlib.
+    _plot_density_scale = c * epsilon_0 / 2 * 1e-4  # |E|^2 in V^2/m^2 -> W/cm^2
+    _plot_density_label = r"Intensity ($W/cm^2$)"
+    _plot_axis_symbol = "z"
+    _plot_axis_unit = "m"
+    _plot_axis_format = ".2e"
+    _plot_components = (r"\psi_1", r"\psi_2")
+
     # Step currently in force, for callbacks that need it -- callbacks receive
     # (simu, A, z, i, *args) and have no other way to see it. Written by the
     # propagation loop, meaningless outside one, and not a way to set the step:
@@ -1715,6 +1726,13 @@ class NLSE:
             A_plot = self._backend.to_numpy(A_plot)
         return A_plot
 
+    def _plot_title(self, z: float) -> str:
+        """Return the figure title, in this solver's axis and units."""
+        return (
+            rf"Field at ${self._plot_axis_symbol}$ = "
+            rf"{z:{self._plot_axis_format}} {self._plot_axis_unit}"
+        )
+
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot a field for monitoring.
 
@@ -1723,11 +1741,11 @@ class NLSE:
         A_plot : np.ndarray
             Field to plot.
         z : float
-            Propagation distance.
+            Propagation distance, in this solver's axis units.
         """
         A_plot = self._to_plot_array(A_plot, 2)
         fig, ax = plt.subplots(1, 3, layout="constrained", figsize=(15, 5))
-        fig.suptitle(rf"Field at $z$ = {z:.2e} m")
+        fig.suptitle(self._plot_title(z))
         ext_real = [
             np.min(self.X) * 1e3,
             np.max(self.X) * 1e3,
@@ -1740,14 +1758,14 @@ class NLSE:
             np.min(self.Ky) * 1e-3,
             np.max(self.Ky) * 1e-3,
         ]
-        rho = np.abs(A_plot) ** 2 * 1e-4 * c / 2 * epsilon_0
+        rho = np.abs(A_plot) ** 2 * self._plot_density_scale
         phi = np.angle(A_plot)
         im_fft = np.abs(np.fft.fftshift(np.fft.fft2(A_plot)))
         im0 = ax[0].imshow(rho, extent=ext_real)
         ax[0].set_title("Intensity")
         ax[0].set_xlabel("x (mm)")
         ax[0].set_ylabel("y (mm)")
-        fig.colorbar(im0, ax=ax[0], shrink=0.6, label=r"Intensity ($W/cm^2$)")
+        fig.colorbar(im0, ax=ax[0], shrink=0.6, label=self._plot_density_label)
         im1 = ax[1].imshow(
             phi,
             extent=ext_real,
