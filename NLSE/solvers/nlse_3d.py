@@ -149,54 +149,10 @@ class NLSE_3d(NLSE):
             + abs(self.D0) / 2 * self.Omega**2
         )
 
-    def _prepare_output_array(
-        self, E_in: np.ndarray, normalize: bool
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Prepare the output arrays depending on backend.
-
-        Prepares the A and A_sq arrays to store the field and its modulus.
-        Overrides base class to normalize to energy instead of power.
-
-        Parameters
-        ----------
-        E_in : np.ndarray
-            Input array.
-        normalize : bool
-            Normalize the field to the total energy.
-
-        Returns
-        -------
-        A : np.ndarray
-            Output field array.
-        A_sq : np.ndarray
-            Output field modulus squared array.
-        """
-        A = self._backend.allocate_field(E_in.shape, E_in.dtype)
-        A_sq = self._backend.allocate_real_field(E_in.shape, E_in.real.dtype)
-        E_in = self._backend.from_numpy(E_in)
-
-        if normalize:
-            arr = (E_in * E_in.conj()).real
-            arr = arr * self._norm_grid_factor
-            if self._backend.name in ["CL", "MLX"]:
-                arr_np = self._backend.to_numpy(arr)
-                E_in_np = self._backend.to_numpy(E_in)
-                integral = np.sum(arr_np, axis=self._last_axes)
-                integral = integral * self._norm_constant
-                E_00 = (self.energy / integral) ** 0.5
-                result = (E_00.T * E_in_np.T).T.astype(E_in_np.dtype)
-                A = self._backend.from_numpy(result)
-            else:
-                integral = np.sum(arr, axis=self._last_axes)
-                integral = integral * self._norm_constant
-                E_00 = (self.energy / integral) ** 0.5
-                A[:] = (E_00.T * E_in.T).T
-        else:
-            if self._backend.name == "MLX":
-                A = E_in
-            else:
-                A[:] = E_in
-        return A, A_sq
+    @property
+    def _norm_target(self) -> float:
+        """Normalize a pulse to its total energy rather than a power."""
+        return self.energy
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
         """Plot a field for monitoring.

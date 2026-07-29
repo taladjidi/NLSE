@@ -430,8 +430,7 @@ class DDGPE(CNLSE):
                     self.I_sat,
                     self.I_sat2,
                 )
-            A[0] = A1
-            A[1] = A2
+            self._set_components(A, A1, A2)
 
         # Linear propagation in Fourier domain
         A = self._apply_linear_step(A, propagator, plans)
@@ -492,8 +491,7 @@ class DDGPE(CNLSE):
         if precision == "single" and self.omega is not None:
             A1, A2 = kernels.rabi_coupling(A1, A2, delta_z, self.omega / 2)
 
-        A[0] = A1
-        A[1] = A2
+        self._set_components(A, A1, A2)
         return A
 
     def out_field(

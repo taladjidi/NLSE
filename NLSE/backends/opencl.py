@@ -116,8 +116,13 @@ class OpenCLBackend(Backend):
         return cla.zeros(self._queue, shape, dtype)
 
     def to_numpy(self, array: Any) -> np.ndarray:
-        """Transfer from OpenCL device to CPU."""
-        return array.get()
+        """Transfer from OpenCL device to CPU.
+
+        Accepts an array that is already on the host, as ``cp.asnumpy`` and
+        MLX's ``np.array`` both do; not every path through a solver leaves the
+        field on the device.
+        """
+        return array.get() if hasattr(array, "get") else np.asarray(array)
 
     def from_numpy(self, array: np.ndarray) -> Any:
         """Transfer from CPU to OpenCL device."""

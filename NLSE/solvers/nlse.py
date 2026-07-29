@@ -312,6 +312,7 @@ class NLSE:
             np.complex64,
             np.complex128,
         ], "Type mismatch, E_in should be complex64 or complex128"
+        self._check_batch_support(E_in)
         field_dtype = self._field_dtype(E_in)
         # Rebuilt below once delta_z is settled; drop the previous run's so
         # the transfer does not carry it.
@@ -1190,6 +1191,25 @@ class NLSE:
             return np.dtype(np.complex64 if single else np.complex128)
         return np.dtype(np.float32 if single else np.float64)
 
+    @property
+    def _norm_target(self) -> Any:
+        """Return what ``normalize=True`` fixes the field's integral to.
+
+        A power here, an energy for ``NLSE_3d``, one value per component for
+        the coupled solvers. Trailing axes broadcast against the integral, so
+        a per-component target works for a batch of them too.
+        """
+        return self.power
+
+    def _check_batch_support(self, E_in: np.ndarray) -> None:
+        """Refuse a batched run the backend cannot serve. Every backend can.
+
+        Parameters
+        ----------
+        E_in : np.ndarray
+            The input field.
+        """
+
     def _prepare_output_array(
         self, E_in: np.ndarray, normalize: bool
     ) -> tuple[np.ndarray | Any, np.ndarray | Any]:
@@ -1227,13 +1247,13 @@ class NLSE:
                 E_in_np = self._backend.to_numpy(E_in)
                 integral = np.sum(arr_np, axis=self._last_axes)
                 integral = integral * self._norm_constant
-                E_00 = (self.power / integral) ** 0.5
+                E_00 = (self._norm_target / integral) ** 0.5
                 result = (E_00.T * E_in_np.T).T.astype(E_in_np.dtype)
                 A = self._backend.from_numpy(result)
             else:
                 integral = np.sum(arr, axis=self._last_axes)
                 integral = integral * self._norm_constant
-                E_00 = (self.power / integral) ** 0.5
+                E_00 = (self._norm_target / integral) ** 0.5
                 A[:] = (E_00.T * E_in.T).T
         else:
             if self._backend.name == "MLX":

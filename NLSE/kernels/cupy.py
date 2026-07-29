@@ -1,3 +1,16 @@
+"""Broadcasting kernels for the CuPy backend, built with ``cp.fuse``.
+
+``cupy_kernels.py`` holds the raw CUDA C kernels the backend uses by default.
+Those take scalar parameters and index every array with one flat id, so they
+cannot serve a batched parameter or a grid shared across a batch;
+``CUDAKernels._needs_broadcast`` detects both and calls in here instead, where
+CuPy's own broadcasting applies.
+
+The two must agree on every kernel they both provide. What checks that is
+``tests/integration/test_broadcasting.py``: on CUPY the batched run takes this
+path and the individual runs take the raw one.
+"""
+
 import cupy as cp
 
 

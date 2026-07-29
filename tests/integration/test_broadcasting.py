@@ -19,7 +19,7 @@ here rather than skipping, so the four implementations cannot drift apart:
 
 import numpy as np
 import pytest
-from NLSE import NLSE
+from NLSE import CNLSE, NLSE, CNLSE_1d
 from NLSE.backends import get_backend, list_available_backends
 
 PRECISION_COMPLEX = np.complex64
@@ -246,3 +246,134 @@ def test_any_batch_size_matches_individual_runs(backend_name, count, with_potent
             atol=1e-5 * float(np.max(np.abs(expected))),
             err_msg=f"{backend_name}: batch of {count}, slice {index} differs",
         )
+
+
+# ---------------------------------------------------------------------------
+# Coupled solvers
+# ---------------------------------------------------------------------------
+# A coupled field carries a component axis before the grid axes, so a batch of
+# them is one axis further out. Nothing above tests this: make_solver builds
+# NLSE, so every check so far runs on a single-component field.
+
+COUPLED_BASE = {
+    "power": 1.05,
+    "window": WINDOW,
+    "n12": -1e-10,
+    "L": 10e-3,
+    "Isat": 10e4,
+}
+# Backends whose coupled kernels take one field of exactly the coupled rank.
+COUPLED_BATCH_BACKENDS = [
+    b for b in AVAILABLE_BACKENDS if b not in CNLSE._no_coupled_batch_backends
+]
+COUPLED_NO_BATCH = [
+    b for b in AVAILABLE_BACKENDS if b in CNLSE._no_coupled_batch_backends
+]
+
+
+def make_coupled(cls, backend_name, n2):
+    """Build a small coupled solver, 1D or 2D."""
+    kwargs = dict(COUPLED_BASE, alpha=0.0, n2=n2, V=None, NX=N, backend=backend_name)
+    if cls is CNLSE:
+        kwargs["NY"] = N
+    return cls(**kwargs)
+
+
+def coupled_field(simu, cls):
+    """Return a two-component input field with unequal components."""
+    if cls is CNLSE:
+        profile = np.exp(-(simu.XX**2 + simu.YY**2) / WAIST**2)
+    else:
+        profile = np.exp(-(simu.X**2) / WAIST**2)
+    return np.array([profile, 0.5 * profile]).astype(PRECISION_COMPLEX)
+
+
+COUPLED = [(CNLSE, (N, N)), (CNLSE_1d, (N,))]
+COUPLED_IDS = ["CNLSE", "CNLSE_1d"]
+
+
+@pytest.mark.parametrize("backend_name", COUPLED_BATCH_BACKENDS)
+@pytest.mark.parametrize("method", ["split_step", "RK4"])
+@pytest.mark.parametrize("cls,grid", COUPLED, ids=COUPLED_IDS)
+def test_coupled_batch_matches_individual_runs(backend_name, method, cls, grid):
+    """Each slice of a batched coupled run must equal that run on its own."""
+    probe = make_coupled(cls, backend_name, N2_VALUES[0])
+    field = coupled_field(probe, cls)
+
+    expected = [
+        propagate(make_coupled(cls, backend_name, n2), field, method)
+        for n2 in N2_VALUES
+    ]
+
+    batched = make_coupled(
+        cls, backend_name, N2_VALUES.reshape((COUNT, 1, *(1,) * len(grid)))
+    )
+    got = propagate(batched, np.broadcast_to(field, (COUNT, 2, *grid)).copy(), method)
+
+    assert got.shape == (COUNT, 2, *grid), (
+        f"a batch of {COUNT} coupled fields came back as {got.shape}"
+    )
+    for i in range(COUNT):
+        scale = float(np.max(np.abs(expected[i])))
+        np.testing.assert_allclose(
+            got[i],
+            expected[i],
+            rtol=2e-5,
+            atol=2e-5 * scale,
+            err_msg=f"{backend_name}/{cls.__name__}/{method}: slice {i} differs",
+        )
+
+
+@pytest.mark.parametrize("backend_name", COUPLED_BATCH_BACKENDS)
+@pytest.mark.parametrize("cls,grid", COUPLED, ids=COUPLED_IDS)
+def test_a_coupled_batch_keeps_the_components_apart(backend_name, cls, grid):
+    """The batch axis must not be mistaken for the component axis.
+
+    Indexing a coupled array at axis 0 selects a component when there is no
+    batch and a simulation when there is. With equal components a swap is
+    invisible, so the two here differ by a factor of two.
+    """
+    probe = make_coupled(cls, backend_name, N2_VALUES[0])
+    field = coupled_field(probe, cls)
+    batched = make_coupled(
+        cls, backend_name, N2_VALUES.reshape((COUNT, 1, *(1,) * len(grid)))
+    )
+    got = propagate(
+        batched, np.broadcast_to(field, (COUNT, 2, *grid)).copy(), "split_step"
+    )
+
+    for i in range(COUNT):
+        power1 = float(np.sum(np.abs(got[i, 0]) ** 2))
+        power2 = float(np.sum(np.abs(got[i, 1]) ** 2))
+        assert power1 > power2, (
+            f"simulation {i}: component 1 should carry the larger power "
+            f"({power1:.3e} vs {power2:.3e})"
+        )
+
+
+@pytest.mark.parametrize("backend_name", COUPLED_NO_BATCH)
+@pytest.mark.parametrize("cls,grid", COUPLED, ids=COUPLED_IDS)
+def test_backends_without_coupled_batching_refuse_it(backend_name, cls, grid):
+    """Refusing is the requirement; returning a reshaped array silently is not.
+
+    ``CNLSE._no_coupled_batch_backends`` is what keeps the tests above off
+    these backends, so it has to match what the solvers do.
+    """
+    probe = make_coupled(cls, backend_name, N2_VALUES[0])
+    field = coupled_field(probe, cls)
+    batched = make_coupled(
+        cls, backend_name, N2_VALUES.reshape((COUNT, 1, *(1,) * len(grid)))
+    )
+    with pytest.raises(NotImplementedError, match=r"[Bb]roadcasting"):
+        propagate(
+            batched, np.broadcast_to(field, (COUNT, 2, *grid)).copy(), "split_step"
+        )
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+@pytest.mark.parametrize("cls,grid", COUPLED, ids=COUPLED_IDS)
+def test_an_unbatched_coupled_run_is_never_refused(backend_name, cls, grid):
+    """The guard must not catch ordinary single runs on any backend."""
+    simu = make_coupled(cls, backend_name, N2_VALUES[0])
+    got = propagate(simu, coupled_field(simu, cls), "split_step")
+    assert got.shape == (2, *grid)

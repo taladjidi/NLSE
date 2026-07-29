@@ -8,10 +8,10 @@ from ..utils import __BACKEND__, __CUPY_AVAILABLE__, __PYOPENCL_AVAILABLE__
 from .nlse import NLSE
 
 if __CUPY_AVAILABLE__:
-    import cupy as cp
+    pass
 
 if __PYOPENCL_AVAILABLE__:
-    from pyopencl import array as cla
+    pass
 
 
 class CNLSE(NLSE):
@@ -110,68 +110,10 @@ class CNLSE(NLSE):
         self.propagator1 = None
         self.propagator2 = None
 
-    def _prepare_output_array(
-        self, E: np.ndarray, normalize: bool
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Prepare the output arrays depending on __BACKEND__.
-
-        Prepares the A and A_sq arrays to store the field and its modulus.
-
-        Parameters
-        ----------
-        E : np.ndarray
-            Input array.
-        normalize : bool
-            Normalize the field to the total power.
-
-        Returns
-        -------
-        A : np.ndarray
-            Output field array.
-        A_sq : np.ndarray
-            Output field modulus squared array.
-        """
-        puiss_arr = np.array([self.power, self.power2], dtype=E.dtype)
-        A = self._backend.allocate_field(E.shape, E.dtype)
-        A_sq = self._backend.allocate_real_field(E.shape, E.real.dtype)
-        if self._backend.name == "CUPY":
-            E = cp.asarray(E)
-            puiss_arr = cp.array(puiss_arr)
-        if normalize:
-            # normalization of the field (use contiguous formula)
-            match self._backend.name:
-                case "CUPY" | "CPU":
-                    arr = (E * E.conj()).real * self._norm_grid_factor
-                    integral = arr.sum(axis=self._last_axes)
-                    integral = integral * self._norm_constant
-                    E_00 = (puiss_arr / integral) ** 0.5
-                case "CL":
-                    arr = (E * E.conj()).real * self._norm_grid_factor
-                    integral = arr.sum(axis=self._last_axes)
-                    integral = integral * self._norm_constant
-                    E_00 = (puiss_arr / integral) ** 0.5
-                    E_00 = cla.to_device(self._backend.queue, E_00.astype(E.dtype))
-                    E = cla.to_device(self._backend.queue, E.astype(E.dtype))
-                case "MLX":
-                    E_np = E if isinstance(E, np.ndarray) else self._backend.to_numpy(E)
-                    arr = (E_np * E_np.conj()).real * self._norm_grid_factor
-                    integral = arr.sum(axis=self._last_axes)
-                    integral = integral * self._norm_constant
-                    E_00 = (puiss_arr / integral) ** 0.5
-                    result = np.zeros_like(E_np)
-                    result[0] = E_00[0] * E_np[0]
-                    result[1] = E_00[1] * E_np[1]
-                    return self._backend.from_numpy(result.astype(E_np.dtype)), A_sq
-            A[0] = E_00[0] * E[0]
-            A[1] = E_00[1] * E[1]
-        else:
-            if self._backend.name == "CL":
-                E = cla.to_device(self._backend.queue, E)
-            if self._backend.name == "MLX":
-                A = self._backend.from_numpy(E)
-            else:
-                A[:] = E
-        return A, A_sq
+    @property
+    def _norm_target(self) -> np.ndarray:
+        """Normalize each component to its own power."""
+        return np.array([self.power, self.power2])
 
     def _propagator_cache_key(self, dtype: np.dtype, delta_z: float) -> tuple:
         """Return cache key for coupled propagator."""
@@ -207,8 +149,8 @@ class CNLSE(NLSE):
         """
         rates = super()._energy_rates(A)
         A_np = np.asarray(self._backend.to_numpy(A))
-        w1 = np.abs(A_np[0]) ** 2
-        w2 = np.abs(A_np[1]) ** 2
+        w1 = np.abs(A_np[self._component(0)]) ** 2
+        w2 = np.abs(A_np[self._component(1)]) ** 2
         t1, t2 = float(np.sum(w1)), float(np.sum(w2))
         if t1 == 0 and t2 == 0:
             return rates
@@ -272,6 +214,25 @@ class CNLSE(NLSE):
         super()._precompute_step_constants(V, precision)
         self._V2_scaled = None if V is None else V * self._k2_half
 
+    def _component(self, i: int) -> tuple:
+        """Return the index selecting component ``i`` of a coupled array.
+
+        The component axis sits just before the grid axes, so it is counted
+        from the end: a 1D pair is (2, NX) and a 2D pair (2, NY, NX), and
+        either may carry leading batch axes.
+
+        Parameters
+        ----------
+        i : int
+            Component, 0 or 1.
+
+        Returns
+        -------
+        tuple
+            Index tuple for ``A[...]``.
+        """
+        return (..., i) + (slice(None),) * len(self._last_axes)
+
     def _take_components(self, A: np.ndarray) -> tuple:
         """Take the components of the field.
 
@@ -285,8 +246,8 @@ class CNLSE(NLSE):
         tuple
             Tuple of the two components.
         """
-        A1 = A[..., 0, :, :]
-        A2 = A[..., 1, :, :]
+        A1 = A[self._component(0)]
+        A2 = A[self._component(1)]
 
         # GPU backends don't support offset arrays - make contiguous copies
         if self._backend.is_device_backend:
@@ -295,6 +256,63 @@ class CNLSE(NLSE):
                 A2 = A2.copy()
 
         return A1, A2
+
+    def _is_batched(self, A: np.ndarray, params: tuple = ()) -> bool:
+        """Whether this run carries a batch, of fields or of parameters.
+
+        An unbatched coupled field is one component axis plus the grid axes;
+        anything above that is a batch of simulations. A parameter given per
+        simulation is the other kind, and either rules out a kernel that
+        expects scalars and one field.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            The coupled field.
+        params : tuple
+            Parameters a kernel would take as scalars. Pass only those; a
+            grid-shaped argument such as V is array-valued either way.
+
+        Returns
+        -------
+        bool
+            True if a batch is present.
+        """
+        if A.ndim > len(self._last_axes) + 1:
+            return True
+        return any(getattr(p, "ndim", 0) > 0 for p in params)
+
+    # Backends whose coupled kernels take one field of exactly the coupled
+    # rank. The generic path they fall back to is not batched-clean either,
+    # so a batched coupled run is refused rather than quietly reshaped.
+    _no_coupled_batch_backends = ("CL", "MLX")
+
+    def _check_batch_support(self, E_in: np.ndarray) -> None:
+        """Refuse a batched coupled run where the kernels cannot serve one."""
+        if self._backend.name not in self._no_coupled_batch_backends:
+            return
+        params = (self.n2, self.n12, self.n22, self.alpha, self.alpha2)
+        if self._is_batched(E_in, params):
+            raise NotImplementedError(
+                f"Broadcasting a coupled solver over a batch is not supported "
+                f"with the {self._backend.name} backend. Use CPU or CUPY."
+            )
+
+    def _set_components(self, A: np.ndarray, A1: np.ndarray, A2: np.ndarray) -> None:
+        """Write the two components back into ``A``.
+
+        The counterpart to ``_take_components``, which returns copies on the
+        device backends: without this the components are computed and dropped.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            Coupled array to write into, modified in place.
+        A1, A2 : np.ndarray
+            The components.
+        """
+        A[self._component(0)] = A1
+        A[self._component(1)] = A2
 
     def _allocate_rk4_buffers(self, A: np.ndarray, method: str) -> None:
         """Pre-allocate scratch buffers for coupled RK4 stepper."""
@@ -432,8 +450,7 @@ class CNLSE(NLSE):
                 Isat1,
             )
 
-        k[0] = k1
-        k[1] = k2
+        self._set_components(k, k1, k2)
 
         return k
 
@@ -585,7 +602,9 @@ class CNLSE(NLSE):
 
         kernels = self._backend.kernels
 
-        # Fused fast path (CL, MLX): zero component copies
+        # Fused fast path (CL, MLX): zero component copies. It takes one field
+        # of exactly the coupled rank; _check_batch_support has already turned
+        # away the batched runs it could not serve.
         if self._backend.has_fused_coupled_split_step and self.nl_length == 0:
             dz = delta_z / 2 if precision == "double" else delta_z
             prop_fft = self._propagator_fft
@@ -620,8 +639,7 @@ class CNLSE(NLSE):
             A1, A2 = self._apply_nl_prop_c(
                 A1, A2, A_sq_1, A_sq_2, delta_z / 2, *nl_args
             )
-            A[0] = A1
-            A[1] = A2
+            self._set_components(A, A1, A2)
 
         # Linear propagation in Fourier domain
         A = self._apply_linear_step(A, propagator, plans)
@@ -637,8 +655,7 @@ class CNLSE(NLSE):
                 A1, A2, delta_z, self.omega / 2
             )
 
-        A[0] = A1
-        A[1] = A2
+        self._set_components(A, A1, A2)
         return A
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
