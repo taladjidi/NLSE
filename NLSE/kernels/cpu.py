@@ -662,8 +662,7 @@ def _rk4_nl_rhs_c_v(
 # grid with the njit kernel, so this costs a few extra dispatches per step
 # rather than giving up numba. It also keeps the fields and the parameters
 # consistently sliced, which matters for apply_propagator: a batched field
-# against a shared propagator used to index past the end of the propagator
-# and silently return NaN and garbage for every slice after the first.
+# against a shared propagator must reuse the propagator, not index past it.
 
 
 def _batch_len(args, scalar_positions):

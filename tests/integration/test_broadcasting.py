@@ -28,10 +28,8 @@ AVAILABLE_BACKENDS = list_available_backends()
 
 N = 32
 COUNT = 3
-# A batch of one is the edge case: a (1, 1, 1) parameter used to slip past the
-# "is this batched?" test on CPU and CL because it holds a single element, and
-# reached numba as a raw array ("No implementation of function imul found for
-# signature (complex64, array(complex128, 3d, C))").
+# A batch of one is the edge case: a (1, 1, 1) parameter holds a single element
+# and can pass a naive "is this batched?" test, reaching numba as a raw array.
 BATCH_SIZES = [1, 2, 3]
 WAIST = 2.23e-3
 WINDOW = 4 * WAIST
@@ -203,8 +201,7 @@ def test_a_shared_grid_is_not_indexed_past_its_end(backend_name):
 def test_every_available_backend_is_covered():
     """No backend may quietly drop out of the matrix above.
 
-    Broadcasting used to be CPU- and CUPY-only, with CL and MLX skipping.
-    The skips hid that MLX had worked all along and that CL was reading out
+    A skipped backend hides both a backend that works and one that reads out
     of bounds, so absence of coverage is itself the failure.
     """
     assert AVAILABLE_BACKENDS, "no backends available to test"

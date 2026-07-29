@@ -1,14 +1,7 @@
-"""The example scripts must not write into whatever directory they are run from.
+"""Example scripts must write through ``examples/_output.output_path``.
 
-They all used to: ``np.save("benchmarks_times.npy", ...)``,
-``fig.savefig("benchmarks.svg")``. Run from the repository root, as the README
-tells you to, they dropped their output among the sources. The .gitignore had
-grown a pattern per file to hide the result, including a repo-wide ``*.npy``
-that would have hidden real data as readily as a stray timing array.
-
-They go through ``examples/_output.output_path`` now. This test is what keeps
-the next script from reintroducing the bare filename, since nothing else runs
-these files.
+A bare filename lands in whatever directory the script was run from. Nothing
+else runs these files, so this is the only check on them.
 """
 
 import ast
@@ -42,7 +35,7 @@ def test_there_are_scripts_to_check():
 
 @pytest.mark.parametrize("script", SCRIPTS, ids=lambda p: p.name)
 def test_output_goes_through_output_path(script):
-    """A literal filename here is a file dropped in the user's directory."""
+    """A literal filename is written to the caller's working directory."""
     tree = ast.parse(script.read_text(), filename=str(script))
     offenders = [
         f"{script.name}:{line} {func}({ast.unparse(arg)})"
@@ -56,7 +49,7 @@ def test_output_goes_through_output_path(script):
 
 @pytest.mark.parametrize("script", SCRIPTS, ids=lambda p: p.name)
 def test_a_script_that_writes_imports_the_helper(script):
-    """And it has to be *that* helper, not a local of the same name."""
+    """And it must be that helper, not a local of the same name."""
     source = script.read_text()
     tree = ast.parse(source, filename=str(script))
     if not writes_in_module(tree):
@@ -67,7 +60,7 @@ def test_a_script_that_writes_imports_the_helper(script):
 
 
 def test_the_helper_stays_out_of_the_working_directory(tmp_path, monkeypatch):
-    """The point of the helper: the path does not depend on the cwd."""
+    """The resolved path does not depend on the working directory."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.syspath_prepend(str(EXAMPLES))
     from _output import output_path

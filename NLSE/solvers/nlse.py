@@ -74,7 +74,6 @@ class NLSE:
     _propagator_fft: Any = None
 
     # All three, so nothing has to know which backends are worth asking about.
-    # MLX was missing, which is how the test conftest came to skip it.
     __CUPY_AVAILABLE__ = __CUPY_AVAILABLE__
     __PYOPENCL_AVAILABLE__ = __PYOPENCL_AVAILABLE__
     __MLX_AVAILABLE__ = __MLX_AVAILABLE__
@@ -1018,10 +1017,9 @@ class NLSE:
         eigenvalue — dispersion, potential, interaction and loss — and they
         add.
 
-        This used to count dispersion alone, which is almost never the
-        largest. With a potential it was wrong by orders of magnitude, since V
-        is scaled by k/2, so RK4 ran outside its stability region and diverged
-        to NaN for any potential at all.
+        Dispersion alone is almost never the largest: V is scaled by k/2, so
+        omitting it puts RK4 outside its stability region whenever there is a
+        potential.
 
         The absorption of a complex potential counts here, unlike in
         ``_split_step_max_dz``: split-step applies it exactly through the
@@ -1058,11 +1056,9 @@ class NLSE:
         ``arg_imag = (g |A|^2 sat + V) dz`` — so both contribute, and their
         energies add.
 
-        The potential used to be left out, on the grounds that it is applied
-        exactly through the exponential. Exact is not free: what matters is
-        the phase the step imprints, however exactly it was computed. Since V
-        is scaled by k/2 ~ 4e6, omitting it made the limit meaningless for
-        anything with a potential.
+        The potential counts even though the exponential applies it exactly:
+        what limits the step is the phase imprinted, however exactly it was
+        computed. Scaled by k/2 ~ 4e6, it dominates.
 
         The kinetic term is deliberately absent, and that is the real
         difference from ``_rk4_max_dz``. Split-step applies the linear part

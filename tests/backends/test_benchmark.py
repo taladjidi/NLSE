@@ -15,9 +15,9 @@ class TestCacheDir:
     def test_cache_dir_outside_package(self):
         """Cache dir must not be under the NLSE package directory.
 
-        It used to be <package>/.cache, which fails on a read-only install
-        and, on uninstall, leaves a directory behind that Python then
-        imports as an empty namespace package.
+        A cache inside the package fails on a read-only install and, on
+        uninstall, leaves a directory Python then imports as an empty
+        namespace package.
         """
         import NLSE
 

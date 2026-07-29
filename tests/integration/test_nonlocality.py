@@ -47,11 +47,10 @@ def test_unsupported_backends_refuse_nonlocality(backend):
 def test_an_unresolvable_nl_length_falls_back_to_local(backend):
     """Below one grid cell there is no non-locality to model.
 
-    The kernel spans ``nl_length // delta_X`` cells, so on a coarser grid it is
-    a single point: the identity, which is a local run that still pays for a
-    convolution every step. It used to do exactly that, silently. Now it warns
-    and runs local -- which also means the backends without a convolution
-    kernel can take it, since there is nothing left for them to implement.
+    The kernel spans ``nl_length // delta_X`` cells, so on a coarser grid it
+    is a single point: the identity, and a local run paying for a convolution
+    every step. The solver warns and drops it instead, which also lets the
+    backends without a convolution kernel accept it.
     """
     with pytest.warns(UserWarning, match="below one grid cell"):
         simu = NLSE(

@@ -1,12 +1,7 @@
 """Where the example scripts put what they produce.
 
-They used to write to the current working directory, so running one from the
-repository root dropped figures and timing arrays among the sources. The
-.gitignore grew a pattern per file to hide them, including a repo-wide
-``*.npy`` that would have hidden real data too.
-
-They write here instead, next to the scripts and independent of where they
-are run from.
+Resolved from this file's location, so it does not depend on the working
+directory the script is run from.
 """
 
 from pathlib import Path

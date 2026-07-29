@@ -577,12 +577,10 @@ class TestCNLSEvsReferenceExtended:
         float64, and with a complex64 field it needs no fp64 support, so
         every backend runs it.
 
-        This used to skip twice over: once for backends reporting no fp64,
-        which was irrelevant to a complex64 field, and once when the result
-        came back NaN, blamed on a "driver limitation". The NaN was really a
-        dtype mismatch — precision="double" built a complex128 propagator for
-        a complex64 field, and the GPU kernels pick single or double
-        precision from the field, then read the propagator with it.
+        Skipping it on fp64 support would be wrong, and a NaN result is a
+        real failure rather than a driver limitation: the GPU kernels pick
+        their precision from the field, then read the propagator with it, so
+        a complex128 propagator under a complex64 field returns NaN.
         """
         NX = NY = 64
 

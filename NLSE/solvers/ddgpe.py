@@ -228,9 +228,8 @@ class DDGPE(CNLSE):
         """Override the couplings, which DDGPE gives the kernels unconverted.
 
         CNLSE scales them by ``k / 2 * c * epsilon_0``, and DDGPE's ``k`` comes
-        from a wavelength it supplies only to satisfy the base constructor. Left
-        at CNLSE's, the interaction rate the step limits read came out about
-        1e26 times too large and collapsed the step to nothing.
+        from a wavelength it supplies only to satisfy the base constructor, so
+        that conversion would inflate the interaction rate by ~1e26.
         """
         return {
             **super()._step_constants(),

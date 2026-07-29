@@ -1,13 +1,9 @@
 """The documentation's code examples have to work.
 
-Every python block in the README and in mkdocs-documentation/ was broken or
-stale at some point: ``backend="GPU"``, which is not a backend name and raises;
-float64 fields where ``out_field`` asserts complex; ``simu.delta_z`` after the
-step became an argument. None of it was caught, because nothing ran the docs.
-
-Two checks, because the blocks are not all the same kind. One a reader could
-copy and run is executed. One that illustrates an API shape, and leans on names
-defined around it, is only read for API that no longer exists.
+Two checks, because the blocks are not all the same kind. A block a reader
+could copy and run is executed. A block that illustrates an API shape, and
+leans on names defined around it, is only scanned for API that no longer
+exists.
 """
 
 import ast
@@ -22,9 +18,7 @@ DOC_FILES = [
     *sorted((ROOT / "mkdocs-documentation" / "docs").glob("*.md")),
     ROOT / "README.md",
 ]
-# Notebooks are documentation too, and the tutorial is a page in the nav. It
-# had drifted furthest of anything here -- still using `puiss`, renamed to
-# `power` long before this -- precisely because nothing read it.
+# Notebooks are documentation too, and the tutorial is a page in the nav.
 NOTEBOOKS = [
     p
     for p in sorted(ROOT.rglob("*.ipynb"))

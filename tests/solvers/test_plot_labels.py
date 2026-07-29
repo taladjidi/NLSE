@@ -1,14 +1,12 @@
 """Each solver plots its own quantity, in its own units.
 
-``plot_field`` was written out in full for six solvers, ~50 lines of matplotlib
-each, differing only in what the density means and what to call it: an optical
-intensity in W/cm^2 for NLSE and CNLSE, a particle density for GPE and DDGPE,
-propagation distance in metres against time in picoseconds, psi_1/psi_2 against
-psi_x/psi_c. The plotting is shared now and the differences are declared.
+``plot_field`` is shared; the differences are declared per solver as
+``_plot_density_scale`` and friends. An optical intensity in W/cm^2 for NLSE
+and CNLSE, a particle density for GPE and DDGPE; distance in metres, or time
+in picoseconds for DDGPE; psi_1/psi_2 against psi_x/psi_c.
 
-Which means the declarations have to be checked. The tests that existed only
-asserted plot_field ran, so a solver drawing the wrong quantity under the wrong
-label would have passed.
+Asserting only that ``plot_field`` runs would pass a solver drawing the wrong
+quantity under the wrong label, so these check the declarations.
 """
 
 import matplotlib

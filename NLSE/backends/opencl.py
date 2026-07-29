@@ -161,9 +161,7 @@ class OpenCLBackend(Backend):
     def supports_double_precision(self) -> bool:
         """Check OpenCL device double precision support.
 
-        Asked of this backend's own device. It used to come from a module
-        global that utils.py filled in by creating a context at import time,
-        so merely importing NLSE took a device handle whether or not anything
-        was going to use OpenCL.
+        Asked of this backend's own device, so importing NLSE does not need
+        to create a context to find out.
         """
         return bool(self._context.devices[0].double_fp_config)

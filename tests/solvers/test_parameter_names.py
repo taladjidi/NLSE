@@ -2,13 +2,9 @@
 
 Both solve NLSE's equation with different physics attached to each term, so
 they reuse its storage: a mass in the wavenumber slot, an interaction energy in
-n2, a total time in L. The physical names are views onto that one storage.
-
-They used to be a second copy, assigned once in __init__. Two things followed.
-Assigning the documented name did nothing -- ``simu.gamma = ...`` left the
-solver running on ``alpha`` -- and DDGPE's ``g`` reported the negative of what
-the caller passed, because the constructor stores ``-g`` for the kernels and
-the copy was taken after that.
+n2, a total time in L. The physical names are ``Parameter`` views onto that one
+storage, so reading and assigning either name reaches the same value, and the
+scaled ones (DDGPE's ``g``, GPE's ``sat``) round-trip.
 """
 
 import numpy as np
