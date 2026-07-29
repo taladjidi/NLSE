@@ -107,10 +107,9 @@ all: without it the backend builds the sdist and pip builds the wheel from it.
 Agreed order, so that later steps benefit from the earlier ones:
 
 1. ~~**Docs**~~ — done, `4837a8f`, and `tests/test_docs.py` now keeps them honest.
-2. **Ugliness ledger** — in progress: 13 of 17 cleared (one added).
-   Left: the mypy override (deferred to last, by request), the two in-place
-   GPU transfer helpers, `_take_components` copies, and the duplicate CUPY
-   kernel modules.
+2. **Ugliness ledger** — in progress: 14 of 17 cleared (one added).
+   Left: the mypy override (deferred to last, by request) and the two
+   in-place GPU transfer helpers.
 3. **Reassess simplification.** Only after 1 and 2: clearing the ledger will
    change what is worth simplifying, so the survey is worth redoing rather
    than planning now.
@@ -257,7 +256,7 @@ read nothing.
 
 ## Ugliness ledger (task #10)
 
-Thirteen cleared, four left. Highest value first:
+Fourteen cleared, three left. Highest value first:
 
 - **mypy checks 15% of the package.** `pyproject.toml` has an
   `ignore_errors` override for `NLSE.solvers.*` and `NLSE.kernels.*`, added in
@@ -291,10 +290,12 @@ Thirteen cleared, four left. Highest value first:
   functions, which are genuinely not part of the class surface.
 - `_send_arrays_to_gpu` / `_retrieve_arrays_from_gpu` mutate `self` in place;
   this is what let `_propagator_fft` go stale.
-- `_take_components` returns copies on GPU, so callers must remember to write
-  back `A[0] = A1; A[1] = A2`.
-- `kernels/cupy.py` (`cp.fuse`) and `kernels/cupy_kernels.py` (raw CUDA) are two
-  parallel CUPY implementations.
+- ~~`kernels/cupy.py` vs `kernels/cupy_kernels.py`~~ — not duplication. The raw
+  CUDA kernels take scalar parameters and one flat index; `cupy.py` is the
+  `cp.fuse` path `_needs_broadcast` falls back to for a batched parameter or a
+  shared grid. `cupy.py` now says so. Drift between them is what
+  `test_broadcasting.py` checks: on CUPY the batched run takes one path and
+  the individual runs the other.
 
 ### 11. nl_length falls back to local, and the docs are tested
 
@@ -371,3 +372,30 @@ Examples now write through `examples/_output.output_path` into
 `examples/output/`. This let six `.gitignore` patterns go, including a
 repo-wide `*.npy` that would have hidden real data. `tests/test_examples.py`
 holds the line; three mutations tried, three caught.
+
+### 14. Coupled solvers broadcast (needs the NVIDIA box)
+
+`CNLSE` and `CNLSE_1d` could not run a batch at all. Three places read the
+component axis as literal 0 and 1 — `_prepare_output_array`, the write-backs
+after each nonlinear step, and `_energy_rates` — so a leading batch axis made
+the solver take simulation 0 for component 0. Nothing caught it: every
+broadcasting test built `NLSE` through `make_solver`, so all of them ran on a
+single-component field. The CUPY kernels have carried broadcast fallbacks for
+`nl_prop_c` and `rk4_nl_rhs_c` all along, unreachable from above.
+
+Components go through `_component(i)`, derived from `_last_axes`, with
+`_set_components` opposite `_take_components`. That retires `CNLSE_1d`'s copy
+of `_take_components`, and a `_norm_target` hook retires `CNLSE`'s and
+`NLSE_3d`'s copies of `_prepare_output_array`.
+
+**Verified on CPU only.** CUPY takes the same generic path and its kernels
+already have the fallbacks, so it should work — that is what the NVIDIA run
+needs to confirm, `tests/integration/test_broadcasting.py`. CL and MLX use a
+fused coupled kernel that assumes one field of the coupled rank; MLX silently
+returned `(2, 3, 2, N, N)` for a batch of three. Both now refuse through
+`_check_batch_support`. **Making them broadcast is kernel work, still open.**
+
+Four mutations tried on the first pass, two caught. The two that survived —
+a shared normalization target, hidden because `power2` defaults to `power`,
+and a dropped `_set_components`, invisible on CPU where the components are
+views — now have tests of their own (`b22e93d`).
