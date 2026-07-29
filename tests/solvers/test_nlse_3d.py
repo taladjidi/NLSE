@@ -25,6 +25,9 @@ Isat = 10e4  # saturation intensity in W/m^2
 L = 1e-2
 alpha = 20
 
+# Step used wherever a test builds a propagator or takes a step by hand.
+DZ_TEST = 1e-4
+
 
 def test_build_propagator(backend) -> None:
     simu = NLSE_3d(
@@ -42,8 +45,8 @@ def test_build_propagator(backend) -> None:
         Isat=Isat,
         backend=backend,
     )
-    prop = simu._build_propagator()
-    prop_th = np.exp(-1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * simu.delta_z)
+    prop = simu._build_propagator(np.complex64, DZ_TEST)
+    prop_th = np.exp(-1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * DZ_TEST)
     prop_th *= np.exp(-1j * simu.D0 / 2 * simu.Omega**2)
     assert np.allclose(
         prop,
@@ -170,7 +173,7 @@ def test_send_arrays_to_gpu() -> None:
             Isat=Isat,
             backend="CUPY",
         )
-        simu.propagator = simu._build_propagator()
+        simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
         simu._send_arrays_to_gpu()
         assert isinstance(simu.propagator, cp.ndarray), (
             "propagator is not a cp.ndarray. (Backend GPU)"
@@ -214,7 +217,7 @@ def test_retrieve_arrays_from_gpu() -> None:
             Isat=Isat,
             backend="CUPY",
         )
-        simu.propagator = simu._build_propagator()
+        simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
         simu._send_arrays_to_gpu()
         simu._retrieve_arrays_from_gpu()
         assert isinstance(simu.propagator, np.ndarray), (
@@ -248,16 +251,15 @@ def test_split_step(backend) -> None:
         Isat=Isat,
         backend=backend,
     )
-    simu.delta_z = 0
-    simu.propagator = simu._build_propagator()
+    simu.propagator = simu._build_propagator(np.complex64, 0)
     E = np.ones((N, N, NZ), dtype=PRECISION_COMPLEX)
     A, A_sq = simu._prepare_output_array(E, normalize=False)
     simu.plans = simu._build_fft_plan(A)
-    simu.propagator = simu._build_propagator()
+    simu.propagator = simu._build_propagator(np.complex64, 0)
     if simu._backend.is_device_backend:
         simu._send_arrays_to_gpu()
     A = simu.split_step(
-        A, A_sq, simu.V, simu.propagator, simu.plans, precision="double"
+        A, A_sq, simu.V, simu.propagator, simu.plans, 0, precision="double"
     )
     np.testing.assert_allclose(
         as_numpy(simu, A),
@@ -290,8 +292,9 @@ def test_out_field(backend) -> None:
     # alpha is 20 here, so the norm is only conserved to 1e-4 over a distance
     # short enough for the (saturated) absorption to be negligible. Pin the
     # step rather than propagate over whatever the solver would choose.
-    simu.delta_z = L / 1000
-    E = simu.out_field(E0, simu.delta_z, verbose=False, plot=False, precision="single")
+    E = simu.out_field(
+        E0, L / 1000, delta_z=L / 1000, verbose=False, plot=False, precision="single"
+    )
     norm = np.sum(np.abs(E) ** 2 * simu.delta_X * simu.delta_Y * simu.delta_T)
     norm *= c * epsilon_0 / 2
     assert E.shape == (

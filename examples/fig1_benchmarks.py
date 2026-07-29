@@ -58,7 +58,6 @@ for i, size in enumerate(sizes):
             backend=backend,
         )
         simu.I_sat = Isat
-        simu.delta_z = 1e-4
         if E_0 is None:
             E_0 = np.exp(-(np.hypot(simu.XX, simu.YY) ** 2) / waist**2).astype(
                 PRECISION_COMPLEX
@@ -66,7 +65,9 @@ for i, size in enumerate(sizes):
         for m, method in enumerate(METHODS):
             for k in range(N_avg):
                 t0 = time.perf_counter()
-                simu.out_field(E_0.copy(), L, verbose=False, method=method)
+                simu.out_field(
+                    E_0.copy(), L, verbose=False, method=method, delta_z=1e-4
+                )
                 times[i, j, m, k] = time.perf_counter() - t0
                 pbar.update(1)
 pbar.close()

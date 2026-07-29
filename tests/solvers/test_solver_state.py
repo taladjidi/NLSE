@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 from NLSE import NLSE
 from NLSE.backends import get_backend, list_available_backends
+from NLSE.callbacks import adapt_delta_z
 from NLSE.solvers.nlse import DEFAULT_MIN_STEPS, DEFAULT_PHASE_PER_STEP
 
 from .helpers import as_numpy
@@ -69,14 +70,11 @@ class TestPropagatorRefresh:
         z = 4e-3
 
         reused = make_solver()
-        reused.delta_z = 1e-4
-        reused.out_field(E.copy(), z, verbose=False, plot=False)
-        reused.delta_z = 1e-5
-        got = reused.out_field(E.copy(), z, verbose=False, plot=False)
+        reused.out_field(E.copy(), z, verbose=False, plot=False, delta_z=1e-4)
+        got = reused.out_field(E.copy(), z, verbose=False, plot=False, delta_z=1e-5)
 
         fresh = make_solver()
-        fresh.delta_z = 1e-5
-        expected = fresh.out_field(E.copy(), z, verbose=False, plot=False)
+        expected = fresh.out_field(E.copy(), z, verbose=False, plot=False, delta_z=1e-5)
 
         np.testing.assert_allclose(
             got,
@@ -94,13 +92,11 @@ class TestPropagatorRefresh:
         """After a second out_field with a new delta_z, the propagator matches it."""
         E = gaussian_input()
         simu = make_solver()
-        simu.delta_z = 1e-4
-        simu.out_field(E.copy(), 2e-3, verbose=False, plot=False)
-        simu.delta_z = 1e-5
-        simu.out_field(E.copy(), 2e-3, verbose=False, plot=False)
+        simu.out_field(E.copy(), 2e-3, verbose=False, plot=False, delta_z=1e-4)
+        simu.out_field(E.copy(), 2e-3, verbose=False, plot=False, delta_z=1e-5)
 
         expected = np.exp(
-            -1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * simu.delta_z
+            -1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * 1e-5
         ).astype(np.complex64)
         np.testing.assert_allclose(
             np.asarray(simu.propagator),
@@ -116,15 +112,17 @@ class TestLinearConstruction:
     def test_zero_n2_constructor(self):
         """n2=0 must not raise; it is plain linear propagation."""
         simu = make_solver(n2=0.0)
-        assert np.isfinite(simu.delta_z), "delta_z must be finite for n2=0"
-        assert simu.delta_z > 0, "delta_z must be positive for n2=0"
+        dz = simu._default_delta_z()
+        assert np.isfinite(dz), "the derived step must be finite for n2=0"
+        assert dz > 0, "the derived step must be positive for n2=0"
 
     def test_zero_n2_propagates_linearly(self):
         """With n2=0 the field must acquire no nonlinear phase."""
         E = gaussian_input()
         simu = make_solver(n2=0.0)
-        simu.delta_z = 1e-4
-        out = simu.out_field(E.copy(), 2e-3, verbose=False, plot=False, normalize=False)
+        out = simu.out_field(
+            E.copy(), 2e-3, verbose=False, plot=False, normalize=False, delta_z=1e-4
+        )
         assert np.all(np.isfinite(out)), "linear propagation produced non-finite values"
 
     def test_zero_n2_matches_negligible_n2(self):
@@ -133,13 +131,13 @@ class TestLinearConstruction:
         z = 2e-3
 
         linear = make_solver(n2=0.0)
-        linear.delta_z = 1e-4
-        got = linear.out_field(E.copy(), z, verbose=False, plot=False, normalize=False)
+        got = linear.out_field(
+            E.copy(), z, verbose=False, plot=False, normalize=False, delta_z=1e-4
+        )
 
         almost = make_solver(n2=-1e-30)
-        almost.delta_z = 1e-4
         expected = almost.out_field(
-            E.copy(), z, verbose=False, plot=False, normalize=False
+            E.copy(), z, verbose=False, plot=False, normalize=False, delta_z=1e-4
         )
 
         np.testing.assert_allclose(
@@ -148,6 +146,78 @@ class TestLinearConstruction:
             rtol=1e-5,
             atol=1e-6 * float(np.max(np.abs(expected))),
             err_msg="n2=0 disagrees with a negligible n2",
+        )
+
+
+class TestAdaptiveStep:
+    """A callback changes the step by returning it, and the propagator follows.
+
+    It used to change it by assigning ``simu.delta_z``. The nonlinear step
+    picked that up, because it read the attribute every step, but the
+    propagator did not: it was built once from the original step and never
+    rebuilt. The linear half of every subsequent step therefore advanced by
+    the wrong distance, silently.
+    """
+
+    Z = 2e-3
+    DZ = 1e-5
+
+    def run(self, simu, **kwargs):
+        """Propagate with the adaptive callback, returning the recorded steps."""
+        steps = []
+        simu.out_field(
+            gaussian_input(),
+            self.Z,
+            delta_z=self.DZ,
+            verbose=False,
+            plot=False,
+            callback=adapt_delta_z,
+            callback_args=(5, steps),
+            **kwargs,
+        )
+        return steps
+
+    def test_the_callback_changes_the_step(self):
+        """Precondition: the callback must actually move the step."""
+        simu = make_solver()
+        steps = self.run(simu)
+        assert len(set(steps)) > 1, (
+            "the adaptive callback never changed the step, so the checks "
+            "below would hold trivially"
+        )
+
+    def test_the_propagator_tracks_the_adapted_step(self):
+        """The propagator must be rebuilt whenever the step changes."""
+        simu = make_solver()
+        self.run(simu)
+        expected = np.exp(
+            -1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * simu._current_delta_z
+        ).astype(PRECISION_COMPLEX)
+        np.testing.assert_allclose(
+            as_numpy(simu, simu.propagator),
+            expected,
+            rtol=1e-5,
+            err_msg=(
+                "the propagator does not correspond to the step the run ended "
+                "on, so the linear step advanced by a different distance from "
+                "the nonlinear one"
+            ),
+        )
+
+    def test_an_adapted_run_stays_finite(self):
+        """The whole thing must still produce a usable field."""
+        simu = make_solver()
+        out = simu.out_field(
+            gaussian_input(),
+            self.Z,
+            delta_z=self.DZ,
+            verbose=False,
+            plot=False,
+            callback=adapt_delta_z,
+            callback_args=(5, []),
+        )
+        assert np.all(np.isfinite(as_numpy(simu, out))), (
+            "an adaptively stepped run produced non-finite values"
         )
 
 
@@ -163,9 +233,13 @@ class TestDefaultStep:
     Z = 2e-3
 
     def propagate(self, simu, **kwargs):
-        """Propagate the module's Gaussian and return the step that was used."""
+        """Propagate the module's Gaussian and return the step that was used.
+
+        Deliberately passes no delta_z: what is under test is the one the
+        solver derives.
+        """
         simu.out_field(gaussian_input(), self.Z, verbose=False, plot=False, **kwargs)
-        return simu.delta_z
+        return simu._current_delta_z
 
     def test_the_step_hits_the_target_phase_per_step(self):
         """Where the nonlinearity binds, it sets the step and nothing else."""
@@ -211,21 +285,22 @@ class TestDefaultStep:
             f"though they are the same problem"
         )
 
-    def test_a_step_the_caller_set_is_kept(self):
-        """An explicit delta_z must survive the run, and the next one."""
+    def test_a_step_the_caller_passed_is_used(self):
+        """An explicit delta_z must be used as given, and only for that run."""
         simu = make_solver()
-        simu.delta_z = 1e-6
-        assert self.propagate(simu) == 1e-6, "the caller's step was overridden"
-        assert self.propagate(simu) == 1e-6, (
-            "the caller's step was overridden on a second run"
+        assert self.propagate(simu, delta_z=1e-6) == 1e-6, (
+            "the caller's step was overridden"
+        )
+        assert self.propagate(simu) != 1e-6, (
+            "the step from the previous call carried over into the next one, "
+            "so it is still state on the solver rather than an argument"
         )
 
-    def test_a_step_the_caller_set_is_still_capped(self):
-        """Overriding is allowed only inside the region of convergence."""
+    def test_a_step_the_caller_passed_is_still_capped(self):
+        """Passing a step is allowed only inside the region of convergence."""
         simu = make_solver(n2=-1.6e-7)
-        simu.delta_z = 1.0
         with pytest.warns(UserWarning, match="exceeds"):
-            used = self.propagate(simu)
+            used = self.propagate(simu, delta_z=1.0)
         assert used < 1.0, "a step past the accuracy limit was left alone"
 
     def test_the_step_responds_to_the_field_not_just_the_parameters(self):
@@ -244,7 +319,7 @@ class TestDefaultStep:
         )
         broad.out_field(E_broad, self.Z, verbose=False, plot=False)
         narrow.out_field(E_narrow, self.Z, verbose=False, plot=False)
-        assert narrow.delta_z < broad.delta_z, (
+        assert narrow._current_delta_z < broad._current_delta_z, (
             "a tighter beam of the same power concentrates the intensity and "
             "should shorten the step, but the step did not move"
         )
@@ -259,12 +334,12 @@ class TestNonlinearityCutoff:
         z = 4 * L
 
         cut = make_solver(L=L)
-        cut.delta_z = L / 20
-        got = cut.out_field(E.copy(), z, verbose=False, plot=False)
+        got = cut.out_field(E.copy(), z, verbose=False, plot=False, delta_z=L / 20)
 
         never_cut = make_solver(L=10 * z)
-        never_cut.delta_z = L / 20
-        full = never_cut.out_field(E.copy(), z, verbose=False, plot=False)
+        full = never_cut.out_field(
+            E.copy(), z, verbose=False, plot=False, delta_z=L / 20
+        )
 
         assert not np.allclose(got, full, rtol=1e-3), (
             "Propagating past L gave the same result as a fully nonlinear run: "
@@ -278,22 +353,22 @@ class TestNonlinearityCutoff:
         z_total = 3 * L
 
         one_shot = make_solver(L=L)
-        one_shot.delta_z = dz
-        got = one_shot.out_field(E.copy(), z_total, verbose=False, plot=False)
+        got = one_shot.out_field(
+            E.copy(), z_total, verbose=False, plot=False, delta_z=dz
+        )
 
         # Stage 1: nonlinear up to L. Stage 2: linear for the remainder,
         # feeding stage 1's output back in unnormalized.
         stage1 = make_solver(L=L)
-        stage1.delta_z = dz
-        mid = stage1.out_field(E.copy(), L, verbose=False, plot=False)
+        mid = stage1.out_field(E.copy(), L, verbose=False, plot=False, delta_z=dz)
         stage2 = make_solver(n2=0.0, L=L)
-        stage2.delta_z = dz
         expected = stage2.out_field(
             mid.astype(PRECISION_COMPLEX),
             z_total - L,
             verbose=False,
             plot=False,
             normalize=False,
+            delta_z=dz,
         )
 
         np.testing.assert_allclose(
@@ -308,12 +383,12 @@ class TestNonlinearityCutoff:
         """Propagating only up to L must be untouched by the cutoff."""
         E = gaussian_input()
         cut = make_solver(L=L)
-        cut.delta_z = L / 20
-        got = cut.out_field(E.copy(), L, verbose=False, plot=False)
+        got = cut.out_field(E.copy(), L, verbose=False, plot=False, delta_z=L / 20)
 
         never_cut = make_solver(L=1e3 * L)
-        never_cut.delta_z = L / 20
-        expected = never_cut.out_field(E.copy(), L, verbose=False, plot=False)
+        expected = never_cut.out_field(
+            E.copy(), L, verbose=False, plot=False, delta_z=L / 20
+        )
 
         np.testing.assert_allclose(
             got, expected, rtol=1e-6, err_msg="z <= L should be fully nonlinear"
@@ -329,8 +404,9 @@ class TestNonlinearityCutoff:
         z = 3 * L
 
         fast = make_solver(L=L)
-        fast.delta_z = L / 20
-        without_callback = fast.out_field(E.copy(), z, verbose=False, plot=False)
+        without_callback = fast.out_field(
+            E.copy(), z, verbose=False, plot=False, delta_z=L / 20
+        )
 
         seen = []
 
@@ -338,9 +414,8 @@ class TestNonlinearityCutoff:
             seen.append(i)
 
         slow = make_solver(L=L)
-        slow.delta_z = L / 20
         with_callback = slow.out_field(
-            E.copy(), z, verbose=False, plot=False, callback=record
+            E.copy(), z, verbose=False, plot=False, callback=record, delta_z=L / 20
         )
 
         assert seen, "callback never fired"
@@ -356,8 +431,7 @@ class TestNonlinearityCutoff:
         """The coupling attributes must survive a past-L run unchanged."""
         E = gaussian_input()
         simu = make_solver(L=L)
-        simu.delta_z = L / 20
-        simu.out_field(E.copy(), 3 * L, verbose=False, plot=False)
+        simu.out_field(E.copy(), 3 * L, verbose=False, plot=False, delta_z=L / 20)
         assert simu.n2 == n2, "n2 was not restored after propagating past L"
 
     def test_zero_L_disables_the_cutoff(self):
@@ -368,12 +442,12 @@ class TestNonlinearityCutoff:
         """
         E = gaussian_input()
         simu = make_solver(L=0.0)
-        simu.delta_z = L / 20
-        got = simu.out_field(E.copy(), 2 * L, verbose=False, plot=False)
+        got = simu.out_field(E.copy(), 2 * L, verbose=False, plot=False, delta_z=L / 20)
 
         nonlinear = make_solver(L=1e3 * L)
-        nonlinear.delta_z = L / 20
-        expected = nonlinear.out_field(E.copy(), 2 * L, verbose=False, plot=False)
+        expected = nonlinear.out_field(
+            E.copy(), 2 * L, verbose=False, plot=False, delta_z=L / 20
+        )
 
         np.testing.assert_allclose(
             got,
@@ -454,7 +528,6 @@ class TestStepLimitWithBatchedParameters:
             -1e-4 * np.exp(-(batched.XX**2 + batched.YY**2) / (70e-6) ** 2)
         ).astype(np.float32)
         batched = make_solver(n2=self.batched_n2(), V=potential, backend=backend_name)
-        batched.delta_z = 1e-4
         one_field = np.exp(-(batched.XX**2 + batched.YY**2) / waist**2).astype(
             PRECISION_COMPLEX
         )
@@ -464,17 +537,21 @@ class TestStepLimitWithBatchedParameters:
             z,
             verbose=False,
             plot=False,
+            delta_z=1e-4,
         )
-        assert batched.delta_z == 1e-4, "the limiter clamped the batched step"
+        assert batched._current_delta_z == 1e-4, "the limiter clamped the batched step"
         assert np.all(np.isfinite(as_numpy(batched, got))), (
             "batched run produced non-finite values"
         )
 
         for index, value in enumerate(values):
             alone = make_solver(n2=float(value), V=potential, backend=backend_name)
-            alone.delta_z = 1e-4
-            expected = alone.out_field(one_field.copy(), z, verbose=False, plot=False)
-            assert alone.delta_z == 1e-4, "the limiter clamped an individual step"
+            expected = alone.out_field(
+                one_field.copy(), z, verbose=False, plot=False, delta_z=1e-4
+            )
+            assert alone._current_delta_z == 1e-4, (
+                "the limiter clamped an individual step"
+            )
             np.testing.assert_allclose(
                 np.asarray(as_numpy(batched, got))[index],
                 np.asarray(as_numpy(alone, expected)),
@@ -552,14 +629,12 @@ class TestPrecomputedConstants:
         z = 2e-3
 
         reused = make_solver()
-        reused.delta_z = 1e-4
-        reused.out_field(E.copy(), z, verbose=False, plot=False)
+        reused.out_field(E.copy(), z, verbose=False, plot=False, delta_z=1e-4)
         setattr(reused, attr, value)
-        got = reused.out_field(E.copy(), z, verbose=False, plot=False)
+        got = reused.out_field(E.copy(), z, verbose=False, plot=False, delta_z=1e-4)
 
         fresh = make_solver(**{attr: value})
-        fresh.delta_z = 1e-4
-        expected = fresh.out_field(E.copy(), z, verbose=False, plot=False)
+        expected = fresh.out_field(E.copy(), z, verbose=False, plot=False, delta_z=1e-4)
 
         np.testing.assert_allclose(
             got,
@@ -605,9 +680,10 @@ class TestStepLimitEnergies:
         probe = make_solver(backend=backend_name)
         V = self.ring(probe)
         simu = make_solver(V=V, backend=backend_name)
-        simu.delta_z = 1e-4
         E = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(PRECISION_COMPLEX)
-        out = simu.out_field(E.copy(), 2e-4, verbose=False, plot=False, method="RK4")
+        out = simu.out_field(
+            E.copy(), 2e-4, verbose=False, plot=False, method="RK4", delta_z=1e-4
+        )
         assert np.all(np.isfinite(np.asarray(as_numpy(simu, out)))), (
             f"{backend_name}: RK4 under a potential diverged. Its step limit "
             f"is not accounting for V."

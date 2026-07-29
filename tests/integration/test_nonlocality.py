@@ -93,16 +93,12 @@ def test_nonlocality():
             nl_length=nl_length,
             backend=backend,
         )
-        simu_c_1d.delta_z = 1e-5
         simu_c_1d.power2 = 10e-3
         simu_c_1d.n22 = 1e-10
         simu_c_1d.k2 = 2 * np.pi / 795e-9
-        simu_c_2d.delta_z = simu_c_1d.delta_z
         simu_c_2d.power2 = simu_c_1d.power2
         simu_c_2d.n22 = simu_c_1d.n22
         simu_c_2d.k2 = simu_c_1d.k2
-        simu_1d.delta_z = simu_c_1d.delta_z
-        simu_2d.delta_z = simu_c_1d.delta_z
         E_0 = np.exp(-(simu_c_2d.XX**2 + simu_c_2d.YY**2) / waist**2).astype(
             PRECISION_COMPLEX
         )
@@ -115,6 +111,7 @@ def test_nonlocality():
             verbose=False,
             plot=False,
             precision="single",
+            delta_z=1e-5,
         )
         arr = E.real * E.real + E.imag * E.imag
         arr *= c * epsilon_0 / 2 * simu_c_1d.delta_X**2
@@ -128,6 +125,7 @@ def test_nonlocality():
             verbose=False,
             plot=False,
             precision="single",
+            delta_z=1e-5,
         )
         arr = E.real * E.real + E.imag * E.imag
         arr *= c * epsilon_0 / 2 * simu_1d.delta_X**2
@@ -141,6 +139,7 @@ def test_nonlocality():
             verbose=False,
             plot=False,
             precision="single",
+            delta_z=1e-5,
         )
         arr = E.real * E.real + E.imag * E.imag
         arr *= c * epsilon_0 / 2 * simu_c_2d.delta_X * simu_c_2d.delta_Y
@@ -154,6 +153,7 @@ def test_nonlocality():
             verbose=False,
             plot=False,
             precision="single",
+            delta_z=1e-5,
         )
         arr = E.real * E.real + E.imag * E.imag
         arr *= c * epsilon_0 / 2 * simu_2d.delta_X * simu_2d.delta_Y

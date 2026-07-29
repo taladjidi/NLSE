@@ -83,12 +83,11 @@ def _propagate(simu, E_in, z, **kwargs):
         The propagated field.
     """
     dz = z / BENCH_STEPS
-    simu.delta_z = dz
-    out = simu.out_field(E_in, z, verbose=False, plot=False, **kwargs)
-    assert simu.delta_z == dz, (
+    out = simu.out_field(E_in, z, verbose=False, plot=False, **kwargs, delta_z=dz)
+    assert simu._current_delta_z == dz, (
         f"the step limiter reduced delta_z from {dz:.3e} to "
-        f"{simu.delta_z:.3e}, so this case runs more steps than the rest and "
-        f"its timing is not comparable. Pick parameters inside the limit."
+        f"{simu._current_delta_z:.3e}, so this case runs more steps than the "
+        f"rest and its timing is not comparable. Pick parameters inside the limit."
     )
     return out
 
@@ -453,7 +452,6 @@ class TestCoupledSolverBenchmark:
         def propagate():
             # DDGPE names its span `t`, so it cannot go through _propagate;
             # pin the step the same way by hand.
-            simu.delta_z = T / BENCH_STEPS
             return simu.out_field(
                 E_in,
                 t=T,
@@ -461,6 +459,7 @@ class TestCoupledSolverBenchmark:
                 verbose=False,
                 callback=[],
                 callback_args=[()],
+                delta_z=T / BENCH_STEPS,
             )
 
         result = benchmark.pedantic(propagate, rounds=10, warmup_rounds=2)

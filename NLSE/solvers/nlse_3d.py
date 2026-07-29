@@ -111,21 +111,21 @@ class NLSE_3d(NLSE):
         # Override normalization factor for 3D (includes delta_T)
         self._norm_grid_factor = np.float32(self.delta_X * self.delta_Y * self.delta_T)
 
-    def _propagator_cache_key(self, dtype: np.dtype) -> tuple:
+    def _propagator_cache_key(self, dtype: np.dtype, delta_z: float) -> tuple:
         """Return cache key for 3D propagator."""
         return (
             self.NX,
             self.NY,
             self.NZ,
-            float(self.delta_z),
+            float(delta_z),
             np.dtype(dtype).str,
             float(self.k),
             float(self.D0),
         )
 
-    def _compute_propagator(self, dtype: np.dtype) -> np.ndarray:
+    def _compute_propagator(self, dtype: np.dtype, delta_z: float) -> np.ndarray:
         """Compute the 3D linear propagation matrix (spatial + temporal)."""
-        prop_2d = super()._compute_propagator(dtype)
+        prop_2d = super()._compute_propagator(dtype, delta_z)
         prop_t = np.exp(-1j * self.D0 / 2 * self.Omega**2, dtype=dtype)
         return prop_2d * prop_t
 

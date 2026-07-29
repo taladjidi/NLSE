@@ -116,24 +116,20 @@ class CNLSE_1d(CNLSE):
         """
         return 0.5 * self.Kx**2 / min(self.k, self.k2)
 
-    def _propagator_cache_key(self, dtype: np.dtype) -> tuple:
+    def _propagator_cache_key(self, dtype: np.dtype, delta_z: float) -> tuple:
         """Return cache key for 1D coupled propagator."""
         return (
             self.NX,
-            float(self.delta_z),
+            float(delta_z),
             np.dtype(dtype).str,
             float(self.k),
             float(self.k2),
         )
 
-    def _compute_propagator(self, dtype: np.dtype) -> np.ndarray:
+    def _compute_propagator(self, dtype: np.dtype, delta_z: float) -> np.ndarray:
         """Compute the 1D coupled linear propagation matrices."""
-        propagator1 = np.exp(
-            -1j * 0.5 * (self.Kx**2) / self.k * self.delta_z, dtype=dtype
-        )
-        propagator2 = np.exp(
-            -1j * 0.5 * (self.Kx**2) / self.k2 * self.delta_z, dtype=dtype
-        )
+        propagator1 = np.exp(-1j * 0.5 * (self.Kx**2) / self.k * delta_z, dtype=dtype)
+        propagator2 = np.exp(-1j * 0.5 * (self.Kx**2) / self.k2 * delta_z, dtype=dtype)
         return np.array([propagator1, propagator2])
 
     def _propagator_rk4_cache_key(self) -> tuple:

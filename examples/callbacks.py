@@ -1,6 +1,9 @@
 import numpy as np
 from NLSE import NLSE, callbacks
 
+# Propagation step, passed to out_field and used by the plots below.
+DELTA_Z = 0.5e-4
+
 PRECISION_COMPLEX = np.complex64
 PRECISION_REAL = np.float32
 
@@ -31,8 +34,7 @@ def main():
         Isat=Isat,
         backend="CUPY",
     )
-    simu.delta_z = 0.5e-4
-    N_steps = int(simu.L / simu.delta_z) + 1
+    N_steps = int(simu.L / DELTA_Z) + 1
     norms = np.zeros(N_steps)
     E_0 = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(PRECISION_COMPLEX)
     simu.V = -1e-4 * np.exp(-(simu.XX**2 + simu.YY**2) / waist2**2).astype(
@@ -46,14 +48,14 @@ def main():
         precision="single",
         callback=callbacks.norm,
         callback_args=(1, norms),
+        delta_z=DELTA_Z,
     )
     norms *= simu.delta_X * simu.delta_Y * c * epsilon_0 / 2
-    plt.plot(np.arange(N_steps) * simu.delta_z * 1e3, norms)
+    plt.plot(np.arange(N_steps) * DELTA_Z * 1e3, norms)
     plt.xlabel("Propagation distance in mm")
     plt.ylabel("Total power in W")
     plt.title("Total power of the field")
     plt.show()
-    simu.delta_z = 0.25e-4
     dzs = []
     simu.out_field(
         E_0,
@@ -63,6 +65,7 @@ def main():
         precision="single",
         callback=callbacks.adapt_delta_z,
         callback_args=(10, dzs),
+        delta_z=0.25e-4,
     )
     plt.plot(dzs)
     plt.xlabel("Iteration")

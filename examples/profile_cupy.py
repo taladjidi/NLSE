@@ -38,6 +38,9 @@ import cupy as cp
 import numpy as np
 from NLSE import NLSE
 
+# Propagation step, passed to out_field and used by the plots below.
+DELTA_Z = 0.5e-4
+
 # ---------------------------------------------------------------------------
 # Simulation parameters (realistic 2D, single precision)
 # ---------------------------------------------------------------------------
@@ -68,20 +71,26 @@ def make_simu():
         backend="CUPY",
     )
     # Fix step size so we get exactly N_STEPS steps over distance z_run
-    simu.delta_z = 0.5e-4
     # Gaussian input field
     E_0 = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(np.complex64)
     # Lens-like potential
     V = -1e-4 * np.exp(-(simu.XX**2 + simu.YY**2) / waist2**2).astype(np.complex64)
     simu.V = V
-    z_run = abs(simu.delta_z) * N_STEPS
+    z_run = abs(DELTA_Z) * N_STEPS
     return simu, E_0, z_run
 
 
 def warmup(simu, E_0):
     """Run a few steps to trigger JIT / FFT planning outside profiled region."""
-    z_warmup = abs(simu.delta_z) * 3
-    simu.out_field(E_0.copy(), z_warmup, verbose=False, plot=False, precision="single")
+    z_warmup = abs(DELTA_Z) * 3
+    simu.out_field(
+        E_0.copy(),
+        z_warmup,
+        verbose=False,
+        plot=False,
+        precision="single",
+        delta_z=DELTA_Z,
+    )
     # Reset propagator so next call rebuilds cleanly
     simu.propagator = None
     simu.plans = None
@@ -112,6 +121,7 @@ def profile_method(simu, E_0, z_run, method, precision="single"):
         plot=False,
         precision=precision,
         method=method,
+        delta_z=DELTA_Z,
     )
 
     t_cpu = time.perf_counter() - t0

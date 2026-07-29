@@ -51,9 +51,14 @@ def host(simu, out):
 
 def propagate(simu, E, **kwargs):
     """Propagate E and return the result as numpy."""
-    simu.delta_z = DELTA_Z
     out = simu.out_field(
-        E.copy(), Z, verbose=False, plot=False, normalize=False, **kwargs
+        E.copy(),
+        Z,
+        verbose=False,
+        plot=False,
+        normalize=False,
+        **kwargs,
+        delta_z=DELTA_Z,
     )
     return host(simu, out)
 
@@ -142,9 +147,11 @@ def test_gpe_zero_potential_matches_no_potential(backend_name):
     E = field(bare)
     zero = GPE(V=np.zeros((N, N), dtype=np.float32), backend=backend_name, **params)
 
-    bare.delta_z = zero.delta_z = 1e-8
     assert_same(
-        host(bare, bare.out_field(E.copy(), 1e-6, verbose=False, plot=False)),
+        host(
+            bare,
+            bare.out_field(E.copy(), 1e-6, verbose=False, plot=False, delta_z=1e-8),
+        ),
         host(zero, zero.out_field(E.copy(), 1e-6, verbose=False, plot=False)),
         f"GPE[{backend_name}]",
     )

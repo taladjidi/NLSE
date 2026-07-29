@@ -54,9 +54,13 @@ def grids(backend_name):
 def propagate(backend_name, V, field, dtype=np.complex64):
     """Propagate the field under V and return the result as numpy."""
     simu = NLSE(V=V, backend=backend_name, **BASE)
-    simu.delta_z = DELTA_Z
     out = simu.out_field(
-        field.astype(dtype), Z, verbose=False, plot=False, normalize=False
+        field.astype(dtype),
+        Z,
+        verbose=False,
+        plot=False,
+        normalize=False,
+        delta_z=DELTA_Z,
     )
     return np.asarray(
         out if isinstance(out, np.ndarray) else simu._backend.to_numpy(out)
@@ -182,9 +186,13 @@ def test_potential_dtype_follows_the_field(backend_name, field_dtype, expected):
     field, ring = grids(backend_name)
     V = (1j * 1e2 * ring).astype(np.complex64)
     simu = NLSE(V=V, backend=backend_name, **BASE)
-    simu.delta_z = DELTA_Z
     simu.out_field(
-        field.astype(field_dtype), Z, verbose=False, plot=False, normalize=False
+        field.astype(field_dtype),
+        Z,
+        verbose=False,
+        plot=False,
+        normalize=False,
+        delta_z=DELTA_Z,
     )
 
     sent = simu._potential_dtype(V, field_dtype)

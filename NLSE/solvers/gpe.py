@@ -80,26 +80,25 @@ class GPE(NLSE):
         self.N = self.power
         self.m = self.k
         self.sat = sat
-        self.delta_t = self.delta_z
         # do some conversion for the units
         self.I_sat *= epsilon_0 * c / 2
         # GPE uses quantum units (Hz), not optical (W), so norm_constant is 1.0
         self._norm_constant = np.float32(1.0)
 
-    def _propagator_cache_key(self, dtype: np.dtype) -> tuple:
+    def _propagator_cache_key(self, dtype: np.dtype, delta_z: float) -> tuple:
         """Return cache key for GPE propagator."""
         return (
             self.NX,
             self.NY,
-            float(self.delta_t),
+            float(delta_z),
             np.dtype(dtype).str,
             float(self.m),
         )
 
-    def _compute_propagator(self, dtype: np.dtype) -> np.ndarray:
+    def _compute_propagator(self, dtype: np.dtype, delta_z: float) -> np.ndarray:
         """Compute the GPE linear propagation matrix."""
         return np.exp(
-            -1j * 0.5 * hbar * (self.Kxx**2 + self.Kyy**2) / self.m * self.delta_t,
+            -1j * 0.5 * hbar * (self.Kxx**2 + self.Kyy**2) / self.m * delta_z,
             dtype=dtype,
         )
 

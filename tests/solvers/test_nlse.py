@@ -24,6 +24,9 @@ Isat = 10e4  # saturation intensity in W/m^2
 L = 10e-3
 alpha = 20
 
+# Step used wherever a test builds a propagator or takes a step by hand.
+DZ_TEST = 1e-4
+
 
 def test_build_propagator(backend) -> None:
     simu = NLSE(
@@ -38,10 +41,10 @@ def test_build_propagator(backend) -> None:
         Isat=Isat,
         backend=backend,
     )
-    prop = simu._build_propagator()
+    prop = simu._build_propagator(PRECISION_COMPLEX, DZ_TEST)
     assert np.allclose(
         prop,
-        np.exp(-1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * simu.delta_z),
+        np.exp(-1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * DZ_TEST),
     ), f"Propagator is wrong. (Backend {backend})"
 
 
@@ -146,7 +149,7 @@ def test_send_arrays_to_gpu() -> None:
         simu = NLSE(
             alpha, power, window, n2, V, L, NX=N, NY=N, Isat=Isat, backend="CUPY"
         )
-        simu.propagator = simu._build_propagator()
+        simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
         simu._send_arrays_to_gpu()
         assert isinstance(simu.propagator, cp.ndarray), (
             "propagator is not a cp.ndarray. (Backend GPU)"
@@ -178,7 +181,7 @@ def test_retrieve_arrays_from_gpu() -> None:
         simu = NLSE(
             alpha, power, window, n2, V, L, NX=N, NY=N, Isat=Isat, backend="CUPY"
         )
-        simu.propagator = simu._build_propagator()
+        simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
         simu._send_arrays_to_gpu()
         simu._retrieve_arrays_from_gpu()
         assert isinstance(simu.propagator, np.ndarray), (
@@ -209,18 +212,17 @@ def test_split_step(backend) -> None:
         Isat=Isat,
         backend=backend,
     )
-    simu.delta_z = 0
-    simu.propagator = simu._build_propagator()
+    simu.propagator = simu._build_propagator(np.complex64, 0)
     E = np.ones((N, N), dtype=PRECISION_COMPLEX)
     A, A_sq = simu._prepare_output_array(E, normalize=False)
     simu.plans = simu._build_fft_plan(A)
-    simu.propagator = simu._build_propagator()
+    simu.propagator = simu._build_propagator(np.complex64, 0)
     # out_field sends arrays for every device backend, so mirror that here or
     # the kernels receive a host propagator.
     if simu._backend.is_device_backend:
         simu._send_arrays_to_gpu()
     A = simu.split_step(
-        A, A_sq, simu.V, simu.propagator, simu.plans, precision="double"
+        A, A_sq, simu.V, simu.propagator, simu.plans, 0, precision="double"
     )
     np.testing.assert_allclose(
         as_numpy(simu, A),
@@ -247,7 +249,9 @@ def test_out_field(backend) -> None:
         Isat=Isat,
         backend=backend,
     )
-    E = simu.out_field(E, L, verbose=False, plot=False, precision="single")
+    E = simu.out_field(
+        E, L, verbose=False, plot=False, precision="single", delta_z=DZ_TEST
+    )
     norm = np.sum(np.abs(E) ** 2 * simu.delta_X * simu.delta_Y)
     norm *= c * epsilon_0 / 2
     assert E.shape == (
@@ -287,6 +291,7 @@ def test_cuda_graph() -> None:
                 plot=False,
                 precision="single",
                 method=method,
+                delta_z=DZ_TEST,
             )
             norm = np.sum(np.abs(E_out) ** 2 * simu.delta_X * simu.delta_Y)
             norm *= c * epsilon_0 / 2

@@ -32,7 +32,6 @@ def main():
         omega=None,
         backend="CL",
     )
-    simu_c.delta_z = 0.5e-4
     simu_c.puiss2 = 10e-3
     simu_c.n22 = 1e-10
     simu_c.I_sat2 = Isat2
@@ -45,6 +44,7 @@ def main():
         verbose=True,
         plot=True,
         precision="single",
+        delta_z=0.5e-4,
     )
 
 

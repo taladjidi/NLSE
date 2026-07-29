@@ -67,9 +67,10 @@ class TestPropagatorFFTRefresh:
     def test_matches_propagator_after_normal_run(self, backend):
         """_propagator_fft is propagator / N after an ordinary run."""
         simu = make_solver(backend)
-        simu.delta_z = L / 20
         E = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(PRECISION_COMPLEX)
-        simu.out_field(E.copy(), 2 * simu.delta_z, verbose=False, plot=False)
+        simu.out_field(
+            E.copy(), 2 * (L / 20), verbose=False, plot=False, delta_z=L / 20
+        )
 
         prop_fft = to_numpy(simu, getattr(simu, "_propagator_fft", None))
         if prop_fft is None:
@@ -92,16 +93,17 @@ class TestPropagatorFFTRefresh:
         clamped one.
         """
         simu = make_solver(backend)
-        # 1000x the constructor default reliably exceeds the split-step
-        # accuracy limit. Keep z tied to the default step, not to the
-        # inflated one, so the run stays a handful of steps once clamped.
-        dz_default = simu.delta_z
-        simu.delta_z = 1000 * dz_default
+        # 1000x a reasonable step reliably exceeds the split-step accuracy
+        # limit. Keep z tied to the reasonable one, not to the inflated one,
+        # so the run stays a handful of steps once clamped.
+        dz_default = 1e-5
         z = 500 * dz_default
         E = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(PRECISION_COMPLEX)
 
         with pytest.warns(UserWarning, match="exceeds"):
-            simu.out_field(E.copy(), z, verbose=False, plot=False)
+            simu.out_field(
+                E.copy(), z, verbose=False, plot=False, delta_z=1000 * dz_default
+            )
 
         prop_fft = to_numpy(simu, getattr(simu, "_propagator_fft", None))
         if prop_fft is None:
@@ -121,7 +123,7 @@ class TestPropagatorFFTRefresh:
 
         # And it must correspond to the clamped delta_z itself.
         expected = np.exp(
-            -1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * simu.delta_z
+            -1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * simu._current_delta_z
         ).astype(np.complex64)
         np.testing.assert_allclose(
             prop,
@@ -140,16 +142,21 @@ class TestPropagatorFFTRefresh:
         E = np.exp(-(reference.XX**2 + reference.YY**2) / waist**2).astype(
             PRECISION_COMPLEX
         )
-        dz_default = reference.delta_z
+        dz_default = 1e-5
         z = 500 * dz_default
 
         results = {}
         for name in ("CPU", backend):
             simu = make_solver(name)
-            simu.delta_z = 1000 * dz_default
             with pytest.warns(UserWarning, match="exceeds"):
                 results[name] = np.asarray(
-                    simu.out_field(E.copy(), z, verbose=False, plot=False)
+                    simu.out_field(
+                        E.copy(),
+                        z,
+                        verbose=False,
+                        plot=False,
+                        delta_z=1000 * dz_default,
+                    )
                 )
 
         np.testing.assert_allclose(

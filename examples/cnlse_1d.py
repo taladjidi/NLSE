@@ -30,7 +30,6 @@ def main() -> None:
         omega=1,
         backend="CUPY",
     )
-    simu_c.delta_z = 1e-5
     simu_c.puiss2 = 10e-3
     simu_c.n22 = 1e-10
     simu_c.k2 = 2 * np.pi / 795e-9
@@ -42,6 +41,7 @@ def main() -> None:
         verbose=True,
         plot=False,
         precision="single",
+        delta_z=1e-5,
     )
 
 

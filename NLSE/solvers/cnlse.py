@@ -169,22 +169,22 @@ class CNLSE(NLSE):
                 A[:] = E
         return A, A_sq
 
-    def _propagator_cache_key(self, dtype: np.dtype) -> tuple:
+    def _propagator_cache_key(self, dtype: np.dtype, delta_z: float) -> tuple:
         """Return cache key for coupled propagator."""
         return (
             self.NX,
             self.NY,
-            float(self.delta_z),
+            float(delta_z),
             np.dtype(dtype).str,
             float(self.k),
             float(self.k2),
         )
 
-    def _compute_propagator(self, dtype: np.dtype) -> np.ndarray:
+    def _compute_propagator(self, dtype: np.dtype, delta_z: float) -> np.ndarray:
         """Compute the coupled linear propagation matrices."""
-        propagator1 = super()._compute_propagator(dtype)
+        propagator1 = super()._compute_propagator(dtype, delta_z)
         propagator2 = np.exp(
-            -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k2 * self.delta_z,
+            -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k2 * delta_z,
             dtype=dtype,
         )
         return np.array([propagator1, propagator2])
@@ -528,6 +528,7 @@ class CNLSE(NLSE):
         V: np.ndarray | None,
         propagator: np.ndarray,
         plans: list,
+        delta_z: float,
         precision: str = "single",
     ) -> np.ndarray:
         """Split step function for one propagation step.
@@ -547,6 +548,9 @@ class CNLSE(NLSE):
             List of FFT plan objects. Either a single FFT plan for
             both directions (GPU case) or distinct FFT and IFFT plans for
             FFTW.
+        delta_z : float
+            Step to take. Must match the propagator, which was built
+            from it.
         precision : str, optional
             Single or double application of the
             nonlinear propagation step. Defaults to "single".
@@ -585,7 +589,7 @@ class CNLSE(NLSE):
 
         # Fused fast path (CL, MLX): zero component copies
         if self._backend.has_fused_coupled_split_step and self.nl_length == 0:
-            dz = self.delta_z / 2 if precision == "double" else self.delta_z
+            dz = delta_z / 2 if precision == "double" else delta_z
             prop_fft = getattr(self, "_propagator_fft", None)
             omega_half = (
                 self.omega / 2
@@ -616,7 +620,7 @@ class CNLSE(NLSE):
             A1, A2 = self._take_components(A)
             A_sq, A_sq_1, A_sq_2 = self._compute_A_sq_components(A, A_sq)
             A1, A2 = self._apply_nl_prop_c(
-                A1, A2, A_sq_1, A_sq_2, self.delta_z / 2, *nl_args
+                A1, A2, A_sq_1, A_sq_2, delta_z / 2, *nl_args
             )
             A[0] = A1
             A[1] = A2
@@ -627,12 +631,12 @@ class CNLSE(NLSE):
         # Second half-step (always)
         A1, A2 = self._take_components(A)
         A_sq, A_sq_1, A_sq_2 = self._compute_A_sq_components(A, A_sq)
-        dz_step = self.delta_z / 2 if precision == "double" else self.delta_z
+        dz_step = delta_z / 2 if precision == "double" else delta_z
         A1, A2 = self._apply_nl_prop_c(A1, A2, A_sq_1, A_sq_2, dz_step, *nl_args)
 
         if precision == "single" and self.omega is not None:
             A1, A2 = self._backend.kernels.rabi_coupling(
-                A1, A2, self.delta_z, self.omega / 2
+                A1, A2, delta_z, self.omega / 2
             )
 
         A[0] = A1

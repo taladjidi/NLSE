@@ -77,10 +77,9 @@ def test_propagation_reuses_the_plan(backend_name):
     """A second out_field must not plan again."""
     simu = solver(backend_name)
     E = gaussian(simu)
-    simu.delta_z = 1e-4
-    simu.out_field(E.copy(), 1e-3, verbose=False, plot=False)
+    simu.out_field(E.copy(), 1e-3, verbose=False, plot=False, delta_z=1e-4)
     first = simu.plans
-    simu.out_field(E.copy(), 1e-3, verbose=False, plot=False)
+    simu.out_field(E.copy(), 1e-3, verbose=False, plot=False, delta_z=1e-4)
     assert simu.plans is first, (
         f"{backend_name} planned again on the second propagation"
     )
@@ -92,8 +91,7 @@ def test_solvers_on_one_grid_share_a_plan(backend_name):
     a, b = solver(backend_name), solver(backend_name)
     E = gaussian(a)
     for simu in (a, b):
-        simu.delta_z = 1e-4
-        simu.out_field(E.copy(), 1e-3, verbose=False, plot=False)
+        simu.out_field(E.copy(), 1e-3, verbose=False, plot=False, delta_z=1e-4)
     assert a.plans is b.plans, (
         f"{backend_name}: two solvers on the same grid hold different plans, "
         f"so a sweep pays the planning cost per point"
@@ -110,20 +108,20 @@ def test_a_shared_plan_does_not_couple_solvers(backend_name):
     strong = solver(backend_name)
     weak = NLSE(NX=N, NY=N, backend=backend_name, **{**BASE, "n2": -1e-12})
     E = gaussian(strong)
-    for simu in (strong, weak):
-        simu.delta_z = 1e-4
 
     together_strong = host(
-        strong, strong.out_field(E.copy(), 2e-3, verbose=False, plot=False)
+        strong,
+        strong.out_field(E.copy(), 2e-3, verbose=False, plot=False, delta_z=1e-4),
     )
     together_weak = host(
-        weak, weak.out_field(E.copy(), 2e-3, verbose=False, plot=False)
+        weak, weak.out_field(E.copy(), 2e-3, verbose=False, plot=False, delta_z=1e-4)
     )
 
     alone = NLSE(NX=N, NY=N, backend=backend_name, **BASE)
-    alone.delta_z = 1e-4
     get_backend(backend_name).clear_fft_plans()
-    expected = host(alone, alone.out_field(E.copy(), 2e-3, verbose=False, plot=False))
+    expected = host(
+        alone, alone.out_field(E.copy(), 2e-3, verbose=False, plot=False, delta_z=1e-4)
+    )
 
     np.testing.assert_allclose(
         np.asarray(together_strong),

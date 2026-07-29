@@ -6,6 +6,9 @@ import tqdm
 from cycler import cycler
 from NLSE import NLSE
 
+# Propagation step, passed to out_field and used by the plots below.
+DELTA_Z = 1e-4
+
 # for plots
 tab_colors = [
     "tab:blue",
@@ -80,33 +83,32 @@ for i, size in enumerate(sizes):
             backend=backend,
         )
         simu0.I_sat = Isat
-        simu0.delta_z = 1e-4
         if j == 0:
             E_0 = np.exp(-(np.hypot(simu0.XX, simu0.YY) ** 2) / waist**2).astype(
                 PRECISION_COMPLEX
             )
         for k in range(N_avg):
             t0 = time.perf_counter()
-            simu0.out_field(E_0, L, verbose=False)
+            simu0.out_field(E_0, L, verbose=False, delta_z=DELTA_Z)
             times[i, j, k] = time.perf_counter() - t0
             pbar.update(1)
     # numpy naive implementation
     for k in range(N_avg):
         E1 = E_0.copy()
         t0 = time.perf_counter()
-        for _ in range(int(L / simu0.delta_z)):
+        for _ in range(int(L / DELTA_Z)):
             E1 = np.fft.fft2(E1)
-            E1 *= np.exp(1j * simu0.delta_z * simu0.propagator / (2 * simu0.k))
+            E1 *= np.exp(1j * DELTA_Z * simu0.propagator / (2 * simu0.k))
             E1 = np.fft.ifft2(E1)
             E1 *= np.exp(
                 1j
-                * simu0.delta_z
+                * DELTA_Z
                 * simu0.k
                 * simu0.n2
                 * np.abs(E1) ** 2
                 / (1 + np.abs(E1) ** 2 / Isat)
             )
-            E1 *= np.exp(-simu0.alpha * simu0.delta_z)
+            E1 *= np.exp(-simu0.alpha * DELTA_Z)
         times[i, 2, k] = time.perf_counter() - t0
         pbar.update(1)
 pbar.close()

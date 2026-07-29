@@ -55,8 +55,7 @@ def test_a_shared_backend_still_propagates_correctly(backend_name):
     assert a._backend is b._backend, "precondition: the backend is shared"
 
     field = np.exp(-(a.XX**2 + a.YY**2) / WAIST**2).astype(np.complex64)
-    a.delta_z = b.delta_z = 1e-4
-    out_a = a.out_field(field.copy(), 1e-3, verbose=False, plot=False)
+    out_a = a.out_field(field.copy(), 1e-3, verbose=False, plot=False, delta_z=1e-4)
     out_b = b.out_field(field.copy(), 1e-3, verbose=False, plot=False)
 
     def host(simu, arr):

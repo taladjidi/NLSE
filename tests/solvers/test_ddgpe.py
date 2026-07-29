@@ -24,6 +24,9 @@ window = 256
 g = 1e-2 / h_bar
 puiss = detuning / g
 
+# Step used wherever a test builds a propagator or takes a step by hand.
+DZ_TEST = 1e-4
+
 
 def test_prepare_output_array(backend) -> None:
     simu = DDGPE(
@@ -89,7 +92,7 @@ def test_send_arrays_to_gpu() -> None:
             backend="CUPY",
         )
         # Build propagator while params are still scalars
-        simu.propagator = simu._build_propagator()
+        simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
         # Now broadcast params for GPU transfer test
         simu.gamma = np.repeat(gamma_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
         simu.g = np.repeat(g_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
@@ -149,7 +152,7 @@ def test_retrieve_arrays_from_gpu() -> None:
             backend="CUPY",
         )
         # Build propagator while params are still scalars
-        simu.propagator = simu._build_propagator()
+        simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
         # Now broadcast params for GPU transfer test
         simu.gamma = np.repeat(gamma_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
         simu.g = np.repeat(g_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
@@ -197,21 +200,25 @@ def test_build_propagator(backend) -> None:
         NX=N,
         NY=N,
     )
-    prop = simu._build_propagator()
+    prop = simu._build_propagator(np.complex64, DZ_TEST)
     assert np.allclose(
         prop[0],
         np.exp(
-            -1j
-            * (simu.omega_exc * (1 + 0 * simu.Kxx**2) - simu.omega_pump)
-            * simu.delta_z
+            -1j * (simu.omega_exc * (1 + 0 * simu.Kxx**2) - simu.omega_pump) * DZ_TEST
         ),
     ), f"Propagator1 is wrong. (Backend {backend})"
+    # The cavity branch is dispersive, unlike the exciton one. This used to
+    # assert the exciton formula for both, which only passed because the step
+    # was small enough to make either of them indistinguishable from 1.
     assert np.allclose(
         prop[1],
         np.exp(
             -1j
-            * (simu.omega_exc * (1 + 0 * simu.Kxx**2) - simu.omega_pump)
-            * simu.delta_z
+            * (
+                simu.omega_cav * np.sqrt(1 + (simu.Kxx**2 + simu.Kyy**2) / simu.k_z**2)
+                - simu.omega_pump
+            )
+            * DZ_TEST
         ),
     ), f"Propagator2 is wrong. (Backend {backend})"
 
@@ -319,8 +326,8 @@ def test_out_field(ddgpe_backend) -> None:
         NY=N,
         backend=backend,
     )
-    simu.delta_z = 0.1 / 32  # need to be adjusted automatically
-    time = np.arange(0, T + simu.delta_z, step=simu.delta_z, dtype=np.float32)
+    dt = 0.1 / 32
+    time = np.arange(0, T + dt, step=dt, dtype=np.float32)
     save_every = 1  # np.argwhere(time == 1)[0][0]
     sample1 = np.zeros(time.size // save_every, dtype=np.float32)
     sample2 = np.zeros(time.size // save_every, dtype=np.float32)
@@ -365,5 +372,6 @@ def test_out_field(ddgpe_backend) -> None:
         plot=False,
         callback=callback,
         callback_args=callback_args,
+        delta_z=0.1 / 32,  # need to be adjusted automatically,
     )
     # test stationarity here

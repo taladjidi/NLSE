@@ -143,13 +143,11 @@ class TestCPUCorrectness:
             Isat=Isat,
             backend="CPU",
         )
-        simu.delta_z = 0
-        simu.propagator = simu._build_propagator()
-
         E = np.ones((N, N), dtype=PRECISION_COMPLEX)
         A, A_sq = simu._prepare_output_array(E, normalize=False)
         simu.plans = simu._build_fft_plan(A)
-        simu.propagator = simu._build_propagator()
+        # A zero step is the identity, which is what unitarity is checked against.
+        simu.propagator = simu._build_propagator(PRECISION_COMPLEX, 0)
 
         simu.split_step(
             A,
@@ -157,6 +155,7 @@ class TestCPUCorrectness:
             simu.V,
             simu.propagator,
             simu.plans,
+            0,
             precision="double",
         )
 
@@ -182,10 +181,8 @@ class TestCPUCorrectness:
             Isat=Isat,
             backend="CPU",
         )
-        prop = simu._build_propagator()
-        expected = np.exp(
-            -1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * simu.delta_z
-        )
+        prop = simu._build_propagator(PRECISION_COMPLEX, DZ_TEST)
+        expected = np.exp(-1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * DZ_TEST)
         assert np.allclose(prop, expected), "Propagator is wrong (CPU)"
 
     def test_prepare_output_array(self):
@@ -465,10 +462,8 @@ class TestNLSEvsReference:
             Isat=Isat,
             backend=backend,
         )
-        prop = simu._build_propagator()
-        expected = np.exp(
-            -1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * simu.delta_z
-        )
+        prop = simu._build_propagator(PRECISION_COMPLEX, DZ_TEST)
+        expected = np.exp(-1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * DZ_TEST)
         assert np.allclose(prop, expected), f"Propagator is wrong (Backend {backend})"
 
 
@@ -1050,7 +1045,6 @@ class TestCNLSECrossMethod:
             Isat=Isat,
             backend=backend,
         )
-        simu_ss.delta_z = self.dz_fine
         simu_rk = CNLSE(
             alpha,
             power,
@@ -1064,7 +1058,6 @@ class TestCNLSECrossMethod:
             Isat=Isat,
             backend=backend,
         )
-        simu_rk.delta_z = self.dz_fine
 
         XX, YY = np.meshgrid(simu_ss.X, simu_ss.Y)
         E_in = np.zeros((2, NX, NY), dtype=PRECISION_COMPLEX)
@@ -1072,10 +1065,20 @@ class TestCNLSECrossMethod:
         E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
 
         E_ss = simu_ss.out_field(
-            E_in.copy(), L, verbose=False, plot=False, precision="single"
+            E_in.copy(),
+            L,
+            verbose=False,
+            plot=False,
+            precision="single",
+            delta_z=self.dz_fine,
         )
         E_rk = simu_rk.out_field(
-            E_in.copy(), L, verbose=False, plot=False, method="RK4"
+            E_in.copy(),
+            L,
+            verbose=False,
+            plot=False,
+            method="RK4",
+            delta_z=self.dz_fine,
         )
 
         np.testing.assert_allclose(
@@ -1108,7 +1111,6 @@ class TestCNLSECrossMethod:
             Isat=Isat,
             backend=backend,
         )
-        simu_ss.delta_z = self.dz_fine
         simu_rk = CNLSE(
             alpha,
             power,
@@ -1122,7 +1124,6 @@ class TestCNLSECrossMethod:
             Isat=Isat,
             backend=backend,
         )
-        simu_rk.delta_z = self.dz_fine
 
         XX, YY = np.meshgrid(simu_ss.X, simu_ss.Y)
         E_in = np.zeros((2, NX, NY), dtype=PRECISION_COMPLEX)
@@ -1130,10 +1131,20 @@ class TestCNLSECrossMethod:
         E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
 
         E_ss = simu_ss.out_field(
-            E_in.copy(), L, verbose=False, plot=False, precision="single"
+            E_in.copy(),
+            L,
+            verbose=False,
+            plot=False,
+            precision="single",
+            delta_z=self.dz_fine,
         )
         E_rk = simu_rk.out_field(
-            E_in.copy(), L, verbose=False, plot=False, method="RK4"
+            E_in.copy(),
+            L,
+            verbose=False,
+            plot=False,
+            method="RK4",
+            delta_z=self.dz_fine,
         )
 
         np.testing.assert_allclose(
@@ -1147,6 +1158,9 @@ class TestCNLSECrossMethod:
 
 # Small grid for fast tests
 S = 64
+
+# Step used wherever a test builds a propagator or takes a step by hand.
+DZ_TEST = 1e-4
 
 
 class TestCPUBackendMethods:
@@ -1305,8 +1319,8 @@ class TestNLSEPropagator:
             Isat=Isat,
             backend="CPU",
         )
-        prop1 = simu._build_propagator()
-        prop2 = simu._build_propagator()
+        prop1 = simu._build_propagator(PRECISION_COMPLEX, DZ_TEST)
+        prop2 = simu._build_propagator(PRECISION_COMPLEX, DZ_TEST)
         assert prop1 is prop2  # same object from cache
 
     def test_propagator_double_precision(self):
@@ -1323,7 +1337,7 @@ class TestNLSEPropagator:
             Isat=Isat,
             backend="CPU",
         )
-        prop = simu._build_propagator(dtype=np.complex128)
+        prop = simu._build_propagator(np.complex128, DZ_TEST)
         assert prop.dtype == np.complex128
 
     def test_propagator_rk4(self):
@@ -1371,9 +1385,9 @@ class TestNLSESplitStep:
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
-        prop = simu._build_propagator(dtype=np.complex128)
+        prop = simu._build_propagator(np.complex128, DZ_TEST)
 
-        simu.split_step(A, A_sq, None, prop, plans, precision="double")
+        simu.split_step(A, A_sq, None, prop, plans, DZ_TEST, precision="double")
         assert np.isfinite(A).all(), "Double precision split step produced NaN/Inf"
 
     def test_double_precision_with_V(self):
@@ -1395,9 +1409,9 @@ class TestNLSESplitStep:
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
-        prop = simu._build_propagator(dtype=np.complex128)
+        prop = simu._build_propagator(np.complex128, DZ_TEST)
 
-        simu.split_step(A, A_sq, V, prop, plans, precision="double")
+        simu.split_step(A, A_sq, V, prop, plans, DZ_TEST, precision="double")
         assert np.isfinite(A).all()
 
     def test_single_precision_with_V(self):
@@ -1419,9 +1433,9 @@ class TestNLSESplitStep:
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
-        prop = simu._build_propagator()
+        prop = simu._build_propagator(PRECISION_COMPLEX, DZ_TEST)
 
-        simu.split_step(A, A_sq, V, prop, plans, precision="single")
+        simu.split_step(A, A_sq, V, prop, plans, DZ_TEST, precision="single")
         assert np.isfinite(A).all()
 
     def test_nonlocal_propagation(self):
@@ -1443,10 +1457,10 @@ class TestNLSESplitStep:
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
-        prop = simu._build_propagator()
+        prop = simu._build_propagator(PRECISION_COMPLEX, DZ_TEST)
 
         # Single precision path with nl_length
-        simu.split_step(A, A_sq, None, prop, plans, precision="single")
+        simu.split_step(A, A_sq, None, prop, plans, DZ_TEST, precision="single")
         assert np.isfinite(A).all()
 
     def test_nonlocal_with_V(self):
@@ -1469,9 +1483,9 @@ class TestNLSESplitStep:
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
-        prop = simu._build_propagator()
+        prop = simu._build_propagator(PRECISION_COMPLEX, DZ_TEST)
 
-        simu.split_step(A, A_sq, V, prop, plans, precision="single")
+        simu.split_step(A, A_sq, V, prop, plans, DZ_TEST, precision="single")
         assert np.isfinite(A).all()
 
     def test_nonlocal_double_precision(self):
@@ -1493,9 +1507,9 @@ class TestNLSESplitStep:
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
-        prop = simu._build_propagator(dtype=np.complex128)
+        prop = simu._build_propagator(np.complex128, DZ_TEST)
 
-        simu.split_step(A, A_sq, None, prop, plans, precision="double")
+        simu.split_step(A, A_sq, None, prop, plans, DZ_TEST, precision="double")
         assert np.isfinite(A).all()
 
 
@@ -1552,7 +1566,7 @@ class TestNLSERK4:
 
         # Just one step to exercise the code path
         A_before = A.copy()
-        simu.split_step_RK4(A, V, prop, plans)
+        simu.split_step_RK4(A, V, prop, plans, DZ_TEST)
         # Field should have changed
         assert not np.allclose(A, A_before)
 
@@ -1736,7 +1750,7 @@ class TestCNLSERK4:
         prop = simu._build_propagator_rk4()
 
         A_before = A.copy()
-        simu.split_step_RK4(A, V, prop, plans)
+        simu.split_step_RK4(A, V, prop, plans, DZ_TEST)
         assert np.isfinite(A).all(), "CNLSE RK4 with V produced NaN/Inf"
         assert not np.allclose(A, A_before), "Field unchanged after RK4 step with V"
 
@@ -1959,7 +1973,7 @@ class TestCNLSEExtended:
             Isat=Isat,
             backend="CPU",
         )
-        prop = simu._build_propagator()
+        prop = simu._build_propagator(PRECISION_COMPLEX, DZ_TEST)
         assert prop.shape == (2, S, S)
         assert np.isfinite(prop).all()
 
@@ -1979,8 +1993,8 @@ class TestCNLSEExtended:
             Isat=Isat,
             backend="CPU",
         )
-        prop1 = simu._build_propagator()
-        prop2 = simu._build_propagator()
+        prop1 = simu._build_propagator(PRECISION_COMPLEX, DZ_TEST)
+        prop2 = simu._build_propagator(PRECISION_COMPLEX, DZ_TEST)
         assert prop1 is prop2
 
     def test_propagator_rk4(self):

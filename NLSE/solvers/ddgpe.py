@@ -149,11 +149,15 @@ class DDGPE(CNLSE):
             Propagation step.
         """
         rand1 = simu._random(
-            loc=0, scale=simu.delta_z, size=(simu.NY, simu.NX)
-        ) + 1j * simu._random(loc=0, scale=simu.delta_z, size=(simu.NY, simu.NX))
+            loc=0, scale=simu._current_delta_z, size=(simu.NY, simu.NX)
+        ) + 1j * simu._random(
+            loc=0, scale=simu._current_delta_z, size=(simu.NY, simu.NX)
+        )
         rand2 = simu._random(
-            loc=0, scale=simu.delta_z, size=(simu.NY, simu.NX)
-        ) + 1j * simu._random(loc=0, scale=simu.delta_z, size=(simu.NY, simu.NX))
+            loc=0, scale=simu._current_delta_z, size=(simu.NY, simu.NX)
+        ) + 1j * simu._random(
+            loc=0, scale=simu._current_delta_z, size=(simu.NY, simu.NX)
+        )
         A[..., 0, :, :] += (
             noise * np.sqrt(simu.gamma / (4 * (simu.delta_X * simu.delta_Y))) * rand1
         )
@@ -198,8 +202,8 @@ class DDGPE(CNLSE):
         F_probe_t : np.ndarray
             The temporal profile of the probe field.
         """
-        A[..., 1, :, :] -= F_pump_r * F_pump_t[i] * simu.delta_z * 1j
-        A[..., 1, :, :] -= F_probe_r * F_probe_t[i] * simu.delta_z * 1j
+        A[..., 1, :, :] -= F_pump_r * F_pump_t[i] * simu._current_delta_z * 1j
+        A[..., 1, :, :] -= F_probe_r * F_probe_t[i] * simu._current_delta_z * 1j
 
     def _precompute_step_constants(
         self, V: np.ndarray | None, precision: str = "single"
@@ -210,12 +214,12 @@ class DDGPE(CNLSE):
         self._gamma_half = fp(self.gamma / 2)
         self._gamma2_half = fp(self.gamma2 / 2)
 
-    def _propagator_cache_key(self, dtype: np.dtype) -> tuple:
+    def _propagator_cache_key(self, dtype: np.dtype, delta_z: float) -> tuple:
         """Return cache key for DDGPE propagator."""
         return (
             self.NX,
             self.NY,
-            float(self.delta_z),
+            float(delta_z),
             np.dtype(dtype).str,
             float(self.omega_exc),
             float(self.omega_cav),
@@ -223,12 +227,10 @@ class DDGPE(CNLSE):
             float(self.k_z),
         )
 
-    def _compute_propagator(self, dtype: np.dtype) -> np.ndarray:
+    def _compute_propagator(self, dtype: np.dtype, delta_z: float) -> np.ndarray:
         """Compute the DDGPE polariton propagation matrices."""
         propagator1 = np.exp(
-            -1j
-            * (self.omega_exc * (1 + 0 * self.Kxx**2) - self.omega_pump)
-            * self.delta_z,
+            -1j * (self.omega_exc * (1 + 0 * self.Kxx**2) - self.omega_pump) * delta_z,
             dtype=dtype,
         )
         propagator2 = np.exp(
@@ -237,7 +239,7 @@ class DDGPE(CNLSE):
                 self.omega_cav * np.sqrt(1 + (self.Kxx**2 + self.Kyy**2) / self.k_z**2)
                 - self.omega_pump
             )
-            * self.delta_z,
+            * delta_z,
             dtype=dtype,
         )
         return np.array([propagator1, propagator2])
@@ -307,6 +309,7 @@ class DDGPE(CNLSE):
         V: np.ndarray,
         propagator: np.ndarray,
         plans: list,
+        delta_z: float,
         precision: str = "single",
     ) -> np.ndarray:
         """Split step function for one propagation step.
@@ -325,6 +328,9 @@ class DDGPE(CNLSE):
         plans : list
             List of FFT plan objects. Either a single FFT plan for
             both directions (GPU case) or distinct FFT and IFFT plans for FFTW.
+        delta_z : float
+            Step to take. Must match the propagator, which was built
+            from it.
         precision : str, optional
             Single or double application of the nonlinear
             propagation step. Defaults to "single".
@@ -349,7 +355,7 @@ class DDGPE(CNLSE):
                     A1,
                     A_sq_1,
                     A_sq_2,
-                    self.delta_z / 2,
+                    delta_z / 2,
                     gamma_half,
                     self.g,
                     self.g12,
@@ -360,7 +366,7 @@ class DDGPE(CNLSE):
                     A2,
                     A_sq_2,
                     A_sq_1,
-                    self.delta_z / 2,
+                    delta_z / 2,
                     gamma2_half,
                     self.g2,
                     self.g12,
@@ -372,7 +378,7 @@ class DDGPE(CNLSE):
                     A1,
                     A_sq_1,
                     A_sq_2,
-                    self.delta_z / 2,
+                    delta_z / 2,
                     gamma_half,
                     V,
                     self.g,
@@ -384,7 +390,7 @@ class DDGPE(CNLSE):
                     A2,
                     A_sq_2,
                     A_sq_1,
-                    self.delta_z / 2,
+                    delta_z / 2,
                     gamma2_half,
                     V,
                     self.g2,
@@ -402,7 +408,7 @@ class DDGPE(CNLSE):
         A1, A2 = self._take_components(A)
         A_sq, A_sq_1, A_sq_2 = self._compute_A_sq_components(A, A_sq)
 
-        dz_step = self.delta_z / 2 if precision == "double" else self.delta_z
+        dz_step = delta_z / 2 if precision == "double" else delta_z
         if V is None:
             A1 = kernels.nl_prop_without_V_c(
                 A1,
@@ -452,7 +458,7 @@ class DDGPE(CNLSE):
                 self.I_sat2,
             )
         if precision == "single" and self.omega is not None:
-            A1, A2 = kernels.rabi_coupling(A1, A2, self.delta_z, self.omega / 2)
+            A1, A2 = kernels.rabi_coupling(A1, A2, delta_z, self.omega / 2)
 
         A[0] = A1
         A[1] = A2
@@ -521,6 +527,7 @@ class DDGPE(CNLSE):
         E_in: np.ndarray,
         t: float,
         laser_excitation: Callable | None,
+        delta_z: float | complex | None = None,
         plot: bool = False,
         precision: str = "single",
         verbose: bool = True,
@@ -536,6 +543,9 @@ class DDGPE(CNLSE):
             E_in[1] is the cavity field.
         t : float
             Time to propagate to in s.
+        delta_z : float or complex, optional
+            Time step. Defaults to None, meaning the solver derives one from
+            the field.
         laser_excitation : callable or None
             The excitation function.
             This represents the laser pump and probe. Defaults to None which uses
@@ -571,6 +581,7 @@ class DDGPE(CNLSE):
         return super().out_field(
             E_in=E_in,
             z=t,
+            delta_z=delta_z,
             plot=plot,
             precision=precision,
             verbose=verbose,

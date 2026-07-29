@@ -110,12 +110,17 @@ def adapt_delta_z(
     i: int,
     update_every: int,
     delta_z: list,
-) -> None:
+) -> float | None:
     """Update the simulation step size.
 
     This callback will update the simulation step size every update_every steps by
     computing the nonlinear refractive index change and adjusting the step size
     accordingly.
+
+    A callback changes the step by returning it. The loop rebuilds the
+    propagator to match before taking the next step; assigning the step
+    somewhere would leave the propagator built from the previous one, and the
+    linear part would advance by the wrong distance.
 
     Parameters
     ----------
@@ -131,10 +136,16 @@ def adapt_delta_z(
         Update the step size every update_every steps.
     delta_z : list
         A list to store the size of the steps.
+
+    Returns
+    -------
+    float or None
+        The new step, on the steps where it is updated, else None.
     """
-    delta_z.append(simu.delta_z)
-    if i % update_every == 0:
-        A_sq = (A.real * A.real + A.imag * A.imag) * c * epsilon_0 / 2
-        delta_n = np.abs(simu.n2) * A_sq / (1 + A_sq / simu.I_sat)
-        z_nl = float(1 / (simu.k * delta_n.max()))
-        simu.delta_z = np.abs(z_nl) / 12
+    delta_z.append(simu._current_delta_z)
+    if i % update_every != 0:
+        return None
+    A_sq = (A.real * A.real + A.imag * A.imag) * c * epsilon_0 / 2
+    delta_n = np.abs(simu.n2) * A_sq / (1 + A_sq / simu.I_sat)
+    z_nl = float(1 / (simu.k * delta_n.max()))
+    return np.abs(z_nl) / 12

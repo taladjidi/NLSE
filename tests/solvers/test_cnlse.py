@@ -22,6 +22,9 @@ Isat2 = waist / waist2 * Isat
 L = 1e-3
 alpha = 20
 
+# Step used wherever a test builds a propagator or takes a step by hand.
+DZ_TEST = 1e-4
+
 
 def test_prepare_output_array(backend) -> None:
     simu = CNLSE(
@@ -95,7 +98,7 @@ def test_send_arrays_to_gpu() -> None:
             Isat=Isat,
             backend="CUPY",
         )
-        simu.propagator = simu._build_propagator()
+        simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
         simu._send_arrays_to_gpu()
         assert isinstance(simu.propagator, cp.ndarray), (
             "propagator is not a cp.ndarray. (Backend GPU)"
@@ -143,7 +146,7 @@ def test_retrieve_arrays_from_gpu() -> None:
             Isat=Isat,
             backend="CUPY",
         )
-        simu.propagator = simu._build_propagator()
+        simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
         simu._send_arrays_to_gpu()
         simu._retrieve_arrays_from_gpu()
         assert isinstance(simu.propagator, np.ndarray), (
@@ -208,8 +211,7 @@ def test_split_step(backend) -> None:
         Isat=Isat,
         backend=backend,
     )
-    simu.delta_z = 0
-    simu.propagator = simu._build_propagator()
+    simu.propagator = simu._build_propagator(np.complex64, 0)
     E = np.ones((2, N, N), dtype=PRECISION_COMPLEX)
     A, A_sq = simu._prepare_output_array(E, normalize=False)
     simu.plans = simu._build_fft_plan(A)
@@ -221,6 +223,7 @@ def test_split_step(backend) -> None:
         simu.V,
         simu.propagator,
         simu.plans,
+        0,
         precision="double",
     )
     np.testing.assert_allclose(
@@ -249,7 +252,9 @@ def test_out_field(backend) -> None:
         Isat=Isat,
         backend=backend,
     )
-    E = simu.out_field(E, L, verbose=False, plot=False, precision="single")
+    E = simu.out_field(
+        E, L, verbose=False, plot=False, precision="single", delta_z=DZ_TEST
+    )
     norm = np.sum(
         np.abs(E) ** 2 * simu.delta_X * simu.delta_Y * c * epsilon_0 / 2,
         axis=simu._last_axes,

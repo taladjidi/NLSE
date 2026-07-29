@@ -50,14 +50,14 @@ DEFAULT_MIN_STEPS = 10
 class NLSE:
     """A class to solve NLSE."""
 
+    # Step currently in force, for callbacks that need it -- callbacks receive
+    # (simu, A, z, i, *args) and have no other way to see it. Written by the
+    # propagation loop, meaningless outside one, and not a way to set the step:
+    # a callback changes it by *returning* a new one.
+    _current_delta_z: float | complex | None = None
+
     __CUPY_AVAILABLE__ = __CUPY_AVAILABLE__
     __PYOPENCL_AVAILABLE__ = __PYOPENCL_AVAILABLE__
-
-    # Class attributes so the delta_z property works whatever order a subclass
-    # assigns things in. None means "not chosen yet": the getter estimates one
-    # on first read, and out_field derives one from the field.
-    _delta_z_is_user_set = False
-    _delta_z: float | None = None
 
     def __init__(
         self,
@@ -211,20 +211,20 @@ class NLSE:
             self._convolution = signal.oaconvolve
         # CL backend doesn't have convolution yet
 
-    def _propagator_cache_key(self, dtype: np.dtype) -> tuple:
+    def _propagator_cache_key(self, dtype: np.dtype, delta_z: float) -> tuple:
         """Return cache key for the split-step propagator."""
         return (
             self.NX,
             self.NY,
-            float(self.delta_z),
+            float(delta_z),
             np.dtype(dtype).str,
             float(self.k),
         )
 
-    def _compute_propagator(self, dtype: np.dtype) -> np.ndarray:
+    def _compute_propagator(self, dtype: np.dtype, delta_z: float) -> np.ndarray:
         """Compute the linear propagation matrix (no caching)."""
         return np.exp(
-            -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k * self.delta_z,
+            -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k * delta_z,
             dtype=dtype,
         )
 
@@ -360,28 +360,6 @@ class NLSE:
         if rate == 0:
             return np.inf
         return RK4_STABILITY_RADIUS / rate
-
-    @property
-    def delta_z(self) -> float:
-        """Propagation step.
-
-        Estimated from the grid on first read, and replaced by one derived
-        from the field when ``out_field`` runs. An assigned step is used as
-        given, capped only where it would leave the method's region of
-        convergence.
-
-        Estimated lazily rather than in __init__ because the estimate reads
-        the dispersion operator, which subclasses build from attributes they
-        set after calling super().__init__.
-        """
-        if self._delta_z is None:
-            self._delta_z = self._default_delta_z()
-        return self._delta_z
-
-    @delta_z.setter
-    def delta_z(self, value: float) -> None:
-        self._delta_z = value
-        self._delta_z_is_user_set = True
 
     def _estimated_rates(self) -> dict[str, float]:
         """Return the phase rates without a field, for use before a run.
@@ -529,18 +507,25 @@ class NLSE:
             return np.asarray(value)
         return np.asarray(self._backend.to_numpy(value))
 
-    def _enforce_step_limit(self, A: np.ndarray, method: str) -> None:
-        """Cap delta_z to the stability/accuracy limit for the chosen method.
+    def _capped_delta_z(self, delta_z: float, A: np.ndarray, method: str) -> float:
+        """Return delta_z, lowered if it leaves the method's convergence region.
 
         Only ever lowers it. A step the solver chose itself is already well
-        inside the limit, so this binds on a step the caller set.
+        inside the limit, so this binds on a step the caller passed.
 
         Parameters
         ----------
+        delta_z : float
+            Proposed step.
         A : np.ndarray
             Normalized field (possibly on device).
         method : str
             Integration method ("split_step" or "RK4").
+
+        Returns
+        -------
+        float
+            The step to actually take.
         """
         if method == "RK4":
             rates = self._energy_rates(A)
@@ -562,14 +547,14 @@ class NLSE:
             max_dz = self._split_step_max_dz(A)
             label = "split-step accuracy"
             extra = ""
-        if self.delta_z > max_dz:
+        if delta_z > max_dz:
             warnings.warn(
-                f"delta_z={self.delta_z:.2e} exceeds {label} limit "
+                f"delta_z={delta_z:.2e} exceeds {label} limit "
                 f"({max_dz:.2e}). Reducing to {0.9 * max_dz:.2e}.{extra}",
                 stacklevel=2,
             )
-            # Private name: capping a step is not the caller choosing one.
-            self._delta_z = 0.9 * max_dz
+            return 0.9 * max_dz
+        return delta_z
 
     @staticmethod
     def _field_dtype(E_in: np.ndarray) -> np.dtype:
@@ -591,29 +576,34 @@ class NLSE:
             ``complex128`` if the field is double precision, else
             ``complex64``.
         """
-        return (
-            np.dtype(np.complex128)
-            if np.dtype(getattr(E_in, "dtype", np.complex64)).itemsize == 16
-            else np.dtype(np.complex64)
-        )
+        dtype = getattr(E_in, "dtype", np.complex64)
+        try:
+            double = np.dtype(dtype).itemsize == 16
+        except TypeError:
+            # MLX names its own dtypes, which numpy cannot interpret.
+            double = "128" in str(dtype)
+        return np.dtype(np.complex128) if double else np.dtype(np.complex64)
 
-    def _build_propagator(self, dtype: np.dtype = np.complex64) -> np.ndarray:
+    def _build_propagator(self, dtype: np.dtype, delta_z: float) -> np.ndarray:
         """Build the linear propagation matrix with caching.
 
         Parameters
         ----------
         dtype : np.dtype
             Complex dtype of the field the propagator will multiply.
+        delta_z : float
+            Step the propagator advances by. It is part of the cache key, so
+            a run with a different step gets its own.
 
         Returns
         -------
         np.ndarray
             The propagator matrix.
         """
-        cache_key = self._propagator_cache_key(dtype)
+        cache_key = self._propagator_cache_key(dtype, delta_z)
         if cache_key in self._propagator_cache:
             return self._propagator_cache[cache_key]
-        propagator = self._compute_propagator(dtype)
+        propagator = self._compute_propagator(dtype, delta_z)
         self._propagator_cache[cache_key] = propagator
         return propagator
 
@@ -837,6 +827,7 @@ class NLSE:
         V: np.ndarray | None,
         propagator: np.ndarray,
         plans: list,
+        delta_z: float,
         precision: str = "single",
     ) -> np.ndarray:
         """Split step function for one propagation step.
@@ -853,6 +844,8 @@ class NLSE:
             Propagator matrix.
         plans : list
             List of FFT plan objects from backend.
+        delta_z : float
+            Step to take. Must match the propagator, which was built from it.
         precision : str, optional
             Order of the split step: "single" applies the nonlinear step
             once, "double" splits it around the linear step. Not the
@@ -878,7 +871,7 @@ class NLSE:
         # Fused fast path (CL, MLX). Not eligible with a nonlocal kernel,
         # which needs the convolution between |A|^2 and the nonlinear step.
         if self._backend.has_fused_split_step and self.nl_length == 0:
-            dz = self.delta_z / 2 if precision == "double" else self.delta_z
+            dz = delta_z / 2 if precision == "double" else delta_z
             prop_fft = getattr(self, "_propagator_fft", None)
             return kernels.split_step_fused(
                 A,
@@ -905,7 +898,7 @@ class NLSE:
                     A = kernels.nl_prop_without_V(
                         A,
                         A_sq,
-                        self.delta_z / 2,
+                        delta_z / 2,
                         alpha_half,
                         g,
                         Isat_conv,
@@ -914,7 +907,7 @@ class NLSE:
                     A = kernels.nl_prop(
                         A,
                         A_sq,
-                        self.delta_z / 2,
+                        delta_z / 2,
                         alpha_half,
                         V_scaled,
                         g,
@@ -924,7 +917,7 @@ class NLSE:
                 if V is None:
                     A = kernels.square_mod_nl_prop(
                         A,
-                        self.delta_z / 2,
+                        delta_z / 2,
                         alpha_half,
                         g,
                         Isat_conv,
@@ -933,7 +926,7 @@ class NLSE:
                     A = kernels.square_mod_nl_prop_v(
                         A,
                         V_scaled,
-                        self.delta_z / 2,
+                        delta_z / 2,
                         alpha_half,
                         g,
                         Isat_conv,
@@ -944,7 +937,7 @@ class NLSE:
 
         # Second half-step (always executed)
         # Determine step size based on precision mode
-        dz_step = self.delta_z / 2 if precision == "double" else self.delta_z
+        dz_step = delta_z / 2 if precision == "double" else delta_z
 
         if self.nl_length > 0:
             # Can't use fused kernel with convolution
@@ -1071,6 +1064,7 @@ class NLSE:
         V: np.ndarray | None,
         propagator: np.ndarray,
         plans: list,
+        delta_z: float,
     ) -> np.ndarray:
         """Propagate one step using classic 4th-order Runge-Kutta.
 
@@ -1087,6 +1081,8 @@ class NLSE:
             Propagator matrix.
         plans : list
             List of FFT plan objects from backend.
+        delta_z : float
+            Step to take. Must match the propagator, which was built from it.
 
         Returns
         -------
@@ -1108,7 +1104,7 @@ class NLSE:
                 A,
                 propagator,
                 V_scaled,
-                self.delta_z,
+                delta_z,
                 alpha_half,
                 g,
                 Isat_conv,
@@ -1120,7 +1116,7 @@ class NLSE:
         k = self._rk4_k
         A_tmp = self._rk4_A_tmp
         acc = self._rk4_acc
-        h = self.delta_z
+        h = delta_z
 
         has_fused = self._backend.has_fused_rk4_stage_update
 
@@ -1169,14 +1165,26 @@ class NLSE:
             self._rk4_acc = self._backend.allocate_field(A.shape, dtype)
 
     def _run_callbacks(self, callback, callback_args, A, z, i):
-        """Dispatch user callbacks at each solver step."""
+        """Dispatch user callbacks at each solver step.
+
+        Returns
+        -------
+        float or None
+            A new step, if a callback asked for one by returning it. Callbacks
+            that return nothing leave the step alone, which is all of them
+            except the adaptive ones.
+        """
+        requested = None
         if isinstance(callback, Callable):
-            callback(self, A, z, i, *callback_args)
+            requested = callback(self, A, z, i, *callback_args)
         elif isinstance(callback, list) and isinstance(callback[0], Callable):
             for c, ca in zip(callback, callback_args, strict=True):
-                c(self, A, z, i, *ca)
+                got = c(self, A, z, i, *ca)
+                if got is not None:
+                    requested = got
         else:
             raise ValueError("callbacks should be a callable or a list of callables")
+        return requested
 
     def _run_propagation(
         self,
@@ -1184,6 +1192,7 @@ class NLSE:
         A_sq,
         V,
         z,
+        delta_z,
         precision,
         method,
         callback,
@@ -1198,30 +1207,40 @@ class NLSE:
         np.ndarray
             The propagated field (may be a new object for functional backends).
         """
-        n_steps = int(np.ceil(z / abs(self.delta_z)))
-        n_steps_nl = self._nonlinear_step_count(z, n_steps)
+        n_steps = int(np.ceil(z / abs(delta_z)))
+        n_steps_nl = self._nonlinear_step_count(z, n_steps, delta_z)
 
         # Use a mutable container so the closure can update A for functional
         # backends (MLX) where kernels return new arrays.
         state = [A]
 
-        if method == "RK4":
+        def _make_step(dz):
+            """Build the per-step closure for a given step size.
 
-            def _step():
-                state[0] = self.split_step_RK4(state[0], V, self.propagator, self.plans)
-        else:
+            Rebuilt when an adaptive callback changes the step, so the step
+            and the propagator it was built from cannot come apart.
+            """
+            if method == "RK4":
 
-            def _step():
-                state[0] = self.split_step(
-                    state[0], A_sq, V, self.propagator, self.plans, precision
-                )
+                def _step():
+                    state[0] = self.split_step_RK4(
+                        state[0], V, self.propagator, self.plans, dz
+                    )
+            else:
+
+                def _step():
+                    state[0] = self.split_step(
+                        state[0], A_sq, V, self.propagator, self.plans, dz, precision
+                    )
+
+            return _step
 
         is_scalar_n2 = isinstance(self.n2, (int, float, np.floating))
         can_use_fast_loop = (
             callback is None
             and is_scalar_n2
             and self.nl_length == 0
-            and not isinstance(self.delta_z, complex)
+            and not isinstance(delta_z, complex)
         )
         # Zeroing the nonlinearity mutates self, so restore it afterwards.
         saved = {attr: getattr(self, attr) for attr in self._nonlinearity_attrs}
@@ -1230,14 +1249,17 @@ class NLSE:
                 # Two segments rather than a mid-loop switch: the constants are
                 # baked into the CUDA graph that execute_loop captures, so each
                 # segment needs its own capture.
-                self._backend.execute_loop(_step, n_steps_nl)
+                step = _make_step(delta_z)
+                self._current_delta_z = delta_z
+                self._backend.execute_loop(step, n_steps_nl)
                 if n_steps > n_steps_nl:
                     self._disable_nonlinearity(V, precision)
-                    self._backend.execute_loop(_step, n_steps - n_steps_nl)
+                    self._backend.execute_loop(step, n_steps - n_steps_nl)
             else:
                 self._loop_with_callbacks(
-                    _step,
+                    _make_step,
                     z,
+                    delta_z,
                     callback,
                     callback_args,
                     state,
@@ -1246,6 +1268,8 @@ class NLSE:
                     z_switch=self.L if n_steps_nl < n_steps else None,
                     V=V,
                     precision=precision,
+                    method=method,
+                    dtype=self._field_dtype(A),
                 )
         finally:
             for attr, value in saved.items():
@@ -1257,7 +1281,7 @@ class NLSE:
     # Subclasses extend this with their own coupling parameters.
     _nonlinearity_attrs = ("n2",)
 
-    def _nonlinear_step_count(self, z: float, n_steps: int) -> int:
+    def _nonlinear_step_count(self, z: float, n_steps: int, delta_z: float) -> int:
         """Return how many of the n_steps fall inside the nonlinear medium.
 
         Propagation past the medium length L continues linearly. Solvers that
@@ -1270,6 +1294,8 @@ class NLSE:
             Total propagation distance.
         n_steps : int
             Total number of steps for this run.
+        delta_z : float
+            Step size.
 
         Returns
         -------
@@ -1278,7 +1304,7 @@ class NLSE:
         """
         if not self.L > 0 or z <= self.L:
             return n_steps
-        return min(n_steps, int(np.ceil(self.L / abs(self.delta_z))))
+        return min(n_steps, int(np.ceil(self.L / abs(delta_z))))
 
     def _disable_nonlinearity(self, V: np.ndarray | None, precision: str) -> None:
         """Zero the nonlinear coupling and re-derive the step constants.
@@ -1296,8 +1322,9 @@ class NLSE:
 
     def _loop_with_callbacks(
         self,
-        step_fn,
+        step_factory,
         z,
+        delta_z,
         callback,
         callback_args,
         state,
@@ -1306,8 +1333,18 @@ class NLSE:
         z_switch=None,
         V=None,
         precision="single",
+        method="split_step",
+        dtype=np.complex64,
     ):
-        """Run propagation loop with per-step callbacks."""
+        """Run propagation loop with per-step callbacks.
+
+        A callback may return a new step to use from here on. The propagator
+        is rebuilt to match before the next step: it is built from delta_z, so
+        changing one without the other silently propagates the linear part by
+        the wrong distance.
+        """
+        step_fn = step_factory(delta_z)
+        self._current_delta_z = delta_z
         z_prop = 0.0
         i = 0
         switched = False
@@ -1317,8 +1354,17 @@ class NLSE:
                 switched = True
             step_fn()
             if callback is not None:
-                self._run_callbacks(callback, callback_args, state[0], z, i)
-            z_prop += self.delta_z
+                requested = self._run_callbacks(callback, callback_args, state[0], z, i)
+                if requested is not None and requested != delta_z:
+                    delta_z = requested
+                    self._current_delta_z = delta_z
+                    if method != "RK4":
+                        self.propagator = self._build_propagator(dtype, delta_z)
+                        if self._backend.is_device_backend:
+                            self.propagator = self._backend.from_numpy(self.propagator)
+                        self._update_propagator_fft()
+                    step_fn = step_factory(delta_z)
+            z_prop += delta_z
             i += 1
             if verbose:
                 pbar.n = abs(z_prop) / z * 100
@@ -1389,6 +1435,7 @@ class NLSE:
         self,
         E_in: np.ndarray,
         z: float,
+        delta_z: float | complex | None = None,
         plot: bool = False,
         precision: str = "single",
         method: str = "split_step",
@@ -1402,8 +1449,8 @@ class NLSE:
         This function propagates the field E_in over a distance z by
         calling the split step function in a loop.
 
-        This function supports imaginary time evolution provided you set
-        the delta_z to a complex number.
+        This function supports imaginary time evolution provided you pass
+        a complex delta_z.
         This allows to find the ground state of the system.
         Warning: this is still experimental !
 
@@ -1413,6 +1460,13 @@ class NLSE:
             Normalized input field (between 0 and 1).
         z : float
             Propagation distance in m.
+        delta_z : float or complex, optional
+            Step to propagate with. Defaults to None, meaning the solver
+            derives one from the field: a step that imprints a fixed phase
+            per step, against the same energy rates the stability and
+            accuracy limits are built from. A step given here is used as
+            given, capped only where it would leave the method's region of
+            convergence. Pass a complex value for imaginary time evolution.
         plot : bool, optional
             Plots the results. Defaults to False.
         precision : str, optional
@@ -1469,10 +1523,10 @@ class NLSE:
         self._allocate_rk4_buffers(A, method)
         self._precompute_step_constants(V, precision)
 
-        # Settle delta_z before building anything that depends on it.
-        if not self._delta_z_is_user_set:
-            self._delta_z = self._default_delta_z(A, method, z)
-        self._enforce_step_limit(A, method)
+        # Settle the step before building anything that depends on it.
+        if delta_z is None:
+            delta_z = self._default_delta_z(A, method, z)
+        delta_z = self._capped_delta_z(delta_z, A, method)
 
         # The propagator depends on delta_z, k, the grid and the precision,
         # any of which may have changed since the last run. _build_propagator
@@ -1480,9 +1534,8 @@ class NLSE:
         if method == "RK4":
             self.propagator = self._build_propagator_rk4()
         else:
-            self.propagator = self._build_propagator(dtype=field_dtype)
-        if self._backend.is_device_backend:
-            self._send_propagator_to_gpu(field_dtype)
+            self.propagator = self._build_propagator(field_dtype, delta_z)
+        self._send_propagator_to_gpu(field_dtype)
         if verbose:
             pbar = tqdm.tqdm(
                 total=100,
@@ -1497,7 +1550,7 @@ class NLSE:
             end_gpu = cp.cuda.Event()
             start_gpu.record()
         t0 = time.perf_counter()
-        if type(self.delta_z) is complex:
+        if type(delta_z) is complex:
             print("Warning: imaginary time evolution !")
 
         A = self._run_propagation(
@@ -1505,6 +1558,7 @@ class NLSE:
             A_sq,
             V,
             z,
+            delta_z,
             precision,
             method,
             callback,

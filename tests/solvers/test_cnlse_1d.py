@@ -20,6 +20,9 @@ Isat = 10e4  # saturation intensity in W/m^2
 L = 1e-3
 alpha = 20
 
+# Step used wherever a test builds a propagator or takes a step by hand.
+DZ_TEST = 1e-4
+
 
 def test_build_propagator(backend) -> None:
     simu = CNLSE_1d(
@@ -34,9 +37,9 @@ def test_build_propagator(backend) -> None:
         Isat=Isat,
         backend=backend,
     )
-    prop = simu._build_propagator()
-    prop1 = np.exp(-1j * 0.5 * (simu.Kx**2) / simu.k * simu.delta_z)
-    prop2 = np.exp(-1j * 0.5 * (simu.Kx**2) / simu.k2 * simu.delta_z)
+    prop = simu._build_propagator(np.complex64, DZ_TEST)
+    prop1 = np.exp(-1j * 0.5 * (simu.Kx**2) / simu.k * DZ_TEST)
+    prop2 = np.exp(-1j * 0.5 * (simu.Kx**2) / simu.k2 * DZ_TEST)
     assert np.allclose(prop, np.array([prop1, prop2])), (
         f"Propagator is wrong. (Backend {backend})"
     )
@@ -100,16 +103,15 @@ def test_split_step(backend) -> None:
         Isat=Isat,
         backend=backend,
     )
-    simu.delta_z = 0
-    simu.propagator = simu._build_propagator()
+    simu.propagator = simu._build_propagator(np.complex64, 0)
     E = np.ones((2, N), dtype=PRECISION_COMPLEX)
     A, A_sq = simu._prepare_output_array(E, normalize=False)
     simu.plans = simu._build_fft_plan(A)
-    simu.propagator = simu._build_propagator()
+    simu.propagator = simu._build_propagator(np.complex64, 0)
     if simu._backend.is_device_backend:
         simu._send_arrays_to_gpu()
     A = simu.split_step(
-        A, A_sq, simu.V, simu.propagator, simu.plans, precision="double"
+        A, A_sq, simu.V, simu.propagator, simu.plans, 0, precision="double"
     )
     np.testing.assert_allclose(
         as_numpy(simu, A),
@@ -125,7 +127,9 @@ def test_out_field(backend) -> None:
         0, power, window, n2, n12, None, L, NX=N, Isat=Isat, backend=backend
     )
     E0 = np.ones((2, N), dtype=PRECISION_COMPLEX)
-    A = simu.out_field(E0, simu.delta_z, verbose=False, plot=False, precision="single")
+    A = simu.out_field(
+        E0, DZ_TEST, delta_z=DZ_TEST, verbose=False, plot=False, precision="single"
+    )
     rho = A.real * A.real + A.imag * A.imag
     print(rho)
     integral = (rho * simu.delta_X**2).sum(axis=simu._last_axes)

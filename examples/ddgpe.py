@@ -3,6 +3,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 from NLSE import DDGPE
 
+# Propagation step, passed to out_field and used by the plots below.
+DELTA_Z = 0.1 / 32
+
 
 def turn_on(
     F_laser_t: np.ndarray,
@@ -78,8 +81,7 @@ def main():
         backend="CPU",
     )
 
-    dd.delta_z = 0.1 / 32  # need to be adjusted automatically
-    time = np.arange(0, T + dd.delta_z, step=dd.delta_z, dtype=np.float32)
+    time = np.arange(0, T + DELTA_Z, step=DELTA_Z, dtype=np.float32)
     save_every = 1  # np.argwhere(time == 1)[0][0]
     sample1 = np.zeros(time.size // save_every, dtype=np.float32)
     sample2 = np.zeros(time.size // save_every, dtype=np.float32)
@@ -113,6 +115,7 @@ def main():
         plot=True,
         callback=callback,
         callback_args=callback_args,
+        delta_z=DELTA_Z,  # need to be adjusted automatically,
     )
 
     plt.figure("pump and field norm sum")

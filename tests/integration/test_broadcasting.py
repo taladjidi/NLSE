@@ -61,7 +61,6 @@ def as_numpy(simu, array):
 def make_solver(backend_name, n2, alpha, V):
     """Build a small NLSE solver with a fixed step."""
     simu = NLSE(alpha=alpha, n2=n2, V=V, backend=backend_name, **BASE)
-    simu.delta_z = DELTA_Z
     return simu
 
 
@@ -83,6 +82,7 @@ def propagate(simu, field, method, precision="single"):
         method=method,
         precision=precision,
         normalize=False,
+        delta_z=DELTA_Z,
     )
     return np.asarray(as_numpy(simu, out))
 

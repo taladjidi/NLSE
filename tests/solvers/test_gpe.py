@@ -14,6 +14,9 @@ waist = 1e-3
 window = 1e-3
 m = 87 * atomic_mass
 
+# Step used wherever a test builds a propagator or takes a step by hand.
+DZ_TEST = 1e-4
+
 
 def test_build_propagator(backend) -> None:
     simu_gpe = GPE(
@@ -27,14 +30,9 @@ def test_build_propagator(backend) -> None:
         NY=N,
         backend=backend,
     )
-    prop = simu_gpe._build_propagator(dtype=np.complex64)
+    prop = simu_gpe._build_propagator(np.complex64, DZ_TEST)
     expected = np.exp(
-        -1j
-        * 0.5
-        * hbar
-        * (simu_gpe.Kxx**2 + simu_gpe.Kyy**2)
-        / simu_gpe.m
-        * simu_gpe.delta_t,
+        -1j * 0.5 * hbar * (simu_gpe.Kxx**2 + simu_gpe.Kyy**2) / simu_gpe.m * DZ_TEST,
         dtype=np.complex64,
     )
     assert np.allclose(
@@ -90,9 +88,10 @@ def test_out_field(backend) -> None:
         NY=N,
         backend=backend,
     )
-    simu.delta_t = 1e-8
     psi_0 = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(PRECISION_COMPLEX)
-    psi = simu.out_field(psi_0, 1e-6, verbose=True, plot=False, precision="single")
+    psi = simu.out_field(
+        psi_0, 1e-6, verbose=True, plot=False, precision="single", delta_z=1e-8
+    )
     norm = np.sum(np.abs(psi) ** 2 * simu.delta_X * simu.delta_Y)
     assert np.allclose(norm, simu.N, rtol=1e-4), (
         f"Norm not conserved. (Backend {backend})"

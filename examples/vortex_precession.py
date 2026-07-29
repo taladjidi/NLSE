@@ -37,9 +37,10 @@ cs = np.sqrt(abs(n2) * intensity) / (1 + intensity / Isat)
 delta_n = abs(n2) * intensity / (1 + intensity / Isat) ** 2
 xi = 1 / (simu.k * cs)
 z_nl = 1 / (simu.k * delta_n)
+# Propagation step, passed to out_field and used below.
+DELTA_Z = z_nl / 6
 simu.L = 48 * z_nl
-simu.delta_z = z_nl / 6
-nsteps = simu.L // simu.delta_z
+nsteps = simu.L // DELTA_Z
 save_every = 2
 N_samples = round(nsteps / save_every)
 E_0 = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(np.complex64)
@@ -68,7 +69,6 @@ for i, n in enumerate(sizes):
         Isat=Isat,
         backend="MLX",
     )
-    simu.delta_z = z_nl / 6
     # Add a vortex phase
     d = 4 * xi
     vortex_plus = vortex(simu.XX + d / 2, simu.YY + d / 2, xi=xi, ell=1)
@@ -88,6 +88,7 @@ for i, n in enumerate(sizes):
             verbose=False,
             plot=False,
             precision="single",
+            delta_z=DELTA_Z,
         )
         # # to plot the animation at the end
         # simu.out_field(
@@ -97,7 +98,7 @@ for i, n in enumerate(sizes):
         #     plot=False,
         #     precision="single",
         #     callback=callback_samples,
-        # )
+        # , delta_z=DELTA_Z )
         ts[i, _] = time.perf_counter() - t0
     timing_string = f"Average time: {np.mean(ts[i]):.2f} s "
     timing_string += f"(min: {np.min(ts[i]):.2f} s, max: {np.max(ts[i]):.2f} s)"
