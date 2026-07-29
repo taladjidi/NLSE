@@ -7,14 +7,17 @@ placeholders, compile once via cp.RawModule, cache, and invoke directly.
 Supports both single (float32/complex64) and double (float64/complex128) precision.
 """
 
-import re
 from pathlib import Path
 
 import cupy as cp
 import numpy as np
 
-# Suffix of the twin that takes a complex (absorbing) potential.
-COMPLEX_V_SUFFIX = "_cv"
+from . import templating
+from .templating import COMPLEX_V_SUFFIX, REAL_V_SUFFIX
+
+# How CUDA C opens a kernel. The extern "C" that precedes it is not part of the
+# match: it keeps the names unmangled so get_function can find them.
+KERNEL_DECL = "__global__ void"
 
 # Module-level cache: precision string -> compiled cp.RawModule
 _COMPILED_MODULES = {}
@@ -34,31 +37,8 @@ def _load_kernel_template():
     return template_path.read_text()
 
 
-_VBLOCK = re.compile(r"// \{\{VBLOCK\}\}\n(.*?)\n// \{\{END_VBLOCK\}\}", re.DOTALL)
-
-# Real-V and complex-V spellings of what a V-reading kernel needs: the
-# argument type, the phase (real part of V) and the gain/loss (imaginary
-# part). V_LOSS expands to nothing in the real case, so a real V keeps the
-# exact arithmetic it had before complex potentials existed.
-_V_REAL_MACROS = """#define V_T {{FP_TYPE}}
-#define V_RE(v, i) ((v)[i])
-#define V_LOSS(v, i)
-"""
-_V_COMPLEX_MACROS = """#define V_T {{FP2_TYPE}}
-#define V_RE(v, i) ((v)[i].x)
-#define V_LOSS(v, i) + (v)[i].y
-"""
-_V_UNDEF = "#undef V_T\n#undef V_RE\n#undef V_LOSS\n"
-
-
 def _expand_v_blocks(source):
-    """Emit a real-V and a complex-V twin of every kernel marked VBLOCK.
-
-    A complex potential is an absorbing one: its imaginary part is gain or
-    loss and belongs in the real part of the exponent, not the phase. V is a
-    bare pointer, so real and complex cannot share an entry point; the
-    complex twin takes ``{{FP2_TYPE}}*`` and is suffixed ``_cv``. Twins
-    rather than a branch, so a real V pays nothing.
+    """Emit the no-V, real-V and complex-V twins of each VBLOCK kernel.
 
     Parameters
     ----------
@@ -68,29 +48,23 @@ def _expand_v_blocks(source):
     Returns
     -------
     str
-        Source with each marked block replaced by both twins.
+        Source with each marked block replaced by its three twins.
     """
+    return templating.expand_v_blocks(source, KERNEL_DECL)
 
-    def expand(match):
-        block = match.group(1)
-        renamed = re.sub(
-            r"(__global__ void )(\w+)\(",
-            r"\1\2" + COMPLEX_V_SUFFIX + "(",
-            block,
-            count=1,
-        )
-        return (
-            _V_REAL_MACROS
-            + block
-            + "\n"
-            + _V_UNDEF
-            + _V_COMPLEX_MACROS
-            + renamed
-            + "\n"
-            + _V_UNDEF
-        )
 
-    return _VBLOCK.sub(expand, source)
+_KERNEL_NAMES: list = []
+
+
+def _kernel_names():
+    """Return every kernel name the expanded template declares."""
+    if not _KERNEL_NAMES:
+        _KERNEL_NAMES.extend(
+            templating.kernel_names(
+                _expand_v_blocks(_load_kernel_template()), KERNEL_DECL
+            )
+        )
+    return _KERNEL_NAMES
 
 
 def _get_kernel_source(precision="single"):
@@ -207,30 +181,32 @@ class CUDAKernels:
         return any(g is not None and g.ndim < A.ndim for g in grids)
 
     @staticmethod
-    def _v_variant(kernels, name, V):
-        """Return the kernel matching this potential's realness.
+    def _v_kernel(kernels, base, V):
+        """Return the twin of this kernel that matches the potential.
 
         A complex V is an absorbing potential: its imaginary part is gain or
-        loss. V is a bare pointer, so the two cases have separate compiled
-        kernels and a real V keeps the instruction stream it always had.
+        loss rather than phase. None, real and complex each get their own
+        compiled kernel, so a run pays for exactly the case it is in.
 
         Parameters
         ----------
         kernels : dict
             Compiled kernels for this precision.
-        name : str
-            Base kernel key.
+        base : str
+            Name of the kernel, without a potential suffix.
         V : cp.ndarray or None
             The potential.
 
         Returns
         -------
         cp.RawKernel
-            The real-V or complex-V kernel.
+            The no-V, real-V or complex-V twin.
         """
-        if V is not None and V.dtype.kind == "c":
-            return kernels[name + COMPLEX_V_SUFFIX]
-        return kernels[name]
+        if V is None:
+            return kernels[base]
+        if V.dtype.kind == "c":
+            return kernels[base + COMPLEX_V_SUFFIX]
+        return kernels[base + REAL_V_SUFFIX]
 
     def _get_kernels(self, dtype):
         """Get compiled kernel functions for given dtype, compiling if needed.
@@ -256,40 +232,11 @@ class CUDAKernels:
 
         if precision not in self._kernels:
             module = _compile_kernels(precision)
+            # Keyed by the kernel's own name, so a V-reading kernel is reached
+            # as <name> with no potential, <name>_v with a real one and
+            # <name>_cv with a complex one -- see _v_kernel.
             self._kernels[precision] = {
-                "nl_prop": module.get_function("nl_prop_fused"),
-                "nl_prop_without_v": module.get_function("nl_prop_without_v_fused"),
-                "nl_prop_c": module.get_function("nl_prop_c_fused"),
-                "nl_prop_c_without_v": module.get_function("nl_prop_c_without_v_fused"),
-                "square_mod": module.get_function("square_mod_fused"),
-                "square_mod_nl_prop": module.get_function("square_mod_nl_prop_fused"),
-                "square_mod_nl_prop_v": module.get_function(
-                    "square_mod_nl_prop_v_fused"
-                ),
-                "apply_propagator": module.get_function("apply_propagator"),
-                "rabi_coupling": module.get_function("rabi_coupling"),
-                "rk4_axpy": module.get_function("rk4_axpy"),
-                "rk4_accumulate": module.get_function("rk4_accumulate"),
-                "rk4_nl_rhs": module.get_function("rk4_nl_rhs_fused"),
-                "rk4_nl_rhs_v": module.get_function("rk4_nl_rhs_v_fused"),
-                "square_mod_rk4_nl_rhs": module.get_function(
-                    "square_mod_rk4_nl_rhs_fused"
-                ),
-                "square_mod_rk4_nl_rhs_v": module.get_function(
-                    "square_mod_rk4_nl_rhs_v_fused"
-                ),
-                "rk4_nl_rhs_c": module.get_function("rk4_nl_rhs_c_fused"),
-                "rk4_nl_rhs_c_v": module.get_function("rk4_nl_rhs_c_v_fused"),
-                "nl_prop_cv": module.get_function("nl_prop_fused_cv"),
-                "nl_prop_c_cv": module.get_function("nl_prop_c_fused_cv"),
-                "square_mod_nl_prop_v_cv": module.get_function(
-                    "square_mod_nl_prop_v_fused_cv"
-                ),
-                "rk4_nl_rhs_v_cv": module.get_function("rk4_nl_rhs_v_fused_cv"),
-                "square_mod_rk4_nl_rhs_v_cv": module.get_function(
-                    "square_mod_rk4_nl_rhs_v_fused_cv"
-                ),
-                "rk4_nl_rhs_c_v_cv": module.get_function("rk4_nl_rhs_c_v_fused_cv"),
+                name: module.get_function(name) for name in _kernel_names()
             }
 
         return self._kernels[precision]
@@ -371,7 +318,7 @@ class CUDAKernels:
         N = int(A.size)
         dz_c, alpha_c, g_c, Isat_c = self._cast(A.dtype, dz, alpha, g, Isat)
         self._launch(
-            self._v_variant(kernels, "nl_prop", V),
+            self._v_kernel(kernels, "nl_prop", V),
             N,
             A,
             A_sq,
@@ -421,7 +368,7 @@ class CUDAKernels:
         N = int(A.size)
         dz_c, alpha_c, g_c, Isat_c = self._cast(A.dtype, dz, alpha, g, Isat)
         self._launch(
-            kernels["nl_prop_without_v"],
+            kernels["nl_prop"],
             N,
             A,
             A_sq,
@@ -482,7 +429,7 @@ class CUDAKernels:
         N = int(A1.size)
         params = self._cast(A1.dtype, dz, alpha, g11, g12, Isat1, Isat2)
         self._launch(
-            self._v_variant(kernels, "nl_prop_c", V),
+            self._v_kernel(kernels, "nl_prop_c", V),
             N,
             A1,
             A_sq_1,
@@ -540,7 +487,7 @@ class CUDAKernels:
         N = int(A1.size)
         params = self._cast(A1.dtype, dz, alpha, g11, g12, Isat1, Isat2)
         self._launch(
-            kernels["nl_prop_c_without_v"],
+            kernels["nl_prop_c"],
             N,
             A1,
             A_sq_1,
@@ -655,7 +602,7 @@ class CUDAKernels:
         N = int(A.size)
         dz_c, alpha_c, g_c, Isat_c = self._cast(A.dtype, dz, alpha, g, Isat)
         self._launch(
-            self._v_variant(kernels, "square_mod_nl_prop_v", V),
+            self._v_kernel(kernels, "square_mod_nl_prop", V),
             N,
             A,
             V,
@@ -891,7 +838,7 @@ class CUDAKernels:
         N = int(A.size)
         params = self._cast(A.dtype, alpha, g, Isat)
         self._launch(
-            self._v_variant(kernels, "rk4_nl_rhs_v", V),
+            self._v_kernel(kernels, "rk4_nl_rhs", V),
             N,
             A_prop,
             A,
@@ -980,7 +927,7 @@ class CUDAKernels:
         N = int(A.size)
         params = self._cast(A.dtype, alpha, g, Isat)
         self._launch(
-            self._v_variant(kernels, "square_mod_rk4_nl_rhs_v", V),
+            self._v_kernel(kernels, "square_mod_rk4_nl_rhs", V),
             N,
             A_prop,
             A,
@@ -1101,7 +1048,7 @@ class CUDAKernels:
         N = int(A_orig.size)
         params = self._cast(A_orig.dtype, alpha, g11, g12, Isat1, Isat2)
         self._launch(
-            self._v_variant(kernels, "rk4_nl_rhs_c_v", V),
+            self._v_kernel(kernels, "rk4_nl_rhs_c", V),
             N,
             A_prop,
             A_orig,

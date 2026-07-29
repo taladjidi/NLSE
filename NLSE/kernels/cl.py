@@ -5,15 +5,17 @@ Supports both single (float32/complex64) and double (float64/complex128) precisi
 on devices that support double precision.
 """
 
-import re
 from pathlib import Path
 
 import numpy as np
 import pyopencl as cl
 from pyopencl import array as cla
 
-# Suffix of the twin that takes a complex (absorbing) potential.
-COMPLEX_V_SUFFIX = "_cv"
+from . import templating
+from .templating import COMPLEX_V_SUFFIX, REAL_V_SUFFIX
+
+# How OpenCL C opens a kernel.
+KERNEL_DECL = "__kernel void"
 
 # Module-level cache for compiled programs
 # Key: (context_hash, precision) -> Value: compiled cl.Program
@@ -105,35 +107,8 @@ def _load_kernel_template():
     return template_path.read_text()
 
 
-_VBLOCK = re.compile(r"// \{\{VBLOCK\}\}\n(.*?)\n// \{\{END_VBLOCK\}\}", re.DOTALL)
-
-# Real-V and complex-V spellings of the three things a V-reading kernel needs:
-# the argument type, the phase (real part of V) and the gain/loss (imaginary
-# part). V_LOSS expands to nothing in the real case, so the real kernels are
-# byte-for-byte the arithmetic they had before complex V existed.
-_V_REAL_MACROS = """#define V_T {{FP_TYPE}}
-#define V_RE(v, i) ((v)[i])
-#define V_LOSS(v, i)
-"""
-_V_COMPLEX_MACROS = """#define V_T {{FP2_TYPE}}
-#define V_RE(v, i) ((v)[i].x)
-#define V_LOSS(v, i) + (v)[i].y
-"""
-_V_UNDEF = "#undef V_T\n#undef V_RE\n#undef V_LOSS\n"
-
-
 def _expand_v_blocks(source):
-    """Emit a real-V and a complex-V twin of every kernel marked VBLOCK.
-
-    A complex potential is an absorbing one: its imaginary part is gain or
-    loss, entering the real part of the exponent rather than the phase. The
-    kernels take V as a bare pointer, so a real and a complex V cannot share
-    one entry point; the complex twin takes ``{{FP2_TYPE}}*`` and is suffixed
-    ``_cv``.
-
-    Twins rather than one kernel that branches, so a real V — overwhelmingly
-    the common case — pays nothing: no wider load, no extra register, and the
-    same instruction stream it had before.
+    """Emit the no-V, real-V and complex-V twins of each VBLOCK kernel.
 
     Parameters
     ----------
@@ -143,26 +118,23 @@ def _expand_v_blocks(source):
     Returns
     -------
     str
-        Source with each marked block replaced by both twins.
+        Source with each marked block replaced by its three twins.
     """
+    return templating.expand_v_blocks(source, KERNEL_DECL, "__global ")
 
-    def expand(match):
-        block = match.group(1)
-        renamed = re.sub(
-            r"(__kernel void )(\w+)\(", r"\1\2" + COMPLEX_V_SUFFIX + "(", block, count=1
-        )
-        return (
-            _V_REAL_MACROS
-            + block
-            + "\n"
-            + _V_UNDEF
-            + _V_COMPLEX_MACROS
-            + renamed
-            + "\n"
-            + _V_UNDEF
-        )
 
-    return _VBLOCK.sub(expand, source)
+_KERNEL_NAMES: list = []
+
+
+def _kernel_names():
+    """Return every kernel name the expanded template declares."""
+    if not _KERNEL_NAMES:
+        _KERNEL_NAMES.extend(
+            templating.kernel_names(
+                _expand_v_blocks(_load_kernel_template()), KERNEL_DECL
+            )
+        )
+    return _KERNEL_NAMES
 
 
 def _get_kernel_source(precision="single"):
@@ -317,59 +289,12 @@ class OpenCLKernels:
 
             program = self._programs[precision]
 
-            # Cache kernel objects to avoid repeated retrieval
+            # Cache kernel objects to avoid repeated retrieval. The key is the
+            # kernel's own name, so a V-reading kernel is reached as <name> with
+            # no potential, <name>_v with a real one and <name>_cv with a
+            # complex one -- see _v_kernel.
             self._kernels[precision] = {
-                "nl_prop": cl.Kernel(program, "nl_prop_fused"),
-                "nl_prop_without_v": cl.Kernel(program, "nl_prop_without_v_fused"),
-                "nl_prop_c": cl.Kernel(program, "nl_prop_c_fused"),
-                "nl_prop_c_without_v": cl.Kernel(program, "nl_prop_c_without_v_fused"),
-                "square_mod": cl.Kernel(program, "square_mod_fused"),
-                # Optimized fused kernels
-                "square_mod_nl_prop": cl.Kernel(program, "square_mod_nl_prop_fused"),
-                "square_mod_nl_prop_v": cl.Kernel(
-                    program, "square_mod_nl_prop_v_fused"
-                ),
-                "apply_propagator": cl.Kernel(program, "apply_propagator"),
-                "rabi_coupling": cl.Kernel(program, "rabi_coupling"),
-                # RK4 utility kernels
-                "rk4_axpy": cl.Kernel(program, "rk4_axpy"),
-                "rk4_accumulate": cl.Kernel(program, "rk4_accumulate"),
-                # RK4 nonlinear RHS kernels
-                "rk4_nl_rhs": cl.Kernel(program, "rk4_nl_rhs_fused"),
-                "rk4_nl_rhs_v": cl.Kernel(program, "rk4_nl_rhs_v_fused"),
-                "square_mod_rk4_nl_rhs": cl.Kernel(
-                    program, "square_mod_rk4_nl_rhs_fused"
-                ),
-                "square_mod_rk4_nl_rhs_v": cl.Kernel(
-                    program, "square_mod_rk4_nl_rhs_v_fused"
-                ),
-                "rk4_nl_rhs_c": cl.Kernel(program, "rk4_nl_rhs_c_fused"),
-                "rk4_nl_rhs_c_v": cl.Kernel(program, "rk4_nl_rhs_c_v_fused"),
-                # Fused RK4 stage update kernels
-                "rk4_set_and_axpy": cl.Kernel(program, "rk4_set_and_axpy"),
-                "rk4_acc_and_axpy": cl.Kernel(program, "rk4_acc_and_axpy"),
-                # Interleaved coupled kernels
-                "coupled_nl_prop_c_v": cl.Kernel(program, "coupled_nl_prop_c_v"),
-                "coupled_nl_prop_c": cl.Kernel(program, "coupled_nl_prop_c"),
-                "coupled_rk4_nl_rhs_c_v": cl.Kernel(program, "coupled_rk4_nl_rhs_c_v"),
-                "coupled_rk4_nl_rhs_c": cl.Kernel(program, "coupled_rk4_nl_rhs_c"),
-                "rabi_coupling_interleaved": cl.Kernel(
-                    program, "rabi_coupling_interleaved"
-                ),
-                "nl_prop_cv": cl.Kernel(program, "nl_prop_fused_cv"),
-                "nl_prop_c_cv": cl.Kernel(program, "nl_prop_c_fused_cv"),
-                "square_mod_nl_prop_v_cv": cl.Kernel(
-                    program, "square_mod_nl_prop_v_fused_cv"
-                ),
-                "rk4_nl_rhs_v_cv": cl.Kernel(program, "rk4_nl_rhs_v_fused_cv"),
-                "square_mod_rk4_nl_rhs_v_cv": cl.Kernel(
-                    program, "square_mod_rk4_nl_rhs_v_fused_cv"
-                ),
-                "rk4_nl_rhs_c_v_cv": cl.Kernel(program, "rk4_nl_rhs_c_v_fused_cv"),
-                "coupled_nl_prop_c_v_cv": cl.Kernel(program, "coupled_nl_prop_c_v_cv"),
-                "coupled_rk4_nl_rhs_c_v_cv": cl.Kernel(
-                    program, "coupled_rk4_nl_rhs_c_v_cv"
-                ),
+                name: cl.Kernel(program, name) for name in _kernel_names()
             }
 
         return self._kernels[precision]
@@ -415,31 +340,32 @@ class OpenCLKernels:
             )
 
     @staticmethod
-    def _v_variant(kernels, name, V):
-        """Return the kernel matching this potential's realness.
+    def _v_kernel(kernels, base, V):
+        """Return the twin of this kernel that matches the potential.
 
         A complex V is an absorbing potential: its imaginary part is gain or
-        loss. The two cases cannot share an entry point because V is a bare
-        pointer, so each has its own compiled kernel and a real V keeps the
-        exact instruction stream it always had.
+        loss rather than phase. None, real and complex each get their own
+        compiled kernel, so a run pays for exactly the case it is in.
 
         Parameters
         ----------
         kernels : dict
             Compiled kernels for this precision.
-        name : str
-            Base kernel key.
+        base : str
+            Name of the kernel, without a potential suffix.
         V : cla.Array or None
             The potential.
 
         Returns
         -------
         cl.Kernel
-            The real-V or complex-V kernel.
+            The no-V, real-V or complex-V twin.
         """
-        if V is not None and V.dtype.kind == "c":
-            return kernels[name + COMPLEX_V_SUFFIX]
-        return kernels[name]
+        if V is None:
+            return kernels[base]
+        if V.dtype.kind == "c":
+            return kernels[base + COMPLEX_V_SUFFIX]
+        return kernels[base + REAL_V_SUFFIX]
 
     @staticmethod
     def _offset(offset):
@@ -511,7 +437,7 @@ class OpenCLKernels:
         kernels = self._get_kernels(A.dtype)
         for offset, gs, ls, params in self._launches(A, (dz, alpha, g, Isat), V):
             dz_c, alpha_c, g_c, Isat_c = self._cast_params(A.dtype, *params)
-            self._v_variant(kernels, "nl_prop", V)(
+            self._v_kernel(kernels, "nl_prop", V)(
                 self.queue,
                 gs,
                 ls,
@@ -560,7 +486,7 @@ class OpenCLKernels:
         kernels = self._get_kernels(A.dtype)
         for offset, gs, ls, params in self._launches(A, (dz, alpha, g, Isat)):
             dz_c, alpha_c, g_c, Isat_c = self._cast_params(A.dtype, *params)
-            kernels["nl_prop_without_v"](
+            kernels["nl_prop"](
                 self.queue,
                 gs,
                 ls,
@@ -621,7 +547,7 @@ class OpenCLKernels:
         global_size = (int(A1.size),)
 
         params = self._cast_params(A1.dtype, dz, alpha, g11, g12, Isat1, Isat2)
-        self._v_variant(kernels, "nl_prop_c", V)(
+        self._v_kernel(kernels, "nl_prop_c", V)(
             self.queue,
             global_size,
             None,
@@ -677,7 +603,7 @@ class OpenCLKernels:
         global_size = (int(A1.size),)
 
         params = self._cast_params(A1.dtype, dz, alpha, g11, g12, Isat1, Isat2)
-        kernels["nl_prop_c_without_v"](
+        kernels["nl_prop_c"](
             self.queue, global_size, None, A1.data, A_sq_1.data, A_sq_2.data, *params
         )
         return A1
@@ -780,7 +706,7 @@ class OpenCLKernels:
         kernels = self._get_kernels(A.dtype)
         for offset, gs, ls, params in self._launches(A, (dz, alpha, g, Isat), V):
             dz_c, alpha_c, g_c, Isat_c = self._cast_params(A.dtype, *params)
-            self._v_variant(kernels, "square_mod_nl_prop_v", V)(
+            self._v_kernel(kernels, "square_mod_nl_prop", V)(
                 self.queue,
                 gs,
                 ls,
@@ -1110,7 +1036,7 @@ class OpenCLKernels:
         """
         kernels = self._get_kernels(A.dtype)
         for offset, gs, ls, values in self._launches(A, (alpha, g, Isat), V):
-            self._v_variant(kernels, "rk4_nl_rhs_v", V)(
+            self._v_kernel(kernels, "rk4_nl_rhs", V)(
                 self.queue,
                 gs,
                 ls,
@@ -1197,7 +1123,7 @@ class OpenCLKernels:
         """
         kernels = self._get_kernels(A.dtype)
         for offset, gs, ls, values in self._launches(A, (alpha, g, Isat), V):
-            self._v_variant(kernels, "square_mod_rk4_nl_rhs_v", V)(
+            self._v_kernel(kernels, "square_mod_rk4_nl_rhs", V)(
                 self.queue,
                 gs,
                 ls,
@@ -1308,7 +1234,7 @@ class OpenCLKernels:
         """
         kernels = self._get_kernels(A_orig.dtype)
         params = self._cast_params(A_orig.dtype, alpha, g11, g12, Isat1, Isat2)
-        self._v_variant(kernels, "rk4_nl_rhs_c_v", V)(
+        self._v_kernel(kernels, "rk4_nl_rhs_c", V)(
             self.queue,
             (int(A_orig.size),),
             None,
@@ -1544,7 +1470,7 @@ class OpenCLKernels:
         # Double precision: NL half-step before linear
         if precision == "double":
             if V1 is not None:
-                self._v_variant(kerns, "coupled_nl_prop_c_v", V1)(
+                self._v_kernel(kerns, "coupled_nl_prop_c", V1)(
                     self.queue,
                     gs,
                     ls,
@@ -1576,7 +1502,7 @@ class OpenCLKernels:
 
         # Nonlinear step
         if V1 is not None:
-            self._v_variant(kerns, "coupled_nl_prop_c_v", V1)(
+            self._v_kernel(kerns, "coupled_nl_prop_c", V1)(
                 self.queue,
                 gs,
                 ls,
@@ -1694,7 +1620,7 @@ class OpenCLKernels:
             A_in.dtype, alpha1, alpha2, g11, g12, g22, Isat1, Isat2
         )
         if V1 is not None:
-            self._v_variant(kerns, "coupled_rk4_nl_rhs_c_v", V1)(
+            self._v_kernel(kerns, "coupled_rk4_nl_rhs_c", V1)(
                 self.queue,
                 gs,
                 ls,

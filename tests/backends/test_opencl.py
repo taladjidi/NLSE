@@ -304,24 +304,31 @@ class TestSharedGridBroadcast:
     exist so that a future edit cannot quietly swap it back.
     """
 
-    SHARED_GRID_KERNELS = [
-        "apply_propagator",
-        "nl_prop_fused",
-        "square_mod_nl_prop_v_fused",
-        "rk4_nl_rhs_v_fused",
-        "square_mod_rk4_nl_rhs_v_fused",
+    # Named by their V-reading base; every twin of each is checked, since the
+    # twins are generated from one body and must all carry the offset.
+    SHARED_GRID_BASES = [
+        "nl_prop",
+        "square_mod_nl_prop",
+        "rk4_nl_rhs",
+        "square_mod_rk4_nl_rhs",
     ]
 
     def test_shared_grid_reads_use_the_launch_offset(self):
         """Every kernel reading a shared grid must subtract the offset."""
         import re
 
-        from NLSE.kernels.cl import _get_kernel_source
+        from NLSE.kernels.cl import COMPLEX_V_SUFFIX, REAL_V_SUFFIX, _get_kernel_source
 
         source = _get_kernel_source("single")
         assert "{{" not in source, "unsubstituted placeholder left in the source"
         bodies = dict(re.findall(r"__kernel void (\w+)\((.*?)\n\}", source, re.DOTALL))
-        for name in self.SHARED_GRID_KERNELS:
+
+        names = ["apply_propagator"] + [
+            base + suffix
+            for base in self.SHARED_GRID_BASES
+            for suffix in (REAL_V_SUFFIX, COMPLEX_V_SUFFIX)
+        ]
+        for name in names:
             assert "get_global_offset(0)" in bodies[name], (
                 f"{name} indexes its shared grid without the launch offset, so "
                 f"a batched run reads the wrong slice"
