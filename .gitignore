@@ -21,13 +21,11 @@ build/*
 NLSE.egg-info/*
 img/inheritance_graph.svg
 mkdocs-documentation/site/
-examples/*.npy
-examples/*.svg
+examples/output/
 
 
 Archive.zip
 .git-session-note.txt
-benchmarks.pdf
 
 # Metal backend (work in progress, not included in main branch)
 NLSE/kernels/metal/
@@ -37,10 +35,3 @@ NLSE/kernels/metal_native/
 .ruff_cache/
 .pytest_cache/
 NLSE/.cache/
-
-# Scripts in examples/ write their timings and figures to the current working
-# directory, so running them from the repo root drops output here.
-*.npy
-benchmarks.svg
-benchmarks_*.npy
-vortex_precession.svg

@@ -107,7 +107,10 @@ all: without it the backend builds the sdist and pip builds the wheel from it.
 Agreed order, so that later steps benefit from the earlier ones:
 
 1. ~~**Docs**~~ — done, `4837a8f`, and `tests/test_docs.py` now keeps them honest.
-2. **Ugliness ledger** — in progress: 10 of 17 cleared (one added).
+2. **Ugliness ledger** — in progress: 13 of 17 cleared (one added).
+   Left: the mypy override (deferred to last, by request), the two in-place
+   GPU transfer helpers, `_take_components` copies, and the duplicate CUPY
+   kernel modules.
 3. **Reassess simplification.** Only after 1 and 2: clearing the ledger will
    change what is worth simplifying, so the survey is worth redoing rather
    than planning now.
@@ -254,7 +257,7 @@ read nothing.
 
 ## Ugliness ledger (task #10)
 
-Ten cleared, seven left. Highest value first:
+Thirteen cleared, four left. Highest value first:
 
 - **mypy checks 15% of the package.** `pyproject.toml` has an
   `ignore_errors` override for `NLSE.solvers.*` and `NLSE.kernels.*`, added in
@@ -286,15 +289,12 @@ Ten cleared, seven left. Highest value first:
   `_take_components` and others, so mangling would break the hierarchy. If
   stronger separation is wanted, move the stateless helpers to module-level
   functions, which are genuinely not part of the class surface.
-- ~40 `getattr(self, "_g", <recompute fallback>)` sites — the fallback
-  duplicates the physics in two places. `_estimated_rates` added another.
 - `_send_arrays_to_gpu` / `_retrieve_arrays_from_gpu` mutate `self` in place;
   this is what let `_propagator_fft` go stale.
 - `_take_components` returns copies on GPU, so callers must remember to write
   back `A[0] = A1; A[1] = A2`.
 - `kernels/cupy.py` (`cp.fuse`) and `kernels/cupy_kernels.py` (raw CUDA) are two
   parallel CUPY implementations.
-- Examples `np.save`/`savefig` into the CWD, littering the repo root.
 
 ### 11. nl_length falls back to local, and the docs are tested
 
@@ -350,3 +350,24 @@ untracked files are not restored at all.
 Keep measurements out of docstrings and comments, and keep comments short.
 Measurements belong in commit messages, where they are dated and attached to
 the change that produced them.
+
+### 13. Step constants have one definition, and examples stop writing to the cwd
+
+`2dd0d37` closes the `getattr(self, "_g", <recompute>)` ledger item. The
+fallback at each of ~50 read sites restated the physics, so a subclass that
+scaled a coupling differently was heard only by the precompute — which is how
+DDGPE's couplings came to be converted as an optical `n2`. `_step_constants()`
+is the single table; `_constant()` reads the attribute once it exists and the
+table until then. `_V_scaled`, `_V2_scaled` and `_propagator_fft` are per-run
+state, not derived constants, so they became class-level `None` defaults.
+
+Guarded by `TestStepConstantTable` and `test_ddgpe_couplings_are_not_scaled_by
+_the_optical_constant` in `tests/solvers/test_solver_state.py`. Four mutations
+tried, four caught: dropping DDGPE's override (the 1e26 bug), restating `_g11`
+with `epsilon_0` missing, a precompute that skips a declared name, and a
+`_constant` that ignores the table.
+
+Examples now write through `examples/_output.output_path` into
+`examples/output/`. This let six `.gitignore` patterns go, including a
+repo-wide `*.npy` that would have hidden real data. `tests/test_examples.py`
+holds the line; three mutations tried, three caught.

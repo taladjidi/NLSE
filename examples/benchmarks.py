@@ -3,6 +3,7 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 import tqdm
+from _output import output_path
 from cycler import cycler
 from NLSE import NLSE
 
@@ -112,8 +113,8 @@ for i, size in enumerate(sizes):
         times[i, 2, k] = time.perf_counter() - t0
         pbar.update(1)
 pbar.close()
-np.save("benchmarks_times.npy", times)
-np.save("benchmarks_sizes.npy", sizes)
+np.save(output_path("benchmarks_times.npy"), times)
+np.save(output_path("benchmarks_sizes.npy"), sizes)
 err_gpu = [
     np.mean(times[:, 0, :], axis=-1) - np.min(times[:, 0, :], axis=-1),
     np.max(times[:, 0, :], axis=-1) - np.mean(times[:, 0, :], axis=-1),
@@ -157,5 +158,5 @@ ax.set_xlabel(r"Size of the system $2^N$")
 ax.set_ylabel("Execution time in s")
 ax.set_title("Execution time (lower is better)")
 ax.set_yscale("log")
-fig.savefig("benchmarks.svg", dpi=300)
+fig.savefig(output_path("benchmarks.svg"), dpi=300)
 plt.show()
