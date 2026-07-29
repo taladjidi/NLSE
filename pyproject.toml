@@ -47,6 +47,8 @@ dev = [
   "pytest-benchmark",
   "ruff",
   "mypy",
+  # Runs those two on commit and the suite on push; see .pre-commit-config.yaml
+  "pre-commit",
   # Needed by tests/test_packaging.py, which builds a real wheel to verify
   # what ships. Without it the test would silently skip.
   "hatchling",

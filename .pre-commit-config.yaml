@@ -1,0 +1,62 @@
+# Local checks, so a mistake is caught in the second before the commit rather
+# than in the minutes after the push.
+#
+#     uv pip install -e ".[dev]"
+#     pre-commit install
+#
+# Every hook is `repo: local` with `language: system`: they run the tools this
+# project already pins in its dev extra, and the commands are the ones CI runs.
+# Nothing is cloned, so installing works offline and there is no second set of
+# tool versions to drift from the first.
+#
+# On commit: ruff and mypy, about a third of a second together.
+# On push: the test suite, about 25 seconds. Skip either with `--no-verify`
+# when you are committing work in progress.
+
+default_install_hook_types: [pre-commit, pre-push]
+
+repos:
+    - repo: local
+      hooks:
+          - id: ruff-check
+            name: ruff (lint)
+            entry: ruff check --fix NLSE/ tests/ examples/
+            language: system
+            # The command names its own paths, exactly as CI does, so it does
+            # not matter which files are staged.
+            pass_filenames: false
+            types_or: [python, pyi, jupyter]
+
+          - id: ruff-format
+            name: ruff (format)
+            entry: ruff format NLSE/ tests/ examples/
+            language: system
+            pass_filenames: false
+            types_or: [python, pyi, jupyter]
+
+          - id: mypy
+            name: mypy
+            entry: mypy NLSE/
+            language: system
+            pass_filenames: false
+            types_or: [python, pyi]
+
+          - id: yaml-parses
+            name: yaml parses
+            entry: python -c "import sys,yaml;[yaml.safe_load(open(f)) for f in sys.argv[1:]]"
+            language: system
+            files: \.(yml|yaml)$
+
+          - id: notebooks-are-json
+            name: notebooks are valid json
+            entry: python -c "import sys,json;[json.load(open(f)) for f in sys.argv[1:]]"
+            language: system
+            files: \.ipynb$
+
+          - id: pytest
+            name: pytest (excluding benchmarks)
+            entry: pytest tests/ -q -m "not benchmark"
+            language: system
+            pass_filenames: false
+            stages: [pre-push]
+            types_or: [python, pyi, jupyter, markdown]

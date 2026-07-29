@@ -152,7 +152,11 @@ so a green run may be hiding them.
 
 ```bash
 uv pip install -e ".[dev]"
+pre-commit install          # ruff + mypy on commit, tests on push
 ```
+
+`pre-commit install` is optional but recommended: it runs the same checks CI
+does, locally, before the code leaves your machine.
 
 The benchmarks can be run using [`examples/benchmarks.py`](examples/benchmarks.py) and compare a "naive" numpy implementation of the main solver loop to our solver.
 We also compare for the example of the vortex precession presented in [`FourierGPE.jl`](https://github.com/AshtonSBradley/FourierGPE.jl/blob/master/examples/2dvortexprecession.jl) to our solver.
