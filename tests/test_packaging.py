@@ -96,10 +96,28 @@ def _build_wheel_command(outdir: Path) -> list[str]:
     ]
 
 
+def _require_hatchling() -> None:
+    """Fail, rather than skip, when the build backend is missing.
+
+    These tests exist to catch a file that fails to ship. Skipping them is
+    indistinguishable from passing in a summary, so an environment without
+    the backend would report a clean run having checked nothing. hatchling is
+    a declared dev dependency, so its absence is a setup problem to fix.
+    """
+    try:
+        import hatchling  # noqa: F401
+    except ImportError:
+        pytest.fail(
+            "hatchling is missing, so the packaging tests cannot build "
+            "anything to inspect. It is in the dev extra: install with "
+            '`pip install -e ".[dev]"`.'
+        )
+
+
 @pytest.fixture(scope="module")
 def wheel_contents(tmp_path_factory) -> list[str]:
     """Build a wheel from the project root and return its member names."""
-    pytest.importorskip("hatchling", reason="hatchling needed to build a wheel")
+    _require_hatchling()
 
     outdir = tmp_path_factory.mktemp("wheel")
     command = _build_wheel_command(outdir)
@@ -116,6 +134,52 @@ def wheel_contents(tmp_path_factory) -> list[str]:
         return zf.namelist()
 
 
+def _run(command: list[str], what: str) -> None:
+    """Run a build command from the project root, failing loudly."""
+    result = subprocess.run(command, capture_output=True, text=True, cwd=PROJECT_ROOT)
+    if result.returncode != 0:
+        pytest.fail(
+            f"{what} failed ({' '.join(str(c) for c in command)}):\n"
+            f"{result.stdout}\n{result.stderr}"
+        )
+
+
+def _build_sdist_and_wheel(outdir: Path) -> None:
+    """Build an sdist into outdir, then a wheel from that sdist.
+
+    ``uv build`` does both in one command where it is installed. Otherwise
+    the backend builds the sdist and pip builds the wheel from it, so this
+    needs nothing beyond the dev extra.
+    """
+    if shutil.which("uv"):
+        _run(
+            ["uv", "build", "--out-dir", str(outdir), str(PROJECT_ROOT)],
+            "building an sdist and then a wheel from it",
+        )
+        return
+
+    _run(
+        [sys.executable, "-m", "hatchling", "build", "-t", "sdist", "-d", str(outdir)],
+        "building an sdist",
+    )
+    sdists = list(outdir.glob("*.tar.gz"))
+    assert len(sdists) == 1, f"expected one sdist, got {sdists}"
+    _run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            "--no-deps",
+            "--no-build-isolation",
+            "--wheel-dir",
+            str(outdir),
+            str(sdists[0]),
+        ],
+        "building a wheel from the sdist",
+    )
+
+
 @pytest.fixture(scope="module")
 def sdist_build(tmp_path_factory):
     """Build an sdist and then a wheel from it; return (sdist names, wheel names).
@@ -125,22 +189,10 @@ def sdist_build(tmp_path_factory):
     be self-contained, and nothing in the source tree can stand in for a
     file it forgot to include.
     """
-    pytest.importorskip("hatchling", reason="hatchling needed to build")
-    if not shutil.which("uv"):
-        pytest.skip("uv is needed to build an sdist and a wheel from it")
+    _require_hatchling()
 
     outdir = tmp_path_factory.mktemp("sdist")
-    result = subprocess.run(
-        ["uv", "build", "--out-dir", str(outdir), str(PROJECT_ROOT)],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        pytest.fail(
-            "building an sdist and then a wheel from it failed; the sdist is "
-            "probably missing something the build needs.\n"
-            f"{result.stdout}\n{result.stderr}"
-        )
+    _build_sdist_and_wheel(outdir)
 
     sdists = list(outdir.glob("*.tar.gz"))
     wheels = list(outdir.glob("*.whl"))
