@@ -388,9 +388,23 @@ Components go through `_component(i)`, derived from `_last_axes`, with
 of `_take_components`, and a `_norm_target` hook retires `CNLSE`'s and
 `NLSE_3d`'s copies of `_prepare_output_array`.
 
-**Verified on CPU only.** CUPY takes the same generic path and its kernels
-already have the fallbacks, so it should work — that is what the NVIDIA run
-needs to confirm, `tests/integration/test_broadcasting.py`. CL and MLX use a
+The first NVIDIA run found two CUPY failures, fixed in `f05d23a`, neither of
+which could fail on CPU:
+
+- `_prepare_output_array` divided CNLSE's per-component target, a numpy array,
+  by an integral on the device. CuPy refuses a numpy operand against a device
+  array, so *every* coupled CUPY test failed, unbatched ones included. The old
+  override moved it with `cp.array`; that went when the method was shared.
+- Batched constants kept the component axis. A parameter is shaped against the
+  field — `(count, 1, 1, 1)` for a `(count, 2, NY, NX)` coupled field — but
+  `_take_components` hands the kernels a `(count, NY, NX)` component. CPU
+  slices the batch itself and did not care; CuPy broadcast for real and made
+  `(count, count, NY, NX)`. The precompute reduces to component rank now.
+
+Both are pinned by CPU tests, so the next machine does not have to find them:
+one asserts the constants come out at component rank, the other that an array
+target passes through `from_numpy` — the identity on CPU, the whole point on
+CUPY. Four mutations tried, four caught. **Still needs a second NVIDIA run.** CL and MLX use a
 fused coupled kernel that assumes one field of the coupled rank; MLX silently
 returned `(2, 3, 2, N, N)` for a batch of three. Both now refuse through
 `_check_batch_support`. **Making them broadcast is kernel work, still open.**
