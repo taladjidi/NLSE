@@ -92,6 +92,29 @@ def test_prepare_output_array(backend) -> None:
     )
 
 
+def test_each_component_normalizes_to_its_own_power(backend) -> None:
+    """``power2`` defaults to ``power``, which hides a shared target.
+
+    With the two equal, normalizing both components to the first one's power
+    gives the right answer for the wrong reason, so this sets them apart.
+    """
+    simu = make_solver(backend)
+    simu.power2 = 4 * simu.power
+    A = np.ones((2, N, N), dtype=PRECISION_COMPLEX)
+
+    out = as_numpy(simu, simu._prepare_output_array(A, normalize=True)[0])
+    integral = (
+        (out.real * out.real + out.imag * out.imag) * simu.delta_X * simu.delta_Y
+    ).sum(axis=simu._last_axes) * (c * epsilon_0 / 2)
+
+    np.testing.assert_allclose(
+        integral,
+        [simu.power, simu.power2],
+        rtol=1e-4,
+        err_msg=f"each component must carry its own power (backend {backend})",
+    )
+
+
 def test_send_arrays_to_gpu() -> None:
     if CNLSE.__CUPY_AVAILABLE__:
         alpha = 20
@@ -224,3 +247,30 @@ def test_out_field(backend) -> None:
     assert np.allclose(norm, [simu.power, simu.power2], rtol=1e-4), (
         "Norm not conserved."
     )
+
+
+def test_components_round_trip_when_taken_by_copy(monkeypatch) -> None:
+    """Components taken by copy must be written back.
+
+    On a device backend ``_take_components`` copies, so the result of a
+    nonlinear step reaches the field only through ``_set_components``. On CPU the components are views and the write-back is a no-op, which
+    leaves CUPY as the only backend where dropping it would show. Forcing the
+    copy branch puts that under test here too.
+    """
+    from NLSE.backends.backend import Backend
+
+    simu = make_solver("CPU")
+    monkeypatch.setattr(Backend, "is_device_backend", property(lambda self: True))
+
+    for shape in ((2, N, N), (3, 2, N, N)):
+        A = np.zeros(shape, dtype=PRECISION_COMPLEX)
+        A1, A2 = simu._take_components(A)
+        assert not np.shares_memory(A1, A), "expected copies on a device backend"
+
+        A1[:] = 1.0
+        A2[:] = 2.0
+        simu._set_components(A, A1, A2)
+
+        got1, got2 = simu._take_components(A)
+        assert np.all(got1 == 1.0), f"component 1 was not written back for {shape}"
+        assert np.all(got2 == 2.0), f"component 2 was not written back for {shape}"
