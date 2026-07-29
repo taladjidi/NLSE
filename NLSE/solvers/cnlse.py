@@ -1,3 +1,5 @@
+from typing import Any
+
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.constants import c, epsilon_0
@@ -16,6 +18,8 @@ class CNLSE(NLSE):
     """A class to solve the coupled NLSE."""
 
     _gpu_param_attrs = (*NLSE._gpu_param_attrs, "n22", "n12")
+    # The second component's potential; None until a run scales it.
+    _V2_scaled: Any = None
     # Both intra- and inter-component couplings switch off past the medium.
     _nonlinearity_attrs = (*NLSE._nonlinearity_attrs, "n12", "n22")
 
@@ -213,30 +217,19 @@ class CNLSE(NLSE):
             return float(np.sum(weight * field) / total) if total > 0 else 0.0
 
         # Each component sees the potential scaled by its own k.
-        V1_scaled = self._as_host_array(getattr(self, "_V_scaled", None))
-        V2_scaled = self._as_host_array(getattr(self, "_V2_scaled", None))
+        V1_scaled = self._as_host_array(self._V_scaled)
+        V2_scaled = self._as_host_array(self._V2_scaled)
         potential = 0.0
         for weight, total, V in ((w1, t1, V1_scaled), (w2, t2, V2_scaled)):
             if V is not None:
                 potential = max(potential, abs(mean(weight, total, np.real(V))))
         rates["potential"] = potential
 
-        if getattr(self, "_g11", None) is None:
-            g11 = self.k / 2 * self.n2 * c * epsilon_0
-            g12 = self.k / 2 * self.n12 * c * epsilon_0
-            g22 = self.k2 / 2 * self.n22 * c * epsilon_0
-        else:
-            g11, g12, g22 = self._g11, self._g12, self._g22
-        if getattr(self, "_Isat_conv", None) is None:
-            Isat1 = 2 * self.I_sat / (epsilon_0 * c)
-            Isat2 = 2 * self.I_sat2 / (epsilon_0 * c)
-        else:
-            Isat1, Isat2 = self._Isat_conv, self._Isat_conv2
-        g11 = np.abs(self._as_host_array(g11))
-        g12 = np.abs(self._as_host_array(g12))
-        g22 = np.abs(self._as_host_array(g22))
-        Isat1 = self._as_host_array(Isat1)
-        Isat2 = self._as_host_array(Isat2)
+        g11 = np.abs(self._as_host_array(self._constant("_g11")))
+        g12 = np.abs(self._as_host_array(self._constant("_g12")))
+        g22 = np.abs(self._as_host_array(self._constant("_g22")))
+        Isat1 = self._as_host_array(self._constant("_Isat_conv"))
+        Isat2 = self._as_host_array(self._constant("_Isat_conv2"))
 
         I1, I2 = mean(w1, t1, w1), mean(w2, t2, w2)
         sat = 1 / (1 + I1 / Isat1 + I2 / Isat2)
@@ -257,22 +250,27 @@ class CNLSE(NLSE):
         prop2 = (-1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k2).astype(np.complex64)
         return np.array([prop1, prop2])
 
+    def _step_constants(self) -> dict[str, Any]:
+        """Add the second component's constants to NLSE's."""
+        base = super()._step_constants()
+        return {
+            **base,
+            # The intra-component coupling is the base class's, under the name
+            # the coupled kernels take it by.
+            "_g11": base["_g"],
+            "_g12": self.k / 2 * self.n12 * c * epsilon_0,
+            "_g22": self.k2 / 2 * self.n22 * c * epsilon_0,
+            "_alpha2_half": self.alpha2 / 2,
+            "_Isat_conv2": 2 * self.I_sat2 / (epsilon_0 * c),
+            "_k2_half": self.k2 / 2,
+        }
+
     def _precompute_step_constants(
         self, V: np.ndarray | None, precision: str = "single"
     ) -> None:
         """Pre-compute constants for coupled propagation steps."""
         super()._precompute_step_constants(V, precision)
-        fp = np.float32 if precision == "single" else np.float64
-        self._g11 = fp(self.k / 2 * self.n2 * c * epsilon_0)
-        self._g12 = fp(self.k / 2 * self.n12 * c * epsilon_0)
-        self._g22 = fp(self.k2 / 2 * self.n22 * c * epsilon_0)
-        self._alpha2_half = fp(self.alpha2 / 2)
-        self._Isat_conv2 = fp(2 * self.I_sat2 / (epsilon_0 * c))
-        self._k2_half = fp(self.k2 / 2)
-        if V is not None:
-            self._V2_scaled = V * self._k2_half
-        else:
-            self._V2_scaled = None
+        self._V2_scaled = None if V is None else V * self._k2_half
 
     def _take_components(self, A: np.ndarray) -> tuple:
         """Take the components of the field.
@@ -330,24 +328,24 @@ class CNLSE(NLSE):
         kernels = self._backend.kernels
 
         # Pre-computed constants (shared by all code paths)
-        alpha_half = getattr(self, "_alpha_half", self.alpha / 2)
-        alpha2_half = getattr(self, "_alpha2_half", self.alpha2 / 2)
-        g11 = getattr(self, "_g11", self.k / 2 * self.n2 * c * epsilon_0)
-        g12 = getattr(self, "_g12", self.k / 2 * self.n12 * c * epsilon_0)
-        g22 = getattr(self, "_g22", self.k2 / 2 * self.n22 * c * epsilon_0)
-        Isat1 = getattr(self, "_Isat_conv", 2 * self.I_sat / (epsilon_0 * c))
-        Isat2 = getattr(self, "_Isat_conv2", 2 * self.I_sat2 / (epsilon_0 * c))
-        V_scaled = getattr(self, "_V_scaled", None)
-        V2_scaled = getattr(self, "_V2_scaled", None)
+        alpha_half = self._constant("_alpha_half")
+        alpha2_half = self._constant("_alpha2_half")
+        g11 = self._constant("_g11")
+        g12 = self._constant("_g12")
+        g22 = self._constant("_g22")
+        Isat1 = self._constant("_Isat_conv")
+        Isat2 = self._constant("_Isat_conv2")
+        V_scaled = self._V_scaled
+        V2_scaled = self._V2_scaled
         if V_scaled is None and V is not None:
-            k_half = getattr(self, "_k_half", np.float32(self.k / 2))
-            k2_half = getattr(self, "_k2_half", np.float32(self.k2 / 2))
+            k_half = self._constant("_k_half")
+            k2_half = self._constant("_k2_half")
             V_scaled = V * k_half
             V2_scaled = V * k2_half
 
         # Fused fast path (CL, MLX): zero component copies
         if self._backend.has_fused_coupled_rk4_rhs and self.nl_length == 0:
-            prop_fft = getattr(self, "_propagator_fft", None)
+            prop_fft = self._propagator_fft
             return kernels.rk4_rhs_coupled_fused(
                 A_in,
                 k,
@@ -561,15 +559,15 @@ class CNLSE(NLSE):
             The propagated field.
         """
         # Use pre-computed constants with fallbacks for direct calls
-        alpha_half = getattr(self, "_alpha_half", self.alpha / 2)
-        alpha2_half = getattr(self, "_alpha2_half", self.alpha2 / 2)
-        g11 = getattr(self, "_g11", self.k / 2 * self.n2 * c * epsilon_0)
-        g12 = getattr(self, "_g12", self.k / 2 * self.n12 * c * epsilon_0)
-        g22 = getattr(self, "_g22", self.k2 / 2 * self.n22 * c * epsilon_0)
-        Isat_conv = getattr(self, "_Isat_conv", 2 * self.I_sat / (epsilon_0 * c))
-        Isat_conv2 = getattr(self, "_Isat_conv2", 2 * self.I_sat2 / (epsilon_0 * c))
-        V_scaled = getattr(self, "_V_scaled", None)
-        V2_scaled = getattr(self, "_V2_scaled", None)
+        alpha_half = self._constant("_alpha_half")
+        alpha2_half = self._constant("_alpha2_half")
+        g11 = self._constant("_g11")
+        g12 = self._constant("_g12")
+        g22 = self._constant("_g22")
+        Isat_conv = self._constant("_Isat_conv")
+        Isat_conv2 = self._constant("_Isat_conv2")
+        V_scaled = self._V_scaled
+        V2_scaled = self._V2_scaled
         if V is not None and V_scaled is None:
             V_scaled = V * np.float32(self.k / 2)
             V2_scaled = V * np.float32(self.k2 / 2)
@@ -590,7 +588,7 @@ class CNLSE(NLSE):
         # Fused fast path (CL, MLX): zero component copies
         if self._backend.has_fused_coupled_split_step and self.nl_length == 0:
             dz = delta_z / 2 if precision == "double" else delta_z
-            prop_fft = getattr(self, "_propagator_fft", None)
+            prop_fft = self._propagator_fft
             omega_half = (
                 self.omega / 2
                 if (precision == "single" and self.omega is not None)

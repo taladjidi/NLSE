@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 
@@ -223,23 +224,28 @@ class DDGPE(CNLSE):
         A[..., 1, :, :] -= F_pump_r * F_pump_t[i] * simu._current_delta_z * 1j
         A[..., 1, :, :] -= F_probe_r * F_probe_t[i] * simu._current_delta_z * 1j
 
+    def _step_constants(self) -> dict[str, Any]:
+        """Override the couplings, which DDGPE gives the kernels unconverted.
+
+        CNLSE scales them by ``k / 2 * c * epsilon_0``, and DDGPE's ``k`` comes
+        from a wavelength it supplies only to satisfy the base constructor. Left
+        at CNLSE's, the interaction rate the step limits read came out about
+        1e26 times too large and collapsed the step to nothing.
+        """
+        return {
+            **super()._step_constants(),
+            "_gamma_half": self.gamma / 2,
+            "_gamma2_half": self.gamma2 / 2,
+            "_g11": self.n2,
+            "_g12": self.n12,
+            "_g22": self.g2,
+        }
+
     def _precompute_step_constants(
         self, V: np.ndarray | None, precision: str = "single"
     ) -> None:
         """Pre-compute constants for DDGPE propagation steps."""
         super()._precompute_step_constants(V, precision)
-        fp = np.float32 if precision == "single" else np.float64
-        self._gamma_half = fp(self.gamma / 2)
-        self._gamma2_half = fp(self.gamma2 / 2)
-        # DDGPE's couplings go to the kernels as they are, with none of the
-        # optical conversion CNLSE applies. Restate them, because the step
-        # limits read these: left at CNLSE's, they carry a factor k/2 built
-        # from a wavelength DDGPE only supplies to keep the base class happy,
-        # which makes the interaction rate about 1e26 times too large and
-        # collapses the step to nothing.
-        self._g11 = fp(self.n2)
-        self._g12 = fp(self.n12)
-        self._g22 = fp(self.g2)
 
     def _propagator_cache_key(self, dtype: np.dtype, delta_z: float) -> tuple:
         """Return cache key for DDGPE propagator."""
@@ -368,8 +374,8 @@ class DDGPE(CNLSE):
             The propagated field.
         """
         # Use pre-computed constants with fallbacks
-        gamma_half = getattr(self, "_gamma_half", self.gamma / 2)
-        gamma2_half = getattr(self, "_gamma2_half", self.gamma2 / 2)
+        gamma_half = self._constant("_gamma_half")
+        gamma2_half = self._constant("_gamma2_half")
         kernels = self._backend.kernels
 
         A1, A2 = self._take_components(A)

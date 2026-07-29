@@ -67,6 +67,12 @@ class NLSE:
     # a callback changes it by *returning* a new one.
     _current_delta_z: float | complex | None = None
 
+    # Set per run rather than derived from the parameters, so they are None
+    # until a run sets them up. Declared here so reading one before that is a
+    # plain attribute access rather than a getattr with a default at each site.
+    _V_scaled: Any = None
+    _propagator_fft: Any = None
+
     # All three, so nothing has to know which backends are worth asking about.
     # MLX was missing, which is how the test conftest came to skip it.
     __CUPY_AVAILABLE__ = __CUPY_AVAILABLE__
@@ -440,11 +446,11 @@ class NLSE:
         kernels = self._backend.kernels
         # Use pre-computed constants (set in out_field), with fallbacks
         # for direct split_step calls outside out_field.
-        alpha_half = getattr(self, "_alpha_half", self.alpha / 2)
-        g = getattr(self, "_g", self.k / 2 * self.n2 * c * epsilon_0)
-        Isat_conv = getattr(self, "_Isat_conv", 2 * self.I_sat / (epsilon_0 * c))
-        k_half = getattr(self, "_k_half", np.float32(self.k / 2))
-        V_scaled = getattr(self, "_V_scaled", None)
+        alpha_half = self._constant("_alpha_half")
+        g = self._constant("_g")
+        Isat_conv = self._constant("_Isat_conv")
+        k_half = self._constant("_k_half")
+        V_scaled = self._V_scaled
         if V_scaled is None and V is not None:
             V_scaled = V * k_half
 
@@ -452,7 +458,7 @@ class NLSE:
         # which needs the convolution between |A|^2 and the nonlinear step.
         if self._backend.has_fused_split_step and self.nl_length == 0:
             dz = delta_z / 2 if precision == "double" else delta_z
-            prop_fft = getattr(self, "_propagator_fft", None)
+            prop_fft = self._propagator_fft
             return kernels.split_step_fused(
                 A,
                 prop_fft if prop_fft is not None else propagator,
@@ -599,11 +605,11 @@ class NLSE:
 
         # Whole-step fused fast path (MLX), single component only
         if self._backend.has_fused_rk4_step and self.nl_length == 0 and A.ndim == 2:
-            alpha_half = getattr(self, "_alpha_half", self.alpha / 2)
-            g = getattr(self, "_g", self.k / 2 * self.n2 * c * epsilon_0)
-            k_half = getattr(self, "_k_half", np.float32(self.k / 2))
-            Isat_conv = getattr(self, "_Isat_conv", 2 * self.I_sat / (epsilon_0 * c))
-            V_scaled = getattr(self, "_V_scaled", None)
+            alpha_half = self._constant("_alpha_half")
+            g = self._constant("_g")
+            k_half = self._constant("_k_half")
+            Isat_conv = self._constant("_Isat_conv")
+            V_scaled = self._V_scaled
             if V_scaled is None and V is not None:
                 V_scaled = V * k_half
             return kernels.split_step_rk4_fused(
@@ -896,25 +902,21 @@ class NLSE:
 
         # Only the real part of V rotates the phase; its imaginary part is
         # gain or loss and belongs with the losses.
-        V_scaled = self._as_host_array(getattr(self, "_V_scaled", None))
+        V_scaled = self._as_host_array(self._V_scaled)
         if V_scaled is None:
             potential = absorption = 0.0
         else:
             potential = float(np.sum(weight * np.real(V_scaled)) / total)
             absorption = float(np.sum(weight * np.abs(np.imag(V_scaled))) / total)
 
-        g = self._as_host_array(getattr(self, "_g", None))
-        if g is None:
-            g = self._as_host_array(self.k / 2 * self.n2 * c * epsilon_0)
-        Isat = self._as_host_array(getattr(self, "_Isat_conv", None))
-        if Isat is None:
-            Isat = self._as_host_array(2 * self.I_sat / (epsilon_0 * c))
+        g = self._as_host_array(self._constant("_g"))
+        Isat = self._as_host_array(self._constant("_Isat_conv"))
         # Batched runs carry one value per simulation; the step has to satisfy
         # the fastest of them, so reduce with max after weighting.
         mean_intensity = float(np.sum(weight * weight / (1 + weight / Isat)) / total)
         interaction = float(np.max(np.abs(g) * mean_intensity))
 
-        alpha_half = self._as_host_array(getattr(self, "_alpha_half", self.alpha / 2))
+        alpha_half = self._as_host_array(self._constant("_alpha_half"))
         loss = float(np.max(np.abs(alpha_half))) + absorption
         return {
             "kinetic": abs(kinetic),
@@ -939,11 +941,9 @@ class NLSE:
         """
         kinetic = float(np.max(np.abs(self._dispersion_operator())))
 
-        V = self._as_host_array(getattr(self, "_V_scaled", None))
-        if V is None:
-            V = self._as_host_array(self.V)
-            if V is not None:
-                V = self.k / 2 * V
+        V = self._as_host_array(self._V_scaled)
+        if V is None and self.V is not None:
+            V = self._as_host_array(self.V) * self._constant("_k_half")
         potential = float(np.max(np.abs(np.real(V)))) if V is not None else 0.0
         loss = float(np.max(np.abs(np.imag(V)))) if V is not None else 0.0
 
@@ -951,8 +951,8 @@ class NLSE:
         intensity = np.abs(
             2 * np.asarray(self.power, dtype=float) / (epsilon_0 * c * area)
         )
-        Isat = np.abs(np.asarray(2 * self.I_sat / (epsilon_0 * c), dtype=float))
-        g = np.abs(np.asarray(self.k / 2 * self.n2 * c * epsilon_0, dtype=float))
+        Isat = np.abs(self._as_host_array(self._constant("_Isat_conv")))
+        g = np.abs(self._as_host_array(self._constant("_g")))
         interaction = float(np.max(g * intensity / (1 + intensity / Isat)))
 
         return {
@@ -1041,7 +1041,7 @@ class NLSE:
         """
         if A is None:
             rate = float(np.max(np.abs(self._dispersion_operator())))
-            V_scaled = self._as_host_array(getattr(self, "_V_scaled", None))
+            V_scaled = self._as_host_array(self._V_scaled)
             if V_scaled is not None:
                 rate += float(np.max(np.abs(V_scaled)))
         else:
@@ -1272,6 +1272,47 @@ class NLSE:
             self._rk4_A_tmp = self._backend.allocate_field(A.shape, dtype)
             self._rk4_acc = self._backend.allocate_field(A.shape, dtype)
 
+    def _step_constants(self) -> dict[str, Any]:
+        """Return the per-step constants, from the physical parameters.
+
+        The single statement of what each one is. ``_precompute_step_constants``
+        casts these to the run's float width and stores them under the same
+        names, and ``_constant`` reads them back, falling back here when a
+        caller asks before a run has set them up.
+
+        Before this, each expression appeared twice: once here and once inside
+        every ``self._constant("_g")`` that read it. Two
+        copies of a physical definition drift, and one of them being wrong is
+        invisible while the other is in use.
+
+        Returns
+        -------
+        dict
+            Attribute name to value, in physical units.
+        """
+        return {
+            "_alpha_half": self.alpha / 2,
+            "_g": self.k / 2 * self.n2 * c * epsilon_0,
+            "_Isat_conv": 2 * self.I_sat / (epsilon_0 * c),
+            "_k_half": self.k / 2,
+        }
+
+    def _constant(self, name: str) -> Any:
+        """Return a per-step constant, precomputed if a run has set it up.
+
+        Parameters
+        ----------
+        name : str
+            Attribute name, as it appears in _step_constants.
+
+        Returns
+        -------
+        Any
+            The stored value, or the same quantity computed afresh.
+        """
+        value = getattr(self, name, None)
+        return self._step_constants()[name] if value is None else value
+
     def _precompute_step_constants(
         self, V: np.ndarray | None, precision: str = "single"
     ) -> None:
@@ -1286,28 +1327,15 @@ class NLSE:
             to pick the width of the precomputed scalar constants.
         """
         fp = np.float32 if precision == "single" else np.float64
-        alpha_half = self.alpha / 2
-        g = self.k / 2 * self.n2 * c * epsilon_0
-        Isat_conv = 2 * self.I_sat / (epsilon_0 * c)
-        k_half = self.k / 2
-        # Cast scalar constants to target precision once
-        if isinstance(alpha_half, (int, float, np.floating)):
-            self._alpha_half = fp(alpha_half)
-        else:
-            self._alpha_half = alpha_half
-        if isinstance(g, (int, float, np.floating)):
-            self._g = fp(g)
-        else:
-            self._g = g
-        if isinstance(Isat_conv, (int, float, np.floating)):
-            self._Isat_conv = fp(Isat_conv)
-        else:
-            self._Isat_conv = Isat_conv
-        self._k_half = fp(k_half)
-        if V is not None:
-            self._V_scaled = V * self._k_half
-        else:
-            self._V_scaled = None
+        for name, value in self._step_constants().items():
+            # A batched parameter is an array and stays one; only scalars are
+            # narrowed, so the kernels get a value of the right width.
+            setattr(
+                self,
+                name,
+                fp(value) if isinstance(value, (int, float, np.floating)) else value,
+            )
+        self._V_scaled = None if V is None else V * self._k_half
         self._update_propagator_fft()
 
     # Moving arrays on and off the device.
@@ -1426,7 +1454,7 @@ class NLSE:
         """
         kernels = self._backend.kernels
         if self._backend.has_linear_step:
-            prop_fft = getattr(self, "_propagator_fft", None)
+            prop_fft = self._propagator_fft
             if prop_fft is not None:
                 return kernels.linear_step(A, prop_fft, plans[0], unnorm_ifft=True)
             return kernels.linear_step(A, propagator, plans[0])
@@ -1460,17 +1488,17 @@ class NLSE:
         """
         kernels = self._backend.kernels
         # Use pre-computed constants (set in out_field), with fallbacks
-        alpha_half = getattr(self, "_alpha_half", self.alpha / 2)
-        g = getattr(self, "_g", self.k / 2 * self.n2 * c * epsilon_0)
-        Isat_conv = getattr(self, "_Isat_conv", 2 * self.I_sat / (epsilon_0 * c))
-        k_half = getattr(self, "_k_half", np.float32(self.k / 2))
-        V_scaled = getattr(self, "_V_scaled", None)
+        alpha_half = self._constant("_alpha_half")
+        g = self._constant("_g")
+        Isat_conv = self._constant("_Isat_conv")
+        k_half = self._constant("_k_half")
+        V_scaled = self._V_scaled
         if V_scaled is None and V is not None:
             V_scaled = V * k_half
 
         # Fused fast path: out-of-place FFT eliminates the buffer copy
         if self._backend.has_fused_rk4_rhs and self.nl_length == 0:
-            prop_fft = getattr(self, "_propagator_fft", None)
+            prop_fft = self._propagator_fft
             return kernels.rk4_rhs_fused(
                 A_in,
                 k,
@@ -1531,7 +1559,7 @@ class NLSE:
         # Swapped rather than rebuilt afterwards: the solver should describe
         # the run it just did, not the sliver at the end of it.
         in_force = self._current_delta_z
-        saved = (self.propagator, getattr(self, "_propagator_fft", None))
+        saved = (self.propagator, self._propagator_fft)
         if method != "RK4":
             self.propagator = self._build_propagator(dtype, remainder)
             self._send_propagator_to_gpu(dtype)
