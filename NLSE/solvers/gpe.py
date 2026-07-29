@@ -4,10 +4,19 @@ from scipy.constants import atomic_mass, c, epsilon_0, hbar
 
 from ..utils import __BACKEND__
 from .nlse import NLSE
+from .parameter import Parameter
 
 
 class GPE(NLSE):
     """A class to solve GPE."""
+
+    # GPE integrates NLSE's equation with cold-gas physics on each term, so it
+    # shares the storage rather than keeping a second copy of every value.
+    gamma = Parameter("alpha", "Losses in Hz.")
+    N = Parameter("power", "Total number of atoms.")
+    m = Parameter("k", "Mass of one atom in kg.")
+    g = Parameter("n2", "Interaction energy in Hz*m^2.")
+    sat = Parameter("I_sat", "Saturation parameter in Hz/m^2.", scale=epsilon_0 * c / 2)
 
     def __init__(
         self,
@@ -73,13 +82,7 @@ class GPE(NLSE):
             wvl=2 * np.pi / m,
             backend=backend,
         )
-        # listof physical parameters
-        self.g = g
         self.V = V
-        self.gamma = self.alpha
-        self.N = self.power
-        self.m = self.k
-        self.sat = sat
         # do some conversion for the units
         self.I_sat *= epsilon_0 * c / 2
         # GPE uses quantum units (Hz), not optical (W), so norm_constant is 1.0

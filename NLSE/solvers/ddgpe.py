@@ -5,6 +5,7 @@ import numpy as np
 
 from ..utils import __BACKEND__, __CUPY_AVAILABLE__
 from .cnlse import CNLSE
+from .parameter import Parameter
 
 if __CUPY_AVAILABLE__:
     import cupy as cp
@@ -13,10 +14,19 @@ if __CUPY_AVAILABLE__:
 class DDGPE(CNLSE):
     """A class to solve the 2D driven dissipative Gross-Pitaevskii equation."""
 
+    # Polariton physics on CNLSE's terms, sharing its storage. g carries the
+    # sign: the two parametrisations write the interaction term opposite ways,
+    # and the kernels want CNLSE's.
+    gamma = Parameter("alpha", "Losses in Hz.")
+    g = Parameter("n2", "Intra-component interaction parameter.", scale=-1)
+    g12 = Parameter("n12", "Inter-component interaction parameter.")
+    T = Parameter("L", "Total propagation time in s.")
+
+    # gamma, g and g12 are not listed: they are views onto alpha, n2 and n12,
+    # which the inherited tuples already carry, and transferring the same
+    # storage twice would convert it twice.
     _gpu_param_attrs = (
         *CNLSE._gpu_param_attrs,
-        "gamma",
-        "g",
         "omega",
         "k_z",
         "omega_exc",
@@ -24,9 +34,12 @@ class DDGPE(CNLSE):
         "detuning",
         "omega_pump",
     )
-    # DDGPE.split_step reads self.g / self.g12 / self.g2 directly rather than
-    # the constants CNLSE precomputes, so they have to be zeroed as well.
-    _nonlinearity_attrs = (*CNLSE._nonlinearity_attrs, "g", "g12", "g2")
+    # g2 belongs to the second component and has storage of its own, so unlike
+    # g and g12 it is not covered by the inherited entries.
+    #
+    # split_step passes n2 and n12 rather than g and g12: the kernels want the
+    # NLSE sign convention, which is what the storage holds.
+    _nonlinearity_attrs = (*CNLSE._nonlinearity_attrs, "g2")
 
     def __init__(
         self,
@@ -107,12 +120,9 @@ class DDGPE(CNLSE):
             omega=omega,
             backend=backend,
         )
-        self.g = self.n2
-        self.g12 = self.n12
         self.g2 = 0
         self.k_z = k_z
-        self.gamma = gamma
-        self.gamma2 = self.gamma
+        self.gamma2 = gamma
         self.omega_exc = omega_exc
         self.omega_cav = omega_cav
         self.detuning = detuning
@@ -213,6 +223,15 @@ class DDGPE(CNLSE):
         fp = np.float32 if precision == "single" else np.float64
         self._gamma_half = fp(self.gamma / 2)
         self._gamma2_half = fp(self.gamma2 / 2)
+        # DDGPE's couplings go to the kernels as they are, with none of the
+        # optical conversion CNLSE applies. Restate them, because the step
+        # limits read these: left at CNLSE's, they carry a factor k/2 built
+        # from a wavelength DDGPE only supplies to keep the base class happy,
+        # which makes the interaction rate about 1e26 times too large and
+        # collapses the step to nothing.
+        self._g11 = fp(self.n2)
+        self._g12 = fp(self.n12)
+        self._g22 = fp(self.g2)
 
     def _propagator_cache_key(self, dtype: np.dtype, delta_z: float) -> tuple:
         """Return cache key for DDGPE propagator."""
@@ -357,8 +376,8 @@ class DDGPE(CNLSE):
                     A_sq_2,
                     delta_z / 2,
                     gamma_half,
-                    self.g,
-                    self.g12,
+                    self.n2,
+                    self.n12,
                     self.I_sat,
                     self.I_sat2,
                 )
@@ -369,7 +388,7 @@ class DDGPE(CNLSE):
                     delta_z / 2,
                     gamma2_half,
                     self.g2,
-                    self.g12,
+                    self.n12,
                     self.I_sat,
                     self.I_sat2,
                 )
@@ -381,8 +400,8 @@ class DDGPE(CNLSE):
                     delta_z / 2,
                     gamma_half,
                     V,
-                    self.g,
-                    self.g12,
+                    self.n2,
+                    self.n12,
                     self.I_sat,
                     self.I_sat2,
                 )
@@ -394,7 +413,7 @@ class DDGPE(CNLSE):
                     gamma2_half,
                     V,
                     self.g2,
-                    self.g12,
+                    self.n12,
                     self.I_sat,
                     self.I_sat2,
                 )
@@ -416,8 +435,8 @@ class DDGPE(CNLSE):
                 A_sq_2,
                 dz_step,
                 gamma_half,
-                self.g,
-                self.g12,
+                self.n2,
+                self.n12,
                 self.I_sat,
                 self.I_sat2,
             )
@@ -428,7 +447,7 @@ class DDGPE(CNLSE):
                 dz_step,
                 gamma2_half,
                 self.g2,
-                self.g12,
+                self.n12,
                 self.I_sat,
                 self.I_sat2,
             )
@@ -440,8 +459,8 @@ class DDGPE(CNLSE):
                 dz_step,
                 gamma_half,
                 V,
-                self.g,
-                self.g12,
+                self.n2,
+                self.n12,
                 self.I_sat,
                 self.I_sat2,
             )
@@ -453,7 +472,7 @@ class DDGPE(CNLSE):
                 gamma2_half,
                 V,
                 self.g2,
-                self.g12,
+                self.n12,
                 self.I_sat,
                 self.I_sat2,
             )
