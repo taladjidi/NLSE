@@ -34,12 +34,30 @@ pyfftw.interfaces.cache.enable()
 # imaginary axis. Every solver's step limit is derived from it.
 RK4_STABILITY_RADIUS = 2.83
 
+# Phase in radians the default step imprints per step. The limits are
+# ceilings (pi for split-step aliasing, 2.83 for RK4 stability); this is where
+# a default sits under them. Measured: RK4 is at its accuracy floor by 0.15
+# and gains nothing below, and split-step's discretisation error stays under
+# the complex64 round-off floor across three decades of step size.
+DEFAULT_PHASE_PER_STEP = 0.1
+
+# Fewest steps a default may take over the requested distance. The loop runs
+# ceil(z / delta_z) whole steps, so a step comparable to z overshoots it; this
+# holds that under 10% and leaves callbacks something to sample.
+DEFAULT_MIN_STEPS = 10
+
 
 class NLSE:
     """A class to solve NLSE."""
 
     __CUPY_AVAILABLE__ = __CUPY_AVAILABLE__
     __PYOPENCL_AVAILABLE__ = __PYOPENCL_AVAILABLE__
+
+    # Class attributes so the delta_z property works whatever order a subclass
+    # assigns things in. None means "not chosen yet": the getter estimates one
+    # on first read, and out_field derives one from the field.
+    _delta_z_is_user_set = False
+    _delta_z: float | None = None
 
     def __init__(
         self,
@@ -122,20 +140,6 @@ class NLSE:
             self.window = window
         else:
             self.window = [window, window]
-        # Coerce through numpy so that n2 == 0 yields inf rather than raising,
-        # and so batched (array) parameters work the same way.
-        Dn = np.asarray(self.n2 * self.power / min(self.window) ** 2, dtype=float)
-        with np.errstate(divide="ignore"):
-            z_nl = float(np.min(1.0 / (self.k * np.abs(Dn))))
-        if not np.isfinite(z_nl):
-            # n2 == 0: the problem is linear and has no nonlinear length
-            # scale. Fall back to the shorter of the diffraction length over
-            # the window and the medium length, so the default step stays
-            # finite and still resolves the propagation.
-            z_nl = self.k * min(self.window) ** 2
-            if self.L > 0:
-                z_nl = min(z_nl, float(self.L))
-        self.delta_z = 5e-3 * z_nl
         # transverse coordinate
         self.X, self.delta_X = np.linspace(
             -self.window[0] / 2,
@@ -357,6 +361,114 @@ class NLSE:
             return np.inf
         return RK4_STABILITY_RADIUS / rate
 
+    @property
+    def delta_z(self) -> float:
+        """Propagation step.
+
+        Estimated from the grid on first read, and replaced by one derived
+        from the field when ``out_field`` runs. An assigned step is used as
+        given, capped only where it would leave the method's region of
+        convergence.
+
+        Estimated lazily rather than in __init__ because the estimate reads
+        the dispersion operator, which subclasses build from attributes they
+        set after calling super().__init__.
+        """
+        if self._delta_z is None:
+            self._delta_z = self._default_delta_z()
+        return self._delta_z
+
+    @delta_z.setter
+    def delta_z(self, value: float) -> None:
+        self._delta_z = value
+        self._delta_z_is_user_set = True
+
+    def _estimated_rates(self) -> dict[str, float]:
+        """Return the phase rates without a field, for use before a run.
+
+        Same quantities as ``_energy_rates``, from the grid rather than from
+        the solution: the largest dispersion eigenvalue, the extremes of V,
+        and the intensity the given power would have spread over the window.
+        Coarser than the field-weighted version, and only used to give
+        ``delta_z`` a value before anything has been propagated.
+
+        Returns
+        -------
+        dict
+            ``kinetic``, ``potential``, ``interaction`` and ``loss`` rates.
+        """
+        kinetic = float(np.max(np.abs(self._dispersion_operator())))
+
+        V = self._as_host_array(getattr(self, "_V_scaled", None))
+        if V is None:
+            V = self._as_host_array(self.V)
+            if V is not None:
+                V = self.k / 2 * V
+        potential = float(np.max(np.abs(np.real(V)))) if V is not None else 0.0
+        loss = float(np.max(np.abs(np.imag(V)))) if V is not None else 0.0
+
+        area = float(np.prod([float(w) for w in self.window[:2]]))
+        intensity = np.abs(
+            2 * np.asarray(self.power, dtype=float) / (epsilon_0 * c * area)
+        )
+        Isat = np.abs(np.asarray(2 * self.I_sat / (epsilon_0 * c), dtype=float))
+        g = np.abs(np.asarray(self.k / 2 * self.n2 * c * epsilon_0, dtype=float))
+        interaction = float(np.max(g * intensity / (1 + intensity / Isat)))
+
+        return {
+            "kinetic": kinetic,
+            "potential": potential,
+            "interaction": interaction,
+            "loss": loss,
+        }
+
+    def _default_delta_z(
+        self,
+        A: np.ndarray | None = None,
+        method: str = "split_step",
+        z: float | None = None,
+    ) -> float:
+        """Return the step to use when the caller has not chosen one.
+
+        Aims at a fixed phase per step, ``DEFAULT_PHASE_PER_STEP``, against
+        the same rate the limit for this method is built from: every term for
+        RK4, which approximates the whole right-hand side, and the real-space
+        terms alone for split-step, which applies the linear part exactly.
+
+        Costs one FFT, against a propagation about to run thousands.
+
+        Parameters
+        ----------
+        A : np.ndarray or None
+            Normalized field (possibly on device). Without one the rates are
+            estimated from the grid instead.
+        method : str
+            Integration method ("split_step" or "RK4").
+        z : float or None
+            Distance about to be propagated, which bounds the step from
+            above. Without it the medium length stands in.
+
+        Returns
+        -------
+        float
+            Step size.
+        """
+        rates = self._energy_rates(A) if A is not None else self._estimated_rates()
+        if method == "RK4":
+            rate = sum(rates.values())
+        else:
+            rate = rates["potential"] + rates["interaction"]
+        # A rate of zero means nothing rotates the phase, so only the bound
+        # below decides.
+        dz = DEFAULT_PHASE_PER_STEP / rate if rate > 0 else np.inf
+
+        span = abs(float(z)) if z is not None else float(self.L)
+        if span > 0:
+            dz = min(dz, span / DEFAULT_MIN_STEPS)
+        if not np.isfinite(dz):
+            dz = self.k * min(self.window) ** 2
+        return dz
+
     def _split_step_max_dz(self, A: np.ndarray) -> float:
         """Compute the maximum step size for split-step accuracy.
 
@@ -417,10 +529,11 @@ class NLSE:
             return np.asarray(value)
         return np.asarray(self._backend.to_numpy(value))
 
-    def _enforce_step_limit(
-        self, A: np.ndarray, method: str, precision: str, dtype: np.dtype
-    ) -> None:
+    def _enforce_step_limit(self, A: np.ndarray, method: str) -> None:
         """Cap delta_z to the stability/accuracy limit for the chosen method.
+
+        Only ever lowers it. A step the solver chose itself is already well
+        inside the limit, so this binds on a step the caller set.
 
         Parameters
         ----------
@@ -428,11 +541,6 @@ class NLSE:
             Normalized field (possibly on device).
         method : str
             Integration method ("split_step" or "RK4").
-        precision : str
-            Order of the split-step: "single" applies the nonlinear step
-            once per step, "double" splits it around the linear step.
-        dtype : np.dtype
-            Complex dtype of the field, so a rebuilt propagator matches it.
         """
         if method == "RK4":
             rates = self._energy_rates(A)
@@ -460,19 +568,8 @@ class NLSE:
                 f"({max_dz:.2e}). Reducing to {0.9 * max_dz:.2e}.{extra}",
                 stacklevel=2,
             )
-            self.delta_z = 0.9 * max_dz
-            # Rebuild propagator (split_step propagator depends on dz)
-            self.propagator = None
-            if method == "RK4":
-                self.propagator = self._build_propagator_rk4()
-            else:
-                self.propagator = self._build_propagator(dtype=dtype)
-            # Send only the new propagator to device
-            if self._backend.is_device_backend:
-                self.propagator = self._backend.from_numpy(self.propagator)
-            # The fused CUPY/CL linear step reads _propagator_fft in
-            # preference to propagator, so it has to follow the rebuild.
-            self._update_propagator_fft()
+            # Private name: capping a step is not the caller choosing one.
+            self._delta_z = 0.9 * max_dz
 
     @staticmethod
     def _field_dtype(E_in: np.ndarray) -> np.dtype:
@@ -669,6 +766,23 @@ class NLSE:
             val = getattr(self, attr)
             if isinstance(val, np.ndarray):
                 setattr(self, attr, self._backend.from_numpy(val))
+
+    def _send_propagator_to_gpu(self, field_dtype: np.dtype) -> None:
+        """Move the freshly built propagator onto the device.
+
+        Separate from _send_arrays_to_gpu because the propagator is built
+        after delta_z is settled, which is after the other arrays have gone.
+
+        Parameters
+        ----------
+        field_dtype : np.dtype
+            Complex dtype of the field, which the propagator already matches.
+        """
+        if self._backend.is_device_backend and self.propagator is not None:
+            self.propagator = self._backend.from_numpy(self.propagator)
+        # The fused CUPY/CL linear step prefers _propagator_fft, so it has to
+        # follow every rebuild.
+        self._update_propagator_fft()
 
     def _retrieve_arrays_from_gpu(self) -> None:
         """Retrieve arrays from device using backend."""
@@ -1343,16 +1457,10 @@ class NLSE:
             np.complex64,
             np.complex128,
         ], "Type mismatch, E_in should be complex64 or complex128"
-        # Rebuild the propagator on every call. It depends on delta_z (and on
-        # k, the grid and the precision), any of which the caller may have
-        # changed since the last run, so it cannot be built once and kept.
-        # _build_propagator is cache-backed, so an unchanged configuration
-        # returns the previously computed array rather than recomputing it.
         field_dtype = self._field_dtype(E_in)
-        if method == "RK4":
-            self.propagator = self._build_propagator_rk4()
-        else:
-            self.propagator = self._build_propagator(dtype=field_dtype)
+        # Rebuilt below once delta_z is settled; drop the previous run's so
+        # the transfer does not carry it.
+        self.propagator = None
         if self._backend.is_device_backend:
             self._send_arrays_to_gpu(field_dtype)
         V = self.V
@@ -1360,7 +1468,21 @@ class NLSE:
         self.plans = self._build_fft_plan(A)
         self._allocate_rk4_buffers(A, method)
         self._precompute_step_constants(V, precision)
-        self._enforce_step_limit(A, method, precision, field_dtype)
+
+        # Settle delta_z before building anything that depends on it.
+        if not self._delta_z_is_user_set:
+            self._delta_z = self._default_delta_z(A, method, z)
+        self._enforce_step_limit(A, method)
+
+        # The propagator depends on delta_z, k, the grid and the precision,
+        # any of which may have changed since the last run. _build_propagator
+        # is cache-backed, so an unchanged configuration is not recomputed.
+        if method == "RK4":
+            self.propagator = self._build_propagator_rk4()
+        else:
+            self.propagator = self._build_propagator(dtype=field_dtype)
+        if self._backend.is_device_backend:
+            self._send_propagator_to_gpu(field_dtype)
         if verbose:
             pbar = tqdm.tqdm(
                 total=100,

@@ -98,11 +98,6 @@ class NLSE_3d(NLSE):
         self.NZ = NZ
         self.window_t = window[-1]
         self.power = self.energy / self.window_t
-        Dn = self.n2 * self.power / min(self.window[0:2]) ** 2
-        z_nl = 1 / (self.k * abs(Dn))
-        if isinstance(z_nl, np.ndarray):
-            z_nl = z_nl.min()
-        self.delta_z = 0.5e-2 * z_nl
         self.T, self.delta_T = np.linspace(
             -self.window_t / 2, self.window_t / 2, self.NZ, retstep=True
         )

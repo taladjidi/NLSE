@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 from NLSE import NLSE
 from NLSE.backends import get_backend, list_available_backends
+from NLSE.solvers.nlse import DEFAULT_MIN_STEPS, DEFAULT_PHASE_PER_STEP
 
 from .helpers import as_numpy
 
@@ -147,6 +148,105 @@ class TestLinearConstruction:
             rtol=1e-5,
             atol=1e-6 * float(np.max(np.abs(expected))),
             err_msg="n2=0 disagrees with a negligible n2",
+        )
+
+
+class TestDefaultStep:
+    """delta_z is derived from the field's energy unless the caller sets one.
+
+    The step limits are ceilings, and running just under one is the largest
+    step that does not fail rather than a sensible default. The default aims
+    instead at a fixed phase per step, against the same rates the ceiling for
+    that method is built from.
+    """
+
+    Z = 2e-3
+
+    def propagate(self, simu, **kwargs):
+        """Propagate the module's Gaussian and return the step that was used."""
+        simu.out_field(gaussian_input(), self.Z, verbose=False, plot=False, **kwargs)
+        return simu.delta_z
+
+    def test_the_step_hits_the_target_phase_per_step(self):
+        """Where the nonlinearity binds, it sets the step and nothing else."""
+        simu = make_solver(n2=-1.6e-8)
+        used = self.propagate(simu)
+        rates = simu._energy_rates(
+            simu._prepare_output_array(gaussian_input(), True)[0]
+        )
+        expected = DEFAULT_PHASE_PER_STEP / (rates["potential"] + rates["interaction"])
+        assert used == pytest.approx(expected, rel=1e-6), (
+            f"the derived step is {used:.3e} m, but a phase of "
+            f"{DEFAULT_PHASE_PER_STEP} rad per step wants {expected:.3e} m"
+        )
+
+    def test_a_stronger_nonlinearity_gives_a_shorter_step(self):
+        """The step must keep tracking the energy where the energy binds."""
+        weak = make_solver(n2=-1.6e-8)
+        strong = make_solver(n2=-1.6e-7)
+        assert self.propagate(strong) < self.propagate(weak), (
+            "a ten-fold stronger nonlinearity did not shorten the step"
+        )
+
+    def test_a_weak_nonlinearity_still_takes_several_steps(self):
+        """A step comparable to the distance asked for overshoots it.
+
+        The loop runs whole steps of delta_z, so nothing here may reduce to
+        one or two of them however little there is to resolve.
+        """
+        for weak in (-1e-11, -1e-14, 0.0):
+            simu = make_solver(n2=weak)
+            used = self.propagate(simu)
+            assert used <= self.Z / DEFAULT_MIN_STEPS * (1 + 1e-9), (
+                f"n2={weak:g}: the step is {used:.3e} m over a {self.Z:g} m "
+                f"propagation, which is {self.Z / used:.3g} steps"
+            )
+
+    def test_the_step_is_continuous_in_n2(self):
+        """A negligible n2 must give what an exactly zero one gives."""
+        linear = self.propagate(make_solver(n2=0.0))
+        almost = self.propagate(make_solver(n2=-1e-20))
+        assert almost == pytest.approx(linear, rel=1e-6), (
+            f"n2=0 gives {linear:.3e} but n2=-1e-20 gives {almost:.3e}, "
+            f"though they are the same problem"
+        )
+
+    def test_a_step_the_caller_set_is_kept(self):
+        """An explicit delta_z must survive the run, and the next one."""
+        simu = make_solver()
+        simu.delta_z = 1e-6
+        assert self.propagate(simu) == 1e-6, "the caller's step was overridden"
+        assert self.propagate(simu) == 1e-6, (
+            "the caller's step was overridden on a second run"
+        )
+
+    def test_a_step_the_caller_set_is_still_capped(self):
+        """Overriding is allowed only inside the region of convergence."""
+        simu = make_solver(n2=-1.6e-7)
+        simu.delta_z = 1.0
+        with pytest.warns(UserWarning, match="exceeds"):
+            used = self.propagate(simu)
+        assert used < 1.0, "a step past the accuracy limit was left alone"
+
+    def test_the_step_responds_to_the_field_not_just_the_parameters(self):
+        """Two fields of the same power but different peak intensity differ.
+
+        This is what reading the field buys over the constructor's estimate,
+        which had only power over the window area to go on.
+        """
+        broad = make_solver()
+        narrow = make_solver()
+        E_broad = np.exp(-(broad.XX**2 + broad.YY**2) / waist**2).astype(
+            PRECISION_COMPLEX
+        )
+        E_narrow = np.exp(-(narrow.XX**2 + narrow.YY**2) / (waist / 4) ** 2).astype(
+            PRECISION_COMPLEX
+        )
+        broad.out_field(E_broad, self.Z, verbose=False, plot=False)
+        narrow.out_field(E_narrow, self.Z, verbose=False, plot=False)
+        assert narrow.delta_z < broad.delta_z, (
+            "a tighter beam of the same power concentrates the intensity and "
+            "should shorten the step, but the step did not move"
         )
 
 

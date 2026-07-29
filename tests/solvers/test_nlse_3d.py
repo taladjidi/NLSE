@@ -287,6 +287,10 @@ def test_out_field(backend) -> None:
         backend=backend,
     )
     E0 = np.ones((N, N, NZ), dtype=PRECISION_COMPLEX)
+    # alpha is 20 here, so the norm is only conserved to 1e-4 over a distance
+    # short enough for the (saturated) absorption to be negligible. Pin the
+    # step rather than propagate over whatever the solver would choose.
+    simu.delta_z = L / 1000
     E = simu.out_field(E0, simu.delta_z, verbose=False, plot=False, precision="single")
     norm = np.sum(np.abs(E) ** 2 * simu.delta_X * simu.delta_Y * simu.delta_T)
     norm *= c * epsilon_0 / 2
