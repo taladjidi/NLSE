@@ -5,23 +5,54 @@ import time
 from NLSE import NLSE
 from NLSE.backends import benchmark, list_available_backends
 
+# Every solver in this file is the same one; the tests differ in backend and,
+# in two of them, grid size.
+N = 256
+alpha = 0
+power = 1
+window = 1e-3
+n2 = 1e-20
+L = 1e-2
+
+
+def make_solver(backend="CPU", n=N, **overrides):
+    """Return an NLSE with this module's parameters.
+
+    Parameters
+    ----------
+    backend : str
+        Backend name.
+    n : int
+        Grid size, square.
+    **overrides
+        Any constructor argument, by keyword.
+
+    Returns
+    -------
+    NLSE
+        The solver.
+    """
+    params = {
+        "alpha": alpha,
+        "power": power,
+        "window": window,
+        "n2": n2,
+        "V": None,
+        "L": L,
+        "NX": n,
+        "NY": n,
+        "backend": backend,
+    }
+    params.update(overrides)
+    return NLSE(**params)
+
 
 class TestAutoBackendSelection:
     """Test NLSE initialization with auto backend."""
 
     def test_nlse_with_auto_backend(self):
         """Test NLSE initialization with auto backend."""
-        simu = NLSE(
-            alpha=0,
-            power=1,
-            window=1e-3,
-            n2=1e-20,
-            V=None,
-            L=1e-2,
-            NX=256,
-            NY=256,
-            backend="auto",
-        )
+        simu = make_solver("auto")
 
         # Should select one of the available backends
         assert simu.backend in list_available_backends()
@@ -33,17 +64,7 @@ class TestAutoBackendSelection:
 
         # Create solver (should use cache, be fast)
         t0 = time.perf_counter()
-        _simu = NLSE(
-            alpha=0,
-            power=1,
-            window=1e-3,
-            n2=1e-20,
-            V=None,
-            L=1e-2,
-            NX=256,
-            NY=256,
-            backend="auto",
-        )
+        _simu = make_solver("auto")
         elapsed = time.perf_counter() - t0
 
         # Should be very fast (<200ms) when using cache
@@ -53,17 +74,7 @@ class TestAutoBackendSelection:
     def test_auto_backend_adapts_to_grid_size(self):
         """Test that auto backend considers actual grid size."""
         # Create solver with specific grid size
-        simu = NLSE(
-            alpha=0,
-            power=1,
-            window=1e-3,
-            n2=1e-20,
-            V=None,
-            L=1e-2,
-            NX=512,
-            NY=512,
-            backend="auto",
-        )
+        simu = make_solver("auto", n=512)
 
         # Should have selected a valid backend
         assert simu.backend in list_available_backends()
@@ -75,33 +86,13 @@ class TestAutoBackendSelection:
 
     def test_manual_backend_override(self):
         """Test that manual backend selection still works."""
-        simu_cpu = NLSE(
-            alpha=0,
-            power=1,
-            window=1e-3,
-            n2=1e-20,
-            V=None,
-            L=1e-2,
-            NX=256,
-            NY=256,
-            backend="CPU",
-        )
+        simu_cpu = make_solver()
 
         assert simu_cpu.backend == "CPU"
 
     def test_backend_property_with_auto(self):
         """Test setting backend property to 'auto'."""
-        simu = NLSE(
-            alpha=0,
-            power=1,
-            window=1e-3,
-            n2=1e-20,
-            V=None,
-            L=1e-2,
-            NX=256,
-            NY=256,
-            backend="CPU",
-        )
+        simu = make_solver()
 
         # Change to auto
         simu.backend = "auto"
@@ -190,17 +181,7 @@ class TestBackendConsistency:
         """Test that auto-selected backend can actually run a simulation."""
         import numpy as np
 
-        simu = NLSE(
-            alpha=0,
-            power=1,
-            window=1e-3,
-            n2=1e-20,
-            V=None,
-            L=1e-2,
-            NX=256,
-            NY=256,
-            backend="auto",
-        )
+        simu = make_solver("auto")
 
         # Create initial field
         E = np.ones((256, 256), dtype=np.complex64)
@@ -238,17 +219,7 @@ class TestCacheManagement:
         from NLSE.utils import get_benchmark_cache_path
 
         # Create solver with auto backend to populate cache
-        simu1 = NLSE(
-            alpha=0,
-            power=1,
-            window=1e-3,
-            n2=1e-20,
-            V=None,
-            L=1e-2,
-            NX=256,
-            NY=256,
-            backend="auto",
-        )
+        simu1 = make_solver("auto")
         assert simu1.backend in list_available_backends()
 
         # Invalidate cache
@@ -257,17 +228,7 @@ class TestCacheManagement:
         assert not cache_path.exists(), "Cache should be invalidated"
 
         # Create new solver (should re-benchmark and recreate cache)
-        simu2 = NLSE(
-            alpha=0,
-            power=1,
-            window=1e-3,
-            n2=1e-20,
-            V=None,
-            L=1e-2,
-            NX=256,
-            NY=256,
-            backend="auto",
-        )
+        simu2 = make_solver("auto")
 
         # Should select a valid backend and recreate cache
         assert simu2.backend in list_available_backends()
@@ -276,17 +237,7 @@ class TestCacheManagement:
     def test_view_benchmark_results(self):
         """Test viewing benchmark results after auto selection."""
         # Create solver with auto backend
-        simu = NLSE(
-            alpha=0,
-            power=1,
-            window=1e-3,
-            n2=1e-20,
-            V=None,
-            L=1e-2,
-            NX=256,
-            NY=256,
-            backend="auto",
-        )
+        simu = make_solver("auto")
 
         # Load and verify benchmark results
         results = benchmark.load_benchmark_cache()

@@ -29,22 +29,44 @@ alpha = 20
 DZ_TEST = 1e-4
 
 
+def make_solver(backend="CPU", n=N, **overrides):
+    """Return an NLSE_3d with this module's parameters.
+
+    Parameters
+    ----------
+    backend : str
+        Backend name.
+    n : int
+        Transverse grid size, square. The temporal axis stays NZ.
+    **overrides
+        Any constructor argument, by keyword.
+
+    Returns
+    -------
+    NLSE_3d
+        The solver.
+    """
+    params = {
+        "alpha": alpha,
+        "energy": energy,
+        "window": window,
+        "n2": n2,
+        "D0": D0,
+        "vg": vg,
+        "V": None,
+        "L": L,
+        "NX": n,
+        "NY": n,
+        "NZ": NZ,
+        "Isat": Isat,
+        "backend": backend,
+    }
+    params.update(overrides)
+    return NLSE_3d(**params)
+
+
 def test_build_propagator(backend) -> None:
-    simu = NLSE_3d(
-        alpha=alpha,
-        energy=energy,
-        window=window,
-        n2=n2,
-        D0=D0,
-        vg=vg,
-        V=None,
-        L=L,
-        NX=N,
-        NY=N,
-        NZ=NZ,
-        Isat=Isat,
-        backend=backend,
-    )
+    simu = make_solver(backend)
     prop = simu._build_propagator(np.complex64, DZ_TEST)
     prop_th = np.exp(-1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * DZ_TEST)
     prop_th *= np.exp(-1j * simu.D0 / 2 * simu.Omega**2)
@@ -55,21 +77,7 @@ def test_build_propagator(backend) -> None:
 
 
 def test_build_fft_plan(backend) -> None:
-    simu = NLSE_3d(
-        alpha=alpha,
-        energy=energy,
-        window=window,
-        n2=n2,
-        D0=D0,
-        vg=vg,
-        V=None,
-        L=L,
-        NX=N,
-        NY=N,
-        NZ=NZ,
-        Isat=Isat,
-        backend=backend,
-    )
+    simu = make_solver(backend)
     if backend == "CUPY" and NLSE_3d.__CUPY_AVAILABLE__:
         A = cp.random.random((N, N, NZ)).astype(PRECISION_REAL) + 1j * cp.random.random(
             (N, N, NZ)
@@ -97,21 +105,7 @@ def test_build_fft_plan(backend) -> None:
 
 
 def test_prepare_output_array(backend) -> None:
-    simu = NLSE_3d(
-        alpha=alpha,
-        energy=energy,
-        window=window,
-        n2=n2,
-        D0=D0,
-        vg=vg,
-        V=None,
-        L=L,
-        NX=N,
-        NY=N,
-        NZ=NZ,
-        Isat=Isat,
-        backend=backend,
-    )
+    simu = make_solver(backend)
     A = random_field((N, N, NZ))
     out, out_sq = simu._prepare_output_array(A, normalize=True)
     assert_c_contiguous(out, f"Output array is not C-contiguous. (Backend {backend})")
@@ -158,21 +152,7 @@ def test_send_arrays_to_gpu() -> None:
         n2 = n2[..., np.newaxis, np.newaxis]
         Isat = np.repeat(Isat, 2)
         Isat = Isat[..., np.newaxis, np.newaxis]
-        simu = NLSE_3d(
-            alpha=alpha,
-            energy=energy,
-            window=window,
-            n2=n2,
-            D0=D0,
-            vg=vg,
-            V=V,
-            L=L,
-            NX=N,
-            NY=N,
-            NZ=NZ,
-            Isat=Isat,
-            backend="CUPY",
-        )
+        simu = make_solver("CUPY", alpha=alpha, n2=n2, V=V, Isat=Isat)
         simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
         simu._send_arrays_to_gpu()
         assert isinstance(simu.propagator, cp.ndarray), (
@@ -202,21 +182,7 @@ def test_retrieve_arrays_from_gpu() -> None:
         n2 = n2[..., np.newaxis, np.newaxis]
         Isat = np.repeat(Isat, 2)
         Isat = Isat[..., np.newaxis, np.newaxis]
-        simu = NLSE_3d(
-            alpha=alpha,
-            energy=energy,
-            window=window,
-            n2=n2,
-            D0=D0,
-            vg=vg,
-            V=V,
-            L=L,
-            NX=N,
-            NY=N,
-            NZ=NZ,
-            Isat=Isat,
-            backend="CUPY",
-        )
+        simu = make_solver("CUPY", alpha=alpha, n2=n2, V=V, Isat=Isat)
         simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
         simu._send_arrays_to_gpu()
         simu._retrieve_arrays_from_gpu()
@@ -236,21 +202,7 @@ def test_retrieve_arrays_from_gpu() -> None:
 
 
 def test_split_step(backend) -> None:
-    simu = NLSE_3d(
-        alpha=alpha,
-        energy=energy,
-        window=window,
-        n2=n2,
-        D0=D0,
-        vg=vg,
-        V=None,
-        L=L,
-        NX=N,
-        NY=N,
-        NZ=NZ,
-        Isat=Isat,
-        backend=backend,
-    )
+    simu = make_solver(backend)
     simu.propagator = simu._build_propagator(np.complex64, 0)
     E = np.ones((N, N, NZ), dtype=PRECISION_COMPLEX)
     A, A_sq = simu._prepare_output_array(E, normalize=False)
@@ -273,21 +225,7 @@ def test_split_step(backend) -> None:
 # tests for convergence of the solver : the norm of the field should be
 # conserved
 def test_out_field(backend) -> None:
-    simu = NLSE_3d(
-        alpha=alpha,
-        energy=energy,
-        window=window,
-        n2=n2,
-        D0=D0,
-        vg=vg,
-        V=None,
-        L=L,
-        NX=N,
-        NY=N,
-        NZ=NZ,
-        Isat=Isat,
-        backend=backend,
-    )
+    simu = make_solver(backend)
     E0 = np.ones((N, N, NZ), dtype=PRECISION_COMPLEX)
     # alpha is 20 here, so the norm is only conserved to 1e-4 over a distance
     # short enough for the (saturated) absorption to be negligible. Pin the

@@ -28,19 +28,41 @@ alpha = 20
 DZ_TEST = 1e-4
 
 
+def make_solver(backend="CPU", n=N, **overrides):
+    """Return a NLSE with this module's parameters.
+
+    Parameters
+    ----------
+    backend : str
+        Backend name.
+    n : int
+        Grid size, square.
+    **overrides
+        Any constructor argument, by keyword.
+
+    Returns
+    -------
+    NLSE
+        The solver.
+    """
+    params = {
+        "alpha": alpha,
+        "power": power,
+        "window": window,
+        "n2": n2,
+        "V": None,
+        "L": L,
+        "NX": n,
+        "NY": n,
+        "Isat": Isat,
+        "backend": backend,
+    }
+    params.update(overrides)
+    return NLSE(**params)
+
+
 def test_build_propagator(backend) -> None:
-    simu = NLSE(
-        alpha,
-        power,
-        window,
-        n2,
-        None,
-        L,
-        NX=N,
-        NY=N,
-        Isat=Isat,
-        backend=backend,
-    )
+    simu = make_solver(backend)
     prop = simu._build_propagator(PRECISION_COMPLEX, DZ_TEST)
     assert np.allclose(
         prop,
@@ -49,18 +71,7 @@ def test_build_propagator(backend) -> None:
 
 
 def test_build_fft_plan(backend) -> None:
-    simu = NLSE(
-        alpha,
-        power,
-        window,
-        n2,
-        None,
-        L,
-        NX=N,
-        NY=N,
-        Isat=Isat,
-        backend=backend,
-    )
+    simu = make_solver(backend)
     A = random_field((N, N))
     plans = simu._build_fft_plan(A)
     if backend == "CPU":
@@ -92,18 +103,7 @@ def test_build_fft_plan(backend) -> None:
 
 
 def test_prepare_output_array(backend) -> None:
-    simu = NLSE(
-        alpha,
-        power,
-        window,
-        n2,
-        None,
-        L,
-        NX=N,
-        NY=N,
-        Isat=Isat,
-        backend=backend,
-    )
+    simu = make_solver(backend)
     A = random_field((N, N))
     out, out_sq = simu._prepare_output_array(A, normalize=True)
     assert_c_contiguous(out, f"Output array is not C-contiguous. (Backend {backend})")
@@ -149,9 +149,7 @@ def test_send_arrays_to_gpu() -> None:
         n2 = n2[..., cp.newaxis, cp.newaxis]
         Isat = np.repeat(Isat, 2)
         Isat = Isat[..., cp.newaxis, cp.newaxis]
-        simu = NLSE(
-            alpha, power, window, n2, V, L, NX=N, NY=N, Isat=Isat, backend="CUPY"
-        )
+        simu = make_solver("CUPY", alpha=alpha, n2=n2, V=V, Isat=Isat)
         simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
         simu._send_arrays_to_gpu()
         assert isinstance(simu.propagator, cp.ndarray), (
@@ -181,9 +179,7 @@ def test_retrieve_arrays_from_gpu() -> None:
         n2 = n2[..., cp.newaxis, cp.newaxis]
         Isat = np.repeat(Isat, 2)
         Isat = Isat[..., cp.newaxis, cp.newaxis]
-        simu = NLSE(
-            alpha, power, window, n2, V, L, NX=N, NY=N, Isat=Isat, backend="CUPY"
-        )
+        simu = make_solver("CUPY", alpha=alpha, n2=n2, V=V, Isat=Isat)
         simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
         simu._send_arrays_to_gpu()
         simu._retrieve_arrays_from_gpu()
@@ -203,18 +199,7 @@ def test_retrieve_arrays_from_gpu() -> None:
 
 
 def test_split_step(backend) -> None:
-    simu = NLSE(
-        alpha,
-        power,
-        window,
-        n2,
-        None,
-        L,
-        NX=N,
-        NY=N,
-        Isat=Isat,
-        backend=backend,
-    )
+    simu = make_solver(backend)
     simu.propagator = simu._build_propagator(np.complex64, 0)
     E = np.ones((N, N), dtype=PRECISION_COMPLEX)
     A, A_sq = simu._prepare_output_array(E, normalize=False)
@@ -240,18 +225,7 @@ def test_split_step(backend) -> None:
 #  conserved
 def test_out_field(backend) -> None:
     E = np.ones((N, N), dtype=PRECISION_COMPLEX)
-    simu = NLSE(
-        0,
-        power,
-        window,
-        n2,
-        None,
-        L,
-        NX=N,
-        NY=N,
-        Isat=Isat,
-        backend=backend,
-    )
+    simu = make_solver(backend, alpha=0)
     E = simu.out_field(
         E, L, verbose=False, plot=False, precision="single", delta_z=DZ_TEST
     )
@@ -275,18 +249,7 @@ def test_cuda_graph() -> None:
     for has_V in [False, True]:
         potential = V if has_V else None
         for method in ["split_step", "RK4"]:
-            simu = NLSE(
-                0,
-                power,
-                window,
-                n2,
-                potential,
-                L,
-                NX=N,
-                NY=N,
-                Isat=Isat,
-                backend="CUPY",
-            )
+            simu = make_solver("CUPY", alpha=0, V=potential)
             E_out = simu.out_field(
                 E.copy(),
                 L,

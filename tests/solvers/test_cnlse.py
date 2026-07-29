@@ -26,20 +26,42 @@ alpha = 20
 DZ_TEST = 1e-4
 
 
+def make_solver(backend="CPU", n=N, **overrides):
+    """Return a CNLSE with this module's parameters.
+
+    Parameters
+    ----------
+    backend : str
+        Backend name.
+    n : int
+        Grid size, square.
+    **overrides
+        Any constructor argument, by keyword.
+
+    Returns
+    -------
+    CNLSE
+        The solver.
+    """
+    params = {
+        "alpha": alpha,
+        "power": power,
+        "window": window,
+        "n2": n2,
+        "n12": n12,
+        "V": None,
+        "L": L,
+        "NX": n,
+        "NY": n,
+        "Isat": Isat,
+        "backend": backend,
+    }
+    params.update(overrides)
+    return CNLSE(**params)
+
+
 def test_prepare_output_array(backend) -> None:
-    simu = CNLSE(
-        alpha,
-        power,
-        window,
-        n2,
-        n12,
-        None,
-        L,
-        NX=N,
-        NY=N,
-        Isat=Isat,
-        backend=backend,
-    )
+    simu = make_solver(backend)
     A = np.ones((2, N, N), dtype=PRECISION_COMPLEX)
     out, out_sq = simu._prepare_output_array(A, normalize=True)
     assert_c_contiguous(out, f"Output array is not C-contiguous. (Backend {backend})")
@@ -85,19 +107,7 @@ def test_send_arrays_to_gpu() -> None:
         n12 = n12[..., np.newaxis, np.newaxis, np.newaxis]
         Isat = np.repeat(Isat, 2)
         Isat = Isat[..., np.newaxis, np.newaxis, np.newaxis]
-        simu = CNLSE(
-            alpha,
-            power,
-            window,
-            n2,
-            n12,
-            V,
-            L,
-            NX=N,
-            NY=N,
-            Isat=Isat,
-            backend="CUPY",
-        )
+        simu = make_solver("CUPY", alpha=alpha, n2=n2, n12=n12, V=V, Isat=Isat)
         simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
         simu._send_arrays_to_gpu()
         assert isinstance(simu.propagator, cp.ndarray), (
@@ -133,19 +143,7 @@ def test_retrieve_arrays_from_gpu() -> None:
         n12 = n12[..., np.newaxis, np.newaxis, np.newaxis]
         Isat = np.repeat(Isat, 2)
         Isat = Isat[..., np.newaxis, np.newaxis, np.newaxis]
-        simu = CNLSE(
-            alpha,
-            power,
-            window,
-            n2,
-            n12,
-            V,
-            L,
-            NX=N,
-            NY=N,
-            Isat=Isat,
-            backend="CUPY",
-        )
+        simu = make_solver("CUPY", alpha=alpha, n2=n2, n12=n12, V=V, Isat=Isat)
         simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
         simu._send_arrays_to_gpu()
         simu._retrieve_arrays_from_gpu()
@@ -168,19 +166,7 @@ def test_retrieve_arrays_from_gpu() -> None:
 
 
 def test_take_components(backend) -> None:
-    simu = CNLSE(
-        alpha,
-        power,
-        window,
-        n2,
-        n12,
-        None,
-        L,
-        NX=N,
-        NY=N,
-        Isat=Isat,
-        backend=backend,
-    )
+    simu = make_solver(backend)
     # create a larger array to test the fancy indexing
     A = np.ones((3, 2, N, N), dtype=PRECISION_COMPLEX)
     A1, A2 = simu._take_components(A)
@@ -198,19 +184,7 @@ def test_take_components(backend) -> None:
 
 
 def test_split_step(backend) -> None:
-    simu = CNLSE(
-        alpha,
-        power,
-        window,
-        n2,
-        n12,
-        None,
-        L,
-        NX=N,
-        NY=N,
-        Isat=Isat,
-        backend=backend,
-    )
+    simu = make_solver(backend)
     simu.propagator = simu._build_propagator(np.complex64, 0)
     E = np.ones((2, N, N), dtype=PRECISION_COMPLEX)
     A, A_sq = simu._prepare_output_array(E, normalize=False)
@@ -239,19 +213,7 @@ def test_split_step(backend) -> None:
 # conserved
 def test_out_field(backend) -> None:
     E = np.ones((2, N, N), dtype=PRECISION_COMPLEX)
-    simu = CNLSE(
-        0,
-        power,
-        window,
-        n2,
-        n12,
-        None,
-        L,
-        NX=N,
-        NY=N,
-        Isat=Isat,
-        backend=backend,
-    )
+    simu = make_solver(backend, alpha=0)
     E = simu.out_field(
         E, L, verbose=False, plot=False, precision="single", delta_z=DZ_TEST
     )

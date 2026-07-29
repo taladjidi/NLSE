@@ -21,6 +21,38 @@ alpha = 20
 DZ_TEST = 1e-4
 
 
+def make_solver(backend="CPU", n=N, **overrides):
+    """Return a NLSE_1d with this module's parameters.
+
+    Parameters
+    ----------
+    backend : str
+        Backend name.
+    n : int
+        Grid size.
+    **overrides
+        Any constructor argument, by keyword.
+
+    Returns
+    -------
+    NLSE_1d
+        The solver.
+    """
+    params = {
+        "alpha": alpha,
+        "power": power,
+        "window": window,
+        "n2": n2,
+        "V": None,
+        "L": L,
+        "NX": n,
+        "Isat": Isat,
+        "backend": backend,
+    }
+    params.update(overrides)
+    return NLSE_1d(**params)
+
+
 def test_build_propagator(backend) -> None:
     simu = NLSE_1d(alpha, power, window, n2, None, L, NX=N, Isat=Isat, backend=backend)
     prop = simu._build_propagator(PRECISION_COMPLEX, DZ_TEST)
@@ -30,17 +62,7 @@ def test_build_propagator(backend) -> None:
 
 
 def test_prepare_output_array(backend) -> None:
-    simu = NLSE_1d(
-        alpha,
-        power,
-        window,
-        n2,
-        None,
-        L,
-        NX=N,
-        Isat=Isat,
-        backend=backend,
-    )
+    simu = make_solver(backend)
     A = np.ones(N, dtype=PRECISION_COMPLEX)
     out, out_sq = simu._prepare_output_array(A, normalize=True)
     assert_c_contiguous(out, f"Output array is not C-contiguous. (Backend {backend})")

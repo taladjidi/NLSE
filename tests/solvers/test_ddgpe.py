@@ -28,22 +28,44 @@ puiss = detuning / g
 DZ_TEST = 1e-4
 
 
+def make_solver(backend="CPU", n=N, **overrides):
+    """Return a DDGPE with this module's parameters.
+
+    Parameters
+    ----------
+    backend : str
+        Backend name.
+    n : int
+        Grid size, square.
+    **overrides
+        Any constructor argument, by keyword.
+
+    Returns
+    -------
+    DDGPE
+        The solver.
+    """
+    params = {
+        "gamma": gamma,
+        "power": puiss,
+        "window": window,
+        "g": g,
+        "omega": omega,
+        "T": T,
+        "omega_exc": omega_exc,
+        "omega_cav": omega_cav,
+        "detuning": detuning,
+        "k_z": k_z,
+        "NX": n,
+        "NY": n,
+        "backend": backend,
+    }
+    params.update(overrides)
+    return DDGPE(**params)
+
+
 def test_prepare_output_array(backend) -> None:
-    simu = DDGPE(
-        gamma,
-        puiss,
-        window,
-        g,
-        omega,
-        T,
-        omega_exc,
-        omega_cav,
-        detuning,
-        k_z,
-        NX=N,
-        NY=N,
-        backend=backend,
-    )
+    simu = make_solver(backend)
     A = np.ones((2, N, N), dtype=PRECISION_COMPLEX)
     out, out_sq = simu._prepare_output_array(A, normalize=False)
     assert_c_contiguous(out, f"Output array is not C-contiguous. (Backend {backend})")
@@ -186,20 +208,7 @@ def test_retrieve_arrays_from_gpu() -> None:
 
 
 def test_build_propagator(backend) -> None:
-    simu = DDGPE(
-        gamma,
-        puiss,
-        window,
-        g,
-        omega,
-        T,
-        omega_exc,
-        omega_cav,
-        detuning,
-        k_z,
-        NX=N,
-        NY=N,
-    )
+    simu = make_solver()
     prop = simu._build_propagator(np.complex64, DZ_TEST)
     assert np.allclose(
         prop[0],
@@ -224,21 +233,7 @@ def test_build_propagator(backend) -> None:
 
 
 def test_take_components(backend) -> None:
-    simu = DDGPE(
-        gamma,
-        puiss,
-        window,
-        g,
-        omega,
-        T,
-        omega_exc,
-        omega_cav,
-        detuning,
-        k_z,
-        NX=N,
-        NY=N,
-        backend=backend,
-    )
+    simu = make_solver(backend)
     # create a larger array to test the fancy indexing
     A = np.ones((3, 2, N, N), dtype=PRECISION_COMPLEX)
     A1, A2 = simu._take_components(A)
@@ -311,21 +306,7 @@ def turn_on(
 )
 def test_out_field(ddgpe_backend) -> None:
     backend = ddgpe_backend
-    simu = DDGPE(
-        gamma,
-        puiss,
-        window,
-        g,
-        omega,
-        T,
-        omega_exc,
-        omega_cav,
-        detuning,
-        k_z,
-        NX=N,
-        NY=N,
-        backend=backend,
-    )
+    simu = make_solver(backend)
     dt = 0.1 / 32
     time = np.arange(0, T + dt, step=dt, dtype=np.float32)
     save_every = 1  # np.argwhere(time == 1)[0][0]
