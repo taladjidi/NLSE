@@ -377,3 +377,55 @@ def test_an_unbatched_coupled_run_is_never_refused(backend_name, cls, grid):
     simu = make_coupled(cls, backend_name, N2_VALUES[0])
     got = propagate(simu, coupled_field(simu, cls), "split_step")
     assert got.shape == (2, *grid)
+
+
+@pytest.mark.parametrize("cls,grid", COUPLED, ids=COUPLED_IDS)
+@pytest.mark.parametrize("rank", ["coupled", "component"], ids=["coupled", "component"])
+def test_batched_constants_are_reduced_to_component_rank(cls, grid, rank):
+    """The kernels are handed one component, so the constants must match it.
+
+    A caller shapes a batched parameter against the field, which for a coupled
+    solver includes the component axis -- n2 of (count, 1, 1, 1) against a
+    field of (count, 2, NY, NX). ``_take_components`` then hands the kernels a
+    (count, NY, NX) component, one axis short of it.
+
+    CPU slices the batch itself and tolerates the extra axis; CuPy broadcasts
+    for real and produces (count, count, NY, NX). This runs on CPU and pins
+    the shape CuPy needs, so the mismatch does not have to be found on a GPU.
+    """
+    shape = (
+        (COUNT, 1, *(1,) * len(grid))
+        if rank == "coupled"
+        else (COUNT, *(1,) * len(grid))
+    )
+    simu = make_coupled(cls, "CPU", N2_VALUES.reshape(shape))
+    V = np.zeros(grid, dtype=np.float32)
+
+    simu._precompute_step_constants(V, "single")
+
+    component_ndim = len(grid)
+    for name in sorted(simu._step_constants()):
+        value = getattr(simu, name)
+        ndim = getattr(value, "ndim", 0)
+        assert ndim <= component_ndim + 1, (
+            f"{name} has shape {tuple(value.shape)}: it cannot broadcast "
+            f"against a {(COUNT, *grid)} component"
+        )
+
+    # And the reduction must keep the values, not just the rank.
+    batched_g = np.asarray(simu._g11).reshape(COUNT)
+    single = [
+        float(np.asarray(make_coupled(cls, "CPU", n2)._step_constants()["_g11"]))
+        for n2 in N2_VALUES
+    ]
+    np.testing.assert_allclose(batched_g, single, rtol=1e-6)
+
+
+@pytest.mark.parametrize("cls,grid", COUPLED, ids=COUPLED_IDS)
+def test_a_parameter_varying_over_components_is_refused(cls, grid):
+    """n22/alpha2/Isat2 are how a component gets its own value, not this axis."""
+    simu = make_coupled(
+        cls, "CPU", np.array([-1e-9, -2e-9]).reshape(1, 2, *(1,) * len(grid))
+    )
+    with pytest.raises(ValueError, match="component axis"):
+        simu._precompute_step_constants(None, "single")

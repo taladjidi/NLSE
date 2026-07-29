@@ -274,3 +274,31 @@ def test_components_round_trip_when_taken_by_copy(monkeypatch) -> None:
         got1, got2 = simu._take_components(A)
         assert np.all(got1 == 1.0), f"component 1 was not written back for {shape}"
         assert np.all(got2 == 2.0), f"component 2 was not written back for {shape}"
+
+
+def test_an_array_norm_target_reaches_the_backend(monkeypatch) -> None:
+    """A per-component target must be moved to the device before it is used.
+
+    ``_norm_target`` is one power per component, a numpy array, and it divides
+    an integral that lives wherever the field does. CuPy rejects a numpy
+    operand against a device array outright; on CPU ``from_numpy`` is the
+    identity, so nothing here would notice the missing conversion. Asserting
+    the conversion happens is what covers CuPy from a machine without it.
+    """
+    simu = make_solver("CPU")
+    seen = []
+    original = simu._backend.from_numpy
+
+    def spy(array):
+        seen.append(np.shape(array))
+        return original(array)
+
+    monkeypatch.setattr(simu._backend, "from_numpy", spy)
+    simu._prepare_output_array(
+        np.ones((2, N, N), dtype=PRECISION_COMPLEX), normalize=True
+    )
+
+    assert (2,) in seen, (
+        f"the per-component target never went through the backend; "
+        f"shapes converted were {seen}"
+    )

@@ -1253,7 +1253,14 @@ class NLSE:
             else:
                 integral = np.sum(arr, axis=self._last_axes)
                 integral = integral * self._norm_constant
-                E_00 = (self._norm_target / integral) ** 0.5
+                target = self._norm_target
+                if getattr(target, "ndim", 0) > 0:
+                    # One target per component: an array operand has to be on
+                    # the same device as the integral it divides.
+                    target = self._backend.from_numpy(
+                        np.asarray(target, dtype=integral.dtype)
+                    )
+                E_00 = (target / integral) ** 0.5
                 A[:] = (E_00.T * E_in.T).T
         else:
             if self._backend.name == "MLX":

@@ -213,6 +213,41 @@ class CNLSE(NLSE):
         """Pre-compute constants for coupled propagation steps."""
         super()._precompute_step_constants(V, precision)
         self._V2_scaled = None if V is None else V * self._k2_half
+        # The kernels see one component at a time, so the constants they take
+        # must broadcast against a component rather than against the pair.
+        for name in (*self._step_constants(), "_V_scaled", "_V2_scaled"):
+            setattr(self, name, self._per_component(getattr(self, name)))
+
+    def _per_component(self, value: Any) -> Any:
+        """Drop the component axis from a batched parameter.
+
+        A caller batching a run shapes each parameter to broadcast against the
+        field, which for a coupled solver includes the component axis: n2 of
+        shape (count, 1, 1, 1) against a field of (count, 2, NY, NX). The
+        kernels are handed one component at a time, of shape (count, NY, NX),
+        so that axis is one too many by the time it reaches them.
+
+        Parameters
+        ----------
+        value : Any
+            A step constant, possibly batched, possibly None.
+
+        Returns
+        -------
+        Any
+            The same value, reduced to component rank if it was above it.
+        """
+        rank = len(self._last_axes)
+        if getattr(value, "ndim", 0) <= rank + 1:
+            return value
+        axis = -(rank + 1)
+        if value.shape[axis] != 1:
+            raise ValueError(
+                f"a batched parameter may not vary over the component axis; "
+                f"got shape {tuple(value.shape)}. Use n2/n22, alpha/alpha2 "
+                f"and Isat/Isat2 to give the components different values."
+            )
+        return value.reshape(value.shape[:axis] + value.shape[axis + 1 :])
 
     def _component(self, i: int) -> tuple:
         """Return the index selecting component ``i`` of a coupled array.
