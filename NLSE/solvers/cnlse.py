@@ -416,11 +416,8 @@ class CNLSE(NLSE):
                 unnorm_ifft=(prop_fft is not None),
             )
 
-        if self._backend.operations_allocate_output:
-            k = self._apply_linear_step(A_in, propagator, plans)
-        else:
-            k[:] = A_in
-            k = self._apply_linear_step(k, propagator, plans)
+        k[:] = A_in
+        k = self._apply_linear_step(k, propagator, plans)
 
         A1, A2 = self._take_components(A_in)
         k1, k2 = self._take_components(k)

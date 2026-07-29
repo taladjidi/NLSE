@@ -119,15 +119,6 @@ class Backend(ABC):
     # reduction in place, or does it more slowly than the round trip costs.
     normalizes_on_host = False
 
-    # Operations return a freshly allocated array rather than writing into a
-    # destination, so staging through a pre-allocated scratch buffer costs a
-    # copy and saves nothing.
-    #
-    # Not a preference: the two routes are not interchangeable either way. A
-    # backend leaving this False may have its FFT plan bound to a particular
-    # buffer, as pyfftw's is, and returns NaN if handed another array.
-    operations_allocate_output = False
-
     @property
     def convolution(self) -> Callable | None:
         """Return this backend's overlap-add convolution, or None.

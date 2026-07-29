@@ -1223,8 +1223,6 @@ class NLSE:
                     )
                 E_00 = (target / integral) ** 0.5
                 A[:] = (E_00.T * E_in.T).T
-        elif self._backend.operations_allocate_output:
-            A = E_in
         else:
             A[:] = E_in
         return A, A_sq
@@ -1518,11 +1516,8 @@ class NLSE:
                 unnorm_ifft=(prop_fft is not None),
             )
 
-        if self._backend.operations_allocate_output:
-            k = self._apply_linear_step(A_in, propagator, plans)
-        else:
-            k[:] = A_in
-            k = self._apply_linear_step(k, propagator, plans)
+        k[:] = A_in
+        k = self._apply_linear_step(k, propagator, plans)
 
         if self.nl_length > 0:
             A_sq = (A_in * A_in.conj()).real

@@ -227,12 +227,12 @@ def test_the_timing_line_names_a_device_only_when_there_is_one():
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_the_buffer_route_carries_the_field_through(backend_name):
-    """Whichever route ``operations_allocate_output`` selects must work.
+    """Every backend stages through its pre-allocated buffer.
 
-    The routes are not interchangeable -- CPU's FFT plan is bound to its
-    buffer and returns NaN if handed another array, MLX's operations do not
-    write into one at all -- so this asserts each backend's own route rather
-    than comparing them.
+    MLX used to skip that and let each operation allocate. Measured, the two
+    are within noise on MLX at every size and method, and CPU cannot take the
+    allocating route at all: pyfftw's plan is bound to its buffer and returns
+    NaN when handed another array. So there is one route, and this checks it.
     """
     waist = 2.23e-3
     simu = NLSE(
