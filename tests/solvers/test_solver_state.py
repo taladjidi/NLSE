@@ -1020,3 +1020,87 @@ def test_ddgpe_couplings_are_not_scaled_by_the_optical_constant():
     assert interaction == pytest.approx(g, rel=0.5), (
         f"interaction rate {interaction:.3e} is not of order g = {g:.3e}"
     )
+
+
+class TestArraysComeBackFromTheDevice:
+    """A run leaves the solver's arrays on the host, however it ends.
+
+    ``out_field`` moves V, nl_profile, the propagator and any batched
+    parameter onto the device for the duration of a run. Left there, the next
+    run is what breaks: ``from_numpy`` is handed a device array. On CL that
+    surfaced as ``ValueError: setting an array element with a sequence`` from
+    a call that had nothing to do with the failure.
+    """
+
+    @staticmethod
+    def solver(backend_name):
+        """Return a small solver with a potential, which has to travel."""
+        V = (-1e-4 * np.ones((N, N))).astype(np.float32)
+        return make_solver(backend_name, V=V)
+
+    @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+    def test_a_failed_run_still_brings_them_back(self, backend_name):
+        """The retrieve has to happen on the way out of a failure too."""
+        simu = self.solver(backend_name)
+        E = gaussian_input()
+
+        def raise_midway(simu, A, z, i):
+            if i == 2:
+                raise RuntimeError("callback failed mid-run")
+
+        with pytest.raises(RuntimeError, match="failed mid-run"):
+            simu.out_field(
+                E.copy(),
+                2e-3,
+                verbose=False,
+                plot=False,
+                delta_z=1e-4,
+                callback=raise_midway,
+            )
+
+        for attr in simu._gpu_array_attrs:
+            value = getattr(simu, attr, None)
+            if value is not None:
+                assert isinstance(value, np.ndarray), (
+                    f"{attr} was left on the device as {type(value).__name__}"
+                )
+
+    @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+    def test_the_solver_is_usable_after_a_failed_run(self, backend_name):
+        """Which is the point: the failure must not poison the next run."""
+        E = gaussian_input()
+        z, dz = 2e-3, 1e-4
+
+        expected = as_numpy(
+            self.solver(backend_name),
+            self.solver(backend_name).out_field(
+                E.copy(), z, verbose=False, plot=False, delta_z=dz
+            ),
+        )
+
+        simu = self.solver(backend_name)
+
+        def raise_midway(simu, A, z, i):
+            if i == 2:
+                raise RuntimeError("callback failed mid-run")
+
+        with pytest.raises(RuntimeError):
+            simu.out_field(
+                E.copy(),
+                z,
+                verbose=False,
+                plot=False,
+                delta_z=dz,
+                callback=raise_midway,
+            )
+
+        got = as_numpy(
+            simu, simu.out_field(E.copy(), z, verbose=False, plot=False, delta_z=dz)
+        )
+        np.testing.assert_allclose(
+            got,
+            expected,
+            rtol=1e-5,
+            atol=1e-5 * float(np.max(np.abs(expected))),
+            err_msg=f"{backend_name}: the run after a failure disagrees with a clean one",
+        )

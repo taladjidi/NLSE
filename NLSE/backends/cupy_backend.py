@@ -1,17 +1,20 @@
 """CUPY backend implementation."""
 
+import contextlib
+import time
 from typing import Any
 
 import numpy as np
 
 from ..utils import __CUPY_AVAILABLE__
-from .backend import Backend
+from .backend import Backend, Timing
 
 if not __CUPY_AVAILABLE__:
     raise ImportError("CuPy is not available - cannot import CUPYBackend")
 
 import cupy as cp
 import cupyx.scipy.fft as _cufft
+import cupyx.scipy.signal as _cusignal
 from cupyx.scipy.fftpack import get_fft_plan
 
 
@@ -69,6 +72,38 @@ class CUPYBackend(Backend):
     def allocate_real_field(self, shape: tuple, dtype: np.dtype) -> Any:
         """Allocate real array on GPU."""
         return cp.zeros(shape, dtype=dtype)
+
+    @property
+    def convolution(self):
+        """Return CuPy's overlap-add convolution."""
+        return _cusignal.oaconvolve
+
+    def synchronize(self, array=None) -> None:
+        """Wait for the null stream, which is where the kernels are queued."""
+        cp.cuda.Stream.null.synchronize()
+
+    @contextlib.contextmanager
+    def timed(self):
+        """Time with CUDA events as well as a wall clock.
+
+        A wall clock times the queueing; the events time the work.
+
+        Yields
+        ------
+        Timing
+            Filled in on exit, ``device`` included.
+        """
+        timing = Timing()
+        start_gpu, end_gpu = cp.cuda.Event(), cp.cuda.Event()
+        start_gpu.record()
+        start = time.perf_counter()
+        try:
+            yield timing
+        finally:
+            timing.wall = time.perf_counter() - start
+            end_gpu.record()
+            end_gpu.synchronize()
+            timing.device = cp.cuda.get_elapsed_time(start_gpu, end_gpu) * 1e-3
 
     def to_numpy(self, array: Any) -> np.ndarray:
         """Transfer from GPU to CPU."""

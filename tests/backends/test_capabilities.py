@@ -6,10 +6,16 @@ AttributeError at propagation time, and a method present with the flag left
 False is silently dead code. Both are caught here rather than on hardware.
 """
 
+import ast
 import inspect
+from pathlib import Path
 
+import numpy as np
 import pytest
+from NLSE import NLSE
 from NLSE.backends import Backend, get_backend, list_available_backends
+from NLSE.backends.backend import Timing
+from scipy.constants import c, epsilon_0
 
 # Capability flag -> kernel methods it promises.
 CAPABILITY_METHODS = {
@@ -139,3 +145,149 @@ def test_fused_signatures_accept_the_documented_arguments(backend_name):
         assert got == params, (
             f"{backend_name}.{method} signature is {got}, expected {params}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Capabilities that replaced a check on the backend's name
+# ---------------------------------------------------------------------------
+
+SOLVERS = Path(__file__).resolve().parent.parent.parent / "NLSE" / "solvers"
+
+
+def name_checks_in(path):
+    """Return (line, source) for each comparison against a backend's name."""
+    found = []
+    for node in ast.walk(ast.parse(path.read_text())):
+        if not isinstance(node, ast.Compare):
+            continue
+        text = ast.unparse(node)
+        if "_backend.name" in text and isinstance(node.ops[0], (ast.Eq, ast.In)):
+            found.append((node.lineno, text))
+    return found
+
+
+def test_there_are_solvers_to_check():
+    """A glob matching nothing would make the test below vacuous."""
+    assert len(list(SOLVERS.glob("*.py"))) > 5
+
+
+@pytest.mark.parametrize("path", sorted(SOLVERS.glob("*.py")), ids=lambda p: p.name)
+def test_no_solver_branches_on_the_backend_name(path):
+    """Ask what a backend can do. Which one it is is not a capability."""
+    offenders = [f"{path.name}:{line}  {text}" for line, text in name_checks_in(path)]
+    assert not offenders, (
+        "branch on a capability rather than on the backend's identity:\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_a_backend_claiming_a_convolution_has_a_working_one(backend_name):
+    """``convolution`` doubles as the non-locality capability, so it must run."""
+    backend = get_backend(backend_name)
+    if backend.convolution is None:
+        pytest.skip("declares no convolution")
+
+    signal = backend.from_numpy(np.ones((8, 8), dtype=np.float32))
+    kernel = backend.from_numpy(np.ones((3, 3), dtype=np.float32))
+    out = np.asarray(backend.to_numpy(backend.convolution(signal, kernel, mode="same")))
+
+    assert out.shape == (8, 8)
+    assert out[4, 4] == pytest.approx(9.0), "a 3x3 box over ones is 9 in the interior"
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_synchronize_takes_an_array_or_nothing(backend_name):
+    """The solver calls it with the field; the contract allows neither."""
+    backend = get_backend(backend_name)
+    backend.synchronize()
+    backend.synchronize(backend.from_numpy(np.ones((4, 4), dtype=np.complex64)))
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_timed_reports_a_positive_wall_time(backend_name):
+    """And a device time only where the backend can measure one."""
+    backend = get_backend(backend_name)
+    with backend.timed() as timing:
+        arr = backend.from_numpy(np.ones((64, 64), dtype=np.complex64))
+        backend.synchronize(arr)
+
+    assert isinstance(timing, Timing)
+    assert timing.wall > 0, "wall time was not filled in on exit"
+    if timing.device is not None:
+        assert timing.device >= 0, "a reported device time cannot be negative"
+
+
+def test_the_timing_line_names_a_device_only_when_there_is_one():
+    """out_field prints this straight, so the wording lives with the data."""
+    assert str(Timing(wall=1.5)) == "Time spent to solve : 1.5 s (CPU)"
+    assert "GPU" in str(Timing(wall=1.5, device=0.5))
+    assert "GPU" not in str(Timing(wall=1.5))
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_the_buffer_route_carries_the_field_through(backend_name):
+    """Every backend stages through its pre-allocated buffer.
+
+    MLX used to skip that and let each operation allocate. Measured, the two
+    are within noise on MLX at every size and method, and CPU cannot take the
+    allocating route at all: pyfftw's plan is bound to its buffer and returns
+    NaN when handed another array. So there is one route, and this checks it.
+    """
+    waist = 2.23e-3
+    simu = NLSE(
+        alpha=0,
+        power=1.05,
+        window=4 * waist,
+        n2=-1e-9,
+        V=None,
+        L=1e-3,
+        NX=32,
+        NY=32,
+        Isat=1e5,
+        backend=backend_name,
+    )
+    field = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(np.complex64)
+
+    out, _ = simu._prepare_output_array(field.copy(), normalize=False)
+    np.testing.assert_allclose(
+        np.asarray(simu._backend.to_numpy(out)),
+        field,
+        rtol=1e-6,
+        err_msg=f"{backend_name} did not carry the field through unnormalized",
+    )
+
+    propagated = np.asarray(
+        simu.out_field(
+            field.copy(), 2e-3, verbose=False, plot=False, delta_z=1e-4, method="RK4"
+        )
+    )
+    assert np.all(np.isfinite(propagated)), (
+        f"{backend_name} produced non-finite values on its buffer route"
+    )
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_normalizing_gives_the_same_answer_by_either_route(backend_name):
+    """``normalizes_on_host`` picks the route; the result cannot depend on it."""
+    waist = 2.23e-3
+    simu = NLSE(
+        alpha=0,
+        power=1.05,
+        window=4 * waist,
+        n2=-1e-9,
+        V=None,
+        L=1e-3,
+        NX=32,
+        NY=32,
+        Isat=1e5,
+        backend=backend_name,
+    )
+    field = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(np.complex64)
+    out = np.asarray(
+        simu._backend.to_numpy(simu._prepare_output_array(field, normalize=True)[0])
+    )
+    integral = float(
+        np.sum(np.abs(out) ** 2) * simu.delta_X * simu.delta_Y * c * epsilon_0 / 2
+    )
+    assert integral == pytest.approx(simu.power, rel=1e-4)
