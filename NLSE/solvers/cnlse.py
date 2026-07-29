@@ -1,3 +1,5 @@
+from typing import Any
+
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.constants import c, epsilon_0
@@ -6,16 +8,18 @@ from ..utils import __BACKEND__, __CUPY_AVAILABLE__, __PYOPENCL_AVAILABLE__
 from .nlse import NLSE
 
 if __CUPY_AVAILABLE__:
-    import cupy as cp
+    pass
 
 if __PYOPENCL_AVAILABLE__:
-    from pyopencl import array as cla
+    pass
 
 
 class CNLSE(NLSE):
     """A class to solve the coupled NLSE."""
 
     _gpu_param_attrs = (*NLSE._gpu_param_attrs, "n22", "n12")
+    # The second component's potential; None until a run scales it.
+    _V2_scaled: Any = None
     # Both intra- and inter-component couplings switch off past the medium.
     _nonlinearity_attrs = (*NLSE._nonlinearity_attrs, "n12", "n22")
 
@@ -106,68 +110,10 @@ class CNLSE(NLSE):
         self.propagator1 = None
         self.propagator2 = None
 
-    def _prepare_output_array(
-        self, E: np.ndarray, normalize: bool
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Prepare the output arrays depending on __BACKEND__.
-
-        Prepares the A and A_sq arrays to store the field and its modulus.
-
-        Parameters
-        ----------
-        E : np.ndarray
-            Input array.
-        normalize : bool
-            Normalize the field to the total power.
-
-        Returns
-        -------
-        A : np.ndarray
-            Output field array.
-        A_sq : np.ndarray
-            Output field modulus squared array.
-        """
-        puiss_arr = np.array([self.power, self.power2], dtype=E.dtype)
-        A = self._backend.allocate_field(E.shape, E.dtype)
-        A_sq = self._backend.allocate_real_field(E.shape, E.real.dtype)
-        if self._backend.name == "CUPY":
-            E = cp.asarray(E)
-            puiss_arr = cp.array(puiss_arr)
-        if normalize:
-            # normalization of the field (use contiguous formula)
-            match self._backend.name:
-                case "CUPY" | "CPU":
-                    arr = (E * E.conj()).real * self._norm_grid_factor
-                    integral = arr.sum(axis=self._last_axes)
-                    integral = integral * self._norm_constant
-                    E_00 = (puiss_arr / integral) ** 0.5
-                case "CL":
-                    arr = (E * E.conj()).real * self._norm_grid_factor
-                    integral = arr.sum(axis=self._last_axes)
-                    integral = integral * self._norm_constant
-                    E_00 = (puiss_arr / integral) ** 0.5
-                    E_00 = cla.to_device(self._backend.queue, E_00.astype(E.dtype))
-                    E = cla.to_device(self._backend.queue, E.astype(E.dtype))
-                case "MLX":
-                    E_np = E if isinstance(E, np.ndarray) else self._backend.to_numpy(E)
-                    arr = (E_np * E_np.conj()).real * self._norm_grid_factor
-                    integral = arr.sum(axis=self._last_axes)
-                    integral = integral * self._norm_constant
-                    E_00 = (puiss_arr / integral) ** 0.5
-                    result = np.zeros_like(E_np)
-                    result[0] = E_00[0] * E_np[0]
-                    result[1] = E_00[1] * E_np[1]
-                    return self._backend.from_numpy(result.astype(E_np.dtype)), A_sq
-            A[0] = E_00[0] * E[0]
-            A[1] = E_00[1] * E[1]
-        else:
-            if self._backend.name == "CL":
-                E = cla.to_device(self._backend.queue, E)
-            if self._backend.name == "MLX":
-                A = self._backend.from_numpy(E)
-            else:
-                A[:] = E
-        return A, A_sq
+    @property
+    def _norm_target(self) -> np.ndarray:
+        """Normalize each component to its own power."""
+        return np.array([self.power, self.power2])
 
     def _propagator_cache_key(self, dtype: np.dtype, delta_z: float) -> tuple:
         """Return cache key for coupled propagator."""
@@ -203,8 +149,8 @@ class CNLSE(NLSE):
         """
         rates = super()._energy_rates(A)
         A_np = np.asarray(self._backend.to_numpy(A))
-        w1 = np.abs(A_np[0]) ** 2
-        w2 = np.abs(A_np[1]) ** 2
+        w1 = np.abs(A_np[self._component(0)]) ** 2
+        w2 = np.abs(A_np[self._component(1)]) ** 2
         t1, t2 = float(np.sum(w1)), float(np.sum(w2))
         if t1 == 0 and t2 == 0:
             return rates
@@ -213,30 +159,19 @@ class CNLSE(NLSE):
             return float(np.sum(weight * field) / total) if total > 0 else 0.0
 
         # Each component sees the potential scaled by its own k.
-        V1_scaled = self._as_host_array(getattr(self, "_V_scaled", None))
-        V2_scaled = self._as_host_array(getattr(self, "_V2_scaled", None))
+        V1_scaled = self._as_host_array(self._V_scaled)
+        V2_scaled = self._as_host_array(self._V2_scaled)
         potential = 0.0
         for weight, total, V in ((w1, t1, V1_scaled), (w2, t2, V2_scaled)):
             if V is not None:
                 potential = max(potential, abs(mean(weight, total, np.real(V))))
         rates["potential"] = potential
 
-        if getattr(self, "_g11", None) is None:
-            g11 = self.k / 2 * self.n2 * c * epsilon_0
-            g12 = self.k / 2 * self.n12 * c * epsilon_0
-            g22 = self.k2 / 2 * self.n22 * c * epsilon_0
-        else:
-            g11, g12, g22 = self._g11, self._g12, self._g22
-        if getattr(self, "_Isat_conv", None) is None:
-            Isat1 = 2 * self.I_sat / (epsilon_0 * c)
-            Isat2 = 2 * self.I_sat2 / (epsilon_0 * c)
-        else:
-            Isat1, Isat2 = self._Isat_conv, self._Isat_conv2
-        g11 = np.abs(self._as_host_array(g11))
-        g12 = np.abs(self._as_host_array(g12))
-        g22 = np.abs(self._as_host_array(g22))
-        Isat1 = self._as_host_array(Isat1)
-        Isat2 = self._as_host_array(Isat2)
+        g11 = np.abs(self._as_host_array(self._constant("_g11")))
+        g12 = np.abs(self._as_host_array(self._constant("_g12")))
+        g22 = np.abs(self._as_host_array(self._constant("_g22")))
+        Isat1 = self._as_host_array(self._constant("_Isat_conv"))
+        Isat2 = self._as_host_array(self._constant("_Isat_conv2"))
 
         I1, I2 = mean(w1, t1, w1), mean(w2, t2, w2)
         sat = 1 / (1 + I1 / Isat1 + I2 / Isat2)
@@ -257,22 +192,81 @@ class CNLSE(NLSE):
         prop2 = (-1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k2).astype(np.complex64)
         return np.array([prop1, prop2])
 
+    def _step_constants(self) -> dict[str, Any]:
+        """Add the second component's constants to NLSE's."""
+        base = super()._step_constants()
+        return {
+            **base,
+            # The intra-component coupling is the base class's, under the name
+            # the coupled kernels take it by.
+            "_g11": base["_g"],
+            "_g12": self.k / 2 * self.n12 * c * epsilon_0,
+            "_g22": self.k2 / 2 * self.n22 * c * epsilon_0,
+            "_alpha2_half": self.alpha2 / 2,
+            "_Isat_conv2": 2 * self.I_sat2 / (epsilon_0 * c),
+            "_k2_half": self.k2 / 2,
+        }
+
     def _precompute_step_constants(
         self, V: np.ndarray | None, precision: str = "single"
     ) -> None:
         """Pre-compute constants for coupled propagation steps."""
         super()._precompute_step_constants(V, precision)
-        fp = np.float32 if precision == "single" else np.float64
-        self._g11 = fp(self.k / 2 * self.n2 * c * epsilon_0)
-        self._g12 = fp(self.k / 2 * self.n12 * c * epsilon_0)
-        self._g22 = fp(self.k2 / 2 * self.n22 * c * epsilon_0)
-        self._alpha2_half = fp(self.alpha2 / 2)
-        self._Isat_conv2 = fp(2 * self.I_sat2 / (epsilon_0 * c))
-        self._k2_half = fp(self.k2 / 2)
-        if V is not None:
-            self._V2_scaled = V * self._k2_half
-        else:
-            self._V2_scaled = None
+        self._V2_scaled = None if V is None else V * self._k2_half
+        # The kernels see one component at a time, so the constants they take
+        # must broadcast against a component rather than against the pair.
+        for name in (*self._step_constants(), "_V_scaled", "_V2_scaled"):
+            setattr(self, name, self._per_component(getattr(self, name)))
+
+    def _per_component(self, value: Any) -> Any:
+        """Drop the component axis from a batched parameter.
+
+        A caller batching a run shapes each parameter to broadcast against the
+        field, which for a coupled solver includes the component axis: n2 of
+        shape (count, 1, 1, 1) against a field of (count, 2, NY, NX). The
+        kernels are handed one component at a time, of shape (count, NY, NX),
+        so that axis is one too many by the time it reaches them.
+
+        Parameters
+        ----------
+        value : Any
+            A step constant, possibly batched, possibly None.
+
+        Returns
+        -------
+        Any
+            The same value, reduced to component rank if it was above it.
+        """
+        rank = len(self._last_axes)
+        if getattr(value, "ndim", 0) <= rank + 1:
+            return value
+        axis = -(rank + 1)
+        if value.shape[axis] != 1:
+            raise ValueError(
+                f"a batched parameter may not vary over the component axis; "
+                f"got shape {tuple(value.shape)}. Use n2/n22, alpha/alpha2 "
+                f"and Isat/Isat2 to give the components different values."
+            )
+        return value.reshape(value.shape[:axis] + value.shape[axis + 1 :])
+
+    def _component(self, i: int) -> tuple:
+        """Return the index selecting component ``i`` of a coupled array.
+
+        The component axis sits just before the grid axes, so it is counted
+        from the end: a 1D pair is (2, NX) and a 2D pair (2, NY, NX), and
+        either may carry leading batch axes.
+
+        Parameters
+        ----------
+        i : int
+            Component, 0 or 1.
+
+        Returns
+        -------
+        tuple
+            Index tuple for ``A[...]``.
+        """
+        return (..., i) + (slice(None),) * len(self._last_axes)
 
     def _take_components(self, A: np.ndarray) -> tuple:
         """Take the components of the field.
@@ -287,8 +281,8 @@ class CNLSE(NLSE):
         tuple
             Tuple of the two components.
         """
-        A1 = A[..., 0, :, :]
-        A2 = A[..., 1, :, :]
+        A1 = A[self._component(0)]
+        A2 = A[self._component(1)]
 
         # GPU backends don't support offset arrays - make contiguous copies
         if self._backend.is_device_backend:
@@ -297,6 +291,63 @@ class CNLSE(NLSE):
                 A2 = A2.copy()
 
         return A1, A2
+
+    def _is_batched(self, A: np.ndarray, params: tuple = ()) -> bool:
+        """Whether this run carries a batch, of fields or of parameters.
+
+        An unbatched coupled field is one component axis plus the grid axes;
+        anything above that is a batch of simulations. A parameter given per
+        simulation is the other kind, and either rules out a kernel that
+        expects scalars and one field.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            The coupled field.
+        params : tuple
+            Parameters a kernel would take as scalars. Pass only those; a
+            grid-shaped argument such as V is array-valued either way.
+
+        Returns
+        -------
+        bool
+            True if a batch is present.
+        """
+        if A.ndim > len(self._last_axes) + 1:
+            return True
+        return any(getattr(p, "ndim", 0) > 0 for p in params)
+
+    # Backends whose coupled kernels take one field of exactly the coupled
+    # rank. The generic path they fall back to is not batched-clean either,
+    # so a batched coupled run is refused rather than quietly reshaped.
+    _no_coupled_batch_backends = ("CL", "MLX")
+
+    def _check_batch_support(self, E_in: np.ndarray) -> None:
+        """Refuse a batched coupled run where the kernels cannot serve one."""
+        if self._backend.name not in self._no_coupled_batch_backends:
+            return
+        params = (self.n2, self.n12, self.n22, self.alpha, self.alpha2)
+        if self._is_batched(E_in, params):
+            raise NotImplementedError(
+                f"Broadcasting a coupled solver over a batch is not supported "
+                f"with the {self._backend.name} backend. Use CPU or CUPY."
+            )
+
+    def _set_components(self, A: np.ndarray, A1: np.ndarray, A2: np.ndarray) -> None:
+        """Write the two components back into ``A``.
+
+        The counterpart to ``_take_components``, which returns copies on the
+        device backends: without this the components are computed and dropped.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            Coupled array to write into, modified in place.
+        A1, A2 : np.ndarray
+            The components.
+        """
+        A[self._component(0)] = A1
+        A[self._component(1)] = A2
 
     def _allocate_rk4_buffers(self, A: np.ndarray, method: str) -> None:
         """Pre-allocate scratch buffers for coupled RK4 stepper."""
@@ -330,24 +381,24 @@ class CNLSE(NLSE):
         kernels = self._backend.kernels
 
         # Pre-computed constants (shared by all code paths)
-        alpha_half = getattr(self, "_alpha_half", self.alpha / 2)
-        alpha2_half = getattr(self, "_alpha2_half", self.alpha2 / 2)
-        g11 = getattr(self, "_g11", self.k / 2 * self.n2 * c * epsilon_0)
-        g12 = getattr(self, "_g12", self.k / 2 * self.n12 * c * epsilon_0)
-        g22 = getattr(self, "_g22", self.k2 / 2 * self.n22 * c * epsilon_0)
-        Isat1 = getattr(self, "_Isat_conv", 2 * self.I_sat / (epsilon_0 * c))
-        Isat2 = getattr(self, "_Isat_conv2", 2 * self.I_sat2 / (epsilon_0 * c))
-        V_scaled = getattr(self, "_V_scaled", None)
-        V2_scaled = getattr(self, "_V2_scaled", None)
+        alpha_half = self._constant("_alpha_half")
+        alpha2_half = self._constant("_alpha2_half")
+        g11 = self._constant("_g11")
+        g12 = self._constant("_g12")
+        g22 = self._constant("_g22")
+        Isat1 = self._constant("_Isat_conv")
+        Isat2 = self._constant("_Isat_conv2")
+        V_scaled = self._V_scaled
+        V2_scaled = self._V2_scaled
         if V_scaled is None and V is not None:
-            k_half = getattr(self, "_k_half", np.float32(self.k / 2))
-            k2_half = getattr(self, "_k2_half", np.float32(self.k2 / 2))
+            k_half = self._constant("_k_half")
+            k2_half = self._constant("_k2_half")
             V_scaled = V * k_half
             V2_scaled = V * k2_half
 
         # Fused fast path (CL, MLX): zero component copies
         if self._backend.has_fused_coupled_rk4_rhs and self.nl_length == 0:
-            prop_fft = getattr(self, "_propagator_fft", None)
+            prop_fft = self._propagator_fft
             return kernels.rk4_rhs_coupled_fused(
                 A_in,
                 k,
@@ -434,8 +485,7 @@ class CNLSE(NLSE):
                 Isat1,
             )
 
-        k[0] = k1
-        k[1] = k2
+        self._set_components(k, k1, k2)
 
         return k
 
@@ -561,15 +611,15 @@ class CNLSE(NLSE):
             The propagated field.
         """
         # Use pre-computed constants with fallbacks for direct calls
-        alpha_half = getattr(self, "_alpha_half", self.alpha / 2)
-        alpha2_half = getattr(self, "_alpha2_half", self.alpha2 / 2)
-        g11 = getattr(self, "_g11", self.k / 2 * self.n2 * c * epsilon_0)
-        g12 = getattr(self, "_g12", self.k / 2 * self.n12 * c * epsilon_0)
-        g22 = getattr(self, "_g22", self.k2 / 2 * self.n22 * c * epsilon_0)
-        Isat_conv = getattr(self, "_Isat_conv", 2 * self.I_sat / (epsilon_0 * c))
-        Isat_conv2 = getattr(self, "_Isat_conv2", 2 * self.I_sat2 / (epsilon_0 * c))
-        V_scaled = getattr(self, "_V_scaled", None)
-        V2_scaled = getattr(self, "_V2_scaled", None)
+        alpha_half = self._constant("_alpha_half")
+        alpha2_half = self._constant("_alpha2_half")
+        g11 = self._constant("_g11")
+        g12 = self._constant("_g12")
+        g22 = self._constant("_g22")
+        Isat_conv = self._constant("_Isat_conv")
+        Isat_conv2 = self._constant("_Isat_conv2")
+        V_scaled = self._V_scaled
+        V2_scaled = self._V2_scaled
         if V is not None and V_scaled is None:
             V_scaled = V * np.float32(self.k / 2)
             V2_scaled = V * np.float32(self.k2 / 2)
@@ -587,10 +637,12 @@ class CNLSE(NLSE):
 
         kernels = self._backend.kernels
 
-        # Fused fast path (CL, MLX): zero component copies
+        # Fused fast path (CL, MLX): zero component copies. It takes one field
+        # of exactly the coupled rank; _check_batch_support has already turned
+        # away the batched runs it could not serve.
         if self._backend.has_fused_coupled_split_step and self.nl_length == 0:
             dz = delta_z / 2 if precision == "double" else delta_z
-            prop_fft = getattr(self, "_propagator_fft", None)
+            prop_fft = self._propagator_fft
             omega_half = (
                 self.omega / 2
                 if (precision == "single" and self.omega is not None)
@@ -622,8 +674,7 @@ class CNLSE(NLSE):
             A1, A2 = self._apply_nl_prop_c(
                 A1, A2, A_sq_1, A_sq_2, delta_z / 2, *nl_args
             )
-            A[0] = A1
-            A[1] = A2
+            self._set_components(A, A1, A2)
 
         # Linear propagation in Fourier domain
         A = self._apply_linear_step(A, propagator, plans)
@@ -639,8 +690,7 @@ class CNLSE(NLSE):
                 A1, A2, delta_z, self.omega / 2
             )
 
-        A[0] = A1
-        A[1] = A2
+        self._set_components(A, A1, A2)
         return A
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
@@ -655,23 +705,24 @@ class CNLSE(NLSE):
         """
         A_plot = self._to_plot_array(A_plot, 3)
         fig, ax = plt.subplots(2, 2, layout="constrained", figsize=(10, 10))
-        fig.suptitle(rf"Field at $z$ = {z:.2e} m")
+        fig.suptitle(self._plot_title(z))
         ext_real = [
             np.min(self.X) * 1e3,
             np.max(self.X) * 1e3,
             np.min(self.Y) * 1e3,
             np.max(self.Y) * 1e3,
         ]
-        rho0 = np.abs(A_plot[0]) ** 2 * 1e-4 * c / 2 * epsilon_0
+        rho0 = np.abs(A_plot[0]) ** 2 * self._plot_density_scale
         phi0 = np.angle(A_plot[0])
-        rho1 = np.abs(A_plot[1]) ** 2 * 1e-4 * c / 2 * epsilon_0
+        rho1 = np.abs(A_plot[1]) ** 2 * self._plot_density_scale
         phi1 = np.angle(A_plot[1])
         # plot amplitudes and phases
         im0 = ax[0, 0].imshow(rho0, extent=ext_real)
-        ax[0, 0].set_title(r"$|\psi_1|^2$")
+        first, second = self._plot_components
+        ax[0, 0].set_title(rf"$|{first}|^2$")
         ax[0, 0].set_xlabel("x (mm)")
         ax[0, 0].set_ylabel("y (mm)")
-        fig.colorbar(im0, ax=ax[0, 0], shrink=0.6, label=r"Intensity $(W/cm^2)$")
+        fig.colorbar(im0, ax=ax[0, 0], shrink=0.6, label=self._plot_density_label)
         im1 = ax[0, 1].imshow(
             phi0,
             extent=ext_real,
@@ -679,15 +730,15 @@ class CNLSE(NLSE):
             vmin=-np.pi,
             vmax=np.pi,
         )
-        ax[0, 1].set_title(r"Phase $\mathrm{arg}(\psi_1)$")
+        ax[0, 1].set_title(rf"Phase $\mathrm{{arg}}({first})$")
         ax[0, 1].set_xlabel("x (mm)")
         ax[0, 1].set_ylabel("y (mm)")
         fig.colorbar(im1, ax=ax[0, 1], shrink=0.6, label="Phase (rad)")
         im2 = ax[1, 0].imshow(rho1, extent=ext_real)
-        ax[1, 0].set_title(r"$|\psi_2|^2$")
+        ax[1, 0].set_title(rf"$|{second}|^2$")
         ax[1, 0].set_xlabel("x (mm)")
         ax[1, 0].set_ylabel("y (mm)")
-        fig.colorbar(im2, ax=ax[1, 0], shrink=0.6, label=r"Intensity $(W/cm^2)$")
+        fig.colorbar(im2, ax=ax[1, 0], shrink=0.6, label=self._plot_density_label)
         im3 = ax[1, 1].imshow(
             phi1,
             extent=ext_real,
@@ -695,7 +746,7 @@ class CNLSE(NLSE):
             vmin=-np.pi,
             vmax=np.pi,
         )
-        ax[1, 1].set_title(r"Phase $\mathrm{arg}(\psi_2)$")
+        ax[1, 1].set_title(rf"Phase $\mathrm{{arg}}({second})$")
         ax[1, 1].set_xlabel("x (mm)")
         ax[1, 1].set_ylabel("y (mm)")
         fig.colorbar(im3, ax=ax[1, 1], shrink=0.6, label="Phase (rad)")

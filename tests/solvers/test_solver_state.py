@@ -7,10 +7,11 @@ state has to be refreshed rather than silently reused.
 
 import numpy as np
 import pytest
-from NLSE import NLSE
+from NLSE import CNLSE, DDGPE, GPE, NLSE
 from NLSE.backends import get_backend, list_available_backends
 from NLSE.callbacks import adapt_delta_z
 from NLSE.solvers.nlse import DEFAULT_MIN_STEPS, DEFAULT_PHASE_PER_STEP
+from scipy.constants import atomic_mass
 
 from .helpers import as_numpy
 
@@ -152,9 +153,8 @@ class TestLinearConstruction:
 class TestPropagationDistance:
     """A run lands on z, rather than past it.
 
-    The loop used to take ceil(z / delta_z) whole steps, so unless the step
-    divided z it propagated further than asked. The error that leaves is the
-    phase the medium imprints over the excess, which is not small: it is the
+    Taking ceil(z / delta_z) whole steps overshoots unless the step divides
+    z, and the error is the phase the medium imprints over the excess: the
     excess as a fraction of z, times the total nonlinear phase.
 
     Floating point makes it worse than it sounds. A step derived from the
@@ -243,10 +243,9 @@ class TestPropagationDistance:
 class TestCallbackArguments:
     """Callbacks are handed the position the field they receive is at.
 
-    They used to be handed the *total* distance, the same number every step,
-    though every callback docstring and the README called it "the current
-    propagation distance". Nothing in-tree read it -- the built-in callbacks
-    all key off the step index -- so it went unnoticed.
+    Every callback docstring and the README call it "the current propagation
+    distance", so it has to advance. No built-in callback reads it -- they all
+    key off the step index -- which leaves these tests as the only check.
     """
 
     def test_z_advances_with_the_field(self):
@@ -289,11 +288,9 @@ class TestCallbackArguments:
 class TestAdaptiveStep:
     """A callback changes the step by returning it, and the propagator follows.
 
-    It used to change it by assigning ``simu.delta_z``. The nonlinear step
-    picked that up, because it read the attribute every step, but the
-    propagator did not: it was built once from the original step and never
-    rebuilt. The linear half of every subsequent step therefore advanced by
-    the wrong distance, silently.
+    Both halves have to follow. The propagator is built from the step, so a
+    new step that reaches the nonlinear half but not a propagator rebuild
+    leaves the linear half advancing the wrong distance.
     """
 
     Z = 2e-3
@@ -837,8 +834,8 @@ class TestStepLimitEnergies:
             "a potential must make the RK4 limit more restrictive"
         )
         assert with_V._split_step_max_dz(A_V) < bare._split_step_max_dz(A_bare), (
-            "a potential must make the split-step limit more restrictive; it "
-            "used to be ignored entirely because V is applied exactly"
+            "a potential must make the split-step limit more restrictive, "
+            "even though the exponential applies V exactly"
         )
 
     def test_the_rates_are_energies_not_grid_maxima(self):
@@ -910,3 +907,116 @@ class TestStepLimitEnergies:
         assert simu._energy_rates(A)["potential"] == 0.0
         for limit in (simu._rk4_max_dz(A), simu._split_step_max_dz(A)):
             assert np.isfinite(limit) and limit > 0
+
+
+class TestStepConstantTable:
+    """Each step constant is defined once, by ``_step_constants``.
+
+    ``_precompute_step_constants`` writes the table onto the solver as
+    fixed-precision attributes for the kernels. Readers that run before a
+    propagation go through ``_constant``, which returns the attribute once it
+    exists and the table's value until then. The two must agree.
+    """
+
+    @staticmethod
+    def solvers():
+        """Return one small solver of each kind, by name."""
+        common = {"window": window, "V": None, "NX": 32, "NY": 32, "backend": "CPU"}
+        h_bar = 0.654
+        return {
+            "NLSE": NLSE(alpha=0, power=power, n2=n2, L=L, Isat=Isat, **common),
+            "CNLSE": CNLSE(
+                alpha=0, power=power, n2=n2, n12=-1e-10, L=L, Isat=Isat, **common
+            ),
+            "GPE": GPE(
+                gamma=0.1,
+                N=1e5,
+                g=1e3,
+                m=87 * atomic_mass,
+                **{**common, "window": 1e-4},
+            ),
+            "DDGPE": DDGPE(
+                gamma=0.1,
+                power=1.0,
+                g=1e-2 / h_bar,
+                g12=0,
+                omega=5.07 / h_bar,
+                T=1,
+                omega_exc=1484.44 / h_bar,
+                omega_cav=1482.76 / h_bar,
+                detuning=0.17 / h_bar,
+                k_z=27,
+                **{**common, "window": 256},
+            ),
+        }
+
+    @pytest.fixture(params=["NLSE", "CNLSE", "GPE", "DDGPE"])
+    def simu(self, request):
+        """Return one solver of each kind."""
+        return self.solvers()[request.param]
+
+    def test_the_precompute_writes_every_name_the_table_declares(self, simu):
+        """A name in the table that nothing sets reads as ``None`` in a kernel."""
+        names = sorted(simu._step_constants())
+        assert names, "the table is empty"
+        for name in names:
+            assert getattr(simu, name, None) is None, (
+                f"{name} was already set before any precompute"
+            )
+
+        simu._precompute_step_constants(None, "single")
+
+        for name in names:
+            assert getattr(simu, name, None) is not None, (
+                f"{name} is declared in _step_constants but the precompute skips it"
+            )
+
+    def test_reading_a_constant_gives_the_same_value_either_side_of_a_run(self, simu):
+        """``_constant`` is the table before a run and the attribute after it.
+
+        They have to agree, or a step chosen before propagating is not the
+        step the kernels then take.
+        """
+        before = {k: float(np.asarray(v)) for k, v in simu._step_constants().items()}
+        simu._precompute_step_constants(None, "single")
+
+        for name, value in before.items():
+            np.testing.assert_allclose(
+                float(np.asarray(simu._constant(name))),
+                value,
+                rtol=1e-6,
+                err_msg=f"{name} changed across the precompute",
+            )
+
+    def test_the_coupled_solvers_reuse_the_base_coupling(self, simu):
+        """``_g11`` is the base class's ``_g``, not a second copy of it.
+
+        Except in DDGPE, which hands the kernels unconverted couplings.
+        """
+        table = simu._step_constants()
+        if "_g11" not in table or isinstance(simu, DDGPE):
+            pytest.skip("not a solver that renames the base coupling")
+        assert table["_g11"] == table["_g"]
+
+
+def test_ddgpe_couplings_are_not_scaled_by_the_optical_constant():
+    """DDGPE's ``g`` reaches the kernels as given, not as an optical n2.
+
+    CNLSE converts a nonlinear index with ``k / 2 * c * epsilon_0``, and
+    DDGPE's ``k`` comes from a wavelength it supplies only to satisfy the base
+    constructor, about 6e30. Applying that conversion here inflates the
+    interaction rate by ~1e26 and collapses the step limit with it.
+    """
+    h_bar = 0.654
+    g = 1e-2 / h_bar
+    simu = TestStepConstantTable.solvers()["DDGPE"]
+    table = simu._step_constants()
+
+    assert table["_g11"] == pytest.approx(-g), (
+        "DDGPE's intra-component coupling is not its own g"
+    )
+    A = np.ones((2, 32, 32), dtype=PRECISION_COMPLEX)
+    interaction = simu._energy_rates(A)["interaction"]
+    assert interaction == pytest.approx(g, rel=0.5), (
+        f"interaction rate {interaction:.3e} is not of order g = {g:.3e}"
+    )

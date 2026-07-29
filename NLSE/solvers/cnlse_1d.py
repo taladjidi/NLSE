@@ -83,30 +83,6 @@ class CNLSE_1d(CNLSE):
         # Override normalization factor for 1D (delta_X^2 instead of delta_X * delta_Y)
         self._norm_grid_factor = np.float32(self.delta_X**2)
 
-    def _take_components(self, A: np.ndarray) -> tuple:
-        """Take the components of the field.
-
-        Parameters
-        ----------
-        A : np.ndarray
-            Field to retrieve the components of.
-
-        Returns
-        -------
-        tuple
-            Tuple of the two components.
-        """
-        A1 = A[..., 0, :]
-        A2 = A[..., 1, :]
-
-        # OpenCL/CUPY backends don't support offset arrays - make contiguous copies
-        if self._backend.is_device_backend:
-            if hasattr(A1, "copy"):
-                A1 = A1.copy()
-                A2 = A2.copy()
-
-        return A1, A2
-
     def _dispersion_operator(self) -> np.ndarray:
         """Return the 1D coupled dispersion eigenvalues.
 

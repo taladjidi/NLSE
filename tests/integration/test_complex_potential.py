@@ -4,11 +4,9 @@
 so it is gain or loss rather than phase. That is how an absorbing boundary is
 built.
 
-It used to work on CPU only. ``_send_arrays_to_gpu`` cast V with
-``dtype=np.float32``, which on every device backend threw the imaginary part
-away — silently, apart from a ``ComplexWarning`` buried in the test output. The
-same input therefore produced different physics on CPU than on CUPY, CL or
-MLX, and an absorbing potential simply stopped absorbing.
+The device backends are the risk: a real cast anywhere in the transfer drops
+the imaginary part, and the absorption with it, leaving CPU and GPU disagreeing
+on the same input.
 
 The kernels take V as a bare pointer, so real and complex V cannot share an
 entry point. Each backend compiles a ``_cv`` twin of every V-reading kernel and

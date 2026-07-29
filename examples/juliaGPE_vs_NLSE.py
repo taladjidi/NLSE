@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
+from _output import output_path
 from cycler import cycler
 
 # for plots
@@ -91,5 +92,5 @@ ax.set_xticks(np.log2(sizes_py_CPU).astype(int))
 
 ax.set_yscale("log")
 ax.set_title("Vortex precession")
-fig.savefig("vortex_precession.svg", dpi=300)
+fig.savefig(output_path("vortex_precession.svg"), dpi=300)
 plt.show()

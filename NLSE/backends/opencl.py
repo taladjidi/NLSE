@@ -116,8 +116,13 @@ class OpenCLBackend(Backend):
         return cla.zeros(self._queue, shape, dtype)
 
     def to_numpy(self, array: Any) -> np.ndarray:
-        """Transfer from OpenCL device to CPU."""
-        return array.get()
+        """Transfer from OpenCL device to CPU.
+
+        Accepts an array that is already on the host, as ``cp.asnumpy`` and
+        MLX's ``np.array`` both do; not every path through a solver leaves the
+        field on the device.
+        """
+        return array.get() if hasattr(array, "get") else np.asarray(array)
 
     def from_numpy(self, array: np.ndarray) -> Any:
         """Transfer from CPU to OpenCL device."""
@@ -161,9 +166,7 @@ class OpenCLBackend(Backend):
     def supports_double_precision(self) -> bool:
         """Check OpenCL device double precision support.
 
-        Asked of this backend's own device. It used to come from a module
-        global that utils.py filled in by creating a context at import time,
-        so merely importing NLSE took a device handle whether or not anything
-        was going to use OpenCL.
+        Asked of this backend's own device, so importing NLSE does not need
+        to create a context to find out.
         """
         return bool(self._context.devices[0].double_fp_config)

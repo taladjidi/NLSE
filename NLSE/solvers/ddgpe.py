@@ -1,6 +1,6 @@
 from collections.abc import Callable
+from typing import Any
 
-import matplotlib.pyplot as plt
 import numpy as np
 
 from ..utils import __BACKEND__, __CUPY_AVAILABLE__
@@ -13,6 +13,15 @@ if __CUPY_AVAILABLE__:
 
 class DDGPE(CNLSE):
     """A class to solve the 2D driven dissipative Gross-Pitaevskii equation."""
+
+    # A polariton density on a time axis, with the two components named for
+    # the exciton and the cavity. Everything else about the plot is CNLSE's.
+    _plot_density_scale = 1.0
+    _plot_density_label = "Density"
+    _plot_axis_symbol = "t"
+    _plot_axis_unit = "ps"
+    _plot_axis_format = "g"
+    _plot_components = (r"\psi_x", r"\psi_c")
 
     # Polariton physics on CNLSE's terms, sharing its storage. g carries the
     # sign: the two parametrisations write the interaction term opposite ways,
@@ -215,23 +224,27 @@ class DDGPE(CNLSE):
         A[..., 1, :, :] -= F_pump_r * F_pump_t[i] * simu._current_delta_z * 1j
         A[..., 1, :, :] -= F_probe_r * F_probe_t[i] * simu._current_delta_z * 1j
 
+    def _step_constants(self) -> dict[str, Any]:
+        """Override the couplings, which DDGPE gives the kernels unconverted.
+
+        CNLSE scales them by ``k / 2 * c * epsilon_0``, and DDGPE's ``k`` comes
+        from a wavelength it supplies only to satisfy the base constructor, so
+        that conversion would inflate the interaction rate by ~1e26.
+        """
+        return {
+            **super()._step_constants(),
+            "_gamma_half": self.gamma / 2,
+            "_gamma2_half": self.gamma2 / 2,
+            "_g11": self.n2,
+            "_g12": self.n12,
+            "_g22": self.g2,
+        }
+
     def _precompute_step_constants(
         self, V: np.ndarray | None, precision: str = "single"
     ) -> None:
         """Pre-compute constants for DDGPE propagation steps."""
         super()._precompute_step_constants(V, precision)
-        fp = np.float32 if precision == "single" else np.float64
-        self._gamma_half = fp(self.gamma / 2)
-        self._gamma2_half = fp(self.gamma2 / 2)
-        # DDGPE's couplings go to the kernels as they are, with none of the
-        # optical conversion CNLSE applies. Restate them, because the step
-        # limits read these: left at CNLSE's, they carry a factor k/2 built
-        # from a wavelength DDGPE only supplies to keep the base class happy,
-        # which makes the interaction rate about 1e26 times too large and
-        # collapses the step to nothing.
-        self._g11 = fp(self.n2)
-        self._g12 = fp(self.n12)
-        self._g22 = fp(self.g2)
 
     def _propagator_cache_key(self, dtype: np.dtype, delta_z: float) -> tuple:
         """Return cache key for DDGPE propagator."""
@@ -360,8 +373,8 @@ class DDGPE(CNLSE):
             The propagated field.
         """
         # Use pre-computed constants with fallbacks
-        gamma_half = getattr(self, "_gamma_half", self.gamma / 2)
-        gamma2_half = getattr(self, "_gamma2_half", self.gamma2 / 2)
+        gamma_half = self._constant("_gamma_half")
+        gamma2_half = self._constant("_gamma2_half")
         kernels = self._backend.kernels
 
         A1, A2 = self._take_components(A)
@@ -417,8 +430,7 @@ class DDGPE(CNLSE):
                     self.I_sat,
                     self.I_sat2,
                 )
-            A[0] = A1
-            A[1] = A2
+            self._set_components(A, A1, A2)
 
         # Linear propagation in Fourier domain
         A = self._apply_linear_step(A, propagator, plans)
@@ -479,67 +491,8 @@ class DDGPE(CNLSE):
         if precision == "single" and self.omega is not None:
             A1, A2 = kernels.rabi_coupling(A1, A2, delta_z, self.omega / 2)
 
-        A[0] = A1
-        A[1] = A2
+        self._set_components(A, A1, A2)
         return A
-
-    def plot_field(self, A_plot: np.ndarray, t: float) -> None:
-        """Plot the field for monitoring.
-
-        Parameters
-        ----------
-        A_plot : np.ndarray
-            The field.
-        t : float
-            The time at which the field was sampled.
-        """
-        A_plot = self._to_plot_array(A_plot, 3)
-        fig, ax = plt.subplots(2, 2, layout="constrained", figsize=(10, 10))
-        fig.suptitle(rf"Field at $t$ = {t:} ps")
-        ext_real = [
-            np.min(self.X) * 1e3,
-            np.max(self.X) * 1e3,
-            np.min(self.Y) * 1e3,
-            np.max(self.Y) * 1e3,
-        ]
-        rho0 = np.abs(A_plot[0]) ** 2
-        phi0 = np.angle(A_plot[0])
-        rho1 = np.abs(A_plot[1]) ** 2
-        phi1 = np.angle(A_plot[1])
-        # plot amplitudes and phases
-        im0 = ax[0, 0].imshow(rho0, extent=ext_real)
-        ax[0, 0].set_title(r"$|\psi_x|^2$")
-        ax[0, 0].set_xlabel("x (mm)")
-        ax[0, 0].set_ylabel("y (mm)")
-        fig.colorbar(im0, ax=ax[0, 0], shrink=0.6, label=r"Density")
-        im1 = ax[0, 1].imshow(
-            phi0,
-            extent=ext_real,
-            cmap="twilight_shifted",
-            vmin=-np.pi,
-            vmax=np.pi,
-        )
-        ax[0, 1].set_title(r"Phase $\mathrm{arg}(\psi_x)$")
-        ax[0, 1].set_xlabel("x (mm)")
-        ax[0, 1].set_ylabel("y (mm)")
-        fig.colorbar(im1, ax=ax[0, 1], shrink=0.6, label="Phase (rad)")
-        im2 = ax[1, 0].imshow(rho1, extent=ext_real)
-        ax[1, 0].set_title(r"$|\psi_c|^2$")
-        ax[1, 0].set_xlabel("x (mm)")
-        ax[1, 0].set_ylabel("y (mm)")
-        fig.colorbar(im2, ax=ax[1, 0], shrink=0.6, label=r"Density")
-        im3 = ax[1, 1].imshow(
-            phi1,
-            extent=ext_real,
-            cmap="twilight_shifted",
-            vmin=-np.pi,
-            vmax=np.pi,
-        )
-        ax[1, 1].set_title(r"Phase $\mathrm{arg}(\psi_c)$")
-        ax[1, 1].set_xlabel("x (mm)")
-        ax[1, 1].set_ylabel("y (mm)")
-        fig.colorbar(im3, ax=ax[1, 1], shrink=0.6, label="Phase (rad)")
-        plt.show()
 
     def out_field(
         self,

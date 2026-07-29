@@ -1,6 +1,7 @@
 import time
 
 import numpy as np
+from _output import output_path
 from NLSE import NLSE
 
 
@@ -103,8 +104,8 @@ for i, n in enumerate(sizes):
     timing_string = f"Average time: {np.mean(ts[i]):.2f} s "
     timing_string += f"(min: {np.min(ts[i]):.2f} s, max: {np.max(ts[i]):.2f} s)"
     print(timing_string)
-np.save(f"python_vortex_precession_{simu.backend}_times.npy", ts)
-np.save(f"python_vortex_precession_{simu.backend}_sizes.npy", sizes)
+np.save(output_path(f"python_vortex_precession_{simu.backend}_times.npy"), ts)
+np.save(output_path(f"python_vortex_precession_{simu.backend}_sizes.npy"), sizes)
 # to plot the animation at the end
 # fig, ax = plt.subplots(1, 2, figsize=(10, 5), layout="constrained")
 # rho = np.abs(E_samples) ** 2

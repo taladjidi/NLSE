@@ -59,6 +59,33 @@ mypy NLSE/ --non-interactive
 
 All checks must pass before merging.
 
+### Running them automatically
+
+`pre-commit` wires them into git, so a mistake surfaces in the second before
+the commit rather than in the minutes after the push:
+
+```bash
+pre-commit install
+```
+
+That installs two hooks. On **commit**, ruff and mypy run — about a third of a
+second together, and ruff fixes what it can. On **push**, the test suite runs,
+about 25 seconds. Use `git commit --no-verify` to skip them on work in
+progress.
+
+Every hook runs the tools from your own environment, with the same commands
+listed above, so there is no second set of versions to drift from these. Run
+them by hand over the whole repository with:
+
+```bash
+pre-commit run --all-files
+pre-commit run --all-files --hook-stage pre-push   # includes the tests
+```
+
+Note that mypy is configured to skip `NLSE.solvers.*` and `NLSE.kernels.*`,
+which is most of the package; see the type-checking note in the repository's
+handoff notes.
+
 ## Code Style
 
 - **Formatter**: ruff (88-character line length)
