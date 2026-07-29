@@ -38,6 +38,7 @@ dependencies = [
 [project.optional-dependencies]
 opencl = ["pyopencl", "pyvkfft", "mako"]
 gpu = ["cupy"]
+mlx = ["mlx"]
 dev = [
   "pytest>=7.0",
   "pytest-cov",

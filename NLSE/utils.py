@@ -4,7 +4,6 @@ import warnings
 from pathlib import Path
 
 __BACKEND__ = "CUPY"
-__PYOPENCL_DOUBLE_SUPPORT__ = False
 
 
 try:
@@ -40,11 +39,11 @@ try:
     # sudo apt install opencl-headers ocl-icd-opencl-dev
     import pyopencl as cl
 
-    # Verify an OpenCL device is actually available, not just the library
-    ctx = cl.create_some_context(interactive=False)
-    device = ctx.devices[0]
-    __PYOPENCL_AVAILABLE__ = True
-    __PYOPENCL_DOUBLE_SUPPORT__ = bool(device.double_fp_config)
+    # A platform with at least one device, without opening a context: creating
+    # one here would take a device handle on every import of NLSE, whether or
+    # not OpenCL is ever used. The backend opens its own when it is built, and
+    # answers questions about the device from that.
+    __PYOPENCL_AVAILABLE__ = any(p.get_devices() for p in cl.get_platforms())
 
 except ImportError:
     warnings.warn(

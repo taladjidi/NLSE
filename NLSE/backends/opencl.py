@@ -4,7 +4,7 @@ from typing import Any
 
 import numpy as np
 
-from ..utils import __PYOPENCL_AVAILABLE__, __PYOPENCL_DOUBLE_SUPPORT__
+from ..utils import __PYOPENCL_AVAILABLE__
 from .backend import Backend
 
 if not __PYOPENCL_AVAILABLE__:
@@ -159,5 +159,11 @@ class OpenCLBackend(Backend):
         return self._kernels
 
     def supports_double_precision(self) -> bool:
-        """Check OpenCL device double precision support."""
-        return __PYOPENCL_DOUBLE_SUPPORT__
+        """Check OpenCL device double precision support.
+
+        Asked of this backend's own device. It used to come from a module
+        global that utils.py filled in by creating a context at import time,
+        so merely importing NLSE took a device handle whether or not anything
+        was going to use OpenCL.
+        """
+        return bool(self._context.devices[0].double_fp_config)

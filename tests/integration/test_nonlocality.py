@@ -1,17 +1,69 @@
 import numpy as np
+import pytest
 from NLSE import CNLSE, GPE, NLSE, CNLSE_1d, NLSE_1d
+from NLSE.backends import list_available_backends
 from scipy.constants import c, epsilon_0
 
 PRECISION_COMPLEX = np.complex64
 PRECISION_REAL = np.float32
-AVAILABLE_BACKENDS = ["CPU"]
-if NLSE.__CUPY_AVAILABLE__:
-    AVAILABLE_BACKENDS.append("CUPY")
-# TODO
-# if NLSE.__PYOPENCL_AVAILABLE__:
-#     AVAILABLE_BACKENDS.append("CL")
 
-# TODO: Add assertions to check the norm
+# Non-locality is a convolution, which OpenCL and MLX have no kernel for, so
+# their solvers refuse a positive nl_length outright. Derived rather than
+# listed, so a backend that gains the kernel is picked up here by removing it
+# from one place.
+NO_NONLOCALITY = ("CL", "MLX")
+AVAILABLE_BACKENDS = [b for b in list_available_backends() if b not in NO_NONLOCALITY]
+UNSUPPORTED = [b for b in list_available_backends() if b in NO_NONLOCALITY]
+
+
+@pytest.mark.parametrize("backend", UNSUPPORTED)
+def test_unsupported_backends_refuse_nonlocality(backend):
+    """A backend without the convolution must say so, not compute silently.
+
+    The list above is what keeps the rest of this file off those backends, so
+    it has to match what the solvers actually do.
+    """
+    with pytest.raises(NotImplementedError, match=r"[Nn]on-local"):
+        NLSE(
+            alpha=0,
+            power=1.05,
+            window=4 * 2.23e-3,
+            n2=-1e-9,
+            V=None,
+            L=2e-4,
+            NX=64,
+            NY=64,
+            Isat=10e4,
+            nl_length=60e-6,
+            backend=backend,
+        )
+
+
+def test_supported_backends_accept_nonlocality():
+    """And the ones on the list must accept it.
+
+    The grid has to resolve nl_length: the non-local kernel spans
+    ``nl_length // delta_X`` cells, so on a coarser grid than that it collapses
+    to a single point and the run is local again, silently.
+    """
+    assert AVAILABLE_BACKENDS, "no backend can run the tests below"
+    for backend in AVAILABLE_BACKENDS:
+        simu = NLSE(
+            alpha=0,
+            power=1.05,
+            window=4 * 2.23e-3,
+            n2=-1e-9,
+            V=None,
+            L=2e-4,
+            NX=256,
+            NY=256,
+            Isat=10e4,
+            nl_length=60e-6,
+            backend=backend,
+        )
+        assert simu.nl_profile.shape[0] > 1, (
+            f"{backend} accepted nl_length but built no non-local profile"
+        )
 
 
 def test_nonlocality():

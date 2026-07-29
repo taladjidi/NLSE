@@ -19,6 +19,7 @@ from ..backends import Backend, get_backend
 from ..utils import (
     __BACKEND__,
     __CUPY_AVAILABLE__,
+    __MLX_AVAILABLE__,
     __PYOPENCL_AVAILABLE__,
 )
 
@@ -55,8 +56,11 @@ class NLSE:
     # a callback changes it by *returning* a new one.
     _current_delta_z: float | complex | None = None
 
+    # All three, so nothing has to know which backends are worth asking about.
+    # MLX was missing, which is how the test conftest came to skip it.
     __CUPY_AVAILABLE__ = __CUPY_AVAILABLE__
     __PYOPENCL_AVAILABLE__ = __PYOPENCL_AVAILABLE__
+    __MLX_AVAILABLE__ = __MLX_AVAILABLE__
 
     def __init__(
         self,
