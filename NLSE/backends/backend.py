@@ -1,9 +1,31 @@
 """Abstract base class for NLSE backends."""
 
+import contextlib
+import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+
+
+@dataclass
+class Timing:
+    """How long a propagation took.
+
+    ``device`` is the time the device itself reports, where it can: a wall
+    clock measures a queue being filled rather than the work being done.
+    """
+
+    wall: float = 0.0
+    device: float | None = None
+
+    def __str__(self) -> str:
+        """Return the line ``out_field`` prints when verbose."""
+        if self.device is None:
+            return f"Time spent to solve : {self.wall} s (CPU)"
+        return f"Time spent to solve : {self.device} s (GPU) / {self.wall} s (CPU)"
 
 
 def _dtype_key(dtype: Any) -> str:
@@ -91,6 +113,63 @@ class Backend(ABC):
     # value per launch instead, so their batched parameters must stay on the
     # host: CPU loops in _broadcast_batch, CL loops with global_offset.
     broadcasts_parameters_natively = False
+
+    # The field is normalized on the host: the reduction is done in numpy and
+    # the result sent back. For backends whose array type cannot do the
+    # reduction in place, or does it more slowly than the round trip costs.
+    normalizes_on_host = False
+
+    # Operations return a freshly allocated array rather than writing into a
+    # destination, so staging through a pre-allocated scratch buffer costs a
+    # copy and saves nothing.
+    #
+    # Not a preference: the two routes are not interchangeable either way. A
+    # backend leaving this False may have its FFT plan bound to a particular
+    # buffer, as pyfftw's is, and returns NaN if handed another array.
+    operations_allocate_output = False
+
+    @property
+    def convolution(self) -> Callable | None:
+        """Return this backend's overlap-add convolution, or None.
+
+        Non-local interaction is a convolution between the field's intensity
+        and the non-local kernel. A backend without one cannot run a non-local
+        simulation, which is the whole of what ``nl_length > 0`` requires, so
+        this doubles as the capability check.
+        """
+        return None
+
+    def synchronize(self, array: Any = None) -> None:
+        """Block until work already submitted has finished.
+
+        A no-op where submission is execution. Elsewhere it is what makes a
+        wall-clock measurement mean anything, and MLX needs the array itself
+        since its graph is lazy.
+
+        Parameters
+        ----------
+        array : Any, optional
+            The array whose value is needed.
+        """
+
+    @contextlib.contextmanager
+    def timed(self) -> Iterator[Timing]:
+        """Time the enclosed region, filling in the Timing it yields.
+
+        Synchronize before leaving the block, or the wall time is the time
+        taken to queue the work.
+
+        Yields
+        ------
+        Timing
+            Filled in on exit.
+        """
+        timing = Timing()
+        start = time.perf_counter()
+        try:
+            yield timing
+        finally:
+            timing.wall = time.perf_counter() - start
 
     @property
     @abstractmethod

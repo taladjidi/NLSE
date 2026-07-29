@@ -81,6 +81,7 @@ class OpenCLBackend(Backend):
     """
 
     has_linear_step = True
+    normalizes_on_host = True
     supports_unnormalized_ifft = True
     has_fused_split_step = True
     has_fused_rk4_rhs = True
@@ -114,6 +115,10 @@ class OpenCLBackend(Backend):
     def allocate_real_field(self, shape: tuple, dtype: np.dtype) -> Any:
         """Allocate real array on OpenCL device."""
         return cla.zeros(self._queue, shape, dtype)
+
+    def synchronize(self, array=None) -> None:
+        """Drain the command queue."""
+        self._queue.finish()
 
     def to_numpy(self, array: Any) -> np.ndarray:
         """Transfer from OpenCL device to CPU.

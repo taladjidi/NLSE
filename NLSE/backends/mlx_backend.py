@@ -30,6 +30,8 @@ class MLXBackend(Backend):
     """
 
     has_linear_step = True
+    normalizes_on_host = True
+    operations_allocate_output = True
     has_fused_split_step = True
     broadcasts_parameters_natively = True
     has_fused_rk4_step = True
@@ -49,6 +51,17 @@ class MLXBackend(Backend):
         """Allocate real array on MLX device."""
         mx_dtype = _NUMPY_TO_MLX_DTYPE.get(np.dtype(dtype), mx.float32)
         return mx.zeros(shape, dtype=mx_dtype)
+
+    def synchronize(self, array=None) -> None:
+        """Force the lazy graph for ``array``.
+
+        Parameters
+        ----------
+        array : Any, optional
+            The array whose value is needed. Nothing to do without one.
+        """
+        if array is not None:
+            mx.eval(array)
 
     def to_numpy(self, array: Any) -> np.ndarray:
         """Transfer from MLX device to CPU."""

@@ -4,7 +4,6 @@
 
 import contextlib
 import multiprocessing
-import time
 import warnings
 from collections.abc import Callable, Iterator
 from typing import Any
@@ -13,7 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pyfftw
 import tqdm
-from scipy import signal, special
+from scipy import special
 from scipy.constants import c, epsilon_0
 
 from ..backends import Backend, get_backend
@@ -25,8 +24,7 @@ from ..utils import (
 )
 
 if __CUPY_AVAILABLE__:
-    import cupy as cp
-    import cupyx.scipy.signal as signal_cp  # type: ignore[import-not-found]
+    pass  # type: ignore[import-not-found]
 
 pyfftw.config.NUM_THREADS = multiprocessing.cpu_count()
 pyfftw.config.PLANNER_EFFORT = "FFTW_MEASURE"
@@ -137,12 +135,6 @@ class NLSE:
         """
         # list of physical parameters
         self._backend: Backend = get_backend(backend, grid_size=(NX, NY))
-        # Setup backend-specific convolution
-        if self._backend.name == "CUPY":
-            self._convolution = signal_cp.oaconvolve
-        elif self._backend.name == "CPU":
-            self._convolution = signal.oaconvolve
-        # CL backend doesn't have convolution yet
         self.n2 = n2
         self.V = V
         self.wl = wvl
@@ -188,7 +180,7 @@ class NLSE:
         self.propagator = None
         self.plans = None
         self.nl_length = self._resolved_nl_length(nl_length)
-        if self.nl_length > 0 and self._backend.name in ["CL", "MLX"]:
+        if self.nl_length > 0 and self._backend.convolution is None:
             raise NotImplementedError(
                 f"Non-local interaction (nl_length > 0) is not supported "
                 f"with the {self._backend.name} backend. Use CPU or CUPY instead."
@@ -227,11 +219,6 @@ class NLSE:
     def backend(self, value: str) -> None:
         """Set the backend for the simulation."""
         self._backend = get_backend(value, grid_size=(self.NX, self.NY))
-        # Setup backend-specific convolution
-        if self._backend.name == "CUPY":
-            self._convolution = signal_cp.oaconvolve
-        elif self._backend.name == "CPU":
-            self._convolution = signal.oaconvolve
 
     def out_field(
         self,
@@ -347,54 +334,31 @@ class NLSE:
                     unit="%",
                     unit_scale=True,
                 )
-            if self._backend.name == "CUPY":
-                start_gpu = cp.cuda.Event()
-                end_gpu = cp.cuda.Event()
-                start_gpu.record()
-            t0 = time.perf_counter()
             if type(delta_z) is complex:
                 print("Warning: imaginary time evolution !")
 
-            A = self._run_propagation(
-                A,
-                A_sq,
-                V,
-                z,
-                delta_z,
-                precision,
-                method,
-                callback,
-                callback_args,
-                verbose,
-                pbar if verbose else None,
-            )
+            with self._backend.timed() as timing:
+                A = self._run_propagation(
+                    A,
+                    A_sq,
+                    V,
+                    z,
+                    delta_z,
+                    precision,
+                    method,
+                    callback,
+                    callback_args,
+                    verbose,
+                    pbar if verbose else None,
+                )
+                # Before the clock stops: a queue submitted is not work done.
+                self._backend.synchronize(A)
 
             if verbose:
                 pbar.n = 100
                 pbar.refresh()
-            # Synchronize device backends before timing
-            if self._backend.name == "CL":
-                self._backend.queue.finish()
-            elif self._backend.name == "MLX":
-                import mlx.core as mx
-
-                mx.eval(A)
-            t_cpu = time.perf_counter() - t0
-            if verbose:
                 pbar.close()
-
-            if self._backend.name == "CUPY":
-                end_gpu.record()
-                end_gpu.synchronize()
-                t_gpu = cp.cuda.get_elapsed_time(start_gpu, end_gpu)
-            if verbose:
-                if self._backend.name == "CUPY":
-                    print(
-                        f"\nTime spent to solve : {t_gpu * 1e-3} s (GPU) /"
-                        f" {time.perf_counter() - t0} s (CPU)\n"
-                    )
-                else:
-                    print(f"\nTime spent to solve : {t_cpu} s (CPU)\n")
+                print(f"\n{timing}\n")
             # _run_propagation restores the nonlinear coupling itself.
             return_np_array = isinstance(E_in, np.ndarray)
             if self._backend.is_device_backend and return_np_array:
@@ -475,7 +439,7 @@ class NLSE:
             if self.nl_length > 0:
                 # Need A_sq for convolution — must keep separate
                 A_sq = kernels.square_mod(A, A_sq)
-                A_sq[:] = self._convolution(
+                A_sq[:] = self._backend.convolution(
                     A_sq, self.nl_profile, mode="same", axes=self._last_axes
                 )
                 if V is None:
@@ -526,7 +490,7 @@ class NLSE:
         if self.nl_length > 0:
             # Can't use fused kernel with convolution
             A_sq = kernels.square_mod(A, A_sq)
-            A_sq[:] = self._convolution(
+            A_sq[:] = self._backend.convolution(
                 A_sq, self.nl_profile, mode="same", axes=self._last_axes
             )
             if V is None:
@@ -1239,8 +1203,7 @@ class NLSE:
             arr = (E_in * E_in.conj()).real
             # Use pre-computed grid factor to avoid runtime upcasting
             arr = arr * self._norm_grid_factor
-            if self._backend.name in ["CL", "MLX"]:
-                # CL/MLX: compute normalization on numpy then convert back.
+            if self._backend.normalizes_on_host:
                 arr_np = self._backend.to_numpy(arr)
                 E_in_np = self._backend.to_numpy(E_in)
                 integral = np.sum(arr_np, axis=self._last_axes)
@@ -1260,11 +1223,10 @@ class NLSE:
                     )
                 E_00 = (target / integral) ** 0.5
                 A[:] = (E_00.T * E_in.T).T
+        elif self._backend.operations_allocate_output:
+            A = E_in
         else:
-            if self._backend.name == "MLX":
-                A = E_in
-            else:
-                A[:] = E_in
+            A[:] = E_in
         return A, A_sq
 
     def _build_fft_plan(self, A: np.ndarray) -> list:
@@ -1556,7 +1518,7 @@ class NLSE:
                 unnorm_ifft=(prop_fft is not None),
             )
 
-        if self._backend.name == "MLX":
+        if self._backend.operations_allocate_output:
             k = self._apply_linear_step(A_in, propagator, plans)
         else:
             k[:] = A_in
@@ -1564,7 +1526,7 @@ class NLSE:
 
         if self.nl_length > 0:
             A_sq = (A_in * A_in.conj()).real
-            A_sq[:] = self._convolution(
+            A_sq[:] = self._backend.convolution(
                 A_sq, self.nl_profile, mode="same", axes=self._last_axes
             )
             if V is None:

@@ -416,7 +416,7 @@ class CNLSE(NLSE):
                 unnorm_ifft=(prop_fft is not None),
             )
 
-        if self._backend.name == "MLX":
+        if self._backend.operations_allocate_output:
             k = self._apply_linear_step(A_in, propagator, plans)
         else:
             k[:] = A_in
@@ -429,10 +429,10 @@ class CNLSE(NLSE):
         A_sq_1, A_sq_2 = self._take_components(A_sq)
 
         if self.nl_length > 0:
-            A_sq_1 = self._convolution(
+            A_sq_1 = self._backend.convolution(
                 A_sq_1, self.nl_profile, mode="same", axes=self._last_axes
             )
-            A_sq_2 = self._convolution(
+            A_sq_2 = self._backend.convolution(
                 A_sq_2, self.nl_profile, mode="same", axes=self._last_axes
             )
 
@@ -563,10 +563,10 @@ class CNLSE(NLSE):
         A_sq = self._backend.kernels.square_mod(A, A_sq)
         A_sq_1, A_sq_2 = self._take_components(A_sq)
         if self.nl_length > 0:
-            A_sq_1 = self._convolution(
+            A_sq_1 = self._backend.convolution(
                 A_sq_1, self.nl_profile, mode="same", axes=self._last_axes
             )
-            A_sq_2 = self._convolution(
+            A_sq_2 = self._backend.convolution(
                 A_sq_2, self.nl_profile, mode="same", axes=self._last_axes
             )
         return A_sq, A_sq_1, A_sq_2

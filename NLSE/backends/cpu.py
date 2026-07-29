@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 import pyfftw
+from scipy import signal
 
 from ..kernels import cpu as kernels_cpu
 from ..utils import get_cache_dir
@@ -35,6 +36,11 @@ class CPUBackend(Backend):
     def allocate_real_field(self, shape: tuple, dtype: np.dtype) -> np.ndarray:
         """Allocate aligned real array."""
         return pyfftw.zeros_aligned(shape, dtype=dtype, n=pyfftw.simd_alignment)
+
+    @property
+    def convolution(self):
+        """Return scipy's overlap-add convolution."""
+        return signal.oaconvolve
 
     def to_numpy(self, array: np.ndarray) -> np.ndarray:
         """Already numpy, return as-is."""

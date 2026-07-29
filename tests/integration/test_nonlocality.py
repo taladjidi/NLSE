@@ -1,19 +1,21 @@
 import numpy as np
 import pytest
 from NLSE import CNLSE, GPE, NLSE, CNLSE_1d, NLSE_1d
-from NLSE.backends import list_available_backends
+from NLSE.backends import get_backend, list_available_backends
 from scipy.constants import c, epsilon_0
 
 PRECISION_COMPLEX = np.complex64
 PRECISION_REAL = np.float32
 
-# Non-locality is a convolution, which OpenCL and MLX have no kernel for, so
-# their solvers refuse a positive nl_length outright. Derived rather than
-# listed, so a backend that gains the kernel is picked up here by removing it
-# from one place.
-NO_NONLOCALITY = ("CL", "MLX")
-AVAILABLE_BACKENDS = [b for b in list_available_backends() if b not in NO_NONLOCALITY]
-UNSUPPORTED = [b for b in list_available_backends() if b in NO_NONLOCALITY]
+# Non-locality is a convolution, and a backend without one refuses a positive
+# nl_length outright. Asked of the backend rather than listed here, so a
+# backend that gains the kernel moves between these lists on its own.
+AVAILABLE_BACKENDS = [
+    b for b in list_available_backends() if get_backend(b).convolution is not None
+]
+UNSUPPORTED = [
+    b for b in list_available_backends() if get_backend(b).convolution is None
+]
 
 
 @pytest.mark.parametrize("backend", UNSUPPORTED)
