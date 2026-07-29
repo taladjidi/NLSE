@@ -4,6 +4,11 @@ Benchmarks:
 1. Individual kernel functions (CPU backend, N=64)
 2. Single-component solver split_step methods (all backends)
 3. Coupled solver split_step methods (all backends)
+
+Every solver benchmark pins delta_z through _propagate, so a run is a fixed
+number of steps rather than however many the solver would choose. Left to the
+default, the workload moves whenever the way delta_z is derived moves, and
+timings stop being comparable across versions without anything looking wrong.
 """
 
 import numpy as np
@@ -43,6 +48,11 @@ g_k = 1e-3
 Isat_k = 1e4
 omega_k = 1e3
 
+# Steps every solver benchmark takes, whatever the solver, backend or
+# distance. Changing it changes every timing here, so numbers either side of
+# such a change are not comparable.
+BENCH_STEPS = 10
+
 # Get available backends
 BACKENDS = list_available_backends()
 
@@ -51,6 +61,36 @@ def skip_if_backend_unavailable(backend: str):
     """Skip benchmark if backend is not available."""
     if backend not in BACKENDS:
         pytest.skip(f"Backend {backend} not available")
+
+
+def _propagate(simu, E_in, z, **kwargs):
+    """Propagate over z in exactly BENCH_STEPS steps.
+
+    Parameters
+    ----------
+    simu : NLSE
+        Solver to run.
+    E_in : np.ndarray
+        Input field.
+    z : float
+        Distance (or time) to propagate.
+    **kwargs
+        Passed through to out_field.
+
+    Returns
+    -------
+    np.ndarray
+        The propagated field.
+    """
+    dz = z / BENCH_STEPS
+    simu.delta_z = dz
+    out = simu.out_field(E_in, z, verbose=False, plot=False, **kwargs)
+    assert simu.delta_z == dz, (
+        f"the step limiter reduced delta_z from {dz:.3e} to "
+        f"{simu.delta_z:.3e}, so this case runs more steps than the rest and "
+        f"its timing is not comparable. Pick parameters inside the limit."
+    )
+    return out
 
 
 def _random_field_2d(seed: int = 42) -> np.ndarray:
@@ -222,7 +262,7 @@ class TestSolverBenchmark:
         E_in = _gaussian_field_2d(waist, simu.X, simu.Y)
 
         def propagate():
-            return simu.out_field(E_in, z=1e-3, verbose=False, precision="single")
+            return _propagate(simu, E_in, 1e-3, precision="single")
 
         result = benchmark.pedantic(propagate, rounds=10, warmup_rounds=2)
         assert result.shape == (N, N)
@@ -246,7 +286,7 @@ class TestSolverBenchmark:
         E_in = np.exp(-(simu.X**2) / waist**2).astype(PRECISION_COMPLEX)
 
         def propagate():
-            return simu.out_field(E_in, z=1e-3, verbose=False, precision="single")
+            return _propagate(simu, E_in, 1e-3, precision="single")
 
         result = benchmark.pedantic(propagate, rounds=10, warmup_rounds=2)
         assert result.shape == (N,)
@@ -278,7 +318,7 @@ class TestSolverBenchmark:
             E_in[:, :, i] = np.exp(-(XX**2 + YY**2) / waist**2)
 
         def propagate():
-            return simu.out_field(E_in, z=1e-3, verbose=False, precision="single")
+            return _propagate(simu, E_in, 1e-3, precision="single")
 
         result = benchmark.pedantic(propagate, rounds=5, warmup_rounds=1)
         assert result.shape == (N, N, N)
@@ -305,7 +345,7 @@ class TestSolverBenchmark:
         E_in = _gaussian_field_2d(waist, simu.X, simu.Y)
 
         def propagate():
-            return simu.out_field(E_in, z=1e-3, verbose=False, precision="single")
+            return _propagate(simu, E_in, 1e-3, precision="single")
 
         result = benchmark.pedantic(propagate, rounds=10, warmup_rounds=2)
         assert result.shape == (N, N)
@@ -338,7 +378,7 @@ class TestCoupledSolverBenchmark:
         E_in[1] = _gaussian_field_2d(waist * 1.2, simu.X, simu.Y) * 0.5
 
         def propagate():
-            return simu.out_field(E_in, z=1e-3, verbose=False, precision="single")
+            return _propagate(simu, E_in, 1e-3, precision="single")
 
         result = benchmark.pedantic(propagate, rounds=10, warmup_rounds=2)
         assert result.shape == (2, N, N)
@@ -365,7 +405,7 @@ class TestCoupledSolverBenchmark:
         E_in[1] = np.exp(-(simu.X**2) / (waist * 1.2) ** 2) * 0.5
 
         def propagate():
-            return simu.out_field(E_in, z=1e-3, verbose=False, precision="single")
+            return _propagate(simu, E_in, 1e-3, precision="single")
 
         result = benchmark.pedantic(propagate, rounds=10, warmup_rounds=2)
         assert result.shape == (2, N)
@@ -411,9 +451,12 @@ class TestCoupledSolverBenchmark:
             pass
 
         def propagate():
+            # DDGPE names its span `t`, so it cannot go through _propagate;
+            # pin the step the same way by hand.
+            simu.delta_z = T / BENCH_STEPS
             return simu.out_field(
                 E_in,
-                t=1e-3,
+                t=T,
                 laser_excitation=no_laser,
                 verbose=False,
                 callback=[],
@@ -486,7 +529,7 @@ class TestGridScaling:
         rounds = 10 if n <= 256 else 5
         _timed(
             benchmark,
-            lambda: simu.out_field(E_in, z=1e-3, verbose=False, plot=False),
+            lambda: _propagate(simu, E_in, 1e-3),
             rounds=rounds,
         )
 
@@ -509,9 +552,7 @@ class TestMethodAndOrder:
         E_in = _field(simu, N)
         _timed(
             benchmark,
-            lambda: simu.out_field(
-                E_in, z=1e-3, verbose=False, plot=False, precision=precision
-            ),
+            lambda: _propagate(simu, E_in, 1e-3, precision=precision),
         )
 
     @pytest.mark.parametrize("backend", BACKENDS)
@@ -522,9 +563,7 @@ class TestMethodAndOrder:
         E_in = _field(simu, N)
         _timed(
             benchmark,
-            lambda: simu.out_field(
-                E_in, z=1e-3, verbose=False, plot=False, method="RK4"
-            ),
+            lambda: _propagate(simu, E_in, 1e-3, method="RK4"),
         )
 
     @pytest.mark.parametrize("backend", BACKENDS)
@@ -544,9 +583,7 @@ class TestMethodAndOrder:
         E_in = _field(simu, N)
         _timed(
             benchmark,
-            lambda: simu.out_field(
-                E_in, z=1e-5, verbose=False, plot=False, method="RK4"
-            ),
+            lambda: _propagate(simu, E_in, 1e-5, method="RK4"),
             rounds=5,
         )
 
@@ -575,9 +612,7 @@ class TestPotential:
         }[kind]
         simu = _solver(backend, N, V=V)
         E_in = _field(simu, N)
-        _timed(
-            benchmark, lambda: simu.out_field(E_in, z=1e-3, verbose=False, plot=False)
-        )
+        _timed(benchmark, lambda: _propagate(simu, E_in, 1e-3))
 
 
 @pytest.mark.benchmark(group="batching")
@@ -598,9 +633,7 @@ class TestBatching:
         n2_batch = np.linspace(n2, 2 * n2, count).reshape(count, 1, 1)
         simu = _solver(backend, N, n2=n2_batch)
         E_in = _field(simu, N, count=count)
-        _timed(
-            benchmark, lambda: simu.out_field(E_in, z=1e-3, verbose=False, plot=False)
-        )
+        _timed(benchmark, lambda: _propagate(simu, E_in, 1e-3))
 
 
 @pytest.mark.benchmark(group="float-width")
@@ -620,9 +653,7 @@ class TestFloatWidth:
         if not simu._backend.supports_double_precision():
             pytest.skip(f"{backend} has no fp64")
         E_in = _field(simu, N, dtype=np.complex128)
-        _timed(
-            benchmark, lambda: simu.out_field(E_in, z=1e-3, verbose=False, plot=False)
-        )
+        _timed(benchmark, lambda: _propagate(simu, E_in, 1e-3))
 
 
 @pytest.mark.benchmark(group="kernels-backend")
