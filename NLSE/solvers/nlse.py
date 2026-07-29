@@ -170,7 +170,7 @@ class NLSE:
         self.Kxx, self.Kyy = np.meshgrid(self.Kx, self.Ky)
         self.propagator = None
         self.plans = None
-        self.nl_length = nl_length
+        self.nl_length = self._resolved_nl_length(nl_length)
         if self.nl_length > 0 and self._backend.name in ["CL", "MLX"]:
             raise NotImplementedError(
                 f"Non-local interaction (nl_length > 0) is not supported "
@@ -213,6 +213,36 @@ class NLSE:
         elif self._backend.name == "CPU":
             self._convolution = signal.oaconvolve
         # CL backend doesn't have convolution yet
+
+    def _resolved_nl_length(self, nl_length: float) -> float:
+        """Return the non-local length, or 0 where the grid cannot resolve it.
+
+        The non-local kernel spans ``nl_length // delta_X`` cells, so on a grid
+        coarser than ``nl_length`` it is a single point — the identity, which
+        is a local run that still pays for a convolution on every step. Fall
+        back to the local path, and say so, rather than quietly charge for a
+        non-locality that is not there.
+
+        Parameters
+        ----------
+        nl_length : float
+            Non-local length in m, as given to the constructor.
+
+        Returns
+        -------
+        float
+            The same value, or 0 if the grid does not resolve it.
+        """
+        if nl_length <= 0 or nl_length // self.delta_X >= 1:
+            return nl_length
+        warnings.warn(
+            f"nl_length={nl_length:.3g} m is below one grid cell "
+            f"({self.delta_X:.3g} m), so the non-local kernel would be a "
+            f"single point and the propagation local anyway. Running local. "
+            f"Refine the grid or raise nl_length to model non-locality.",
+            stacklevel=3,
+        )
+        return 0
 
     def _propagator_cache_key(self, dtype: np.dtype, delta_z: float) -> tuple:
         """Return cache key for the split-step propagator."""

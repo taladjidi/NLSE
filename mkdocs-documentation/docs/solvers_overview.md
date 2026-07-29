@@ -117,6 +117,17 @@ simu.V = my_potential
 
 For 2D solvers, the potential should have shape `(NY, NX)`. Set to `None` for free propagation.
 
+#### Non-locality
+
+`nl_length` models a diffusive non-locality, as a Bessel kernel convolved with
+the intensity. The kernel spans `nl_length // delta_X` grid cells, so the grid
+has to resolve the length you ask for: below one cell the kernel is a single
+point, which is the identity. The solver warns and propagates locally in that
+case rather than charging you for a convolution that does nothing.
+
+Only CPU and CUPY have the convolution; OpenCL and MLX raise
+`NotImplementedError` for a non-locality they cannot compute.
+
 #### Complex potentials
 
 `V` may be complex. Its real part shifts the phase, as a refractive index

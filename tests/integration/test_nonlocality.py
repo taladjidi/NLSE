@@ -22,6 +22,10 @@ def test_unsupported_backends_refuse_nonlocality(backend):
 
     The list above is what keeps the rest of this file off those backends, so
     it has to match what the solvers actually do.
+
+    The grid has to resolve nl_length, or there is no non-locality to refuse:
+    below one cell the solver drops it and runs local, which these backends
+    can do perfectly well.
     """
     with pytest.raises(NotImplementedError, match=r"[Nn]on-local"):
         NLSE(
@@ -31,12 +35,61 @@ def test_unsupported_backends_refuse_nonlocality(backend):
             n2=-1e-9,
             V=None,
             L=2e-4,
-            NX=64,
-            NY=64,
+            NX=512,
+            NY=512,
             Isat=10e4,
             nl_length=60e-6,
             backend=backend,
         )
+
+
+@pytest.mark.parametrize("backend", list_available_backends())
+def test_an_unresolvable_nl_length_falls_back_to_local(backend):
+    """Below one grid cell there is no non-locality to model.
+
+    The kernel spans ``nl_length // delta_X`` cells, so on a coarser grid it is
+    a single point: the identity, which is a local run that still pays for a
+    convolution every step. It used to do exactly that, silently. Now it warns
+    and runs local -- which also means the backends without a convolution
+    kernel can take it, since there is nothing left for them to implement.
+    """
+    with pytest.warns(UserWarning, match="below one grid cell"):
+        simu = NLSE(
+            alpha=0,
+            power=1.05,
+            window=4 * 2.23e-3,
+            n2=-1e-9,
+            V=None,
+            L=2e-4,
+            NX=64,
+            NY=64,
+            Isat=10e4,
+            nl_length=60e-6,  # smaller than this grid's 139 um cell
+            backend=backend,
+        )
+    assert simu.nl_length == 0, "the unresolvable length was not dropped"
+    assert simu.nl_profile.shape == (64, 64), (
+        "a local run should have the flat profile, not a 1x1 kernel"
+    )
+
+
+def test_a_resolved_nl_length_is_kept():
+    """The fallback must not fire on a grid that does resolve the length."""
+    simu = NLSE(
+        alpha=0,
+        power=1.05,
+        window=4 * 2.23e-3,
+        n2=-1e-9,
+        V=None,
+        L=2e-4,
+        NX=512,
+        NY=512,
+        Isat=10e4,
+        nl_length=60e-6,
+        backend="CPU",
+    )
+    assert simu.nl_length == 60e-6
+    assert simu.nl_profile.shape[0] > 1, "no non-local kernel was built"
 
 
 def test_supported_backends_accept_nonlocality():

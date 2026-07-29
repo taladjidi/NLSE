@@ -39,6 +39,8 @@ dependencies = [
 opencl = ["pyopencl", "pyvkfft", "mako"]
 gpu = ["cupy"]
 mlx = ["mlx"]
+# Building mkdocs-documentation/ needs these four; there was no way to say so.
+docs = ["mkdocs", "mkdocs-material", "mkdocstrings[python]", "mkdocs-jupyter"]
 dev = [
   "pytest>=7.0",
   "pytest-cov",

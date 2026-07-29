@@ -11,6 +11,7 @@ defined around it, is only read for API that no longer exists.
 """
 
 import ast
+import json
 import re
 from pathlib import Path
 
@@ -20,6 +21,14 @@ ROOT = Path(__file__).resolve().parent.parent
 DOC_FILES = [
     *sorted((ROOT / "mkdocs-documentation" / "docs").glob("*.md")),
     ROOT / "README.md",
+]
+# Notebooks are documentation too, and the tutorial is a page in the nav. It
+# had drifted furthest of anything here -- still using `puiss`, renamed to
+# `power` long before this -- precisely because nothing read it.
+NOTEBOOKS = [
+    p
+    for p in sorted(ROOT.rglob("*.ipynb"))
+    if ".ipynb_checkpoints" not in str(p) and ".cache" not in str(p)
 ]
 
 SOLVER_CALLS = (
@@ -39,6 +48,7 @@ REMOVED_API = {
     r"\.delta_t\s*=(?!=)": "assigns delta_t, which no longer exists",
     r"\w+\.delta_z(?!\s*=)": "reads delta_z, which is not an attribute",
     r"""backend\s*=\s*["']GPU["']""": 'backend="GPU" is not a backend name',
+    r"\bpuiss\b": "puiss was renamed to power",
 }
 
 # Shrunk so the suite stays quick; the docs quote sizes worth running for real.
@@ -61,6 +71,21 @@ def blocks(path):
     return re.findall(r"```python\n(.*?)```", path.read_text(), re.S)
 
 
+def notebook_sources(path):
+    """Return every cell's text from a notebook, code and markdown alike.
+
+    Markdown cells included: the tutorial quotes source in prose, and a quoted
+    signature that no longer exists misleads exactly as much as a code cell
+    that no longer runs.
+    """
+    cells = json.loads(path.read_text()).get("cells", [])
+    out = []
+    for cell in cells:
+        src = cell.get("source")
+        out.append("".join(src) if isinstance(src, list) else (src or ""))
+    return out
+
+
 def self_contained(block):
     """Whether a block builds its own solver and propagates it."""
     return "out_field" in block and any(s in block for s in SOLVER_CALLS)
@@ -79,6 +104,20 @@ def test_the_docs_were_found():
     """Guard against the checks below passing because they looked nowhere."""
     assert len(DOC_FILES) > 5, f"only found {DOC_FILES}"
     assert sum(len(blocks(p)) for p in DOC_FILES) > 20, "no code blocks found"
+    assert NOTEBOOKS, "no notebooks found"
+
+
+@pytest.mark.parametrize(
+    "path", NOTEBOOKS, ids=lambda p: p.name if hasattr(p, "name") else str(p)
+)
+def test_notebooks_use_current_api(path):
+    """No notebook cell may reference API that has been removed."""
+    for i, text in enumerate(notebook_sources(path)):
+        for pattern, why in REMOVED_API.items():
+            found = re.search(pattern, text)
+            assert found is None, (
+                f"{path.name} cell {i}: {found.group(0).strip()!r}: {why}"
+            )
 
 
 @pytest.mark.parametrize("block", _cases(lambda b: True))

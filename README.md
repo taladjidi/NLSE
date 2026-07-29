@@ -27,6 +27,8 @@ Optional extras pull in the accelerated backends and the development tooling:
 uv pip install ".[gpu]"      # CuPy, for Nvidia GPUs
 uv pip install ".[opencl]"   # PyOpenCL + pyvkfft, for OpenCL devices
 uv pip install -e ".[dev]"   # pytest, ruff, mypy
+uv pip install ".[mlx]"      # MLX, for Apple silicon
+uv pip install ".[docs]"     # mkdocs, to build the documentation
 ```
 
 ## Basic usage
