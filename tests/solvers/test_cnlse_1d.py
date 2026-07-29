@@ -131,7 +131,6 @@ def test_out_field(backend) -> None:
         E0, DZ_TEST, delta_z=DZ_TEST, verbose=False, plot=False, precision="single"
     )
     rho = A.real * A.real + A.imag * A.imag
-    print(rho)
     integral = (rho * simu.delta_X**2).sum(axis=simu._last_axes)
     integral *= c * epsilon_0 / 2
     assert A.shape == (

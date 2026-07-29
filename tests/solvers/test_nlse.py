@@ -82,7 +82,10 @@ def test_build_fft_plan(backend) -> None:
         assert isinstance(plans[0], _VkFFTPlan), (
             f"Plan type is wrong. (Backend {backend})"
         )
-        assert plans[0]._app.shape0 == (
+        # The plan's spec, not its VkFFTApp: the app is compiled on first
+        # use, so reading it here passed only when some earlier test in the
+        # session had already triggered a transform on this cached plan.
+        assert plans[0]._spec["shape"] == (
             N,
             N,
         ), f"Plan shape is wrong. (Backend {backend})"
