@@ -149,6 +149,97 @@ class TestLinearConstruction:
         )
 
 
+class TestPropagationDistance:
+    """A run lands on z, rather than past it.
+
+    The loop used to take ceil(z / delta_z) whole steps, so unless the step
+    divided z it propagated further than asked. The error that leaves is the
+    phase the medium imprints over the excess, which is not small: it is the
+    excess as a fraction of z, times the total nonlinear phase.
+
+    Floating point makes it worse than it sounds. A step derived from the
+    physics rarely divides z, and even one that should can fail to: for 237
+    steps of this case, z / delta_z comes to 237.00000000000003, so ceil asks
+    for 238 and the run goes 0.42% too far. That put a 285x error spike at one
+    step count, with its neighbours unaffected.
+    """
+
+    Z = 5e-3
+
+    def distance(self, simu, delta_z):
+        """Propagate and return how far the run actually went."""
+        travelled = []
+        simu.out_field(
+            gaussian_input(),
+            self.Z,
+            delta_z=delta_z,
+            verbose=False,
+            plot=False,
+            callback=lambda s, A, z, i: travelled.append(z),
+            callback_args=(),
+        )
+        return travelled[-1]
+
+    @pytest.mark.parametrize("steps", [236, 237, 238, 100, 33])
+    def test_a_run_stops_at_z(self, steps):
+        """Whatever the step, the last callback must report z."""
+        simu = make_solver()
+        got = self.distance(simu, self.Z / steps)
+        assert got == pytest.approx(self.Z, rel=1e-9), (
+            f"a run asked for {self.Z:g} m in steps of {self.Z / steps:.4e} "
+            f"went {got:.6e} m, {100 * (got - self.Z) / self.Z:+.3f}% out"
+        )
+
+    def test_an_indivisible_step_still_stops_at_z(self):
+        """The case the whole-step loop could not do at all."""
+        simu = make_solver()
+        got = self.distance(simu, self.Z / 7.3)
+        assert got == pytest.approx(self.Z, rel=1e-9), (
+            f"a step that does not divide z overshot to {got:.6e}"
+        )
+
+    def test_neighbouring_step_counts_agree_without_callbacks(self):
+        """The no-callback path must land on z too.
+
+        This is where the spike was: with no callback the loop runs
+        ceil(z / delta_z) whole steps through the backend, so 237 steps of
+        z/237 became 238 and the result was 285x further from a converged
+        reference than 236 or 238 steps were.
+        """
+        E = gaussian_input()
+        results = {
+            steps: np.asarray(
+                make_solver(n2=-1.6e-8).out_field(
+                    E.copy(), self.Z, delta_z=self.Z / steps, verbose=False, plot=False
+                )
+            )
+            for steps in (236, 237, 238)
+        }
+        scale = float(np.linalg.norm(results[236]))
+        for steps in (237, 238):
+            err = float(np.linalg.norm(results[steps] - results[236])) / scale
+            assert err < 1e-2, (
+                f"{steps} steps differs from 236 by {err:.3e}, so one of them "
+                f"is not propagating the distance it was asked for"
+            )
+
+    def test_the_derived_step_also_stops_at_z(self):
+        """The default is a real number from the physics, so it rarely divides z."""
+        simu = make_solver(n2=-1.6e-8)
+        travelled = []
+        simu.out_field(
+            gaussian_input(),
+            self.Z,
+            verbose=False,
+            plot=False,
+            callback=lambda s, A, z, i: travelled.append(z),
+            callback_args=(),
+        )
+        assert travelled[-1] == pytest.approx(self.Z, rel=1e-9), (
+            f"a default run went {travelled[-1]:.6e} m instead of {self.Z:g}"
+        )
+
+
 class TestCallbackArguments:
     """Callbacks are handed the position the field they receive is at.
 

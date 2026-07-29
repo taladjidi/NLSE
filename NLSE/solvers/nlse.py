@@ -41,9 +41,8 @@ RK4_STABILITY_RADIUS = 2.83
 # the complex64 round-off floor across three decades of step size.
 DEFAULT_PHASE_PER_STEP = 0.1
 
-# Fewest steps a default may take over the requested distance. The loop runs
-# ceil(z / delta_z) whole steps, so a step comparable to z overshoots it; this
-# holds that under 10% and leaves callbacks something to sample.
+# Fewest steps a default may take over the requested distance, so that a run
+# is something a callback can sample and a plot can show rather than one jump.
 DEFAULT_MIN_STEPS = 10
 
 
@@ -1207,7 +1206,17 @@ class NLSE:
         np.ndarray
             The propagated field (may be a new object for functional backends).
         """
-        n_steps = int(np.ceil(z / abs(delta_z)))
+        # Whole steps, then whatever distance is left over. Taking ceil(z/dz)
+        # whole steps instead propagates past z by up to a full step, and the
+        # error that leaves is the phase the medium imprints over the excess --
+        # which is not small: a step derived from the physics rarely divides z,
+        # and floating point makes even an exact division fragile (z/dz for 237
+        # steps comes to 237.00000000000003, so ceil asks for 238).
+        n_steps = int(z / abs(delta_z))
+        remainder = z - n_steps * abs(delta_z)
+        # Anything below this is round-off in z/dz rather than real distance.
+        if remainder < 1e-9 * abs(delta_z):
+            remainder = 0.0
         n_steps_nl = self._nonlinear_step_count(z, n_steps, delta_z)
 
         # Use a mutable container so the closure can update A for functional
@@ -1255,11 +1264,20 @@ class NLSE:
                 if n_steps > n_steps_nl:
                     self._disable_nonlinearity(V, precision)
                     self._backend.execute_loop(step, n_steps - n_steps_nl)
+                if remainder:
+                    self._take_partial_step(
+                        _make_step,
+                        remainder,
+                        method,
+                        precision,
+                        self._field_dtype(state[0]),
+                    )
             else:
                 self._loop_with_callbacks(
                     _make_step,
                     z,
                     delta_z,
+                    remainder,
                     callback,
                     callback_args,
                     state,
@@ -1320,11 +1338,45 @@ class NLSE:
             setattr(self, attr, 0)
         self._precompute_step_constants(V, precision)
 
+    def _take_partial_step(self, step_factory, remainder, method, precision, dtype):
+        """Cover the distance left over after the whole steps.
+
+        The propagator is built from the step, so a shorter one needs its own.
+        Cache-backed, and a run takes at most one of these.
+
+        Parameters
+        ----------
+        step_factory : callable
+            Builds the per-step closure for a given step size.
+        remainder : float
+            Distance still to cover.
+        method : str
+            Integration method ("split_step" or "RK4").
+        precision : str
+            Order of the split step.
+        dtype : np.dtype
+            Complex dtype of the field.
+        """
+        # Swapped rather than rebuilt afterwards: the solver should describe
+        # the run it just did, not the sliver at the end of it.
+        in_force = self._current_delta_z
+        saved = (self.propagator, getattr(self, "_propagator_fft", None))
+        if method != "RK4":
+            self.propagator = self._build_propagator(dtype, remainder)
+            self._send_propagator_to_gpu(dtype)
+        self._current_delta_z = remainder
+        try:
+            step_factory(remainder)()
+        finally:
+            self._current_delta_z = in_force
+            self.propagator, self._propagator_fft = saved
+
     def _loop_with_callbacks(
         self,
         step_factory,
         z,
         delta_z,
+        remainder,
         callback,
         callback_args,
         state,
@@ -1348,7 +1400,10 @@ class NLSE:
         z_prop = 0.0
         i = 0
         switched = False
-        while abs(z_prop) < z:
+        # Strictly less than the whole-step total: the leftover is taken below,
+        # at its own size, so the run lands on z rather than past it.
+        whole = z - remainder
+        while abs(z_prop) < whole - 1e-12 * z:
             if z_switch is not None and not switched and abs(z_prop) >= z_switch:
                 self._disable_nonlinearity(V, precision)
                 switched = True
@@ -1373,6 +1428,16 @@ class NLSE:
             if verbose:
                 pbar.n = abs(z_prop) / z * 100
                 pbar.refresh()
+        if remainder:
+            # An adaptive callback may have moved the step, so what is left is
+            # measured from where the loop actually stopped, not from the
+            # remainder computed before it ran.
+            left = z - abs(z_prop)
+            if left > 1e-12 * z:
+                self._take_partial_step(step_factory, left, method, precision, dtype)
+                z_prop += left
+                if callback is not None:
+                    self._run_callbacks(callback, callback_args, state[0], z_prop, i)
 
     def _precompute_step_constants(
         self, V: np.ndarray | None, precision: str = "single"
