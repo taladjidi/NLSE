@@ -43,15 +43,19 @@ power = 1.05 # input optical power in W
 Isat = 10e4  # saturation intensity in W/m^2
 L = 10e-3 # Length of the medium in m
 alpha = 20 # linear losses coefficient in m^-1
-backend = "GPU" # whether to run on the GPU or the CPU
+backend = "auto" # or "CPU", "CUPY" (Nvidia), "CL" (OpenCL), "MLX" (Apple)
 
+# A solver with no potential, to get at its coordinate grids
 simu = NLSE(
     alpha, power, window, n2, None, L, NX=N, NY=N, Isat=Isat, backend=backend
 )
-# Define input field and potential
-E_0 = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2)
+# Define the input field and the potential on that grid. The field must be
+# complex: its width is what selects single or double precision.
+E_0 = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(np.complex64)
 V = -1e-4 * np.exp(-(simu.XX**2 + simu.YY**2) / waist2**2)
-simu.out_field(E_0, L, verbose=True, plot=True, precision="single")
+
+simu = NLSE(alpha, power, window, n2, V, L, NX=N, NY=N, Isat=Isat, backend=backend)
+E = simu.out_field(E_0, L, verbose=True, plot=True, precision="single")
 ```
 
 <!-- TODO ADD IMAGE !!! -->
@@ -134,7 +138,7 @@ The cache now lives outside the package, so this cannot recur.
 
 Tests are included to check functionalities and benchmark performance.
 You can run all tests by using [`pytest`](https://docs.pytest.org/en/8.2.x/) at the root of the repo.
-It will test both CPU and GPU backends (if available).
+It tests every backend it finds installed.
 This can take some time !
 
 Install the dev extra first, and re-run it after pulling: the build backend
@@ -200,7 +204,7 @@ $$
 #### Initialization
 
 The physical parameters listed above are defined at the instantiation of the `NLSE` class (`__init__` function).
-The backend (GPU or CPU) is tested when the library is imported, but you can then dynamically switch it when instantiating a `NLSE` class by setting the `self.backend` attribute to `"GPU"` or `"CPU"`.
+A backend is chosen when the library is imported, but you can pick one per solver with the `backend` argument: `"CPU"`, `"CUPY"`, `"CL"`, `"MLX"`, or `"auto"` to benchmark what is installed and take the fastest. It can also be switched afterwards through the `backend` property.
 
 #### Broadcasting
 
@@ -214,28 +218,51 @@ a `(N_n2, N_alpha, Ny, Nx)` array.
 
 The take-home message is that the array shape should be compliant with `numpy` [broadcasting rules](https://numpy.org/doc/stable/user/basics.broadcasting.html).
 
-**WARNING : For now it is only available on the GPU backend !**
+Broadcasting works on every backend. CUPY and MLX pass batched parameters
+into their kernels and broadcast there; CPU and OpenCL take one simulation's
+values per launch and loop, so their gain over separate runs is in the FFTs
+rather than in the kernels.
 
 #### Numerical precision
 
-In order to reach the best performance, the numerical precision is hardcoded as a constant variable at the top of `nlse.py`.
-When importing the solvers like `NLSE`, the data types of the input arrays must match the data type given as input of `out_field`.
+The floating-point width follows the **input field**: pass a `complex64` array
+for single precision, `complex128` for double, on a device that supports it.
+The propagator and the potential are built to match, because the GPU kernels
+read their precision from the field and then index those arrays with it.
+
+Note that `out_field`'s `precision` argument is a different thing entirely: it
+selects the *order of the split step*, not the float width. See below.
 
 #### Callbacks
 
 The `out_field` functions support callbacks with the following signature `callback(self, A, z, i)` where `self` is the class instance, `A` is the field, `z` is the current position and `i` the main loop index.
-For example if you want to print the number of steps every 100 steps, this is the callback you could write :
+For example if you want to print the step number every 100 steps, this is the callback you could write :
 
 ```python
 def callback(nlse, A, z, i):
-    n = int(z/nlse.delta_z)
-    if n % 100 == 0:
-        print(n)
+    if i % 100 == 0:
+        print(i)
 ```
 
 Notice that since the class instance is passed to the callback, you have access to all of the classes attributes.
 Be mindful however that since the callback is running in the main solver loop, this function should not be called too often in order to not slow down the execution too much.
 You can find several generic callbacks in the [`callbacks`](NLSE/callbacks.py) sublibrary.
+
+A callback can also **change the step**, by returning a new one. Returning
+nothing leaves it alone, which is what all the others do. The solver rebuilds
+the linear propagator to match before taking the next step, so the two halves
+of a split step always advance by the same distance:
+
+```python
+def refine_past_halfway(nlse, A, z, i, dz_fine):
+    """Switch to a finer step once past the middle of the medium."""
+    return dz_fine if z >= nlse.L / 2 else None
+```
+
+Make sure such a callback settles on a value rather than adjusting every step:
+one that shrinks the step unconditionally will never reach the end of the
+propagation. `adapt_delta_z` in the [`callbacks`](NLSE/callbacks.py)
+sublibrary derives a step from the nonlinear refractive index change instead.
 
 #### Propagation
 
@@ -247,8 +274,28 @@ The `out_field` method is the main function of the code that propagates the fiel
 - Inverse Fourier transforming the field
 - Applying all real space terms (potential, losses and interactions)
 
-The `precision` argument allows to switch between applicating the nonlinear terms in a single multiplication (`"single"`), or applying a "half" nonlinear term before and after computing the effect of losses, potential and interactions (`"double"`). The numerical error is $\mathcal{O}(\delta z)$ in the first case and $\mathcal{O}(\delta z^3)$ in the second case at the expense of two additional FFT's and another matrix multiplication (essentially doubling the runtime).\
-The propagation step $\delta z$ is chosen to be the minimum between `1e-5` the Rayleigh length of the beam or `2.5e-2` $z_{NL}=\frac{1}{k_0 n_2 I}$, but this can be hand tuned to reach desired speed or precision by setting the `delta_z` attribute.
+The `precision` argument allows to switch between applicating the nonlinear terms in a single multiplication (`"single"`), or applying a "half" nonlinear term before and after computing the effect of losses, potential and interactions (`"double"`). The numerical error is $\mathcal{O}(\delta z)$ in the first case and $\mathcal{O}(\delta z^3)$ in the second case at the expense of two additional FFT's and another matrix multiplication (essentially doubling the runtime).
+
+#### The propagation step
+
+The step $\delta z$ is an argument to `out_field`, not a property of the solver: the same medium can be propagated at different steps, and a step chosen for one run should not silently apply to the next.
+
+```python
+E = simu.out_field(E_in, z)                 # step derived from the field
+E = simu.out_field(E_in, z, delta_z=1e-5)   # step chosen by hand
+```
+
+Left to itself, the solver picks a step that imprints a fixed phase per step —
+`DEFAULT_PHASE_PER_STEP`, 0.1 rad — measured against the energy the field
+actually carries in each term: $\langle\psi|\hat{O}|\psi\rangle / \langle\psi|\psi\rangle$
+for the kinetic, potential and interaction terms. That is the same quantity the
+stability and accuracy limits are built from, so the default sits a fixed
+distance inside them rather than at an arbitrary fraction of a length scale.
+
+A step you pass is used as given, and lowered only if it would leave the
+method's region of convergence: $\pi$ per step before split-step aliases,
+$2\sqrt{2}$ before RK4 leaves its stability region. You get a warning when that
+happens, naming the limit that bound.
 
 ### Inheritance
 

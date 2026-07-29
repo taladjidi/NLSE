@@ -149,6 +149,52 @@ class TestLinearConstruction:
         )
 
 
+class TestCallbackArguments:
+    """Callbacks are handed the position the field they receive is at.
+
+    They used to be handed the *total* distance, the same number every step,
+    though every callback docstring and the README called it "the current
+    propagation distance". Nothing in-tree read it -- the built-in callbacks
+    all key off the step index -- so it went unnoticed.
+    """
+
+    def test_z_advances_with_the_field(self):
+        """The position must run from one step up to the whole distance."""
+        simu = make_solver()
+        z, dz = 1e-3, 2e-4
+        seen = []
+        simu.out_field(
+            gaussian_input(),
+            z,
+            delta_z=dz,
+            verbose=False,
+            plot=False,
+            callback=lambda s, A, z_, i: seen.append(z_),
+            callback_args=(),
+        )
+        assert seen == pytest.approx([dz * (k + 1) for k in range(len(seen))]), (
+            f"callbacks saw {seen}, not the position after each step"
+        )
+
+    def test_z_is_not_constant(self):
+        """The specific failure: the same number every step."""
+        simu = make_solver()
+        seen = []
+        simu.out_field(
+            gaussian_input(),
+            1e-3,
+            delta_z=2e-4,
+            verbose=False,
+            plot=False,
+            callback=lambda s, A, z_, i: seen.append(z_),
+            callback_args=(),
+        )
+        assert len(set(seen)) == len(seen), (
+            "callbacks saw one repeated value, so they were given the total "
+            "distance rather than the current position"
+        )
+
+
 class TestAdaptiveStep:
     """A callback changes the step by returning it, and the propagator follows.
 

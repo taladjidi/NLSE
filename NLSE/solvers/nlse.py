@@ -1353,8 +1353,13 @@ class NLSE:
                 self._disable_nonlinearity(V, precision)
                 switched = True
             step_fn()
+            # Advance before the callbacks, so the position they get is the one
+            # the field they are handed is actually at.
+            z_prop += delta_z
             if callback is not None:
-                requested = self._run_callbacks(callback, callback_args, state[0], z, i)
+                requested = self._run_callbacks(
+                    callback, callback_args, state[0], z_prop, i
+                )
                 if requested is not None and requested != delta_z:
                     delta_z = requested
                     self._current_delta_z = delta_z
@@ -1364,7 +1369,6 @@ class NLSE:
                             self.propagator = self._backend.from_numpy(self.propagator)
                         self._update_propagator_fft()
                     step_fn = step_factory(delta_z)
-            z_prop += delta_z
             i += 1
             if verbose:
                 pbar.n = abs(z_prop) / z * 100
