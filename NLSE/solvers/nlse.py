@@ -430,101 +430,58 @@ class NLSE:
 
         # First half-step (only for precision == "double")
         if precision == "double":
-            if self.nl_length > 0:
-                # Need A_sq for convolution — must keep separate
-                A_sq = kernels.square_mod(A, A_sq)
-                A_sq[:] = self._backend.convolution(
-                    A_sq, self.nl_profile, mode="same", axes=self._last_axes
-                )
-                if V is None:
-                    A = kernels.nl_prop_without_V(
-                        A,
-                        A_sq,
-                        delta_z / 2,
-                        alpha_half,
-                        g,
-                        Isat_conv,
-                    )
-                else:
-                    A = kernels.nl_prop(
-                        A,
-                        A_sq,
-                        delta_z / 2,
-                        alpha_half,
-                        V_scaled,
-                        g,
-                        Isat_conv,
-                    )
-            else:
-                if V is None:
-                    A = kernels.square_mod_nl_prop(
-                        A,
-                        delta_z / 2,
-                        alpha_half,
-                        g,
-                        Isat_conv,
-                    )
-                else:
-                    A = kernels.square_mod_nl_prop_v(
-                        A,
-                        V_scaled,
-                        delta_z / 2,
-                        alpha_half,
-                        g,
-                        Isat_conv,
-                    )
+            A = self._nonlinear_step(A, A_sq, V_scaled, delta_z / 2)
 
         # Linear propagation in Fourier domain
         A = self._apply_linear_step(A, propagator, plans)
 
-        # Second half-step (always executed)
-        # Determine step size based on precision mode
+        # Second half-step (always executed), the whole step for Lie splitting
         dz_step = delta_z / 2 if precision == "double" else delta_z
+        return self._nonlinear_step(A, A_sq, V_scaled, dz_step)
+
+    def _nonlinear_step(self, A, A_sq, V_scaled, dz):
+        """Apply the real-space part of the step: interaction, potential, loss.
+
+        Both halves of a Strang step do exactly this and differed only in the
+        distance, so they are one method. It is also what brackets a merged
+        run -- see ``_merged_strang_bracket``.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            Field, modified in place on the array backends.
+        A_sq : np.ndarray
+            Scratch for the intensity. Only used by the non-local path, which
+            has to convolve it before the kernel reads it.
+        V_scaled : np.ndarray or None
+            Pre-scaled potential, or None.
+        dz : float
+            Distance this application advances by. May be negative, which is
+            how the bracket undoes its last half step.
+
+        Returns
+        -------
+        np.ndarray
+            The field.
+        """
+        kernels = self._backend.kernels
+        alpha_half = self._constant("_alpha_half")
+        g = self._constant("_g")
+        Isat_conv = self._constant("_Isat_conv")
 
         if self.nl_length > 0:
-            # Can't use fused kernel with convolution
+            # The convolution needs the intensity as an array of its own, so
+            # the kernel that computes it inline cannot be used.
             A_sq = kernels.square_mod(A, A_sq)
             A_sq[:] = self._backend.convolution(
                 A_sq, self.nl_profile, mode="same", axes=self._last_axes
             )
-            if V is None:
-                A = kernels.nl_prop_without_V(
-                    A,
-                    A_sq,
-                    dz_step,
-                    alpha_half,
-                    g,
-                    Isat_conv,
-                )
-            else:
-                A = kernels.nl_prop(
-                    A,
-                    A_sq,
-                    dz_step,
-                    alpha_half,
-                    V_scaled,
-                    g,
-                    Isat_conv,
-                )
-        else:
-            if V is None:
-                A = kernels.square_mod_nl_prop(
-                    A,
-                    dz_step,
-                    alpha_half,
-                    g,
-                    Isat_conv,
-                )
-            else:
-                A = kernels.square_mod_nl_prop_v(
-                    A,
-                    V_scaled,
-                    dz_step,
-                    alpha_half,
-                    g,
-                    Isat_conv,
-                )
-        return A
+            if V_scaled is None:
+                return kernels.nl_prop_without_V(A, A_sq, dz, alpha_half, g, Isat_conv)
+            return kernels.nl_prop(A, A_sq, dz, alpha_half, V_scaled, g, Isat_conv)
+        if V_scaled is None:
+            return kernels.square_mod_nl_prop(A, dz, alpha_half, g, Isat_conv)
+        return kernels.square_mod_nl_prop_v(A, V_scaled, dz, alpha_half, g, Isat_conv)
 
     def split_step_RK4(
         self,
@@ -1766,6 +1723,66 @@ class NLSE:
     # _precompute_step_constants. Subclasses extend it with their own.
     _nonlinearity_attrs = ("n2",)
 
+    # Whether this solver's Lie step is exactly the inside of its Strang step.
+    # DDGPE's is not: it drives and it adds noise, so its steps are not a
+    # product of the same two operators.
+    _lie_step_is_strang_body = True
+
+    def _merges_strang_halves(self, precision: str) -> bool:
+        """Whether consecutive Strang steps may share their half steps.
+
+        A Strang step is ``N(h/2) L(h) N(h/2)``, so a run of them is
+
+            N(h/2) [L(h) N(h)] ... [L(h) N(h)] N(-h/2)
+
+        and the bracketed body is precisely a Lie step. Merging costs one
+        nonlinear application for the whole run instead of one per step, and
+        the loop body becomes what ``precision="single"`` already runs, so
+        there is no third stepper to keep in step with the other two.
+
+        It is exact only where ``N(a) N(b) == N(a + b)``. ``N`` rotates the
+        phase by an amount that depends on ``|A|^2``, so that holds when
+        ``|A|`` survives it: no loss, and no absorbing potential. With either,
+        the second application sees an intensity the first one changed, and
+        the two half steps are not one whole one.
+
+        Parameters
+        ----------
+        precision : str
+            Splitting the caller asked for. Only Strang has halves to merge.
+
+        Returns
+        -------
+        bool
+            True if the run may be merged.
+        """
+        if precision != "double" or not self._lie_step_is_strang_body:
+            return False
+        if self.nl_length > 0:
+            return False
+        # A Rabi coupling rides on the Lie step alone, so the body would
+        # apply it and the Strang step it stands in for would not.
+        if getattr(self, "omega", None) is not None:
+            return False
+        if not np.all(
+            np.asarray(self._as_host_array(self._constant("_alpha_half"))) == 0
+        ):
+            return False
+        V_scaled = self._as_host_array(self._V_scaled)
+        return V_scaled is None or not np.iscomplexobj(V_scaled)
+
+    def _open_strang_bracket(self, merged, A, A_sq, delta_z):
+        """Take the half step that precedes a merged run."""
+        if not merged:
+            return A
+        return self._nonlinear_step(A, A_sq, self._V_scaled, delta_z / 2)
+
+    def _close_strang_bracket(self, merged, A, A_sq, delta_z):
+        """Undo the half step the merged run's last body left over."""
+        if not merged:
+            return A
+        return self._nonlinear_step(A, A_sq, self._V_scaled, -delta_z / 2)
+
     def _run_propagation(
         self,
         A,
@@ -1804,11 +1821,15 @@ class NLSE:
         # backends (MLX) where kernels return new arrays.
         state = [A]
 
-        def _make_step(dz):
+        def _make_step(dz, body_precision=precision):
             """Build the per-step closure for a given step size.
 
             Rebuilt when an adaptive callback changes the step, so the step
             and the propagator it was built from cannot come apart.
+
+            ``body_precision`` is the splitting the loop body runs, which is
+            not always the one the caller asked for: a merged Strang run
+            takes Lie steps between two half steps of its own.
             """
             if method == "RK4":
 
@@ -1820,7 +1841,13 @@ class NLSE:
 
                 def _step():
                     state[0] = self.split_step(
-                        state[0], A_sq, V, self.propagator, self.plans, dz, precision
+                        state[0],
+                        A_sq,
+                        V,
+                        self.propagator,
+                        self.plans,
+                        dz,
+                        body_precision,
                     )
 
             return _step
@@ -1839,12 +1866,21 @@ class NLSE:
                 # Two segments rather than a mid-loop switch: the constants are
                 # baked into the CUDA graph that execute_loop captures, so each
                 # segment needs its own capture.
-                step = _make_step(delta_z)
+                merged = self._merges_strang_halves(precision)
+                step = _make_step(delta_z, "single" if merged else precision)
                 self._current_delta_z = delta_z
+                state[0] = self._open_strang_bracket(merged, state[0], A_sq, delta_z)
                 self._backend.execute_loop(step, n_steps_nl)
+                state[0] = self._close_strang_bracket(merged, state[0], A_sq, delta_z)
                 if n_steps > n_steps_nl:
                     self._disable_nonlinearity(V, precision)
+                    state[0] = self._open_strang_bracket(
+                        merged, state[0], A_sq, delta_z
+                    )
                     self._backend.execute_loop(step, n_steps - n_steps_nl)
+                    state[0] = self._close_strang_bracket(
+                        merged, state[0], A_sq, delta_z
+                    )
                 if remainder:
                     self._take_partial_step(
                         _make_step,

@@ -331,6 +331,10 @@ class DDGPE(CNLSE):
             pass
         return A, A_sq
 
+    # Its step drives the cavity and adds noise, so it is not a product of
+    # the same two operators taken in halves.
+    _lie_step_is_strang_body = False
+
     def split_step(
         self,
         A: np.ndarray,
