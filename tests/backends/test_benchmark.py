@@ -39,24 +39,6 @@ class TestCacheDir:
         assert bench_path.parent == cache_dir
         assert bench_path.name == "fft_benchmark.json"
 
-    def test_wisdom_in_cache_dir(self):
-        """FFTW wisdom should be written inside the cache dir."""
-        cache_dir = get_cache_dir()
-        wisdom_path = cache_dir / "fft.wisdom"
-
-        # Remove existing wisdom to test it gets recreated
-        if wisdom_path.exists():
-            wisdom_path.unlink()
-
-        from NLSE.backends.cpu import CPUBackend
-
-        backend = CPUBackend()
-        shape = (64, 64)
-        dtype = __import__("numpy").complex64
-        backend.build_fft(shape, axes=(-2, -1), dtype=dtype)
-
-        assert wisdom_path.exists()
-
 
 class TestBenchmarkBackend:
     """Test benchmarking individual backends."""

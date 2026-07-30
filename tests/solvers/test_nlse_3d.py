@@ -1,5 +1,4 @@
 import numpy as np
-import pyfftw
 from helpers import as_numpy, assert_c_contiguous, random_field
 from NLSE import NLSE_3d
 from scipy.constants import c, epsilon_0
@@ -148,15 +147,8 @@ def test_build_fft_plan(backend) -> None:
             f"Plan type is wrong. (Backend {backend})"
         )
     elif backend == "CPU":
-        assert len(plans) == 2, f"Number of plans is wrong. (Backend {backend})"
-        assert isinstance(plans[0], pyfftw.FFTW), (
-            f"Plan type is wrong. (Backend {backend})"
-        )
-        assert plans[0].output_shape == (
-            N,
-            N,
-            NZ,
-        ), f"Plan shape is wrong. (Backend {backend})"
+        assert len(plans) == 1, f"Number of plans is wrong. (Backend {backend})"
+        assert plans[0] == (-3, -2, -1), f"Plan axes are wrong. (Backend {backend})"
 
 
 def test_prepare_output_array(backend) -> None:

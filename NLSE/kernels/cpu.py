@@ -1,7 +1,27 @@
 import functools
+import sys
 
 import numba
+import numba.np.ufunc.parallel
 import numpy as np
+
+# Claim the OpenMP runtime before anything else in the process can.
+#
+# A library that vendors its own copy rather than linking the environment's --
+# pyfftw's PyPI wheel is the one that bit us, under pyfftw/.dylibs -- can
+# coexist with numba's, but only if numba's initialized first. The other order
+# segfaults at the first prange, wherever in the process that happens to be,
+# so it surfaces as a crash in whichever kernel ran first. This package no
+# longer imports pyfftw, but it cannot stop a caller from importing one above
+# it, and an environment that had NLSE before this still has pyfftw installed.
+#
+# Initializing here is enough whenever NLSE is imported first. When it is not,
+# the window is already gone and the only safe pool is the one that owns no
+# OpenMP runtime; it measures ~6% slower on these kernels, against not running.
+if "pyfftw" in sys.modules and not numba.np.ufunc.parallel._is_initialized:
+    # numba.config builds its attributes at import, so mypy sees none of them.
+    numba.config.THREADING_LAYER = "workqueue"  # type: ignore[attr-defined]
+numba.get_num_threads()
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)

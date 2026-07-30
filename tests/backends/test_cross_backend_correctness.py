@@ -9,7 +9,6 @@ import matplotlib
 matplotlib.use("Agg")  # non-interactive backend for plot tests
 
 import numpy as np
-import pyfftw
 import pytest
 from helpers import as_numpy, make
 from NLSE import CNLSE, NLSE
@@ -62,16 +61,14 @@ class TestCPUCorrectness:
     """Tests that validate CPU backend internals."""
 
     def test_build_fft_plan(self):
-        """FFTW plans have correct type, shape, and count."""
+        """The plan is the axes to transform over, and nothing else."""
         simu = make_nlse()
         A = np.random.random((N, N)) + 1j * np.random.random((N, N))
         A = A.astype(PRECISION_COMPLEX)
         plans = simu._build_fft_plan(A)
 
-        assert len(plans) == 2, "Number of plans is wrong"
-        assert isinstance(plans[0], pyfftw.FFTW), "Forward plan type is wrong"
-        assert isinstance(plans[1], pyfftw.FFTW), "Inverse plan type is wrong"
-        assert plans[0].output_shape == (N, N), "Plan shape is wrong"
+        assert len(plans) == 1, "Number of plans is wrong"
+        assert plans[0] == (-2, -1), "Plan axes are wrong"
 
     def test_fft_roundtrip(self):
         """FFT then IFFT returns the original array."""

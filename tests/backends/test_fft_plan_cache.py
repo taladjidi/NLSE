@@ -1,9 +1,8 @@
 """FFT plans are built once per transform, not once per propagation.
 
 A plan depends only on the shape, the axes and the dtype, so rebuilding one
-per ``out_field`` call bought nothing and cost a great deal: the CPU backend
-reloads FFTW wisdom from disk and times a roundtrip to validate it, and
-VkFFT compiles its own kernels.
+per ``out_field`` call bought nothing and cost a great deal: VkFFT compiles
+its own kernels, and cuFFT allocates its work area.
 
 Caching is only safe because a plan is not bound to the array it was built
 with: FFTW, cuFFT and VkFFT all take their arrays at call time. The tests

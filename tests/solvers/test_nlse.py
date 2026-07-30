@@ -1,5 +1,4 @@
 import numpy as np
-import pyfftw
 import pytest
 from helpers import as_numpy, assert_c_contiguous, make, random_field
 from NLSE import NLSE
@@ -46,14 +45,8 @@ def test_build_fft_plan(backend) -> None:
     A = random_field((N, N))
     plans = simu._build_fft_plan(A)
     if backend == "CPU":
-        assert len(plans) == 2, f"Number of plans is wrong. (Backend {backend})"
-        assert isinstance(plans[0], pyfftw.FFTW), (
-            f"Plan type is wrong. (Backend {backend})"
-        )
-        assert plans[0].output_shape == (
-            N,
-            N,
-        ), f"Plan shape is wrong. (Backend {backend})"
+        assert len(plans) == 1, f"Number of plans is wrong. (Backend {backend})"
+        assert plans[0] == (-2, -1), f"Plan axes are wrong. (Backend {backend})"
     elif backend == "CUPY" and NLSE.__CUPY_AVAILABLE__:
         assert len(plans) == 1, f"Number of plans is wrong. (Backend {backend})"
         assert isinstance(plans[0], _CuFFTPlan), (

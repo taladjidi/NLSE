@@ -30,7 +30,6 @@ dependencies = [
   "matplotlib",
   "numba",
   "numpy",
-  "pyfftw",
   "scipy",
   "tqdm",
 ]

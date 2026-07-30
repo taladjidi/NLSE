@@ -120,7 +120,7 @@ jobs:
               if: runner.os == 'Windows'
               run: uv pip install --system -e ".[dev]"
 
-            - name: Cache FFTW wisdom and benchmarks
+            - name: Cache backend benchmarks
               uses: actions/cache@v4
               with:
                   path: ${{ github.workspace }}/.nlse-cache
@@ -165,7 +165,7 @@ jobs:
             - name: Install dependencies
               run: uv pip install --system -e ".[dev,opencl]"
 
-            - name: Cache FFTW wisdom and benchmarks
+            - name: Cache backend benchmarks
               uses: actions/cache@v4
               with:
                   path: ${{ github.workspace }}/.nlse-cache
