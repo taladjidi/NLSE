@@ -752,6 +752,20 @@ The probe is `scratchpad/cb_probe2.py` in the session directory if it is.
   match destroyed sections 16-22 once, and they had to be rewritten from the
   conversation. It is tracked now, so git has a copy.
 - A new test is not trusted until a mutation makes it fail.
+- **Test data symmetric in the thing under test cannot see an error in it.**
+  Both components of a coupled field built from the same Gaussian make
+  `|A1|^2 == |A2|^2`, and `CNLSE.__init__` sets `alpha2 = alpha`,
+  `n22 = n2`, `I_sat2 = I_sat`, `k2 = k`. Between them, seven mutations
+  swapping one component for the other survived the whole suite. A test that
+  reads `simu.k2` for its own expectation agrees with a propagator that
+  ignores it.
+- **A test of one fast path must switch off every faster one.** The solver
+  takes the most fused path a run qualifies for, so turning off the flag whose
+  name matches the kernel under test can leave both sides of the comparison on
+  the same path. Half a file went vacuous that way the moment a new level was
+  added above it, and nothing failed.
 - Measure repeatability before believing a benchmark. Three separate
   measurement harnesses in this project produced confident wrong answers that
   only fell over when run twice.
+- Verify a bulk edit of the tests against the collected test IDs, not the
+  diff. `pytest --collect-only -q` before and after must match exactly.
