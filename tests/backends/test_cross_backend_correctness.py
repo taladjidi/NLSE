@@ -11,7 +11,7 @@ matplotlib.use("Agg")  # non-interactive backend for plot tests
 import numpy as np
 import pyfftw
 import pytest
-from helpers import make
+from helpers import as_numpy, make
 from NLSE import CNLSE, NLSE
 from NLSE.backends import list_available_backends
 from scipy.constants import c, epsilon_0
@@ -151,7 +151,7 @@ class TestCPUCorrectness:
     def test_propagator_correctness(self):
         """Propagator matches analytical formula."""
         simu = make_nlse()
-        prop = simu._build_propagator(PRECISION_COMPLEX, DZ_TEST)
+        prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
         expected = np.exp(-1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * DZ_TEST)
         assert np.allclose(prop, expected), "Propagator is wrong (CPU)"
 
@@ -309,7 +309,7 @@ class TestNLSEvsReference:
     def test_propagator_correctness(self, backend):
         """Propagator matches analytical formula on each backend."""
         simu = make_nlse(backend)
-        prop = simu._build_propagator(PRECISION_COMPLEX, DZ_TEST)
+        prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
         expected = np.exp(-1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * DZ_TEST)
         assert np.allclose(prop, expected), f"Propagator is wrong (Backend {backend})"
 
@@ -809,14 +809,14 @@ class TestNLSEPropagator:
     def test_propagator_caching(self):
         """Propagator is cached and reused."""
         simu = make_nlse("CPU", n=S)
-        prop1 = simu._build_propagator(PRECISION_COMPLEX, DZ_TEST)
-        prop2 = simu._build_propagator(PRECISION_COMPLEX, DZ_TEST)
+        prop1 = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
+        prop2 = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
         assert prop1 is prop2  # same object from cache
 
     def test_propagator_double_precision(self):
         """Double precision propagator has complex128 dtype."""
         simu = make_nlse("CPU", n=S)
-        prop = simu._build_propagator(np.complex128, DZ_TEST)
+        prop = as_numpy(simu, simu._build_propagator(np.complex128, DZ_TEST))
         assert prop.dtype == np.complex128
 
     def test_propagator_rk4(self):
@@ -842,7 +842,7 @@ class TestNLSESplitStep:
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
-        prop = simu._build_propagator(np.complex128, DZ_TEST)
+        prop = as_numpy(simu, simu._build_propagator(np.complex128, DZ_TEST))
 
         simu.split_step(A, A_sq, None, prop, plans, DZ_TEST, precision="double")
         assert np.isfinite(A).all(), "Double precision split step produced NaN/Inf"
@@ -855,7 +855,7 @@ class TestNLSESplitStep:
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
-        prop = simu._build_propagator(np.complex128, DZ_TEST)
+        prop = as_numpy(simu, simu._build_propagator(np.complex128, DZ_TEST))
 
         simu.split_step(A, A_sq, V, prop, plans, DZ_TEST, precision="double")
         assert np.isfinite(A).all()
@@ -868,7 +868,7 @@ class TestNLSESplitStep:
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
-        prop = simu._build_propagator(PRECISION_COMPLEX, DZ_TEST)
+        prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
 
         simu.split_step(A, A_sq, V, prop, plans, DZ_TEST, precision="single")
         assert np.isfinite(A).all()
@@ -880,7 +880,7 @@ class TestNLSESplitStep:
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
-        prop = simu._build_propagator(PRECISION_COMPLEX, DZ_TEST)
+        prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
 
         # Single precision path with nl_length
         simu.split_step(A, A_sq, None, prop, plans, DZ_TEST, precision="single")
@@ -894,7 +894,7 @@ class TestNLSESplitStep:
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
-        prop = simu._build_propagator(PRECISION_COMPLEX, DZ_TEST)
+        prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
 
         simu.split_step(A, A_sq, V, prop, plans, DZ_TEST, precision="single")
         assert np.isfinite(A).all()
@@ -906,7 +906,7 @@ class TestNLSESplitStep:
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
-        prop = simu._build_propagator(np.complex128, DZ_TEST)
+        prop = as_numpy(simu, simu._build_propagator(np.complex128, DZ_TEST))
 
         simu.split_step(A, A_sq, None, prop, plans, DZ_TEST, precision="double")
         assert np.isfinite(A).all()
@@ -1168,7 +1168,7 @@ class TestCNLSEExtended:
         """CNLSE propagator has two components."""
         n12_local = 0.5e-9
         simu = make_cnlse("CPU", n=S, n12=n12_local)
-        prop = simu._build_propagator(PRECISION_COMPLEX, DZ_TEST)
+        prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
         assert prop.shape == (2, S, S)
         assert np.isfinite(prop).all()
 
@@ -1176,8 +1176,8 @@ class TestCNLSEExtended:
         """CNLSE propagator is cached."""
         n12_local = 0.5e-9
         simu = make_cnlse("CPU", n=S, n12=n12_local)
-        prop1 = simu._build_propagator(PRECISION_COMPLEX, DZ_TEST)
-        prop2 = simu._build_propagator(PRECISION_COMPLEX, DZ_TEST)
+        prop1 = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
+        prop2 = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
         assert prop1 is prop2
 
     def test_propagator_rk4(self):

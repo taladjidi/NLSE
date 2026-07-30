@@ -27,7 +27,7 @@ def make_solver(backend="CPU", n=N, **overrides):
 
 def test_build_propagator(backend) -> None:
     simu = NLSE_1d(alpha, power, window, n2, None, L, NX=N, Isat=Isat, backend=backend)
-    prop = simu._build_propagator(PRECISION_COMPLEX, DZ_TEST)
+    prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
     assert np.allclose(prop, np.exp(-1j * 0.5 * (simu.Kx**2) / simu.k * DZ_TEST)), (
         f"Propagator is wrong. (Backend {backend})"
     )

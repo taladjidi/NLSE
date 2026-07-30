@@ -66,7 +66,7 @@ def make_solver(backend="CPU", n=N, **overrides):
 
 def test_build_propagator(backend) -> None:
     simu = make_solver(backend)
-    prop = simu._build_propagator(np.complex64, DZ_TEST)
+    prop = as_numpy(simu, simu._build_propagator(np.complex64, DZ_TEST))
     prop_th = np.exp(-1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * DZ_TEST)
     prop_th *= np.exp(-1j * simu.D0 / 2 * simu.Omega**2)
     assert np.allclose(

@@ -34,7 +34,7 @@ def make_solver(backend="CPU", n=N, **overrides):
 
 def test_build_propagator(backend) -> None:
     simu = make_solver(backend)
-    prop = simu._build_propagator(PRECISION_COMPLEX, DZ_TEST)
+    prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
     assert np.allclose(
         prop,
         np.exp(-1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * DZ_TEST),

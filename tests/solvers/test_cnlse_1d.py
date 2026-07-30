@@ -30,7 +30,7 @@ def make_solver(backend="CPU", n=N, **overrides):
 
 def test_build_propagator(backend) -> None:
     simu = make_solver(backend)
-    prop = simu._build_propagator(np.complex64, DZ_TEST)
+    prop = as_numpy(simu, simu._build_propagator(np.complex64, DZ_TEST))
     prop1 = np.exp(-1j * 0.5 * (simu.Kx**2) / simu.k * DZ_TEST)
     prop2 = np.exp(-1j * 0.5 * (simu.Kx**2) / simu.k2 * DZ_TEST)
     assert np.allclose(prop, np.array([prop1, prop2])), (

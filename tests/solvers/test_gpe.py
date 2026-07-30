@@ -29,7 +29,7 @@ def test_build_propagator(backend) -> None:
         NY=N,
         backend=backend,
     )
-    prop = simu_gpe._build_propagator(np.complex64, DZ_TEST)
+    prop = as_numpy(simu_gpe, simu_gpe._build_propagator(np.complex64, DZ_TEST))
     expected = np.exp(
         -1j * 0.5 * hbar * (simu_gpe.Kxx**2 + simu_gpe.Kyy**2) / simu_gpe.m * DZ_TEST,
         dtype=np.complex64,

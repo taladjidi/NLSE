@@ -208,7 +208,7 @@ def test_retrieve_arrays_from_gpu() -> None:
 
 def test_build_propagator(backend) -> None:
     simu = make_solver()
-    prop = simu._build_propagator(np.complex64, DZ_TEST)
+    prop = as_numpy(simu, simu._build_propagator(np.complex64, DZ_TEST))
     assert np.allclose(
         prop[0],
         np.exp(
