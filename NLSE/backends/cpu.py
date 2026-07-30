@@ -146,11 +146,26 @@ def warn_if_fftw_lacks_simd() -> bool:
         return False
     _warned_about_fft = True
     warnings.warn(
-        "pyFFTW planned this transform with no vector codelets, which means "
-        "it is linked against an FFTW built without vector instructions. The "
-        "transform is most of a CPU step at large grid sizes, and such a "
-        "build measures four times slower on Apple silicon. Installing pyfftw "
-        "from conda-forge rather than PyPI fixes it.",
+        f"pyFFTW planned this transform with no vector codelets, so it is "
+        f"linked against an FFTW built without vector instructions. The "
+        f"transform is most of a CPU step at large grid sizes, and such a "
+        f"build measures four times slower on Apple silicon.\n"
+        f"  The PyPI arm64 wheel bundles one; the conda-forge build does not. "
+        f"To swap, in this order:\n"
+        f"    pip uninstall pyfftw          # conda cannot see it, and will "
+        f"otherwise no-op\n"
+        f"    conda install -c conda-forge pyfftw\n"
+        f"    rm {get_cache_dir() / 'fft.wisdom'}   # plans recorded against "
+        f"the old library outlive it\n"
+        f"  To check afterwards, plan any transform and look at what FFTW "
+        f"says it used:\n"
+        f'    python -c "import pyfftw,numpy as np;'
+        f"A=pyfftw.empty_aligned((64,64),dtype='complex64');"
+        f"pyfftw.FFTW(A,A,axes=(-2,-1));"
+        f"print(b''.join(pyfftw.export_wisdom()))\"\n"
+        f"  A vectorized build names the instruction set in the codelet -- "
+        f"fftwf_codelet_n1fv_64_neon -- where a scalar one says "
+        f"fftwf_codelet_n1_64.",
         RuntimeWarning,
         stacklevel=2,
     )
