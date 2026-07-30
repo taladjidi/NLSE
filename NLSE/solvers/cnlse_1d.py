@@ -4,6 +4,7 @@ from scipy.constants import c, epsilon_0
 
 from ..utils import __BACKEND__
 from .cnlse import CNLSE
+from .nlse import show_if_possible
 
 
 class CNLSE_1d(CNLSE):
@@ -150,4 +151,4 @@ class CNLSE_1d(CNLSE):
         ax[1, 1].set_title(r"$\mathrm{arg}(\psi_2)$")
         ax[1, 1].set_xlabel("x in mm")
         ax[1, 1].set_ylabel(r"Phase in rad")
-        plt.show()
+        show_if_possible()

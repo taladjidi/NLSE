@@ -293,3 +293,27 @@ def test_a_lossy_run_still_loses_power():
     assert np.abs(lossy[0, 0]) < 0.999, (
         f"a lossy step must reduce it, got {np.abs(lossy[0, 0])}"
     )
+
+
+def test_a_field_with_no_power_survives_normalization(backend) -> None:
+    """Normalizing a zero field must leave it zero, not make it NaN.
+
+    There is no factor that scales an empty field to a target power, and
+    dividing anyway gives infinity, which multiplies the zeros it came from
+    into NaN. Nothing downstream notices: the run completes and returns a
+    field of NaN, having said no more than "divide by zero encountered".
+
+    It is a legitimate initial condition -- a driven cavity starts from one --
+    so the field is left as it is.
+    """
+    import warnings
+
+    simu = make_solver(backend, n=32)
+    empty = np.zeros((32, 32), dtype=PRECISION_COMPLEX)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        out = as_numpy(simu, simu.out_field(empty, 1e-3, verbose=False, plot=False))
+    assert np.all(np.isfinite(out.view(np.float32))), (
+        f"an empty field came back with non-finite values. (Backend {backend})"
+    )
+    assert np.all(out == 0), f"an empty field should stay empty. (Backend {backend})"

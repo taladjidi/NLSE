@@ -160,3 +160,28 @@ def test_the_optical_density_is_converted_and_the_quantum_one_is_not():
     assert gpe()._plot_density_scale == 1.0
     assert cnlse()._plot_density_scale == pytest.approx(c * epsilon_0 / 2 * 1e-4)
     assert ddgpe()._plot_density_scale == 1.0
+
+
+def test_a_figure_is_shown_where_it_can_be(monkeypatch):
+    """The guard must skip only the backends that cannot show anything.
+
+    plt.show() on a file-rendering backend does nothing except warn, and a
+    library should not warn a user for the backend matplotlib picked. But a
+    guard drawn too widely would silently stop showing figures to everyone,
+    and no plotting test would notice: they read the figure, not the screen.
+    """
+    from NLSE.solvers import nlse as nlse_module
+
+    shown = []
+    monkeypatch.setattr(nlse_module.plt, "show", lambda: shown.append(True))
+
+    monkeypatch.setattr(nlse_module.plt, "get_backend", lambda: "Agg")
+    assert nlse_module.show_if_possible() is False
+    monkeypatch.setattr(nlse_module.plt, "get_backend", lambda: "pdf")
+    assert nlse_module.show_if_possible() is False
+    assert not shown, "a non-interactive backend was asked to show a figure"
+
+    for name in ("TkAgg", "QtAgg", "macosx", "module://ipympl.backend_nbagg"):
+        monkeypatch.setattr(nlse_module.plt, "get_backend", lambda n=name: n)
+        assert nlse_module.show_if_possible() is True, f"{name} should show"
+    assert len(shown) == 4

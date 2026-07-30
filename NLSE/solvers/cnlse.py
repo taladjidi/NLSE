@@ -5,7 +5,7 @@ import numpy as np
 from scipy.constants import c, epsilon_0
 
 from ..utils import __BACKEND__, __CUPY_AVAILABLE__, __PYOPENCL_AVAILABLE__
-from .nlse import NLSE
+from .nlse import NLSE, show_if_possible
 
 if __CUPY_AVAILABLE__:
     pass
@@ -842,4 +842,4 @@ class CNLSE(NLSE):
         ax[1, 1].set_xlabel("x (mm)")
         ax[1, 1].set_ylabel("y (mm)")
         fig.colorbar(im3, ax=ax[1, 1], shrink=0.6, label="Phase (rad)")
-        plt.show()
+        show_if_possible()

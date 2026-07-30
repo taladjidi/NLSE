@@ -2,6 +2,7 @@
 
 import multiprocessing
 import pickle
+import re
 import time
 import warnings
 from typing import Any
@@ -28,7 +29,42 @@ pyfftw.interfaces.cache.enable()
 # so the spread between builds is far wider than this.
 _FFT_SLOWDOWN_FACTOR = 2.0
 
+# Below these the comparison cannot tell a slow library from the cost of
+# calling one. A 32x32 pair is microseconds of arithmetic under a millisecond
+# of dispatch, so the ratio is noise: it reported "2.2x slower" from 0.1 ms
+# against 0.1 ms. The gap this looks for only bites at large grids anyway --
+# 1.5 ms at 512, 35 at 2048 -- which is the same reason it is safe to skip.
+_FFT_MIN_ELEMENTS = 128 * 128
+_FFT_MIN_SECONDS = 1e-3
+
+# Timings this short are one scheduling hiccup away from doubling, so the
+# reference is the best of a few rather than a single run.
+_FFT_REPEATS = 3
+
 _warned_about_fft = False
+
+
+def measurable(array: np.ndarray, seconds: float) -> bool:
+    """Whether a timing on this array can mean anything.
+
+    Below these the comparison is mostly the cost of dispatching a transform
+    rather than performing one, and the ratio between two such is noise. It
+    mattered: a spurious verdict here does not merely warn, it discards the
+    wisdom cache and replans.
+
+    Parameters
+    ----------
+    array : np.ndarray
+        The array transformed.
+    seconds : float
+        What the transform pair took.
+
+    Returns
+    -------
+    bool
+        True if the measurement is worth comparing.
+    """
+    return array.size >= _FFT_MIN_ELEMENTS and seconds >= _FFT_MIN_SECONDS
 
 
 def scipy_roundtrip_seconds(array: np.ndarray, axes: tuple) -> float:
@@ -47,30 +83,56 @@ def scipy_roundtrip_seconds(array: np.ndarray, axes: tuple) -> float:
         Seconds for a forward and inverse transform.
     """
     reference = array.copy()
-    start = time.perf_counter()
-    scipy_fft.ifftn(
-        scipy_fft.fftn(reference, axes=axes, workers=-1), axes=axes, workers=-1
-    )
-    return time.perf_counter() - start
+    best = float("inf")
+    for _ in range(_FFT_REPEATS):
+        start = time.perf_counter()
+        scipy_fft.ifftn(
+            scipy_fft.fftn(reference, axes=axes, workers=-1), axes=axes, workers=-1
+        )
+        best = min(best, time.perf_counter() - start)
+    return best
 
 
-def warn_if_fft_is_slow(array: np.ndarray, seconds: float, axes: tuple) -> bool:
-    """Warn once if pyfftw is far slower than scipy on the same transform.
+# FFTW names every codelet it plans, and the vector ones carry the instruction
+# set in the name: fftwf_codelet_n2fv_64_avx against fftwf_codelet_n1_8. That
+# is the fact we actually want, and wisdom states it outright.
+_SIMD_CODELET = re.compile(
+    rb"codelet_[a-z0-9_]+_(sse2|avx512|avx2|avx|neon|vsx|altivec|generic_simd\d*)"
+)
+
+
+def fftw_lacks_simd() -> bool | None:
+    """Whether this FFTW plans without vector codelets, or None if unknown.
 
     Which FFTW a pyfftw wheel is linked against decides most of a CPU step at
-    large grid sizes, and nothing in the library reports it. ``simd_alignment``
-    does not: it read 4 both for the PyPI arm64 wheel, whose bundled FFTW has
-    no NEON codelets at all, and for the conda-forge build that is four times
-    faster. So this measures instead of asking.
+    large grid sizes: the PyPI arm64 wheel bundles a build with no NEON
+    codelets at all and is four times slower than the conda-forge one.
 
-    Parameters
-    ----------
-    array : np.ndarray
-        The array that was transformed, used to time the comparison.
-    seconds : float
-        What the pyfftw roundtrip took.
-    axes : tuple
-        Axes the transform was over.
+    ``simd_alignment`` does not report it -- it read 4 for both of those. But
+    FFTW records the codelets it planned, and names them for the instruction
+    set they use, so exporting wisdom answers the question directly. That
+    beats timing pyfftw against scipy and reading the ratio, which is what
+    this did before: at small sizes both are mostly the cost of being called,
+    and a 32x32 pair reported "2.2x slower" from 0.1 ms against 0.1 ms.
+
+    Returns
+    -------
+    bool or None
+        True if wisdom names codelets and none of them is vectorized, False
+        if any is, and None if nothing has been planned yet -- which is no
+        evidence either way, and is not reported as either.
+    """
+    try:
+        wisdom = b"".join(pyfftw.export_wisdom())
+    except Exception:  # a pyfftw that cannot export tells us nothing
+        return None
+    if b"codelet" not in wisdom:
+        return None
+    return not _SIMD_CODELET.search(wisdom)
+
+
+def warn_if_fftw_lacks_simd() -> bool:
+    """Warn once if this FFTW was built without vector instructions.
 
     Returns
     -------
@@ -80,17 +142,15 @@ def warn_if_fft_is_slow(array: np.ndarray, seconds: float, axes: tuple) -> bool:
     global _warned_about_fft
     if _warned_about_fft:
         return True
-    scipy_seconds = scipy_roundtrip_seconds(array, axes)
-    if seconds <= _FFT_SLOWDOWN_FACTOR * scipy_seconds:
+    if fftw_lacks_simd() is not True:
         return False
     _warned_about_fft = True
     warnings.warn(
-        f"pyFFTW is {seconds / scipy_seconds:.1f}x slower than scipy.fft on this "
-        f"machine ({seconds * 1e3:.1f} ms against {scipy_seconds * 1e3:.1f} ms for "
-        f"a {array.shape} transform pair), which usually means it is linked "
-        f"against an FFTW built without vector instructions. The transform is "
-        f"most of a CPU step at large grid sizes. Installing pyfftw from "
-        f"conda-forge rather than PyPI has measured 4x faster on Apple silicon.",
+        "pyFFTW planned this transform with no vector codelets, which means "
+        "it is linked against an FFTW built without vector instructions. The "
+        "transform is most of a CPU step at large grid sizes, and such a "
+        "build measures four times slower on Apple silicon. Installing pyfftw "
+        "from conda-forge rather than PyPI fixes it.",
         RuntimeWarning,
         stacklevel=2,
     )
@@ -207,9 +267,13 @@ class CPUBackend(Backend):
         #
         # An absolute threshold cannot see that. The old one allowed 400 ms at
         # this size, ten times the bad plan's cost, so it never fired. What
-        # separates a good plan from a stale one is the same measurement that
-        # separates a good FFTW build from a scalar one: how it compares to
-        # scipy on the same array.
+        # separates a good plan from a stale one is how it compares to scipy
+        # on the same array -- but only where that comparison means something,
+        # hence `measurable`: at 32x32 the ratio is dispatch overhead, and
+        # acting on it discards the whole wisdom cache to replan.
+        #
+        # Whether the *library* has vector codelets is a different question,
+        # and wisdom answers it outright rather than by timing.
         plan_fft(A, A)
         plan_ifft(A, A)
         t0 = time.perf_counter()
@@ -217,7 +281,9 @@ class CPUBackend(Backend):
         plan_ifft(A, A)
         t_roundtrip = time.perf_counter() - t0
 
-        if t_roundtrip > _FFT_SLOWDOWN_FACTOR * scipy_roundtrip_seconds(A, axes):
+        if measurable(A, t_roundtrip) and t_roundtrip > (
+            _FFT_SLOWDOWN_FACTOR * scipy_roundtrip_seconds(A, axes)
+        ):
             pyfftw.forget_wisdom()
             plan_fft = pyfftw.FFTW(
                 A,
@@ -235,12 +301,11 @@ class CPUBackend(Backend):
             )
             plan_fft(A, A)
             plan_ifft(A, A)
-            t0 = time.perf_counter()
-            plan_fft(A, A)
-            plan_ifft(A, A)
-            # Still slow with fresh wisdom means the library itself is slow,
-            # which no amount of replanning fixes.
-            warn_if_fft_is_slow(A, time.perf_counter() - t0, axes)
+
+        # Asked whatever the timing said, and of the library rather than of
+        # the plan: replanning cannot give an FFTW vector codelets it was
+        # built without.
+        warn_if_fftw_lacks_simd()
 
         # Restore array contents after planning
         A[:] = saved

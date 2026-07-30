@@ -3,7 +3,7 @@ import numpy as np
 from scipy.constants import c, epsilon_0
 
 from ..utils import __BACKEND__
-from .nlse import NLSE
+from .nlse import NLSE, show_if_possible
 
 
 class NLSE_1d(NLSE):
@@ -120,4 +120,4 @@ class NLSE_1d(NLSE):
         ax[1].set_ylabel(r"Phase arg$(\psi)$")
         for a in ax:
             a.set_xlabel("Position x in mm")
-        plt.show()
+        show_if_possible()

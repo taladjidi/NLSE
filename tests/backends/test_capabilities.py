@@ -325,33 +325,91 @@ def test_normalizing_gives_the_same_answer_by_either_route(backend_name):
 # ---------------------------------------------------------------------------
 
 
-def test_a_slow_fft_is_reported(monkeypatch):
-    """A pyfftw far slower than scipy must say so rather than be 4x slower.
+SCALAR_WISDOM = b"(fftw-3.3.10 (fftwf_codelet_n1_8) (fftwf_codelet_t1_4))"
+VECTOR_WISDOM = b"(fftw-3.3.10 (fftwf_codelet_n2fv_64_avx) (fftwf_codelet_t2fv_4_sse2))"
+NEON_WISDOM = b"(fftw-3.3.10 (fftwf_codelet_n1fv_8_neon))"
 
-    Nothing else notices. ``simd_alignment`` in particular does not: it reads
-    4 both for the PyPI arm64 wheel, whose FFTW has no NEON codelets, and for
-    the conda-forge build that is four times faster. Only timing separates
-    them, so only timing is checked.
+
+def fake_wisdom(monkeypatch, blob):
+    """Pin what FFTW reports it planned."""
+    from NLSE.backends import cpu as cpu_backend
+
+    monkeypatch.setattr(cpu_backend.pyfftw, "export_wisdom", lambda: (b"", blob, b""))
+
+
+def test_a_scalar_fftw_is_recognised(monkeypatch):
+    """A build with no vector codelets must be reported.
+
+    Which FFTW a pyfftw wheel is linked against decides most of a CPU step at
+    large grid sizes, and ``simd_alignment`` does not report it: it reads 4
+    both for the PyPI arm64 wheel, whose FFTW has no NEON codelets, and for
+    the conda-forge build that is four times faster. FFTW does say, in the
+    names of the codelets it plans, and that is what is read here.
     """
     from NLSE.backends import cpu as cpu_backend
 
     monkeypatch.setattr(cpu_backend, "_warned_about_fft", False)
-    array = np.ones((64, 64), dtype=np.complex64)
+    fake_wisdom(monkeypatch, SCALAR_WISDOM)
+    assert cpu_backend.fftw_lacks_simd() is True
+    with pytest.warns(RuntimeWarning, match="no vector codelets"):
+        assert cpu_backend.warn_if_fftw_lacks_simd() is True
 
-    with pytest.warns(RuntimeWarning, match="slower than scipy"):
-        assert cpu_backend.warn_if_fft_is_slow(array, 10.0, (-2, -1)) is True
 
-
-def test_a_healthy_fft_is_not_reported(monkeypatch):
-    """And a good build must not cry wolf on every plan built."""
+@pytest.mark.parametrize("blob", [VECTOR_WISDOM, NEON_WISDOM])
+def test_a_vectorized_fftw_is_left_alone(monkeypatch, blob):
+    """And a good build must not be accused, on either instruction set."""
     from NLSE.backends import cpu as cpu_backend
 
     monkeypatch.setattr(cpu_backend, "_warned_about_fft", False)
-    array = np.ones((64, 64), dtype=np.complex64)
-
+    fake_wisdom(monkeypatch, blob)
+    assert cpu_backend.fftw_lacks_simd() is False
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        assert cpu_backend.warn_if_fft_is_slow(array, 1e-9, (-2, -1)) is False
+        assert cpu_backend.warn_if_fftw_lacks_simd() is False
+
+
+def test_nothing_planned_yet_is_not_a_verdict(monkeypatch):
+    """Wisdom naming no codelets is no evidence, and must not be read as any."""
+    from NLSE.backends import cpu as cpu_backend
+
+    monkeypatch.setattr(cpu_backend, "_warned_about_fft", False)
+    fake_wisdom(monkeypatch, b"(fftw-3.3.10)")
+    assert cpu_backend.fftw_lacks_simd() is None
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert cpu_backend.warn_if_fftw_lacks_simd() is False
+
+
+def test_this_machines_fftw_is_judged_one_way_or_the_other():
+    """The probe has to work against the real library, not only a fake one.
+
+    Faked wisdom proves the parsing; this proves the parsing is pointed at
+    something. A pyfftw that has planned a transform must come back True or
+    False, never None.
+    """
+    from NLSE.backends import cpu as cpu_backend
+
+    array = cpu_backend.pyfftw.empty_aligned((64, 64), dtype="complex64")
+    cpu_backend.pyfftw.FFTW(array, array, direction="FFTW_FORWARD", axes=(-2, -1))
+    assert cpu_backend.fftw_lacks_simd() in (True, False)
+
+
+def test_a_transform_too_small_to_time_is_not_judged():
+    """A ratio between two dispatch overheads says nothing about FFTW.
+
+    This is what the verdict used to rest on, and at 32x32 it accused a
+    conda-forge build -- the fast one -- of being 2.2x slow on the strength
+    of 0.1 ms against 0.1 ms. Timing still decides whether cached wisdom has
+    gone stale, and acting on that discards the whole wisdom cache to replan,
+    so it is guarded by the same measurability floor.
+    """
+    from NLSE.backends import cpu as cpu_backend
+
+    tiny = np.ones((32, 32), dtype=np.complex64)
+    assert cpu_backend.measurable(tiny, 10.0) is False
+    big = np.ones((512, 512), dtype=np.complex64)
+    assert cpu_backend.measurable(big, 1e-6) is False
+    assert cpu_backend.measurable(big, 0.1) is True
 
 
 def test_the_fft_warning_is_issued_once(monkeypatch):
@@ -359,10 +417,10 @@ def test_the_fft_warning_is_issued_once(monkeypatch):
     from NLSE.backends import cpu as cpu_backend
 
     monkeypatch.setattr(cpu_backend, "_warned_about_fft", False)
-    array = np.ones((64, 64), dtype=np.complex64)
+    fake_wisdom(monkeypatch, SCALAR_WISDOM)
 
     with pytest.warns(RuntimeWarning):
-        cpu_backend.warn_if_fft_is_slow(array, 10.0, (-2, -1))
+        cpu_backend.warn_if_fftw_lacks_simd()
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        assert cpu_backend.warn_if_fft_is_slow(array, 10.0, (-2, -1)) is True
+        assert cpu_backend.warn_if_fftw_lacks_simd() is True

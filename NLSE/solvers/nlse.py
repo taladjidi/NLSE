@@ -40,6 +40,28 @@ DEFAULT_PHASE_PER_STEP = 0.1
 DEFAULT_MIN_STEPS = 10
 
 
+# Backends that render to a file rather than a window. Calling show() on one
+# does nothing except warn, and a library should not warn a user for the
+# backend matplotlib picked.
+_NON_INTERACTIVE_BACKENDS = frozenset(
+    {"agg", "pdf", "ps", "svg", "template", "cairo", "pgf"}
+)
+
+
+def show_if_possible() -> bool:
+    """Show the current figure, where the backend can show anything.
+
+    Returns
+    -------
+    bool
+        True if the figure was shown.
+    """
+    if plt.get_backend().lower() in _NON_INTERACTIVE_BACKENDS:
+        return False
+    plt.show()
+    return True
+
+
 class NLSE:
     """A class to solve NLSE."""
 
@@ -801,7 +823,7 @@ class NLSE:
         ax[2].set_xlabel(r"$k_x$ ($mm^{-1}$)")
         ax[2].set_ylabel(r"$k_y$ ($mm^{-1}$)")
         fig.colorbar(im2, ax=ax[2], shrink=0.6, label="Intensity (a.u.)")
-        plt.show()
+        show_if_possible()
 
     # Construction.
     def _resolved_nl_length(self, nl_length: float) -> float:
@@ -1341,7 +1363,7 @@ class NLSE:
                 E_in_np = self._backend.to_numpy(E_in)
                 integral = np.sum(arr_np, axis=self._last_axes)
                 integral = integral * self._norm_constant
-                E_00 = (self._norm_target / integral) ** 0.5
+                E_00 = self._normalization_factor(self._norm_target, integral)
                 result = (E_00.T * E_in_np.T).T.astype(E_in_np.dtype)
                 A = self._backend.from_numpy(result)
             else:
@@ -1354,11 +1376,38 @@ class NLSE:
                     target = self._backend.from_numpy(
                         np.asarray(target, dtype=integral.dtype)
                     )
-                E_00 = (target / integral) ** 0.5
+                E_00 = self._normalization_factor(target, integral)
                 A[:] = (E_00.T * E_in.T).T
         else:
             A[:] = E_in
         return A, A_sq
+
+    @staticmethod
+    def _normalization_factor(target, integral):
+        """Return the scale that carries this field to the target power.
+
+        A field with no power in it has no factor that scales it to one, and
+        dividing anyway gives infinity where the caller asked for a beam --
+        which then multiplies the zeros it came from into NaN, and the run
+        reports nothing worse than a RuntimeWarning on the way past. A field
+        that is zero is left as it is instead. It is a legitimate initial
+        condition: a driven cavity starts from one.
+
+        Parameters
+        ----------
+        target : Any
+            Power asked for, per component where there are several.
+        integral : Any
+            Power the field carries.
+
+        Returns
+        -------
+        Any
+            The factor, 1 wherever the field carries nothing.
+        """
+        empty = integral == 0
+        safe = integral + empty  # 1 where the field is empty, untouched elsewhere
+        return ((target / safe) ** 0.5) * (1 - empty) + empty
 
     def _build_fft_plan(self, A: np.ndarray) -> list:
         """Build the FFT plan objects for propagation.
@@ -1966,7 +2015,10 @@ class NLSE:
                     step_fn = step_factory(delta_z)
             i += 1
             if verbose:
-                pbar.n = abs(z_prop) / z * 100
+                # Clamped: the last step covers the distance left over, and
+                # rounding can put z_prop a hair past z, which tqdm reports as
+                # a warning about a fraction outside [0, 1].
+                pbar.n = min(100.0, abs(z_prop) / z * 100)
                 pbar.refresh()
         if remainder:
             # An adaptive callback may have moved the step, so what is left is
