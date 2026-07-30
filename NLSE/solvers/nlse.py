@@ -360,7 +360,7 @@ class NLSE:
                 self.propagator = self._build_propagator_rk4(field_dtype)
             else:
                 self.propagator = self._build_propagator(field_dtype, delta_z)
-            self._send_propagator_to_gpu(field_dtype)
+            self._send_propagator_to_gpu()
             if verbose:
                 pbar = tqdm.tqdm(
                     total=100,
@@ -1786,16 +1786,17 @@ class NLSE:
             if isinstance(val, np.ndarray):
                 setattr(self, attr, self._backend.from_numpy(val))
 
-    def _send_propagator_to_gpu(self, field_dtype: np.dtype) -> None:
+    def _send_propagator_to_gpu(self) -> None:
         """Move the freshly built propagator onto the device.
 
         Separate from _send_arrays_to_gpu because the propagator is built
         after delta_z is settled, which is after the other arrays have gone.
 
-        Parameters
-        ----------
-        field_dtype : np.dtype
-            Complex dtype of the field, which the propagator already matches.
+        It used to take the field's dtype, and never looked at it: the
+        propagator is built from that dtype a line or two earlier, so the
+        argument restated a fact rather than deciding anything. Reading the
+        call, it looked as though passing the wrong one would convert
+        something.
         """
         # _build_propagator leaves it on the device; the RK4 operator comes
         # from the cache on the host, so only that still needs moving.
@@ -1931,7 +1932,7 @@ class NLSE:
                 )
         return k
 
-    def _take_partial_step(self, step_factory, remainder, method, precision, dtype):
+    def _take_partial_step(self, step_factory, remainder, method, dtype):
         """Cover the distance left over after the whole steps.
 
         The propagator is built from the step, so a shorter one needs its own.
@@ -1945,10 +1946,13 @@ class NLSE:
             Distance still to cover.
         method : str
             Integration method ("split_step" or "RK4").
-        precision : str
-            Order of the split step.
         dtype : np.dtype
             Complex dtype of the field.
+
+        The splitting is not passed: ``step_factory`` defaults it to the one
+        the run asked for, which is what this wants. A merged Strang run
+        overrides it for the loop body only, and its bracket is closed before
+        the remainder is reached, so the leftover is a whole step of its own.
         """
         # Swapped rather than rebuilt afterwards: the solver should describe
         # the run it just did, not the sliver at the end of it.
@@ -1956,7 +1960,7 @@ class NLSE:
         saved = (self.propagator, self._propagator_fft)
         if method != "RK4":
             self.propagator = self._build_propagator(dtype, remainder)
-            self._send_propagator_to_gpu(dtype)
+            self._send_propagator_to_gpu()
         self._current_delta_z = remainder
         try:
             step_factory(remainder)()
@@ -2131,11 +2135,7 @@ class NLSE:
                     )
                 if remainder:
                     self._take_partial_step(
-                        _make_step,
-                        remainder,
-                        method,
-                        precision,
-                        self._field_dtype(state[0]),
+                        _make_step, remainder, method, self._field_dtype(state[0])
                     )
             else:
                 self._loop_with_callbacks(
@@ -2223,7 +2223,7 @@ class NLSE:
             # remainder computed before it ran.
             left = z - abs(z_prop)
             if left > 1e-12 * z:
-                self._take_partial_step(step_factory, left, method, precision, dtype)
+                self._take_partial_step(step_factory, left, method, dtype)
                 z_prop += left
                 if callback is not None:
                     self._run_callbacks(callback, callback_args, state[0], z_prop, i)
