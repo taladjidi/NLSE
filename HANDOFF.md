@@ -814,6 +814,52 @@ Both are tested by driving the controller directly. A test through a
 propagation could not reach the ceiling to exercise the cap, and could only
 ever time out on the floor.
 
+### 30. The device-side propagator: two bugs found, the change backed out
+
+`_compute_propagator` builds `exp(theta*dz)` with `np.exp` over host grids and
+transfers the result: 9.78 ms at 512x512 against a 0.164 ms step on CUPY, and
+identical on all three backends because none of it happens on the device.
+`_energy_rates` is another 9.16 ms for the same reason. Both only ever ran once
+per run until the error-driven step started calling them repeatedly.
+
+**Attempted and reverted.** Building it on the device made `tests/backends`
+run for over 500 s where the whole suite takes 55, and pushed `tests/solvers`
+from 2.28 GB to 2.96 GB. The slowdown is not explained and must be understood
+before retrying -- it is not the propagator cache, which was bounded and
+verified bounded (6 entries against a cap of 8 under an adaptive run). The
+diff is 218 lines; the pieces below are all verified and worth keeping.
+
+**`Backend.exp` works natively on every testable backend**: `np.exp`,
+`cp.exp`, `pyopencl.clmath.exp` all handle complex arrays, to 6.7e-8. MLX
+untested.
+
+**The two propagators are the same object.** For NLSE, NLSE_1d, CNLSE,
+CNLSE_1d and GPE, `_compute_propagator(dtype, dz)` equals
+`exp(_compute_propagator_rk4() * dz)` to the last bit, so one implementation
+could replace five overrides.
+
+**NLSE_3d's split step applies its temporal dispersion without the step.**
+`prop_t = np.exp(-1j * D0 / 2 * Omega**2)` has no `delta_z`, so the temporal
+phase it imprints is 1.852e-3 whatever the step, where it should be that times
+`dz`. Over a fixed distance the dispersion picked up follows the *number of
+steps*: halve the step and you double it, and the run never converges under
+refinement. The physics is unambiguous -- `D0` is documented in s^2/m, so
+`D0/2 * Omega**2` is 1/m and the exponent needs a length to be dimensionless.
+Corroborated twice in the same file: `_dispersion_operator` adds it to
+`0.5*K^2/k` as a like-for-like rate, and `_compute_propagator_rk4` returns it
+as a rate RK4 multiplies by the step. **Split-step and RK4 therefore disagree
+about 3D physics**, and RK4 is the one that is right.
+
+**DDGPE's RK4 dispersion operator raises**, and did before this branch:
+`np.array([prop1, prop2])` where prop1 is a scalar and prop2 a grid is an
+inhomogeneous array in numpy >= 1.24. So DDGPE with `method="RK4"` cannot run.
+Nothing covers it -- `test_double_precision.py` spans five solver classes and
+DDGPE is not one of them.
+
+**`_propagator_cache` is unbounded**, per instance and holding a field per
+distinct step. Harmless while the step was fixed; an error-driven step asks
+for a new one every few steps. `tests/solvers` already peaks at 2.28 GB.
+
 ## Conventions used
 
 - Commit before mutation testing. `git checkout -- <file>` during a mutation
