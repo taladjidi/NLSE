@@ -108,6 +108,18 @@ A vectorized build names the instruction set in the codelet, as in
 `fftwf_codelet_n1_64`. Note that `pyfftw.simd_alignment` does **not** tell you
 this — it reads the same for both builds.
 
+If the warning persists after reinstalling, run
+
+```bash
+python benchmarks/check_fftw.py
+```
+
+which reports which package was actually imported and what it plans. The usual
+cause is that `conda install` reported success without doing anything: it sees
+a package named `pyfftw` at a satisfying version and marks the requirement met,
+so the wheel stays. `conda list pyfftw` showing a channel of `pypi` is the
+giveaway.
+
 On Mac, you first need to install FFTW which can be done by simply using Homebrew `brew install fftw`. Some users reported this didn't work for them, in this case the next best bet is to build it from source following these instructions: [FFTW - Installation and customization](http://www.fftw.org/fftw2_doc/fftw_6.html).
 
 **WARNING** : The default flag passed to `FFTW` for planning is `FFTW_PATIENT` which means that the first run of the code can take a long time. This information is cached so subsequent runs just have to load the plans, removing this computation time.

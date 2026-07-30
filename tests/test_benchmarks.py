@@ -74,3 +74,29 @@ def test_the_columns_nsys_renamed_are_both_accepted():
     assert nsys_summary.column(old, "Total Time (ns)", "Total Time") == "1000"
     assert nsys_summary.column(old, "Instances", "Num Calls", "Count") == "4"
     assert nsys_summary.column(old, "Name", "Kernel Name", "Operation") == "k"
+
+
+def test_the_fftw_check_shares_the_backends_classification():
+    """One statement of what a vector codelet looks like, not two.
+
+    benchmarks/check_fftw.py exists to explain a warning the CPU backend
+    raises. If it carried its own idea of which codelet names are vectorized,
+    the tool and the warning could disagree, and the tool is what someone
+    reaches for when they doubt the warning.
+    """
+    check_fftw = pytest.importorskip("check_fftw")
+    from NLSE.backends.cpu import _SIMD_CODELET
+
+    assert check_fftw._SIMD_CODELET is _SIMD_CODELET
+
+
+def test_the_fftw_check_reads_real_codelet_names():
+    """Its parsing must find the names FFTW actually writes."""
+    check_fftw = pytest.importorskip("check_fftw")
+
+    wisdom = b"(fftw-3.3.10 (fftwf_codelet_n1fv_8_neon) (fftwf_codelet_t1_4))"
+    assert check_fftw.codelets(wisdom) == [
+        "fftwf_codelet_n1fv_8_neon",
+        "fftwf_codelet_t1_4",
+    ]
+    assert bool(check_fftw._SIMD_CODELET.search(wisdom)) is True
