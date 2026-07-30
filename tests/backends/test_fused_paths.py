@@ -85,8 +85,34 @@ def grid_shape(cls):
     return (N,) if one_dimensional(cls) else (N, N)
 
 
-def make(cls, backend, **overrides):
-    """Return a solver of this class with this module's parameters."""
+def make(cls, backend, symmetric=False, **overrides):
+    """Return a solver of this class with this module's parameters.
+
+    A coupled solver gets the two components *different* physics, because its
+    constructor does not: it sets ``alpha2 = alpha``, ``n22 = n2``,
+    ``I_sat2 = I_sat`` and ``k2 = k``, so a test that leaves them alone runs
+    with g11 == g22, alpha1 == alpha2 and Isat1 == Isat2. Every kernel here
+    then reads the same number whichever component's parameter it means, and
+    swapping them changes nothing. Four such mutations survived the whole
+    suite before these were made to differ.
+
+    Parameters
+    ----------
+    cls : type
+        Solver class.
+    backend : str
+        Backend name.
+    symmetric : bool
+        Leave the components sharing one set of parameters, as the
+        constructor does. For the few tests that are about that.
+    **overrides
+        Any constructor argument, by keyword.
+
+    Returns
+    -------
+    NLSE
+        The solver.
+    """
     params = {
         "alpha": 20,
         "power": 1.05,
@@ -103,7 +129,15 @@ def make(cls, backend, **overrides):
     if not one_dimensional(cls):
         params["NY"] = N
     params.update(overrides)
-    return cls(**params)
+    solver = cls(**params)
+    if coupled(cls) and not symmetric:
+        solver.alpha2 = 0.5 * solver.alpha
+        solver.n22 = 0.4 * solver.n2
+        solver.I_sat2 = 0.25 * solver.I_sat
+        # The second component's wavenumber too, or its propagator is the
+        # first one's and reading the wrong one goes unnoticed.
+        solver.k2 = 2 * np.pi / 795e-9
+    return solver
 
 
 def gaussian(cls, dtype=np.complex64):

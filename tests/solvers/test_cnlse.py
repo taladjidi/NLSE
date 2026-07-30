@@ -302,3 +302,28 @@ def test_an_array_norm_target_reaches_the_backend(monkeypatch) -> None:
         f"the per-component target never went through the backend; "
         f"shapes converted were {seen}"
     )
+
+
+def test_each_component_propagates_at_its_own_wavenumber(backend) -> None:
+    """Both propagators must read the wavenumber of their own component.
+
+    ``CNLSE.__init__`` sets ``k2 = k``, so a propagator built from ``k``
+    where it should use ``k2`` gives the right answer for every test that
+    leaves the default alone -- and the tests that check the formula take
+    their own expectation from ``simu.k2``, so they agree with it. Both
+    mutations survived the suite. This gives the second component a
+    different wavenumber, which is the only way the difference shows.
+    """
+    simu = make_solver(backend)
+    simu.k2 = 2 * np.pi / 795e-9
+    assert simu.k2 != simu.k, "the components must differ for this to test anything"
+
+    split = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
+    assert np.allclose(
+        split[1], np.exp(-1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k2 * DZ_TEST)
+    ), f"the split-step propagator ignores k2. (Backend {backend})"
+
+    rk4 = as_numpy(simu, simu._build_propagator_rk4(PRECISION_COMPLEX))
+    assert np.allclose(rk4[1], -1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k2), (
+        f"the RK4 dispersion operator ignores k2. (Backend {backend})"
+    )
