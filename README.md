@@ -100,11 +100,11 @@ We found out that [PyVkFFT](https://github.com/vincefn/pyvkfft/tree/master) was 
 
 Other than this, the code relies on these libraries :
 
-- `numba` : for best CPU performance on Intel CPU's, with `icc_rt`
-- `pickle`
+- `numba` : compiles the CPU kernels, and runs them across cores
 - `numpy`
-- `scipy`
+- `scipy` : the CPU transform, and the non-local convolution
 - `matplotlib`
+- `tqdm`
 
 ### Troubleshooting a CUDA install
 

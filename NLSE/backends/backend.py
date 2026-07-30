@@ -297,9 +297,10 @@ class Backend(ABC):
         """Return the FFT plan for this transform, building it once.
 
         A plan depends only on the shape, the axes and the dtype, so it is
-        built once and reused. Planning is expensive: the CPU backend
-        reloads FFTW wisdom from disk and times a roundtrip to validate it,
-        and VkFFT compiles its own kernels.
+        built once and reused. Planning is expensive where there is planning
+        to do: VkFFT compiles its own kernels, and cuFFT allocates a work
+        area. The CPU backend has none -- scipy plans per call from a cache
+        of its own -- and returns the axes.
 
         The cache lives on the backend, and backends are shared per name, so
         a parameter sweep that builds a solver per point plans once rather

@@ -348,8 +348,8 @@ class DDGPE(CNLSE):
             Propagator matrix for both fields
             [propagator1, propagator2].
         plans : list
-            List of FFT plan objects. Either a single FFT plan for
-            both directions (GPU case) or distinct FFT and IFFT plans for FFTW.
+            List of FFT plan objects: one plan used in both directions on
+            the GPU backends, and the axes to transform over on CPU.
         delta_z : float
             Step to take. Must match the propagator, which was built
             from it.

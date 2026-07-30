@@ -1622,9 +1622,9 @@ class NLSE:
 
         The buffers take the field's own precision. Pinning them to
         complex64 made a double-precision run write the field into a stage
-        buffer half its width, and the FFT plan -- built from the field --
-        then met an array of the wrong dtype: pyfftw refused it outright and
-        cuFFT returned NaN.
+        buffer half its width, and the transform -- planned from the field --
+        then met an array of the wrong dtype, which cuFFT answers with NaN
+        rather than an error.
         """
         if method == "RK4":
             dtype = self._field_dtype(A)

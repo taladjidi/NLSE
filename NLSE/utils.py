@@ -63,7 +63,7 @@ except Exception:
 
 
 def get_cache_dir() -> Path:
-    """Get the directory for cached FFTW wisdom and backend benchmarks.
+    """Get the directory for cached backend benchmarks.
 
     Uses the platform cache location rather than the package directory.
     Writing inside the installed package fails outright on a read-only or
