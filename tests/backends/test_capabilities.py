@@ -443,3 +443,24 @@ def test_exp_stays_on_the_backend(backend_name):
         f"{backend_name}.exp disagrees with numpy"
     )
     assert got.shape == operator.shape
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_norm_agrees_with_numpy(backend_name):
+    """Reducing on the device must give what reducing on the host gives.
+
+    Only the scalar should cross, but the answer has to be the same one. This
+    was missing, and the OpenCL override shipped broken: pyopencl builds its
+    reductions from a mako template, mako is not one of its hard dependencies,
+    and without it the reduction raises the first time it is asked for --
+    which was inside a callback, partway through a propagation.
+    """
+    backend = get_backend(backend_name)
+    field = (
+        np.linspace(-1, 1, 4096).reshape(64, 64)
+        + 1j * np.linspace(2, -2, 4096).reshape(64, 64)
+    ).astype(np.complex64)
+    got = backend.norm(backend.from_numpy(field))
+    assert got == pytest.approx(float(np.linalg.norm(field)), rel=1e-5), (
+        f"{backend_name}.norm disagrees with numpy"
+    )

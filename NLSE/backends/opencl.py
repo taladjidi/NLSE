@@ -163,9 +163,21 @@ class OpenCLBackend(Backend):
         return plan[0].ifft_unnorm(array, array)
 
     def norm(self, array: Any) -> float:
-        """Reduce on the device; only the scalar comes back."""
-        flat = array.reshape(-1)
-        return float(np.sqrt(cla.vdot(flat, flat).get().real))
+        """Reduce on the device where the reduction can be built.
+
+        PyOpenCL generates its reduction kernels from a mako template, and
+        mako is not a hard dependency of pyopencl. Without it every reduction
+        raises ModuleNotFoundError -- not at import, but the first time one is
+        asked for, which here was inside a callback partway through a
+        propagation. Falling back to the base class costs the round trip this
+        override exists to avoid, and is what the caller would have had
+        anyway.
+        """
+        try:
+            flat = array.reshape(-1)
+            return float(np.sqrt(cla.vdot(flat, flat).get().real))
+        except ModuleNotFoundError:
+            return super().norm(array)
 
     def exp(self, array: Any) -> Any:
         """Exponentiate without leaving this backend."""
