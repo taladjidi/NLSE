@@ -814,51 +814,77 @@ Both are tested by driving the controller directly. A test through a
 propagation could not reach the ceiling to exercise the cap, and could only
 ever time out on the floor.
 
-### 30. The device-side propagator: two bugs found, the change backed out
+### 30. The propagator is built where the field is
 
-`_compute_propagator` builds `exp(theta*dz)` with `np.exp` over host grids and
-transfers the result: 9.78 ms at 512x512 against a 0.164 ms step on CUPY, and
-identical on all three backends because none of it happens on the device.
-`_energy_rates` is another 9.16 ms for the same reason. Both only ever ran once
-per run until the error-driven step started calling them repeatedly.
+`_build_propagator` is `exp(theta * dz)` for the operator RK4 already
+integrates, computed by `Backend.exp` on the backend's own arrays. The seven
+`_compute_propagator` implementations are gone with it.
 
-**Attempted and reverted.** Building it on the device made `tests/backends`
-run for over 500 s where the whole suite takes 55, and pushed `tests/solvers`
-from 2.28 GB to 2.96 GB. The slowdown is not explained and must be understood
-before retrying -- it is not the propagator cache, which was bounded and
-verified bounded (6 entries against a cap of 8 under an adaptive run). The
-diff is 218 lines; the pieces below are all verified and worth keeping.
+**A rebuild at 512x512: CUPY 9.68 -> 0.064 ms, CL 9.72 -> 0.254, CPU 9.60 ->
+7.61.** 151x and 38x; the CPU keeps the exponential either way and saves only
+rebuilding `Kxx**2 + Kyy**2` in complex128. It matters wherever the step
+changes during a run.
 
-**`Backend.exp` works natively on every testable backend**: `np.exp`,
-`cp.exp`, `pyopencl.clmath.exp` all handle complex arrays, to 6.7e-8. MLX
-untested.
+**The first attempt looked like a hang and was a type change.** Returning
+backend-native arrays broke every test that compares a propagator against
+numpy, and the two device backends fail that differently: CuPy raises, while
+PyOpenCL's `Array` has no `__array__` at all, so numpy reads it one element at
+a time -- **866 ms for a single 256x256 array**. A suite full of those is not
+recognisable as a type error. The conversion is explicit at the test boundary
+now.
 
-**The two propagators are the same object.** For NLSE, NLSE_1d, CNLSE,
-CNLSE_1d and GPE, `_compute_propagator(dtype, dz)` equals
-`exp(_compute_propagator_rk4() * dz)` to the last bit, so one implementation
-could replace five overrides.
+Three things that had to move with it:
 
-**NLSE_3d's split step applies its temporal dispersion without the step.**
-`prop_t = np.exp(-1j * D0 / 2 * Omega**2)` has no `delta_z`, so the temporal
-phase it imprints is 1.852e-3 whatever the step, where it should be that times
-`dz`. Over a fixed distance the dispersion picked up follows the *number of
-steps*: halve the step and you double it, and the run never converges under
-refinement. The physics is unambiguous -- `D0` is documented in s^2/m, so
-`D0/2 * Omega**2` is 1/m and the exponent needs a length to be dimensionless.
-Corroborated twice in the same file: `_dispersion_operator` adds it to
-`0.5*K^2/k` as a like-for-like rate, and `_compute_propagator_rk4` returns it
-as a rate RK4 multiplies by the step. **Split-step and RK4 therefore disagree
-about 3D physics**, and RK4 is the one that is right.
+- `_send_arrays_to_gpu` handed `from_numpy` whatever it found. PyOpenCL does
+  not reject an `Array`; it tries to enqueue a write *from* it.
+- The propagator cache is bounded and least-recently-used. It held a field per
+  distinct step, which is nothing while the step is fixed and unbounded once
+  it is chosen from a measured error.
+- On a device backend the host copy of the operator is not kept. Peak RSS went
+  4.57 GB -> 2.28, its baseline.
 
-**DDGPE's RK4 dispersion operator raises**, and did before this branch:
-`np.array([prop1, prop2])` where prop1 is a scalar and prop2 a grid is an
-inhomogeneous array in numpy >= 1.24. So DDGPE with `method="RK4"` cannot run.
-Nothing covers it -- `test_double_precision.py` spans five solver classes and
-DDGPE is not one of them.
+**NLSE_3d was integrating a different equation in each method.** Its split step
+applied the temporal dispersion with no step at all -- `exp(-1j D0/2 Omega^2)`
+-- while RK4 treated the same expression as a rate. `D0` is documented in
+s^2/m, so `D0/2 Omega^2` is a phase per metre and the exponent is not
+dimensionless without a length. Writing the propagator as `exp(theta*dz)`
+fixes it by construction, and **3D results change**.
 
-**`_propagator_cache` is unbounded**, per instance and holding a field per
-distinct step. Harmless while the step was fixed; an error-driven step asks
-for a new one every few steps. `tests/solvers` already peaks at 2.28 GB.
+The test is that a linear run cannot depend on its step count: with no
+nonlinearity the linear operator is applied exactly and has nothing to fail to
+commute with. Four steps against sixteen differed by 2.6e-4 and now agree to
+9.1e-7. **It needs `alpha=0` as well as `n2=0`** -- loss is saturable, so with
+a finite `Isat` it depends on the intensity, does not commute either, and
+leaves 1.2e-4 of its own, which looks exactly like the bug.
+
+**DDGPE's dispersion operator paired a scalar with a grid.** The exciton branch
+has no k dependence, and `np.array([scalar, grid])` is an inhomogeneous array,
+which numpy has raised on since 1.24. Unreachable while only RK4 read it and
+DDGPE exposes no `method` argument; load-bearing now that the split step is
+built from it.
+
+### 31. What is left, and where the adaptive stepper's cost went
+
+**`_energy_rates` is now the whole of it.** It is still `to_numpy(A)` and numpy
+reductions -- 9.16 ms at 512x512 -- and the step cap calls it at every
+adaptation. Measured at 512x512 with the same step count either way, the
+error-driven step costs 2.77x the fast loop on CUPY, and about 27 ms of that
+32 ms is `_energy_rates`. It is the same fix as the propagator: reduce where
+the field is. `Backend.norm` already exists for it.
+
+End to end, where the step is free to grow, it already pays for itself: 0.93x
+the fixed-step fast loop on CL and 0.80x on CPU, against 1.90x on CUPY, whose
+steps are too cheap to amortize three trials.
+
+**`Backend.norm` on OpenCL shipped raising.** pyopencl builds its reductions
+from a mako template and does not depend on mako, so without it every
+reduction raises the first time one is asked for -- inside a callback, partway
+through a propagation. It falls back now. Nothing had checked that a backend's
+norm agrees with numpy, because the tests that exercise it run on CPU; and
+with mako installed the fallback is unreachable, so the test has to simulate
+the failure or it passes either way.
+
+## Conventions used
 
 ## Conventions used
 
