@@ -29,18 +29,89 @@ import numpy as np
 COMPLEX = 8  # complex64
 REAL = 4  # float32
 
-# Kernel -> bytes touched per element, counting each array once. A kernel that
-# reads an array it also writes is charged for both.
+# Bytes each kernel must touch per grid point, counting every array it reads
+# and every array it writes. A kernel that updates an array in place is
+# charged for the read and the write. Coupled kernels are charged per
+# component, since they are handed one component at a time.
+#
+# This is the compulsory traffic, so GB/s computed from it is a lower bound on
+# what the kernel actually moves.
 TRAFFIC = {
     "bandwidth_ceiling": 2 * COMPLEX,
+    # single component, real space
     "square_mod": COMPLEX + REAL,
     "apply_propagator": 3 * COMPLEX,
-    "nl_prop_without_V": 2 * COMPLEX + REAL,
     "nl_prop": 2 * COMPLEX + 2 * REAL,
+    "nl_prop_without_V": 2 * COMPLEX + REAL,
     "square_mod_nl_prop": 2 * COMPLEX,
     "square_mod_nl_prop_v": 2 * COMPLEX + REAL,
-    "fft_roundtrip": 4 * COMPLEX,  # a lower bound; see the module docstring
+    # coupled
+    "nl_prop_c": 2 * COMPLEX + 3 * REAL,
+    "nl_prop_without_V_c": 2 * COMPLEX + 2 * REAL,
+    "rabi_coupling": 4 * COMPLEX,
+    # RK4 stages
+    "rk4_axpy": 3 * COMPLEX,
+    "rk4_accumulate": 3 * COMPLEX,
+    "rk4_nl_rhs": 3 * COMPLEX + REAL,
+    "rk4_nl_rhs_v": 3 * COMPLEX + 2 * REAL,
+    "square_mod_rk4_nl_rhs": 3 * COMPLEX,
+    "square_mod_rk4_nl_rhs_v": 3 * COMPLEX + REAL,
+    "rk4_nl_rhs_c": 3 * COMPLEX + 2 * REAL,
+    "rk4_nl_rhs_c_v": 3 * COMPLEX + 3 * REAL,
+    "rk4_set_and_axpy": 5 * COMPLEX,
+    "rk4_acc_and_axpy": 6 * COMPLEX,
+    # whole-step kernels: a transform pair plus the real-space work
+    "linear_step": 4 * COMPLEX,
+    "split_step_fused": 6 * COMPLEX,
+    "split_step_coupled_fused": 12 * COMPLEX,
+    "rk4_rhs_fused": 6 * COMPLEX,
+    "rk4_rhs_coupled_fused": 12 * COMPLEX,
+    "split_step_rk4_fused": 24 * COMPLEX,
+    "fft_roundtrip": 4 * COMPLEX,
 }
+
+# Which group each kernel belongs to, for the report.
+GROUPS = [
+    ("reference", ["bandwidth_ceiling", "fft_roundtrip"]),
+    (
+        "single component",
+        [
+            "square_mod",
+            "apply_propagator",
+            "nl_prop",
+            "nl_prop_without_V",
+            "square_mod_nl_prop",
+            "square_mod_nl_prop_v",
+        ],
+    ),
+    ("coupled", ["nl_prop_c", "nl_prop_without_V_c", "rabi_coupling"]),
+    (
+        "RK4 stages",
+        [
+            "rk4_axpy",
+            "rk4_accumulate",
+            "rk4_nl_rhs",
+            "rk4_nl_rhs_v",
+            "square_mod_rk4_nl_rhs",
+            "square_mod_rk4_nl_rhs_v",
+            "rk4_nl_rhs_c",
+            "rk4_nl_rhs_c_v",
+            "rk4_set_and_axpy",
+            "rk4_acc_and_axpy",
+        ],
+    ),
+    (
+        "fused whole steps",
+        [
+            "linear_step",
+            "split_step_fused",
+            "split_step_coupled_fused",
+            "rk4_rhs_fused",
+            "rk4_rhs_coupled_fused",
+            "split_step_rk4_fused",
+        ],
+    ),
+]
 
 
 def reset(backend):
@@ -66,7 +137,7 @@ def reset(backend):
 
 
 def timed(fn, backend, result_of, repeats=15):
-    """Return the best seconds for one call.
+    """Return the best and median seconds for one call.
 
     Every call is synchronized before the clock stops. Queueing several and
     forcing only the last lets a lazy backend discard the ones whose results
@@ -85,20 +156,30 @@ def timed(fn, backend, result_of, repeats=15):
 
 
 def make_arrays(backend, n):
-    """Return the field, its modulus squared and a propagator, on the device."""
+    """Return every array the kernels need, on the device."""
     rng = np.random.default_rng(0)
     a = (rng.normal(size=(n, n)) + 1j * rng.normal(size=(n, n))).astype(np.complex64)
+    pair = np.stack([a, 0.5 * a])
     return {
-        "A": backend.from_numpy(a),
+        "A": backend.from_numpy(a.copy()),
+        "A2": backend.from_numpy((0.5 * a).copy()),
         "B": backend.from_numpy(a.copy()),
+        "k": backend.from_numpy(a.copy()),
+        "acc": backend.from_numpy(a.copy()),
+        "out": backend.from_numpy(a.copy()),
         "A_sq": backend.from_numpy(np.abs(a) ** 2),
+        "A_sq2": backend.from_numpy(np.abs(0.5 * a) ** 2),
         "prop": backend.from_numpy(np.exp(1j * a.real).astype(np.complex64)),
         "V": backend.from_numpy(a.real.copy()),
+        "pair": backend.from_numpy(pair.copy()),
+        "pair_prop": backend.from_numpy(
+            np.stack([np.exp(1j * a.real), np.exp(1j * a.real)]).astype(np.complex64)
+        ),
     }
 
 
 def ceiling_call(backend, arrays):
-    """Return a callable scaling one array into another, and its result."""
+    """Return a callable scaling one array into another."""
     name = backend.name
     a, b = arrays["A"], arrays["B"]
     if name == "MLX":
@@ -110,35 +191,105 @@ def ceiling_call(backend, arrays):
 
         return lambda: cp.multiply(a, np.complex64(2.0), out=b)
     if name == "CL":
-        import pyopencl.array as cla  # noqa: F401
-
         return lambda: (b._axpbz(b, np.complex64(2.0), a, np.complex64(0.0)), b)[1]
     return lambda: np.multiply(a, np.complex64(2.0), out=b)
 
 
-def kernel_calls(kernels, arrays, dz=1e-4):
+def kernel_calls(kernels, arrays, plan, pair_plan, dz=1e-4):
     """Return {name: callable} for every kernel this backend provides."""
-    A, A_sq, prop, V = arrays["A"], arrays["A_sq"], arrays["prop"], arrays["V"]
-    alpha, g, Isat = np.float32(0.0), np.float32(1e-3), np.float32(1e5)
+    A, A2, k, acc, out = (arrays[x] for x in ("A", "A2", "k", "acc", "out"))
+    A_sq, A_sq2 = arrays["A_sq"], arrays["A_sq2"]
+    prop, V, pair, pair_prop = (arrays[x] for x in ("prop", "V", "pair", "pair_prop"))
+    f = np.float32
+    alpha, g, Isat = f(0.0), f(1e-3), f(1e5)
+    g12, Isat2, omega = f(1e-4), f(1e5), f(1.0)
+
     candidates = {
         "square_mod": lambda: kernels.square_mod(A, A_sq),
         "apply_propagator": lambda: kernels.apply_propagator(A, prop),
+        "nl_prop": lambda: kernels.nl_prop(A, A_sq, dz, alpha, V, g, Isat),
         "nl_prop_without_V": lambda: kernels.nl_prop_without_V(
             A, A_sq, dz, alpha, g, Isat
         ),
-        "nl_prop": lambda: kernels.nl_prop(A, A_sq, dz, alpha, V, g, Isat),
         "square_mod_nl_prop": lambda: kernels.square_mod_nl_prop(A, dz, alpha, g, Isat),
         "square_mod_nl_prop_v": lambda: kernels.square_mod_nl_prop_v(
             A, V, dz, alpha, g, Isat
+        ),
+        "nl_prop_c": lambda: kernels.nl_prop_c(
+            A, A_sq, A_sq2, dz, alpha, V, g, g12, Isat, Isat2
+        ),
+        "nl_prop_without_V_c": lambda: kernels.nl_prop_without_V_c(
+            A, A_sq, A_sq2, dz, alpha, g, g12, Isat, Isat2
+        ),
+        "rabi_coupling": lambda: kernels.rabi_coupling(A, A2, dz, omega),
+        "rk4_axpy": lambda: kernels.rk4_axpy(out, A, f(0.5), k),
+        "rk4_accumulate": lambda: kernels.rk4_accumulate(acc, f(0.5), k),
+        "rk4_nl_rhs": lambda: kernels.rk4_nl_rhs(k, A, A_sq, alpha, g, Isat),
+        "rk4_nl_rhs_v": lambda: kernels.rk4_nl_rhs_v(k, A, A_sq, V, alpha, g, Isat),
+        "square_mod_rk4_nl_rhs": lambda: kernels.square_mod_rk4_nl_rhs(
+            k, A, alpha, g, Isat
+        ),
+        "square_mod_rk4_nl_rhs_v": lambda: kernels.square_mod_rk4_nl_rhs_v(
+            k, A, V, alpha, g, Isat
+        ),
+        "rk4_nl_rhs_c": lambda: kernels.rk4_nl_rhs_c(
+            k, A, A_sq, A_sq2, alpha, g, g12, Isat, Isat2
+        ),
+        "rk4_nl_rhs_c_v": lambda: kernels.rk4_nl_rhs_c_v(
+            k, A, A_sq, A_sq2, V, alpha, g, g12, Isat, Isat2
+        ),
+        "rk4_set_and_axpy": lambda: kernels.rk4_set_and_axpy(acc, out, A, k, f(0.5)),
+        "rk4_acc_and_axpy": lambda: kernels.rk4_acc_and_axpy(
+            acc, out, A, k, f(0.5), f(0.5)
+        ),
+        "linear_step": lambda: kernels.linear_step(A, prop, plan),
+        "split_step_fused": lambda: kernels.split_step_fused(
+            A, prop, V, dz, alpha, g, Isat, "single", plan
+        ),
+        "rk4_rhs_fused": lambda: kernels.rk4_rhs_fused(
+            A, k, V, prop, plan, alpha, g, Isat
+        ),
+        "split_step_rk4_fused": lambda: kernels.split_step_rk4_fused(
+            A, prop, V, dz, alpha, g, Isat, plan
+        ),
+        "split_step_coupled_fused": lambda: kernels.split_step_coupled_fused(
+            pair,
+            pair_prop,
+            V,
+            V,
+            dz,
+            alpha,
+            alpha,
+            g,
+            g12,
+            g,
+            Isat,
+            Isat2,
+            "single",
+            pair_plan,
+        ),
+        "rk4_rhs_coupled_fused": lambda: kernels.rk4_rhs_coupled_fused(
+            pair,
+            pair.copy() if hasattr(pair, "copy") else pair,
+            V,
+            V,
+            pair_prop,
+            pair_plan,
+            alpha,
+            alpha,
+            g,
+            g12,
+            g,
+            Isat,
+            Isat2,
         ),
     }
     return {n: c for n, c in candidates.items() if hasattr(kernels, n)}
 
 
-def fft_call(backend, arrays, n):
+def fft_call(backend, arrays, n, plan):
     """Return a callable doing one forward and one inverse transform."""
     A = arrays["A"]
-    plan = backend.build_fft((n, n), (-2, -1), np.complex64, array=A)
 
     def roundtrip():
         out = backend.fft(A, plan)
@@ -154,9 +305,20 @@ def profile(backend_name, n, get_backend):
     elements = n * n
     rows = {}
 
+    # build_fft returns a list; the fused kernels take one plan object, which
+    # is how the solvers call them too (plans[0]).
+    plans = backend.build_fft((n, n), (-2, -1), np.complex64, array=arrays["A"])
+    plan = plans[0]
+    try:
+        pair_plan = backend.build_fft(
+            (2, n, n), (-2, -1), np.complex64, array=arrays["pair"]
+        )[0]
+    except Exception:
+        pair_plan = plan
+
     calls = {"bandwidth_ceiling": ceiling_call(backend, arrays)}
-    calls.update(kernel_calls(backend.kernels, arrays))
-    calls["fft_roundtrip"] = fft_call(backend, arrays, n)
+    calls.update(kernel_calls(backend.kernels, arrays, plan, pair_plan))
+    calls["fft_roundtrip"] = fft_call(backend, arrays, n, plans)
 
     for name, call in calls.items():
         reset(backend)
@@ -198,40 +360,32 @@ def main(argv=None):
             mib = n * n * COMPLEX / 1024**2
             print(f"\n=== {backend_name}  {n}x{n}  ({mib:.0f} MiB per array) ===")
             print(
-                f"{'kernel':<24} {'time':>10} {'GB/s':>9} {'of best':>9} {'spread':>8}"
+                f"{'kernel':<26} {'time':>10} {'GB/s':>9} {'of best':>9} {'spread':>8}"
             )
-            print("-" * 65)
-            for name, (seconds, gbs, spread) in rows.items():
-                if seconds is None:
-                    print(f"{name:<24} {gbs}")
+            listed = set()
+            for group, names in GROUPS:
+                present = [x for x in names if x in rows]
+                if not present:
                     continue
-                share = (
-                    "    (n/a)"
-                    if name == "fft_roundtrip"
-                    else f"{100 * gbs / best:7.0f} %"
-                )
-                print(
-                    f"{name:<24} {seconds * 1e3:8.3f}ms {gbs:8.1f} {share:>9}"
-                    f" {spread:6.0f} %"
-                )
-
-            # What one split-step costs, from the parts, when nl_length is 0:
-            # a transform pair, the propagator multiply, and the fused
-            # nonlinear step. Backends with a fused whole-step kernel do it in
-            # one launch, so this is the budget rather than the measured step.
-            budget = {
-                k: rows[k][0]
-                for k in ("fft_roundtrip", "apply_propagator", "square_mod_nl_prop")
-                if k in rows and rows[k][0] is not None
-            }
-            if len(budget) == 3:
-                total = sum(budget.values())
-                parts = "  ".join(
-                    f"{k.replace('_roundtrip', '').replace('square_mod_', '')}"
-                    f" {100 * v / total:.0f}%"
-                    for k, v in budget.items()
-                )
-                print(f"step budget ~{total * 1e3:.2f} ms:  {parts}")
+                print(f"-- {group}")
+                for name in present:
+                    listed.add(name)
+                    seconds, gbs, spread = rows[name]
+                    if seconds is None:
+                        print(f"   {name:<23} {gbs}")
+                        continue
+                    share = (
+                        "    (n/a)"
+                        if name in ("fft_roundtrip", "bandwidth_ceiling")
+                        else f"{100 * gbs / best:7.0f} %"
+                    )
+                    print(
+                        f"   {name:<23} {seconds * 1e3:8.3f}ms {gbs:8.1f} {share:>9}"
+                        f" {spread:6.0f} %"
+                    )
+            missing = [x for x in rows if x not in listed]
+            if missing:
+                print(f"-- ungrouped: {', '.join(missing)}")
 
             line = f"best observed: {best:.0f} GB/s"
             if args.peak_gbs:
