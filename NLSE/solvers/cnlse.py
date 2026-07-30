@@ -428,13 +428,13 @@ class CNLSE(NLSE):
         if self._backend.has_fused_coupled_rk4_rhs and self._can_fuse_components(
             A_in, (alpha_half, alpha2_half, g11, g12, g22, Isat1, Isat2)
         ):
-            prop_fft = self._propagator_fft
+            prop, unnorm = self._fused_propagator(propagator)
             return kernels.rk4_rhs_coupled_fused(
                 A_in,
                 k,
                 V_scaled,
                 V2_scaled,
-                prop_fft if prop_fft is not None else propagator,
+                prop,
                 plans[0],
                 alpha_half,
                 alpha2_half,
@@ -443,7 +443,7 @@ class CNLSE(NLSE):
                 g22,
                 Isat1,
                 Isat2,
-                unnorm_ifft=(prop_fft is not None),
+                unnorm_ifft=unnorm,
             )
 
         k[:] = A_in
@@ -546,13 +546,13 @@ class CNLSE(NLSE):
         if V_scaled is None and V is not None:
             V_scaled = V * self._constant("_k_half")
             V2_scaled = V * self._constant("_k2_half")
-        prop_fft = self._propagator_fft
+        prop, unnorm = self._fused_propagator(propagator)
         return self._backend.kernels.rk4_stage_coupled_fused(
             A_in,
             self._rk4_k,
             V_scaled,
             V2_scaled,
-            prop_fft if prop_fft is not None else propagator,
+            prop,
             plans[0],
             self._rk4_acc,
             out,
@@ -567,7 +567,7 @@ class CNLSE(NLSE):
             w,
             c,
             mode,
-            unnorm_ifft=(prop_fft is not None),
+            unnorm_ifft=unnorm,
         )
 
     def _apply_nl_prop_c(
@@ -724,7 +724,7 @@ class CNLSE(NLSE):
             (alpha_half, alpha2_half, g11, g12, g22, Isat_conv, Isat_conv2),
         ):
             dz = delta_z / 2 if precision == "double" else delta_z
-            prop_fft = self._propagator_fft
+            prop, unnorm = self._fused_propagator(propagator)
             omega_half = (
                 self.omega / 2
                 if (precision == "single" and self.omega is not None)
@@ -732,7 +732,7 @@ class CNLSE(NLSE):
             )
             return kernels.split_step_coupled_fused(
                 A,
-                prop_fft if prop_fft is not None else propagator,
+                prop,
                 V_scaled,
                 V2_scaled,
                 dz,
@@ -746,7 +746,7 @@ class CNLSE(NLSE):
                 precision,
                 plans[0],
                 omega=omega_half,
-                unnorm_ifft=(prop_fft is not None),
+                unnorm_ifft=unnorm,
             )
 
         # First half-step (double precision only)

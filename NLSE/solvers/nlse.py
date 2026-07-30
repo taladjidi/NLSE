@@ -456,10 +456,10 @@ class NLSE:
         # which needs the convolution between |A|^2 and the nonlinear step.
         if self._backend.has_fused_split_step and self.nl_length == 0:
             dz = delta_z / 2 if precision == "double" else delta_z
-            prop_fft = self._propagator_fft
+            prop, unnorm = self._fused_propagator(propagator)
             return kernels.split_step_fused(
                 A,
-                prop_fft if prop_fft is not None else propagator,
+                prop,
                 V_scaled,
                 dz,
                 alpha_half,
@@ -467,7 +467,7 @@ class NLSE:
                 Isat_conv,
                 precision,
                 plans[0],
-                unnorm_ifft=(prop_fft is not None),
+                unnorm_ifft=unnorm,
             )
 
         # First half-step (only for precision == "double")
@@ -726,12 +726,12 @@ class NLSE:
         V_scaled = self._V_scaled
         if V_scaled is None and V is not None:
             V_scaled = V * self._constant("_k_half")
-        prop_fft = self._propagator_fft
+        prop, unnorm = self._fused_propagator(propagator)
         return self._backend.kernels.rk4_stage_fused(
             A_in,
             self._rk4_k,
             V_scaled,
-            prop_fft if prop_fft is not None else propagator,
+            prop,
             plans[0],
             self._rk4_acc,
             out,
@@ -742,7 +742,7 @@ class NLSE:
             w,
             c,
             mode,
-            unnorm_ifft=(prop_fft is not None),
+            unnorm_ifft=unnorm,
         )
 
     def _split_step_RK4_fused(
@@ -995,6 +995,38 @@ class NLSE:
         propagator = np.asarray(self._compute_propagator_rk4()).astype(dtype)
         self._dispersion_cache[cache_key] = propagator
         return propagator
+
+    def _fused_propagator(self, propagator: Any) -> tuple:
+        """Return the propagator a kernel should use, and whether it carries 1/N.
+
+        Two answers that have to agree. ``_update_propagator_fft`` builds a
+        pre-normalized twin where the backend can skip the inverse
+        transform's 1/N, and a kernel handed that twin must be told to skip
+        it -- handed it and told to normalize anyway, the field is divided by
+        N twice, and told to skip it while handed the plain propagator, not
+        at all. Neither shows up as an error, only as a field of the wrong
+        amplitude.
+
+        Every fused call site chose both by hand, eight of them across this
+        class and CNLSE, each writing ``prop_fft if prop_fft is not None else
+        propagator`` next to ``unnorm_ifft=(prop_fft is not None)``. Deciding
+        it here is one fact rather than eight pairs of facts.
+
+        Parameters
+        ----------
+        propagator : Any
+            The plain propagator, used when there is no pre-normalized twin.
+
+        Returns
+        -------
+        tuple
+            ``(propagator, unnorm_ifft)`` -- what to pass, and what to pass
+            it as.
+        """
+        prop_fft = self._propagator_fft
+        if prop_fft is None:
+            return propagator, False
+        return prop_fft, True
 
     def _update_propagator_fft(self) -> None:
         """Derive the pre-normalized propagator used by fused linear steps.
@@ -1847,18 +1879,15 @@ class NLSE:
             The propagated field.
         """
         kernels = self._backend.kernels
+        prop, unnorm = self._fused_propagator(propagator)
         if self._backend.has_linear_step:
-            prop_fft = self._propagator_fft
-            if prop_fft is not None:
-                return kernels.linear_step(A, prop_fft, plans[0], unnorm_ifft=True)
-            return kernels.linear_step(A, propagator, plans[0])
+            return kernels.linear_step(A, prop, plans[0], unnorm_ifft=unnorm)
         # The pre-normalized propagator carries the inverse transform's 1/N,
         # so the transform itself can skip it. A backend without a fused
         # linear step reaches it here rather than through kernels.linear_step.
-        prop_fft = self._propagator_fft
         A = self._backend.fft(A, plans)
-        A = kernels.apply_propagator(A, propagator if prop_fft is None else prop_fft)
-        A = self._backend.ifft(A, plans, normalize=prop_fft is None)
+        A = kernels.apply_propagator(A, prop)
+        A = self._backend.ifft(A, plans, normalize=not unnorm)
         return A
 
     def _RK4_rhs(
@@ -1896,17 +1925,17 @@ class NLSE:
 
         # Fused fast path: out-of-place FFT eliminates the buffer copy
         if self._backend.has_fused_rk4_rhs and self.nl_length == 0:
-            prop_fft = self._propagator_fft
+            prop, unnorm = self._fused_propagator(propagator)
             return kernels.rk4_rhs_fused(
                 A_in,
                 k,
                 V_scaled,
-                prop_fft if prop_fft is not None else propagator,
+                prop,
                 plans[0],
                 alpha_half,
                 g,
                 Isat_conv,
-                unnorm_ifft=(prop_fft is not None),
+                unnorm_ifft=unnorm,
             )
 
         k[:] = A_in
