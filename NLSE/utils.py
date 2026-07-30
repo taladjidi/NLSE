@@ -62,6 +62,27 @@ except Exception:
     __PYOPENCL_AVAILABLE__ = False
 
 
+def say(message: str) -> None:
+    """Print unless ``NLSE_QUIET`` asked for silence.
+
+    Choosing a backend talks: it announces what it picked, and if it has to
+    time the backends to decide, it narrates that too. Under a parameter sweep
+    or in a notebook that is noise, which is what NLSE_QUIET is for -- except
+    that it reached one of those lines and every other one printed regardless.
+
+    Read per call rather than once at import, so that setting the variable
+    inside a session works, and so tests can set it without reloading the
+    package.
+
+    Parameters
+    ----------
+    message : str
+        What to say.
+    """
+    if os.environ.get("NLSE_QUIET", "0") != "1":
+        print(message)
+
+
 def get_cache_dir() -> Path:
     """Get the directory for cached backend benchmarks.
 

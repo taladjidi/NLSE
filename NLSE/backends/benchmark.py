@@ -13,6 +13,8 @@ from typing import Any, TypedDict
 
 import numpy as np
 
+from ..utils import say
+
 # Bumped whenever a cached timing stops meaning what it meant, so that a cache
 # written before the change is discarded rather than believed. It was written
 # into every cache from the start and never read, which is the same as not
@@ -123,7 +125,7 @@ def benchmark_backend(
         return float(np.median(times))
 
     except Exception as e:
-        print(f"Warning: Benchmarking {backend_name} failed: {e}")
+        say(f"Warning: Benchmarking {backend_name} failed: {e}")
         return None
 
 
@@ -162,7 +164,7 @@ def benchmark_all_backends(
 
     # Benchmark each available backend
     for backend_name in available_backends:
-        print(f"Benchmarking {backend_name} backend...")
+        say(f"Benchmarking {backend_name} backend...")
         time_ms = benchmark_backend(backend_name, grid_size)
 
         if time_ms is not None:
@@ -227,7 +229,7 @@ def load_benchmark_cache() -> BenchmarkResults | None:
             return None
 
         if cache["version"] != CACHE_VERSION:
-            print(
+            say(
                 "Benchmark cache predates a change to what it timed, re-benchmarking..."
             )
             return None
@@ -240,7 +242,7 @@ def load_benchmark_cache() -> BenchmarkResults | None:
         here = (platform.system(), platform.machine())
         there = (cached_platform.get("system"), cached_platform.get("processor"))
         if there != here:
-            print(
+            say(
                 f"Benchmark cache was written on {there}, not {here}, re-benchmarking..."
             )
             return None
@@ -248,13 +250,13 @@ def load_benchmark_cache() -> BenchmarkResults | None:
         # Check if cache is stale (>30 days)
         cache_time = datetime.fromisoformat(cache["timestamp"])
         if datetime.now() - cache_time > timedelta(days=30):
-            print("Benchmark cache is stale (>30 days), re-benchmarking...")
+            say("Benchmark cache is stale (>30 days), re-benchmarking...")
             return None
 
         return cache
 
     except (json.JSONDecodeError, ValueError, KeyError) as e:
-        print(f"Warning: Invalid benchmark cache: {e}")
+        say(f"Warning: Invalid benchmark cache: {e}")
         return None
 
 
@@ -273,9 +275,9 @@ def save_benchmark_cache(results: BenchmarkResults) -> None:
     try:
         with open(cache_path, "w") as f:
             json.dump(results, f, indent=2)
-        print(f"Benchmark results cached to {cache_path}")
+        say(f"Benchmark results cached to {cache_path}")
     except Exception as e:
-        print(f"Warning: Failed to save benchmark cache: {e}")
+        say(f"Warning: Failed to save benchmark cache: {e}")
 
 
 def invalidate_cache() -> None:
@@ -286,9 +288,9 @@ def invalidate_cache() -> None:
 
     if cache_path.exists():
         cache_path.unlink()
-        print(f"Benchmark cache invalidated: {cache_path}")
+        say(f"Benchmark cache invalidated: {cache_path}")
     else:
-        print("No benchmark cache found")
+        say("No benchmark cache found")
 
 
 def get_fastest_backend(
@@ -323,12 +325,12 @@ def get_fastest_backend(
                 if fastest:
                     return fastest
             else:
-                print(
+                say(
                     f"Grid size mismatch (cached: {cached_grid}, requested: {grid_size}), re-benchmarking..."
                 )
 
     # Run benchmarks
-    print(f"Benchmarking FFT backends on {grid_size[0]}x{grid_size[1]} grid...")
+    say(f"Benchmarking FFT backends on {grid_size[0]}x{grid_size[1]} grid...")
     results = benchmark_all_backends(grid_size)
 
     # Save to cache
@@ -337,7 +339,7 @@ def get_fastest_backend(
     # Return fastest backend (fallback to CPU if none found)
     fastest = results.get("fastest", "CPU")
     if fastest is None:
-        print("Warning: No working backends found, falling back to CPU")
+        say("Warning: No working backends found, falling back to CPU")
         fastest = "CPU"
 
     return fastest

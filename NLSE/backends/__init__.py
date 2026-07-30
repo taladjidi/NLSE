@@ -2,6 +2,7 @@
 
 import os
 
+from ..utils import say
 from .backend import Backend
 from .cpu import CPUBackend
 
@@ -41,7 +42,6 @@ except ImportError:
 
 # Environment variables for backend control
 _ENV_BACKEND = os.environ.get("NLSE_BACKEND", "").upper()
-_QUIET = os.environ.get("NLSE_QUIET", "0") == "1"
 _FORCE_BENCHMARK = os.environ.get("NLSE_FORCE_BENCHMARK", "0") == "1"
 
 
@@ -126,8 +126,7 @@ def get_backend(name: str, grid_size: tuple = (2048, 2048)) -> Backend:
     # Auto-select optimal backend
     if name == "AUTO":
         name = get_optimal_backend(grid_size, force_benchmark=_FORCE_BENCHMARK)
-        if not _QUIET:
-            print(f"Auto-selected FFT backend: {name}")
+        say(f"Auto-selected FFT backend: {name}")
 
     # Validate before consulting the cache, so an unavailable backend raises
     # the same way whether or not something asked for it earlier.
