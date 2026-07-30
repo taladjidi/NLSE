@@ -104,8 +104,13 @@ class MLXBackend(Backend):
         axes = plan[0]
         return mx.fft.fftn(array, axes=axes)
 
-    def ifft(self, array: Any, plan: list) -> Any:
-        """Perform inverse FFT."""
+    def ifft(self, array: Any, plan: list, normalize: bool = True) -> Any:
+        """Perform inverse FFT.
+
+        MLX's inverse always normalizes, so this backend does not declare
+        supports_unnormalized_ifft and is never asked to skip it.
+        """
+        assert normalize, "MLX cannot skip the inverse transform's 1/N"
         axes = plan[0]
         return mx.fft.ifftn(array, axes=axes)
 

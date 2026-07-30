@@ -87,18 +87,42 @@ def test_required_kernels_are_present(backend_name):
 
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
-def test_unnormalized_ifft_implies_linear_step(backend_name):
-    """Folding 1/N into the propagator only makes sense with linear_step.
+def test_an_unnormalized_ifft_really_skips_the_factor(backend_name):
+    """A backend claiming the capability must actually honour it.
 
-    _update_propagator_fft builds the pre-normalized propagator whenever
-    supports_unnormalized_ifft is set, and only linear_step consumes it.
+    The caller folds 1/N into the propagator and then asks the transform to
+    skip it, so a backend that accepts ``normalize=False`` and normalizes
+    anyway divides the field by N twice -- which no correctness test would
+    attribute to the transform. Round-tripping is the direct check: with the
+    factor skipped the field comes back N times larger.
+
+    This replaces an assertion that the capability implied has_linear_step.
+    That was true only while the fused kernels were the sole consumer; the
+    generic linear step reads the pre-normalized propagator too, which is
+    how the CPU backend gets the saving without a fused entry point.
     """
     backend = get_backend(backend_name)
-    if backend.supports_unnormalized_ifft:
-        assert backend.has_linear_step, (
-            f"{backend_name} sets supports_unnormalized_ifft without "
-            f"has_linear_step, so the pre-normalized propagator is unused."
-        )
+    if not backend.supports_unnormalized_ifft:
+        return
+    n = 16
+    field = np.zeros((n, n), dtype=np.complex64)
+    field[n // 4, n // 4] = 1.0 + 0.5j
+    plans = backend.build_fft(field.shape, (-2, -1), np.complex64, field)
+
+    def round_trip(normalize):
+        A = backend.from_numpy(field.copy())
+        A = backend.fft(A, plans)
+        A = backend.ifft(A, plans, normalize=normalize)
+        return backend.to_numpy(A)
+
+    normalized = round_trip(True)
+    assert np.allclose(normalized, field, atol=1e-5), (
+        f"{backend_name} does not round-trip a normalized transform"
+    )
+    assert np.allclose(round_trip(False), field * (n * n), atol=1e-3), (
+        f"{backend_name} declares supports_unnormalized_ifft but its ifft "
+        f"normalized anyway, so the propagator's 1/N would be applied twice"
+    )
 
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)

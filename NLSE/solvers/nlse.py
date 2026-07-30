@@ -1646,9 +1646,13 @@ class NLSE:
             if prop_fft is not None:
                 return kernels.linear_step(A, prop_fft, plans[0], unnorm_ifft=True)
             return kernels.linear_step(A, propagator, plans[0])
+        # The pre-normalized propagator carries the inverse transform's 1/N,
+        # so the transform itself can skip it. A backend without a fused
+        # linear step reaches it here rather than through kernels.linear_step.
+        prop_fft = self._propagator_fft
         A = self._backend.fft(A, plans)
-        A = kernels.apply_propagator(A, propagator)
-        A = self._backend.ifft(A, plans)
+        A = kernels.apply_propagator(A, propagator if prop_fft is None else prop_fft)
+        A = self._backend.ifft(A, plans, normalize=prop_fft is None)
         return A
 
     def _RK4_rhs(

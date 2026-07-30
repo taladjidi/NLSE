@@ -366,7 +366,7 @@ class Backend(ABC):
         pass
 
     @abstractmethod
-    def ifft(self, array: Any, plan: Any) -> Any:
+    def ifft(self, array: Any, plan: Any, normalize: bool = True) -> Any:
         """Perform inverse FFT.
 
         Parameters
@@ -375,6 +375,12 @@ class Backend(ABC):
             Input array
         plan : Any
             FFT plan
+        normalize : bool
+            Whether to divide by N. A backend that declares
+            ``supports_unnormalized_ifft`` must honour ``False`` here: the
+            caller has folded the factor into the propagator instead, and
+            silently normalizing anyway would divide the field by N twice.
+            One that does not declare it is never asked.
 
         Returns
         -------

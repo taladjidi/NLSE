@@ -103,7 +103,15 @@ class CPUBackend(Backend):
     Provides no fused entry points: pyFFTW plans are driven from Python and
     the numba kernels are already single-pass, so there is no launch
     overhead to amortize.
+
+    It does skip the inverse transform's normalization. FFTW's backward
+    transform is unnormalized and pyfftw divides by N in a pass of its own
+    afterwards, which costs a fifth of the transform -- an inverse measures
+    25% more than a forward for the same work. The factor goes into the
+    propagator once instead.
     """
+
+    supports_unnormalized_ifft = True
 
     @property
     def name(self) -> str:
@@ -249,9 +257,15 @@ class CPUBackend(Backend):
         plan[0](array, array)
         return array
 
-    def ifft(self, array: np.ndarray, plan: list) -> np.ndarray:
-        """Perform inverse FFT in-place."""
-        plan[1](array, array)
+    def ifft(self, array: np.ndarray, plan: list, normalize: bool = True) -> np.ndarray:
+        """Perform inverse FFT in-place.
+
+        FFTW's backward transform is unnormalized; the 1/N is a separate pass
+        pyfftw makes afterwards, and it costs a fifth of the transform. When
+        the caller has folded the factor into the propagator, that pass is
+        skipped.
+        """
+        plan[1](array, array, normalise_idft=normalize)
         return array
 
     @property

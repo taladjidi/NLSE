@@ -155,9 +155,11 @@ class OpenCLBackend(Backend):
         """Perform forward FFT."""
         return plan[0].fft(array, array)
 
-    def ifft(self, array: Any, plan: list) -> Any:
+    def ifft(self, array: Any, plan: list, normalize: bool = True) -> Any:
         """Perform inverse FFT."""
-        return plan[0].ifft(array, array)
+        if normalize:
+            return plan[0].ifft(array, array)
+        return plan[0].ifft_unnorm(array, array)
 
     @property
     def kernels(self) -> Any:
