@@ -96,6 +96,17 @@ class Backend(ABC):
     # Combine the accumulate and axpy of an RK4 stage into one launch.
     has_fused_rk4_stage_update = False
 
+    # kernels.rk4_stage_fused / kernels.rk4_stage_coupled_fused
+    # A whole RK4 stage -- linear part, slope and stage update -- with the
+    # slope spent from registers rather than written and read back.
+    # Supersedes has_fused_rk4_rhs and has_fused_rk4_stage_update where set.
+    has_fused_rk4_stage = False
+
+    # kernels.rk4_final_update(A, acc, k, w)
+    # Accumulate the fourth slope and update the field in one launch, rather
+    # than writing acc only to read it straight back.
+    has_fused_rk4_final_update = False
+
     # kernels.split_step_coupled_fused(
     #     A, propagator, V1_scaled, V2_scaled, dz, alpha1, alpha2,
     #     g11, g12, g22, Isat1, Isat2, precision, plan, omega=None,

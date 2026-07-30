@@ -290,14 +290,11 @@ class DDGPE(CNLSE):
 
     def _compute_propagator_rk4(self) -> np.ndarray:
         """Compute the raw DDGPE polariton dispersion operators for RK4."""
-        prop1 = (-1j * (self.omega_exc - self.omega_pump)).astype(np.complex64)
-        prop2 = (
-            -1j
-            * (
-                self.omega_cav * np.sqrt(1 + (self.Kxx**2 + self.Kyy**2) / self.k_z**2)
-                - self.omega_pump
-            )
-        ).astype(np.complex64)
+        prop1 = -1j * (self.omega_exc - self.omega_pump)
+        prop2 = -1j * (
+            self.omega_cav * np.sqrt(1 + (self.Kxx**2 + self.Kyy**2) / self.k_z**2)
+            - self.omega_pump
+        )
         return np.array([prop1, prop2])
 
     def _dispersion_operator(self) -> np.ndarray:

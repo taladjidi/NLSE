@@ -872,7 +872,7 @@ class TestNLSEPropagator:
     def test_propagator_rk4(self):
         """RK4 propagator does not include delta_z exponential."""
         simu = make_nlse("CPU", n=S)
-        prop = simu._build_propagator_rk4()
+        prop = simu._build_propagator_rk4(np.complex64)
         expected = -1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k
         np.testing.assert_allclose(
             prop,
@@ -989,7 +989,7 @@ class TestNLSERK4:
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, _A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
-        prop = simu._build_propagator_rk4()
+        prop = simu._build_propagator_rk4(np.complex64)
 
         # Just one step to exercise the code path
         A_before = A.copy()
@@ -1094,7 +1094,7 @@ class TestCNLSERK4:
         E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
         A, _A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
-        prop = simu._build_propagator_rk4()
+        prop = simu._build_propagator_rk4(np.complex64)
 
         A_before = A.copy()
         simu.split_step_RK4(A, V, prop, plans, DZ_TEST)
@@ -1234,7 +1234,7 @@ class TestCNLSEExtended:
         """CNLSE RK4 propagator."""
         n12_local = 0.5e-9
         simu = make_cnlse("CPU", n=S, n12=n12_local)
-        prop = simu._build_propagator_rk4()
+        prop = simu._build_propagator_rk4(np.complex64)
         assert prop.shape == (2, S, S)
         # RK4 propagator should not be exponential (no delta_z)
         assert not np.allclose(np.abs(prop), 1.0)

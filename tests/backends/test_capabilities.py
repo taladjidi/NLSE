@@ -25,6 +25,8 @@ CAPABILITY_METHODS = {
     "has_fused_rk4_rhs": ["rk4_rhs_fused"],
     "has_fused_rk4_step": ["split_step_rk4_fused"],
     "has_fused_rk4_stage_update": ["rk4_set_and_axpy", "rk4_acc_and_axpy"],
+    "has_fused_rk4_final_update": ["rk4_final_update"],
+    "has_fused_rk4_stage": ["rk4_stage_fused", "rk4_stage_coupled_fused"],
     "has_fused_coupled_split_step": ["split_step_coupled_fused"],
     "has_fused_coupled_rk4_rhs": ["rk4_rhs_coupled_fused"],
 }

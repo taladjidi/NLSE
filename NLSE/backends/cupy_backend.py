@@ -52,14 +52,27 @@ class _CuFFTPlan:
 class CUPYBackend(Backend):
     """CUPY backend using CuPy and cuFFT.
 
-    Deliberately exposes no fused split step: execute_loop captures the
-    whole propagation step into a CUDA graph, which removes the launch
-    overhead that fusion exists to amortize on the other GPU backends.
+    Exposes no fused *split* step: execute_loop captures the whole
+    propagation step into a CUDA graph, which removes the launch overhead
+    that fusion exists to amortize on the other GPU backends.
+
+    The coupled and RK4 fusions below are declared all the same, because
+    what they save is not launches but traffic. Reaching a one-component
+    kernel with a two-component field means copying each component out and
+    the result back, and starting an RK4 stage in place means copying the
+    field into the stage buffer first. A CUDA graph replays those copies as
+    faithfully as it replays the arithmetic.
     """
 
     has_linear_step = True
     supports_unnormalized_ifft = True
     broadcasts_parameters_natively = True
+    has_fused_rk4_rhs = True
+    has_fused_rk4_stage_update = True
+    has_fused_rk4_final_update = True
+    has_fused_rk4_stage = True
+    has_fused_coupled_split_step = True
+    has_fused_coupled_rk4_rhs = True
 
     @property
     def name(self) -> str:

@@ -86,7 +86,7 @@ class NLSE_1d(NLSE):
 
     def _compute_propagator_rk4(self) -> np.ndarray:
         """Compute the raw 1D dispersion operator for RK4."""
-        return (-1j * 0.5 * self.Kx**2 / self.k).astype(np.complex64)
+        return -1j * 0.5 * self.Kx**2 / self.k
 
     def _dispersion_operator(self) -> np.ndarray:
         """Return the 1D dispersion eigenvalues."""

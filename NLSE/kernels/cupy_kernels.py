@@ -758,6 +758,93 @@ class CUDAKernels:
         self._launch(kernels["rk4_accumulate"], N, acc, w_c, k, np.int32(N))
         return acc
 
+    def rk4_set_and_axpy(self, acc, out, A, k, c):
+        """Compute acc = k and out = A + c * k in one launch (RK4 stage 1).
+
+        Every argument is a whole field of the same shape and ``c`` is a
+        scalar, so there is nothing here for a batch to broadcast: the flat
+        index serves a batched field as well as a single one.
+
+        Parameters
+        ----------
+        acc : cp.ndarray
+            Accumulator, set to k (modified in-place)
+        out : cp.ndarray
+            Stage argument, set to A + c*k (modified in-place)
+        A : cp.ndarray
+            Base field
+        k : cp.ndarray
+            RK4 slope array
+        c : float
+            Scalar coefficient
+
+        Returns
+        -------
+        tuple[cp.ndarray, cp.ndarray]
+            The modified (acc, out).
+        """
+        kernels = self._get_kernels(A.dtype)
+        N = int(A.size)
+        (c_c,) = self._cast(A.dtype, c)
+        self._launch(kernels["rk4_set_and_axpy"], N, acc, out, A, k, c_c, np.int32(N))
+        return acc, out
+
+    def rk4_final_update(self, A, acc, k, w):
+        """Compute A += w * (acc + k), closing the step in one launch.
+
+        Parameters
+        ----------
+        A : cp.ndarray
+            The field (modified in-place)
+        acc : cp.ndarray
+            Accumulated slopes from the first three stages
+        k : cp.ndarray
+            The fourth slope
+        w : float
+            Scalar weight, h/6
+
+        Returns
+        -------
+        cp.ndarray
+            The modified field A.
+        """
+        kernels = self._get_kernels(A.dtype)
+        N = int(A.size)
+        (w_c,) = self._cast(A.dtype, w)
+        self._launch(kernels["rk4_final_update"], N, A, acc, k, w_c, np.int32(N))
+        return A
+
+    def rk4_acc_and_axpy(self, acc, out, A, k, w, c):
+        """Compute acc += w * k and out = A + c * k in one launch (stages 2-3).
+
+        Parameters
+        ----------
+        acc : cp.ndarray
+            Accumulator (modified in-place)
+        out : cp.ndarray
+            Stage argument, set to A + c*k (modified in-place)
+        A : cp.ndarray
+            Base field
+        k : cp.ndarray
+            RK4 slope array
+        w : float
+            Accumulation weight
+        c : float
+            Scalar coefficient
+
+        Returns
+        -------
+        tuple[cp.ndarray, cp.ndarray]
+            The modified (acc, out).
+        """
+        kernels = self._get_kernels(A.dtype)
+        N = int(A.size)
+        w_c, c_c = self._cast(A.dtype, w, c)
+        self._launch(
+            kernels["rk4_acc_and_axpy"], N, acc, out, A, k, w_c, c_c, np.int32(N)
+        )
+        return acc, out
+
     def rk4_nl_rhs(self, A_prop, A, A_sq, alpha, g, Isat):
         """Accumulate nonlinear RHS for RK4 (no potential).
 
@@ -1059,6 +1146,412 @@ class CUDAKernels:
             np.int32(N),
         )
         return A_prop
+
+    def rk4_rhs_fused(
+        self, A_in, k, V_scaled, propagator, plan, alpha, g, Isat, unnorm_ifft=False
+    ):
+        """Compute the RK4 RHS into k without copying A_in into it first.
+
+        Parameters
+        ----------
+        A_in : cp.ndarray
+            Input field (not modified).
+        k : cp.ndarray
+            Output buffer for the RHS (modified in-place).
+        V_scaled : cp.ndarray or None
+            Pre-scaled potential (V * k/2), or None.
+        propagator : cp.ndarray
+            Pre-computed propagator (pre-divided by N_fft when unnorm_ifft).
+        plan : _CuFFTPlan
+            Pre-built FFT plan.
+        alpha : float
+            Half-loss coefficient.
+        g : float
+            Nonlinear interaction strength.
+        Isat : float
+            Saturation intensity (converted units).
+        unnorm_ifft : bool
+            If True, the propagator carries the 1/N and the inverse
+            transform skips it.
+
+        Returns
+        -------
+        cp.ndarray
+            The modified buffer k.
+        """
+        # The transform moves A_in into k, so no copy precedes it. Unlike
+        # VkFFT, which the OpenCL backend gives a separate fft_oop, a cuFFT
+        # plan is out-of-place already: plan.fft takes its output array.
+        plan.fft(A_in, k)
+        self.apply_propagator(k, propagator)
+        if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
+            plan.ifft_unnorm(k, k)
+        else:
+            plan.ifft(k, k)
+        if V_scaled is not None:
+            return self.square_mod_rk4_nl_rhs_v(k, A_in, V_scaled, alpha, g, Isat)
+        return self.square_mod_rk4_nl_rhs(k, A_in, alpha, g, Isat)
+
+    def _linear_into(self, A_in, k, propagator, plan, unnorm_ifft):
+        """Transform A_in into k, propagate it there, and come back.
+
+        The transform is what moves the field into the stage buffer, so no
+        copy precedes it: a cuFFT plan is out-of-place already, unlike the
+        VkFFT one the OpenCL backend gives a separate ``fft_oop``.
+        """
+        plan.fft(A_in, k)
+        self.apply_propagator(k, propagator)
+        if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
+            plan.ifft_unnorm(k, k)
+        else:
+            plan.ifft(k, k)
+        return k
+
+    def rk4_stage_fused(
+        self,
+        A_in,
+        k,
+        V_scaled,
+        propagator,
+        plan,
+        acc,
+        out,
+        A,
+        alpha,
+        g,
+        Isat,
+        w,
+        c,
+        mode,
+        unnorm_ifft=False,
+    ):
+        """Run a whole RK4 stage: linear part, slope and stage update.
+
+        The slope is finished in registers and spent on ``acc`` and ``out``
+        without reaching memory, which is two fewer accesses per element than
+        writing it and reading it back.
+
+        Parameters
+        ----------
+        A_in : cp.ndarray
+            Field this stage evaluates the slope at (not modified).
+        k : cp.ndarray
+            Scratch buffer the transform writes into (modified in-place).
+        V_scaled : cp.ndarray or None
+            Pre-scaled potential (V * k/2), or None.
+        propagator : cp.ndarray
+            Pre-computed propagator (pre-divided by N_fft when unnorm_ifft).
+        plan : _CuFFTPlan
+            Pre-built FFT plan.
+        acc : cp.ndarray
+            Slope accumulator (modified in-place unless mode is 2).
+        out : cp.ndarray
+            Where the stage's result goes: the next stage's argument, or the
+            field itself on the last stage.
+        A : cp.ndarray
+            The field the step started from.
+        alpha : float
+            Half-loss coefficient.
+        g : float
+            Nonlinear interaction strength.
+        Isat : float
+            Saturation intensity (converted units).
+        w : float
+            Weight this stage's slope carries into the accumulator.
+        c : float
+            Coefficient of the slope in the stage's output.
+        mode : int
+            0 to set the accumulator, 1 to add to it, 2 to spend it.
+        unnorm_ifft : bool
+            If True, the propagator carries the 1/N.
+
+        Returns
+        -------
+        cp.ndarray
+            ``out``, the array this stage wrote.
+        """
+        self._linear_into(A_in, k, propagator, plan, unnorm_ifft)
+        kernels = self._get_kernels(A.dtype)
+        N = int(A.size)
+        params = self._cast(A.dtype, alpha, g, Isat, w, c)
+        args = (k, A_in) + ((V_scaled,) if V_scaled is not None else ())
+        self._launch(
+            self._v_kernel(kernels, "square_mod_rk4_stage", V_scaled),
+            N,
+            *args,
+            acc,
+            out,
+            A,
+            *params,
+            np.int32(mode),
+            np.int32(N),
+        )
+        return out
+
+    def rk4_stage_coupled_fused(
+        self,
+        A_in,
+        k,
+        V1,
+        V2,
+        propagator,
+        plan,
+        acc,
+        out,
+        A,
+        alpha1,
+        alpha2,
+        g11,
+        g12,
+        g22,
+        Isat1,
+        Isat2,
+        w,
+        c,
+        mode,
+        unnorm_ifft=False,
+    ):
+        """Run a whole coupled RK4 stage, both components at once.
+
+        Parameters
+        ----------
+        A_in : cp.ndarray
+            Coupled field this stage evaluates the slope at (not modified).
+        k : cp.ndarray
+            Scratch buffer the transform writes into (modified in-place).
+        V1, V2 : cp.ndarray or None
+            Pre-scaled potentials, one per component. Both None or neither.
+        propagator : cp.ndarray
+            Pre-computed propagator (pre-divided by N_fft when unnorm_ifft).
+        plan : _CuFFTPlan
+            Pre-built FFT plan.
+        acc : cp.ndarray
+            Slope accumulator (modified in-place unless mode is 2).
+        out : cp.ndarray
+            Where the stage's result goes.
+        A : cp.ndarray
+            The field the step started from.
+        alpha1, alpha2 : float
+            Half-loss coefficients.
+        g11, g22 : float
+            Intra-component interactions.
+        g12 : float
+            Cross-component interaction.
+        Isat1, Isat2 : float
+            Saturation intensities (converted units).
+        w : float
+            Weight this stage's slope carries into the accumulator.
+        c : float
+            Coefficient of the slope in the stage's output.
+        mode : int
+            0 to set the accumulator, 1 to add to it, 2 to spend it.
+        unnorm_ifft : bool
+            If True, the propagator carries the 1/N.
+
+        Returns
+        -------
+        cp.ndarray
+            ``out``, the array this stage wrote.
+        """
+        self._linear_into(A_in, k, propagator, plan, unnorm_ifft)
+        kernels = self._get_kernels(A.dtype)
+        N_sq = int(A.size) // 2
+        params = self._cast(A.dtype, alpha1, alpha2, g11, g12, g22, Isat1, Isat2, w, c)
+        args = (k, A_in) + ((V1, V2) if V1 is not None else ())
+        self._launch(
+            self._v_kernel(kernels, "coupled_rk4_stage_c", V1),
+            N_sq,
+            *args,
+            acc,
+            out,
+            A,
+            *params,
+            np.int32(mode),
+            np.int32(N_sq),
+        )
+        return out
+
+    def split_step_coupled_fused(
+        self,
+        A,
+        propagator,
+        V1,
+        V2,
+        dz,
+        alpha1,
+        alpha2,
+        g11,
+        g12,
+        g22,
+        Isat1,
+        Isat2,
+        precision,
+        plan,
+        omega=None,
+        unnorm_ifft=False,
+    ):
+        """Take a coupled split step without separating the components.
+
+        The interleaved kernels read both components out of the one
+        ``(2, ...)`` array, so nothing is copied out and nothing written
+        back. They take scalar parameters and index with one flat id, so the
+        caller must not hand them a batch; ``CNLSE.split_step`` checks.
+
+        Parameters
+        ----------
+        A : cp.ndarray
+            Coupled field of shape (2, ...), modified in-place.
+        propagator : cp.ndarray
+            Pre-computed propagator for both components.
+        V1, V2 : cp.ndarray or None
+            Pre-scaled potentials, one per component. Both None or neither.
+        dz : float
+            Nonlinear step (the whole step for single precision, half for
+            double).
+        alpha1, alpha2 : float
+            Half-loss coefficients.
+        g11, g22 : float
+            Intra-component interactions.
+        g12 : float
+            Cross-component interaction.
+        Isat1, Isat2 : float
+            Saturation intensities (converted units).
+        precision : str
+            "single" or "double".
+        plan : _CuFFTPlan
+            Pre-built FFT plan.
+        omega : float or None
+            Half the Rabi coupling, or None to skip it.
+        unnorm_ifft : bool
+            If True, the propagator carries the 1/N.
+
+        Returns
+        -------
+        cp.ndarray
+            The propagated field A.
+        """
+        kernels = self._get_kernels(A.dtype)
+        # One thread per element of a component, which is half the field.
+        N_sq = int(A.size) // 2
+        N_sq_i = np.int32(N_sq)
+        params = self._cast(A.dtype, dz, alpha1, alpha2, g11, g12, g22, Isat1, Isat2)
+
+        def nonlinear():
+            if V1 is not None:
+                self._launch(
+                    self._v_kernel(kernels, "coupled_nl_prop_c", V1),
+                    N_sq,
+                    A,
+                    V1,
+                    V2,
+                    *params,
+                    N_sq_i,
+                )
+            else:
+                self._launch(kernels["coupled_nl_prop_c"], N_sq, A, *params, N_sq_i)
+
+        # Double precision: a nonlinear half-step before the linear one
+        if precision == "double":
+            nonlinear()
+
+        plan.fft(A, A)
+        self.apply_propagator(A, propagator)
+        if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
+            plan.ifft_unnorm(A, A)
+        else:
+            plan.ifft(A, A)
+
+        nonlinear()
+
+        # Rabi coupling (single precision only)
+        if omega is not None:
+            cos_c, sin_c = self._cast(
+                A.dtype,
+                np.cos(omega * float(params[0])),
+                np.sin(omega * float(params[0])),
+            )
+            self._launch(
+                kernels["rabi_coupling_interleaved"], N_sq, A, cos_c, sin_c, N_sq_i
+            )
+
+        return A
+
+    def rk4_rhs_coupled_fused(
+        self,
+        A_in,
+        k,
+        V1,
+        V2,
+        propagator,
+        plan,
+        alpha1,
+        alpha2,
+        g11,
+        g12,
+        g22,
+        Isat1,
+        Isat2,
+        unnorm_ifft=False,
+    ):
+        """Compute the coupled RK4 RHS without separating the components.
+
+        Parameters
+        ----------
+        A_in : cp.ndarray
+            Coupled input field of shape (2, ...), not modified.
+        k : cp.ndarray
+            Output buffer (modified in-place).
+        V1, V2 : cp.ndarray or None
+            Pre-scaled potentials, one per component. Both None or neither.
+        propagator : cp.ndarray
+            Pre-computed propagator (pre-divided by N_fft when unnorm_ifft).
+        plan : _CuFFTPlan
+            Pre-built FFT plan.
+        alpha1, alpha2 : float
+            Half-loss coefficients.
+        g11, g22 : float
+            Intra-component interactions.
+        g12 : float
+            Cross-component interaction.
+        Isat1, Isat2 : float
+            Saturation intensities (converted units).
+        unnorm_ifft : bool
+            If True, the propagator carries the 1/N.
+
+        Returns
+        -------
+        cp.ndarray
+            The modified buffer k.
+        """
+        kernels = self._get_kernels(A_in.dtype)
+        N_sq = int(A_in.size) // 2
+        N_sq_i = np.int32(N_sq)
+
+        # The transform moves A_in into k, so no copy precedes it.
+        plan.fft(A_in, k)
+        self.apply_propagator(k, propagator)
+        if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
+            plan.ifft_unnorm(k, k)
+        else:
+            plan.ifft(k, k)
+
+        params = self._cast(A_in.dtype, alpha1, alpha2, g11, g12, g22, Isat1, Isat2)
+        if V1 is not None:
+            self._launch(
+                self._v_kernel(kernels, "coupled_rk4_nl_rhs_c", V1),
+                N_sq,
+                k,
+                A_in,
+                V1,
+                V2,
+                *params,
+                N_sq_i,
+            )
+        else:
+            self._launch(
+                kernels["coupled_rk4_nl_rhs_c"], N_sq, k, A_in, *params, N_sq_i
+            )
+        return k
 
     def vortex_cp(self, im, i, j, ii, jj, ll):
         """Generate vortex of charge ll at position (i, j) using CuPy.

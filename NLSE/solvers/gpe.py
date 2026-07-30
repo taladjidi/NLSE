@@ -115,9 +115,7 @@ class GPE(NLSE):
 
     def _compute_propagator_rk4(self) -> np.ndarray:
         """Compute the raw GPE dispersion operator for RK4."""
-        return (-1j * 0.5 * hbar * (self.Kxx**2 + self.Kyy**2) / self.m).astype(
-            np.complex64
-        )
+        return -1j * 0.5 * hbar * (self.Kxx**2 + self.Kyy**2) / self.m
 
     def _dispersion_operator(self) -> np.ndarray:
         """Return the GPE dispersion eigenvalues.

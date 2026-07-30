@@ -136,7 +136,7 @@ class NLSE_3d(NLSE):
     def _compute_propagator_rk4(self) -> np.ndarray:
         """Compute the raw 3D dispersion operator for RK4."""
         prop_spatial = super()._compute_propagator_rk4()
-        prop_temporal = (-1j * self.D0 / 2 * self.Omega**2).astype(np.complex64)
+        prop_temporal = -1j * self.D0 / 2 * self.Omega**2
         return prop_spatial + prop_temporal
 
     def _dispersion_operator(self) -> np.ndarray:

@@ -315,7 +315,7 @@ class NLSE:
             # any of which may have changed since the last run. _build_propagator
             # is cache-backed, so an unchanged configuration is not recomputed.
             if method == "RK4":
-                self.propagator = self._build_propagator_rk4()
+                self.propagator = self._build_propagator_rk4(field_dtype)
             else:
                 self.propagator = self._build_propagator(field_dtype, delta_z)
             self._send_propagator_to_gpu(field_dtype)
@@ -559,6 +559,10 @@ class NLSE:
         """
         kernels = self._backend.kernels
 
+        # Whole-stage fused path: the slope never reaches memory.
+        if self._backend.has_fused_rk4_stage and self._can_fuse_rk4_stage(A):
+            return self._split_step_RK4_fused(A, V, propagator, plans, delta_z)
+
         # Whole-step fused fast path (MLX), single component only
         if self._backend.has_fused_rk4_step and self.nl_length == 0 and A.ndim == 2:
             alpha_half = self._constant("_alpha_half")
@@ -614,14 +618,177 @@ class NLSE:
 
         # Stage 4: k4 = f(A + h*k3)
         k = self._RK4_rhs(A_tmp, k, V, propagator, plans)
-        acc = kernels.rk4_accumulate(acc, 1.0, k)  # acc = k1+2*k2+2*k3+k4
-
-        # Final update: A += h/6 * acc
-        A = kernels.rk4_accumulate(A, h / 6, acc)
+        if self._backend.has_fused_rk4_final_update:
+            # A += h/6 * (acc + k4), without writing acc only to read it back
+            A = kernels.rk4_final_update(A, acc, k, h / 6)
+        else:
+            acc = kernels.rk4_accumulate(acc, 1.0, k)  # acc = k1+2*k2+2*k3+k4
+            # Final update: A += h/6 * acc
+            A = kernels.rk4_accumulate(A, h / 6, acc)
 
         self._rk4_k = k
         self._rk4_A_tmp = A_tmp
         self._rk4_acc = acc
+        return A
+
+    def _is_batched(self, A: np.ndarray, params: tuple = ()) -> bool:
+        """Whether this run carries a batch, of fields or of parameters.
+
+        An unbatched field is the grid axes and nothing else; anything above
+        that is a batch of simulations. A parameter given per simulation is
+        the other kind, and either rules out a kernel taking scalars and one
+        field.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            The field.
+        params : tuple
+            Parameters a kernel would take as scalars.
+
+        Returns
+        -------
+        bool
+            True if a batch is present.
+        """
+        if A.ndim > len(self._last_axes):
+            return True
+        return any(getattr(p, "ndim", 0) > 0 for p in params)
+
+    def _can_fuse_rk4_stage(self, A: np.ndarray) -> bool:
+        """Whether the whole-stage kernels can serve this run.
+
+        They take their parameters as scalars and index one field with a flat
+        id, so a batch goes the generic way; and they compute the intensity
+        from the field in registers, which a non-local run cannot do because
+        it has to convolve it first.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            The field.
+
+        Returns
+        -------
+        bool
+            True if the fused path applies.
+        """
+        return self.nl_length == 0 and not self._is_batched(A, self._fusable_params())
+
+    def _fusable_params(self) -> tuple:
+        """Return the parameters the whole-stage kernel takes as scalars."""
+        return (
+            self._constant("_alpha_half"),
+            self._constant("_g"),
+            self._constant("_Isat_conv"),
+        )
+
+    def _RK4_fused_stage(
+        self,
+        A_in: np.ndarray,
+        V: np.ndarray | None,
+        propagator: np.ndarray,
+        plans: list,
+        out: np.ndarray,
+        A: np.ndarray,
+        w: float,
+        c: float,
+        mode: int,
+    ) -> np.ndarray:
+        """Run one whole RK4 stage through the backend's fused kernel.
+
+        The one thing the coupled solver has to say differently, so that
+        ``_split_step_RK4_fused`` states the scheme once.
+
+        Parameters
+        ----------
+        A_in : np.ndarray
+            Field this stage evaluates the slope at.
+        V : np.ndarray or None
+            Potential field.
+        propagator : np.ndarray
+            Propagator matrix.
+        plans : list
+            FFT plan objects from the backend.
+        out : np.ndarray
+            Where this stage's result goes.
+        A : np.ndarray
+            The field the step started from.
+        w, c : float
+            Weights of this stage's slope in the accumulator and the output.
+        mode : int
+            0 to set the accumulator, 1 to add to it, 2 to spend it.
+
+        Returns
+        -------
+        np.ndarray
+            The array this stage wrote.
+        """
+        V_scaled = self._V_scaled
+        if V_scaled is None and V is not None:
+            V_scaled = V * self._constant("_k_half")
+        prop_fft = self._propagator_fft
+        return self._backend.kernels.rk4_stage_fused(
+            A_in,
+            self._rk4_k,
+            V_scaled,
+            prop_fft if prop_fft is not None else propagator,
+            plans[0],
+            self._rk4_acc,
+            out,
+            A,
+            self._constant("_alpha_half"),
+            self._constant("_g"),
+            self._constant("_Isat_conv"),
+            w,
+            c,
+            mode,
+            unnorm_ifft=(prop_fft is not None),
+        )
+
+    def _split_step_RK4_fused(
+        self,
+        A: np.ndarray,
+        V: np.ndarray | None,
+        propagator: np.ndarray,
+        plans: list,
+        delta_z: float,
+    ) -> np.ndarray:
+        """Take one RK4 step with each stage fused into a single kernel.
+
+        The same scheme as ``split_step_RK4``: four slopes, the first three
+        accumulated with weights 1, 2, 2 and the argument advanced by h/2,
+        h/2, h, then the field advanced by h/6 times the total. What differs
+        is that no slope is written to memory.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            Field to propagate, modified in place by the last stage.
+        V : np.ndarray or None
+            Potential field.
+        propagator : np.ndarray
+            Propagator matrix.
+        plans : list
+            FFT plan objects from the backend.
+        delta_z : float
+            Step to take.
+
+        Returns
+        -------
+        np.ndarray
+            The propagated field.
+        """
+        if not hasattr(self, "_rk4_k"):
+            self._allocate_rk4_buffers(A, "RK4")
+        A_tmp = self._rk4_A_tmp
+        h = delta_z
+        stage = self._RK4_fused_stage
+        #        argument  out     w    c      mode
+        stage(A, V, propagator, plans, A_tmp, A, 1.0, h / 2, 0)
+        stage(A_tmp, V, propagator, plans, A_tmp, A, 2.0, h / 2, 1)
+        stage(A_tmp, V, propagator, plans, A_tmp, A, 2.0, h, 1)
+        stage(A_tmp, V, propagator, plans, A, A, 1.0, h / 6, 2)
         return A
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
@@ -748,8 +915,14 @@ class NLSE:
         return (self.NX, self.NY, "RK4", float(self.k))
 
     def _compute_propagator_rk4(self) -> np.ndarray:
-        """Compute the raw dispersion operator for RK4 (no caching)."""
-        return (-1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k).astype(np.complex64)
+        """Compute the raw dispersion operator for RK4 (no caching).
+
+        Left at the width the grid gives it. ``_build_propagator_rk4`` casts
+        it to the field's, which is the one place that knows what the field
+        is: computing it narrow and widening it afterwards would carry
+        single-precision values in a double-precision array.
+        """
+        return -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k
 
     def _build_propagator(self, dtype: np.dtype, delta_z: float) -> np.ndarray:
         """Build the linear propagation matrix with caching.
@@ -774,18 +947,27 @@ class NLSE:
         self._propagator_cache[cache_key] = propagator
         return propagator
 
-    def _build_propagator_rk4(self) -> np.ndarray:
+    def _build_propagator_rk4(self, dtype: np.dtype) -> np.ndarray:
         """Build raw dispersion operator for RK4 with caching.
+
+        Parameters
+        ----------
+        dtype : np.dtype
+            Complex dtype of the field the operator will multiply. The GPU
+            kernels choose their precision from the field and index the
+            operator with the same flat id, so an operator of the other
+            width is read as the wrong type and comes back NaN. It is part
+            of the cache key for the same reason.
 
         Returns
         -------
         np.ndarray
-            The raw dispersion operator.
+            The raw dispersion operator, at the field's precision.
         """
-        cache_key = self._propagator_rk4_cache_key()
+        cache_key = (*self._propagator_rk4_cache_key(), np.dtype(dtype).str)
         if cache_key in self._propagator_cache:
             return self._propagator_cache[cache_key]
-        propagator = self._compute_propagator_rk4()
+        propagator = np.asarray(self._compute_propagator_rk4()).astype(dtype)
         self._propagator_cache[cache_key] = propagator
         return propagator
 
@@ -1240,9 +1422,16 @@ class NLSE:
         return plan
 
     def _allocate_rk4_buffers(self, A: np.ndarray, method: str) -> None:
-        """Pre-allocate scratch buffers for the RK4 stepper."""
+        """Pre-allocate scratch buffers for the RK4 stepper.
+
+        The buffers take the field's own precision. Pinning them to
+        complex64 made a double-precision run write the field into a stage
+        buffer half its width, and the FFT plan -- built from the field --
+        then met an array of the wrong dtype: pyfftw refused it outright and
+        cuFFT returned NaN.
+        """
         if method == "RK4":
-            dtype = np.complex64
+            dtype = self._field_dtype(A)
             self._rk4_k = self._backend.allocate_field(A.shape, dtype)
             self._rk4_A_tmp = self._backend.allocate_field(A.shape, dtype)
             self._rk4_acc = self._backend.allocate_field(A.shape, dtype)

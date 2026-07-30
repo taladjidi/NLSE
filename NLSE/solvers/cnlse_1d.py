@@ -114,8 +114,8 @@ class CNLSE_1d(CNLSE):
 
     def _compute_propagator_rk4(self) -> np.ndarray:
         """Compute the raw 1D coupled dispersion operators for RK4."""
-        prop1 = (-1j * 0.5 * self.Kx**2 / self.k).astype(np.complex64)
-        prop2 = (-1j * 0.5 * self.Kx**2 / self.k2).astype(np.complex64)
+        prop1 = -1j * 0.5 * self.Kx**2 / self.k
+        prop2 = -1j * 0.5 * self.Kx**2 / self.k2
         return np.array([prop1, prop2])
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:

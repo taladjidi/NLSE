@@ -39,10 +39,15 @@ KERNEL_PHASES = [
     ("split_step_coupled", "whole step (fused)"),
     ("split_step_rk4", "whole step (fused)"),
     ("split_step", "whole step (fused)"),
+    # A whole stage: the linear part's slope finished and spent in one kernel,
+    # so it is neither the rhs phase nor the stage phase but both. Matched
+    # before square_mod, which square_mod_rk4_stage would otherwise answer to.
+    ("rk4_stage", "RK4 whole stage (fused)"),
     ("rk4_rhs", "RK4 rhs (fused)"),
     ("rk4_nl_rhs", "RK4 rhs"),
     ("rk4_set_and_axpy", "RK4 stage"),
     ("rk4_acc_and_axpy", "RK4 stage"),
+    ("rk4_final_update", "RK4 stage"),
     ("rk4_axpy", "RK4 stage"),
     ("rk4_accumulate", "RK4 stage"),
     ("linear_step", "linear (fused)"),
@@ -161,6 +166,16 @@ def summarise_kernels(rows, top):
     print(f"  {'phase':<22} {'time':>10} {'share':>7} {'launches':>9}")
     for phase, (ns, calls) in sorted(by_phase.items(), key=lambda x: -x[1][0]):
         print(f"  {phase:<22} {ns / 1e6:8.2f}ms {100 * ns / total:6.1f} % {calls:9d}")
+
+    # A kernel this script has no rule for lands in "other", which reads as a
+    # residual rather than as a kernel nobody named. Say which they were: a
+    # new kernel silently becoming 4% of "other" is how a phase table stops
+    # describing the solver.
+    unnamed = sorted({name for _, _, name in entries if phase_of(name) == "other"})
+    if unnamed:
+        print(f'  "other" is {len(unnamed)} unrecognised kernel(s):')
+        for name in unnamed[:10]:
+            print(f"    {name if len(name) <= 60 else name[:57] + '...'}")
 
     print(f"\n  slowest {top} kernels")
     print(f"  {'kernel':<52} {'time':>10} {'launches':>9} {'per launch':>11}")
