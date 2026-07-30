@@ -3,6 +3,7 @@
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 
 from ..utils import __MLX_AVAILABLE__
 from .backend import Backend
@@ -41,12 +42,12 @@ class MLXBackend(Backend):
     def name(self) -> str:
         return "MLX"
 
-    def allocate_field(self, shape: tuple, dtype: np.dtype) -> Any:
+    def allocate_field(self, shape: tuple, dtype: npt.DTypeLike) -> Any:
         """Allocate complex array on MLX device."""
         mx_dtype = _NUMPY_TO_MLX_DTYPE.get(np.dtype(dtype), mx.complex64)
         return mx.zeros(shape, dtype=mx_dtype)
 
-    def allocate_real_field(self, shape: tuple, dtype: np.dtype) -> Any:
+    def allocate_real_field(self, shape: tuple, dtype: npt.DTypeLike) -> Any:
         """Allocate real array on MLX device."""
         mx_dtype = _NUMPY_TO_MLX_DTYPE.get(np.dtype(dtype), mx.float32)
         return mx.zeros(shape, dtype=mx_dtype)

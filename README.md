@@ -31,6 +31,28 @@ uv pip install ".[mlx]"      # MLX, for Apple silicon
 uv pip install ".[docs]"     # mkdocs, to build the documentation
 ```
 
+### Which FFTW you get
+
+The CPU backend spends most of a step in FFTW, and the two `pyfftw` builds are
+not equivalent. On Apple silicon the PyPI wheel bundles an FFTW with no NEON
+codelets and measures four times slower than the conda-forge one, so if you use
+conda, prefer it:
+
+```bash
+pip uninstall pyfftw          # conda cannot see the wheel, and will otherwise no-op
+conda install -c conda-forge pyfftw
+rm ~/Library/Caches/NLSE/fft.wisdom   # plans recorded against the old library outlive it
+```
+
+The package warns at runtime when it plans a transform on a build without
+vector codelets, so you do not have to check by hand.
+
+The wheel also vendors its own copy of the OpenMP runtime rather than linking
+the one in your environment, which numba's thread pool also uses. Two copies
+coexist only if numba's is initialized first, and the CPU backend makes sure it
+is; nothing is required of you. The conda-forge build links the shared one and
+has no such constraint.
+
 ## Basic usage
 
 After installing `NLSE`, you can simply import one of the solvers and instantiate your problem as follows:

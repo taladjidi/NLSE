@@ -263,12 +263,20 @@ def adapt_delta_z_to_error(
     Returns
     -------
     float or None
-        The new step, on the steps where it is measured, else None.
+        The new step, on the steps where it is measured, else None. Also None
+        under imaginary time, which this does not control -- see below.
     """
     step = simu._current_delta_z
     if delta_z is not None:
         delta_z.append(step)
     if i % update_every != 0 or step is None:
+        return None
+    # Imaginary time passes a complex step, and the two ends of this compare it
+    # against a floor and a cap, which no complex number answers: it raised
+    # TypeError rather than adapting anything. Declining is the honest reply --
+    # imaginary time is a relaxation towards a ground state, not a trajectory,
+    # so a local error against the step it took is not the quantity to control.
+    if isinstance(step, complex):
         return None
 
     whole = _trial_propagation(simu, A, step, 1)

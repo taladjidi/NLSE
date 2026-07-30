@@ -5,6 +5,7 @@ import time
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 
 from ..utils import __CUPY_AVAILABLE__
 from .backend import Backend, Timing
@@ -78,11 +79,11 @@ class CUPYBackend(Backend):
     def name(self) -> str:
         return "CUPY"
 
-    def allocate_field(self, shape: tuple, dtype: np.dtype) -> Any:
+    def allocate_field(self, shape: tuple, dtype: npt.DTypeLike) -> Any:
         """Allocate array on GPU."""
         return cp.zeros(shape, dtype=dtype)
 
-    def allocate_real_field(self, shape: tuple, dtype: np.dtype) -> Any:
+    def allocate_real_field(self, shape: tuple, dtype: npt.DTypeLike) -> Any:
         """Allocate real array on GPU."""
         return cp.zeros(shape, dtype=dtype)
 

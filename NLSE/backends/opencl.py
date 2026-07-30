@@ -3,6 +3,7 @@
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 
 from ..utils import __PYOPENCL_AVAILABLE__
 from .backend import Backend
@@ -109,11 +110,11 @@ class OpenCLBackend(Backend):
         """Get OpenCL context."""
         return self._context
 
-    def allocate_field(self, shape: tuple, dtype: np.dtype) -> Any:
+    def allocate_field(self, shape: tuple, dtype: npt.DTypeLike) -> Any:
         """Allocate array on OpenCL device."""
         return cla.zeros(self._queue, shape, dtype)
 
-    def allocate_real_field(self, shape: tuple, dtype: np.dtype) -> Any:
+    def allocate_real_field(self, shape: tuple, dtype: npt.DTypeLike) -> Any:
         """Allocate real array on OpenCL device."""
         return cla.zeros(self._queue, shape, dtype)
 

@@ -95,6 +95,14 @@ class NLSE:
     # plain attribute access rather than a getattr with a default at each site.
     _V_scaled: Any = None
     _propagator_fft: Any = None
+    # Assigned None in __init__ too, but only the declaration here says what
+    # they become: whichever array type the backend allocates, and a list of
+    # whichever plan object it builds. Without it they read as None-and-only-
+    # None outside this module, where the override that silences the solvers
+    # does not apply -- which is how a callback setting up a trial propagation
+    # was told it could not pass them to split_step.
+    propagator: Any = None
+    plans: Any = None
 
     # All three, so nothing has to know which backends are worth asking about.
     __CUPY_AVAILABLE__ = __CUPY_AVAILABLE__

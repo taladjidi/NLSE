@@ -8,6 +8,7 @@ import warnings
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 import pyfftw
 from scipy import fft as scipy_fft, signal
 
@@ -200,11 +201,11 @@ class CPUBackend(Backend):
     def name(self) -> str:
         return "CPU"
 
-    def allocate_field(self, shape: tuple, dtype: np.dtype) -> np.ndarray:
+    def allocate_field(self, shape: tuple, dtype: npt.DTypeLike) -> np.ndarray:
         """Allocate aligned array for FFTW."""
         return pyfftw.zeros_aligned(shape, dtype=dtype, n=pyfftw.simd_alignment)
 
-    def allocate_real_field(self, shape: tuple, dtype: np.dtype) -> np.ndarray:
+    def allocate_real_field(self, shape: tuple, dtype: npt.DTypeLike) -> np.ndarray:
         """Allocate aligned real array."""
         return pyfftw.zeros_aligned(shape, dtype=dtype, n=pyfftw.simd_alignment)
 

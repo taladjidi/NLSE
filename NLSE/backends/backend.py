@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 
 
 @dataclass
@@ -185,14 +186,14 @@ class Backend(ABC):
         return self.name in ("CUPY", "CL", "MLX")
 
     @abstractmethod
-    def allocate_field(self, shape: tuple, dtype: np.dtype) -> Any:
+    def allocate_field(self, shape: tuple, dtype: npt.DTypeLike) -> Any:
         """Allocate a field array on this backend.
 
         Parameters
         ----------
         shape : tuple
             Shape of the array
-        dtype : np.dtype
+        dtype : npt.DTypeLike
             Data type
 
         Returns
@@ -204,14 +205,14 @@ class Backend(ABC):
         pass
 
     @abstractmethod
-    def allocate_real_field(self, shape: tuple, dtype: np.dtype) -> Any:
+    def allocate_real_field(self, shape: tuple, dtype: npt.DTypeLike) -> Any:
         """Allocate a real-valued field array.
 
         Parameters
         ----------
         shape : tuple
             Shape of the array
-        dtype : np.dtype
+        dtype : npt.DTypeLike
             Data type (should be real)
 
         Returns
@@ -272,7 +273,7 @@ class Backend(ABC):
             Array shape
         axes : tuple
             Axes to transform
-        dtype : np.dtype
+        dtype : npt.DTypeLike
             Data type
         array : np.ndarray or None
             An array of that shape and dtype, when the backend can plan
@@ -310,7 +311,7 @@ class Backend(ABC):
             Array shape
         axes : tuple
             Axes to transform
-        dtype : np.dtype
+        dtype : npt.DTypeLike
             Data type
         array : np.ndarray or None
             An array of that shape and dtype, used only when the plan has to
