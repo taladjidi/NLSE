@@ -5,7 +5,7 @@ import numpy as np
 from scipy.constants import c, epsilon_0
 
 from ..utils import __BACKEND__, __CUPY_AVAILABLE__, __PYOPENCL_AVAILABLE__
-from .nlse import NLSE
+from .nlse import NLSE, show_if_possible
 
 if __CUPY_AVAILABLE__:
     pass
@@ -189,7 +189,7 @@ class CNLSE(NLSE):
     def _compute_propagator_rk4(self) -> np.ndarray:
         """Compute the raw coupled dispersion operators for RK4."""
         prop1 = super()._compute_propagator_rk4()
-        prop2 = (-1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k2).astype(np.complex64)
+        prop2 = -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k2
         return np.array([prop1, prop2])
 
     def _step_constants(self) -> dict[str, Any]:
@@ -333,6 +333,32 @@ class CNLSE(NLSE):
                 f"with the {self._backend.name} backend. Use CPU or CUPY."
             )
 
+    def _can_fuse_components(self, A: np.ndarray, params: tuple) -> bool:
+        """Whether the interleaved coupled kernels can serve this call.
+
+        They read both components out of the one array with a flat index and
+        take their parameters as scalars, so a batch -- of fields or of
+        parameters -- has to go the generic way, as does a non-local run,
+        which needs the intensity convolved between the two.
+
+        CL and MLX refuse a batched coupled run outright, in
+        ``_check_batch_support``, so for them this only ever restates what is
+        already true. CUPY serves one, and needs the fallback.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            The coupled field.
+        params : tuple
+            The parameters the kernel would take as scalars.
+
+        Returns
+        -------
+        bool
+            True if the fused path applies.
+        """
+        return self.nl_length == 0 and not self._is_batched(A, params)
+
     def _set_components(self, A: np.ndarray, A1: np.ndarray, A2: np.ndarray) -> None:
         """Write the two components back into ``A``.
 
@@ -350,10 +376,20 @@ class CNLSE(NLSE):
         A[self._component(1)] = A2
 
     def _allocate_rk4_buffers(self, A: np.ndarray, method: str) -> None:
-        """Pre-allocate scratch buffers for coupled RK4 stepper."""
+        """Pre-allocate scratch buffers for coupled RK4 stepper.
+
+        The intensity buffer takes the real width matching the field, for the
+        reason given on the base method: the kernels pick their precision
+        from the field and write this buffer at that width.
+        """
         super()._allocate_rk4_buffers(A, method)
         if method == "RK4":
-            self._rk4_A_sq_c = self._backend.allocate_real_field(A.shape, np.float32)
+            real_dtype = (
+                np.float32
+                if np.dtype(self._field_dtype(A)).itemsize == 8
+                else np.float64
+            )
+            self._rk4_A_sq_c = self._backend.allocate_real_field(A.shape, real_dtype)
 
     def _RK4_rhs(
         self,
@@ -396,8 +432,11 @@ class CNLSE(NLSE):
             V_scaled = V * k_half
             V2_scaled = V * k2_half
 
-        # Fused fast path (CL, MLX): zero component copies
-        if self._backend.has_fused_coupled_rk4_rhs and self.nl_length == 0:
+        # Fused fast path: zero component copies, and the transform writes
+        # straight into k rather than the stage starting with a copy.
+        if self._backend.has_fused_coupled_rk4_rhs and self._can_fuse_components(
+            A_in, (alpha_half, alpha2_half, g11, g12, g22, Isat1, Isat2)
+        ):
             prop_fft = self._propagator_fft
             return kernels.rk4_rhs_coupled_fused(
                 A_in,
@@ -416,11 +455,8 @@ class CNLSE(NLSE):
                 unnorm_ifft=(prop_fft is not None),
             )
 
-        if self._backend.name == "MLX":
-            k = self._apply_linear_step(A_in, propagator, plans)
-        else:
-            k[:] = A_in
-            k = self._apply_linear_step(k, propagator, plans)
+        k[:] = A_in
+        k = self._apply_linear_step(k, propagator, plans)
 
         A1, A2 = self._take_components(A_in)
         k1, k2 = self._take_components(k)
@@ -429,10 +465,10 @@ class CNLSE(NLSE):
         A_sq_1, A_sq_2 = self._take_components(A_sq)
 
         if self.nl_length > 0:
-            A_sq_1 = self._convolution(
+            A_sq_1 = self._backend.convolution(
                 A_sq_1, self.nl_profile, mode="same", axes=self._last_axes
             )
-            A_sq_2 = self._convolution(
+            A_sq_2 = self._backend.convolution(
                 A_sq_2, self.nl_profile, mode="same", axes=self._last_axes
             )
 
@@ -488,6 +524,60 @@ class CNLSE(NLSE):
         self._set_components(k, k1, k2)
 
         return k
+
+    def _fusable_params(self) -> tuple:
+        """Return the parameters the coupled whole-stage kernel takes as scalars."""
+        return (
+            self._constant("_alpha_half"),
+            self._constant("_alpha2_half"),
+            self._constant("_g11"),
+            self._constant("_g12"),
+            self._constant("_g22"),
+            self._constant("_Isat_conv"),
+            self._constant("_Isat_conv2"),
+        )
+
+    def _RK4_fused_stage(
+        self,
+        A_in: np.ndarray,
+        V: np.ndarray | None,
+        propagator: np.ndarray,
+        plans: list,
+        out: np.ndarray,
+        A: np.ndarray,
+        w: float,
+        c: float,
+        mode: int,
+    ) -> np.ndarray:
+        """Run one whole coupled RK4 stage, both components at once."""
+        V_scaled = self._V_scaled
+        V2_scaled = self._V2_scaled
+        if V_scaled is None and V is not None:
+            V_scaled = V * self._constant("_k_half")
+            V2_scaled = V * self._constant("_k2_half")
+        prop_fft = self._propagator_fft
+        return self._backend.kernels.rk4_stage_coupled_fused(
+            A_in,
+            self._rk4_k,
+            V_scaled,
+            V2_scaled,
+            prop_fft if prop_fft is not None else propagator,
+            plans[0],
+            self._rk4_acc,
+            out,
+            A,
+            self._constant("_alpha_half"),
+            self._constant("_alpha2_half"),
+            self._constant("_g11"),
+            self._constant("_g12"),
+            self._constant("_g22"),
+            self._constant("_Isat_conv"),
+            self._constant("_Isat_conv2"),
+            w,
+            c,
+            mode,
+            unnorm_ifft=(prop_fft is not None),
+        )
 
     def _apply_nl_prop_c(
         self,
@@ -563,10 +653,10 @@ class CNLSE(NLSE):
         A_sq = self._backend.kernels.square_mod(A, A_sq)
         A_sq_1, A_sq_2 = self._take_components(A_sq)
         if self.nl_length > 0:
-            A_sq_1 = self._convolution(
+            A_sq_1 = self._backend.convolution(
                 A_sq_1, self.nl_profile, mode="same", axes=self._last_axes
             )
-            A_sq_2 = self._convolution(
+            A_sq_2 = self._backend.convolution(
                 A_sq_2, self.nl_profile, mode="same", axes=self._last_axes
             )
         return A_sq, A_sq_1, A_sq_2
@@ -637,10 +727,12 @@ class CNLSE(NLSE):
 
         kernels = self._backend.kernels
 
-        # Fused fast path (CL, MLX): zero component copies. It takes one field
-        # of exactly the coupled rank; _check_batch_support has already turned
-        # away the batched runs it could not serve.
-        if self._backend.has_fused_coupled_split_step and self.nl_length == 0:
+        # Fused fast path: zero component copies. It takes one field of
+        # exactly the coupled rank and scalar parameters.
+        if self._backend.has_fused_coupled_split_step and self._can_fuse_components(
+            A,
+            (alpha_half, alpha2_half, g11, g12, g22, Isat_conv, Isat_conv2),
+        ):
             dz = delta_z / 2 if precision == "double" else delta_z
             prop_fft = self._propagator_fft
             omega_half = (
@@ -750,4 +842,4 @@ class CNLSE(NLSE):
         ax[1, 1].set_xlabel("x (mm)")
         ax[1, 1].set_ylabel("y (mm)")
         fig.colorbar(im3, ax=ax[1, 1], shrink=0.6, label="Phase (rad)")
-        plt.show()
+        show_if_possible()

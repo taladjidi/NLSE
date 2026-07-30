@@ -11,6 +11,7 @@ matplotlib.use("Agg")  # non-interactive backend for plot tests
 import numpy as np
 import pyfftw
 import pytest
+from helpers import make
 from NLSE import CNLSE, NLSE
 from NLSE.backends import list_available_backends
 from scipy.constants import c, epsilon_0
@@ -43,69 +44,18 @@ def make_nlse(backend="CPU", n=N, **overrides):
     Ninety-odd solver constructions in this file differed only in backend,
     grid size and one or two parameters; spelling each out in full made the
     difference between two tests the hardest thing to see in them.
-
-    Parameters
-    ----------
-    backend : str
-        Backend name.
-    n : int
-        Grid size, square.
-    **overrides
-        Any constructor argument, by keyword.
-
-    Returns
-    -------
-    NLSE
-        The solver.
     """
-    params = {
-        "alpha": alpha,
-        "power": power,
-        "window": window,
-        "n2": n2,
-        "V": None,
-        "L": L,
-        "NX": n,
-        "NY": n,
-        "Isat": Isat,
-        "backend": backend,
-    }
-    params.update(overrides)
-    return NLSE(**params)
+    return make(NLSE, backend, n=n, **overrides)
 
 
 def make_cnlse(backend="CPU", n=N, **overrides):
     """Return a CNLSE with this module's parameters.
 
-    Parameters
-    ----------
-    backend : str
-        Backend name.
-    n : int
-        Grid size, square.
-    **overrides
-        Any constructor argument, by keyword.
-
-    Returns
-    -------
-    CNLSE
-        The solver.
+    Ninety-odd solver constructions in this file differed only in backend,
+    grid size and one or two parameters; spelling each out in full made the
+    difference between two tests the hardest thing to see in them.
     """
-    params = {
-        "alpha": alpha,
-        "power": power,
-        "window": window,
-        "n2": n2,
-        "n12": n12,
-        "V": None,
-        "L": L,
-        "NX": n,
-        "NY": n,
-        "Isat": Isat,
-        "backend": backend,
-    }
-    params.update(overrides)
-    return CNLSE(**params)
+    return make(CNLSE, backend, n=n, **{"n12": n12, **overrides})
 
 
 class TestCPUCorrectness:
@@ -872,7 +822,7 @@ class TestNLSEPropagator:
     def test_propagator_rk4(self):
         """RK4 propagator does not include delta_z exponential."""
         simu = make_nlse("CPU", n=S)
-        prop = simu._build_propagator_rk4()
+        prop = simu._build_propagator_rk4(np.complex64)
         expected = -1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k
         np.testing.assert_allclose(
             prop,
@@ -989,7 +939,7 @@ class TestNLSERK4:
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, _A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
-        prop = simu._build_propagator_rk4()
+        prop = simu._build_propagator_rk4(np.complex64)
 
         # Just one step to exercise the code path
         A_before = A.copy()
@@ -1094,7 +1044,7 @@ class TestCNLSERK4:
         E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
         A, _A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
-        prop = simu._build_propagator_rk4()
+        prop = simu._build_propagator_rk4(np.complex64)
 
         A_before = A.copy()
         simu.split_step_RK4(A, V, prop, plans, DZ_TEST)
@@ -1234,7 +1184,7 @@ class TestCNLSEExtended:
         """CNLSE RK4 propagator."""
         n12_local = 0.5e-9
         simu = make_cnlse("CPU", n=S, n12=n12_local)
-        prop = simu._build_propagator_rk4()
+        prop = simu._build_propagator_rk4(np.complex64)
         assert prop.shape == (2, S, S)
         # RK4 propagator should not be exponential (no delta_z)
         assert not np.allclose(np.abs(prop), 1.0)

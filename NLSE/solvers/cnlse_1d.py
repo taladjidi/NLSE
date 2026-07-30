@@ -4,6 +4,7 @@ from scipy.constants import c, epsilon_0
 
 from ..utils import __BACKEND__
 from .cnlse import CNLSE
+from .nlse import show_if_possible
 
 
 class CNLSE_1d(CNLSE):
@@ -114,8 +115,8 @@ class CNLSE_1d(CNLSE):
 
     def _compute_propagator_rk4(self) -> np.ndarray:
         """Compute the raw 1D coupled dispersion operators for RK4."""
-        prop1 = (-1j * 0.5 * self.Kx**2 / self.k).astype(np.complex64)
-        prop2 = (-1j * 0.5 * self.Kx**2 / self.k2).astype(np.complex64)
+        prop1 = -1j * 0.5 * self.Kx**2 / self.k
+        prop2 = -1j * 0.5 * self.Kx**2 / self.k2
         return np.array([prop1, prop2])
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
@@ -150,4 +151,4 @@ class CNLSE_1d(CNLSE):
         ax[1, 1].set_title(r"$\mathrm{arg}(\psi_2)$")
         ax[1, 1].set_xlabel("x in mm")
         ax[1, 1].set_ylabel(r"Phase in rad")
-        plt.show()
+        show_if_possible()

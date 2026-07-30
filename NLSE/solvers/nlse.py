@@ -2,17 +2,15 @@
 # @author: Tangui Aladjidi / Clara Piekarski
 """NLSE Main module."""
 
-import multiprocessing
-import time
+import contextlib
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pyfftw
 import tqdm
-from scipy import signal, special
+from scipy import special
 from scipy.constants import c, epsilon_0
 
 from ..backends import Backend, get_backend
@@ -24,12 +22,7 @@ from ..utils import (
 )
 
 if __CUPY_AVAILABLE__:
-    import cupy as cp
-    import cupyx.scipy.signal as signal_cp  # type: ignore[import-not-found]
-
-pyfftw.config.NUM_THREADS = multiprocessing.cpu_count()
-pyfftw.config.PLANNER_EFFORT = "FFTW_MEASURE"
-pyfftw.interfaces.cache.enable()
+    pass  # type: ignore[import-not-found]
 
 # Explicit RK4 is stable for |lambda * dz| up to ~2*sqrt(2) along the
 # imaginary axis. Every solver's step limit is derived from it.
@@ -45,6 +38,28 @@ DEFAULT_PHASE_PER_STEP = 0.1
 # Fewest steps a default may take over the requested distance, so that a run
 # is something a callback can sample and a plot can show rather than one jump.
 DEFAULT_MIN_STEPS = 10
+
+
+# Backends that render to a file rather than a window. Calling show() on one
+# does nothing except warn, and a library should not warn a user for the
+# backend matplotlib picked.
+_NON_INTERACTIVE_BACKENDS = frozenset(
+    {"agg", "pdf", "ps", "svg", "template", "cairo", "pgf"}
+)
+
+
+def show_if_possible() -> bool:
+    """Show the current figure, where the backend can show anything.
+
+    Returns
+    -------
+    bool
+        True if the figure was shown.
+    """
+    if plt.get_backend().lower() in _NON_INTERACTIVE_BACKENDS:
+        return False
+    plt.show()
+    return True
 
 
 class NLSE:
@@ -136,12 +151,6 @@ class NLSE:
         """
         # list of physical parameters
         self._backend: Backend = get_backend(backend, grid_size=(NX, NY))
-        # Setup backend-specific convolution
-        if self._backend.name == "CUPY":
-            self._convolution = signal_cp.oaconvolve
-        elif self._backend.name == "CPU":
-            self._convolution = signal.oaconvolve
-        # CL backend doesn't have convolution yet
         self.n2 = n2
         self.V = V
         self.wl = wvl
@@ -187,7 +196,7 @@ class NLSE:
         self.propagator = None
         self.plans = None
         self.nl_length = self._resolved_nl_length(nl_length)
-        if self.nl_length > 0 and self._backend.name in ["CL", "MLX"]:
+        if self.nl_length > 0 and self._backend.convolution is None:
             raise NotImplementedError(
                 f"Non-local interaction (nl_length > 0) is not supported "
                 f"with the {self._backend.name} backend. Use CPU or CUPY instead."
@@ -226,11 +235,6 @@ class NLSE:
     def backend(self, value: str) -> None:
         """Set the backend for the simulation."""
         self._backend = get_backend(value, grid_size=(self.NX, self.NY))
-        # Setup backend-specific convolution
-        if self._backend.name == "CUPY":
-            self._convolution = signal_cp.oaconvolve
-        elif self._backend.name == "CPU":
-            self._convolution = signal.oaconvolve
 
     def out_field(
         self,
@@ -317,90 +321,64 @@ class NLSE:
         # Rebuilt below once delta_z is settled; drop the previous run's so
         # the transfer does not carry it.
         self.propagator = None
-        if self._backend.is_device_backend:
-            self._send_arrays_to_gpu(field_dtype)
-        V = self.V
-        A, A_sq = self._prepare_output_array(E_in, normalize)
-        self.plans = self._build_fft_plan(A)
-        self._allocate_rk4_buffers(A, method)
-        self._precompute_step_constants(V, precision)
+        with self._arrays_on_device(field_dtype):
+            V = self.V
+            A, A_sq = self._prepare_output_array(E_in, normalize)
+            self.plans = self._build_fft_plan(A)
+            self._allocate_rk4_buffers(A, method)
+            self._precompute_step_constants(V, precision)
 
-        # Settle the step before building anything that depends on it.
-        if delta_z is None:
-            delta_z = self._default_delta_z(A, method, z)
-        delta_z = self._capped_delta_z(delta_z, A, method)
+            # Settle the step before building anything that depends on it.
+            if delta_z is None:
+                delta_z = self._default_delta_z(A, method, z)
+            delta_z = self._capped_delta_z(delta_z, A, method)
 
-        # The propagator depends on delta_z, k, the grid and the precision,
-        # any of which may have changed since the last run. _build_propagator
-        # is cache-backed, so an unchanged configuration is not recomputed.
-        if method == "RK4":
-            self.propagator = self._build_propagator_rk4()
-        else:
-            self.propagator = self._build_propagator(field_dtype, delta_z)
-        self._send_propagator_to_gpu(field_dtype)
-        if verbose:
-            pbar = tqdm.tqdm(
-                total=100,
-                position=4,
-                desc="Propagation",
-                leave=False,
-                unit="%",
-                unit_scale=True,
-            )
-        if self._backend.name == "CUPY":
-            start_gpu = cp.cuda.Event()
-            end_gpu = cp.cuda.Event()
-            start_gpu.record()
-        t0 = time.perf_counter()
-        if type(delta_z) is complex:
-            print("Warning: imaginary time evolution !")
-
-        A = self._run_propagation(
-            A,
-            A_sq,
-            V,
-            z,
-            delta_z,
-            precision,
-            method,
-            callback,
-            callback_args,
-            verbose,
-            pbar if verbose else None,
-        )
-
-        if verbose:
-            pbar.n = 100
-            pbar.refresh()
-        # Synchronize device backends before timing
-        if self._backend.name == "CL":
-            self._backend.queue.finish()
-        elif self._backend.name == "MLX":
-            import mlx.core as mx
-
-            mx.eval(A)
-        t_cpu = time.perf_counter() - t0
-        if verbose:
-            pbar.close()
-
-        if self._backend.name == "CUPY":
-            end_gpu.record()
-            end_gpu.synchronize()
-            t_gpu = cp.cuda.get_elapsed_time(start_gpu, end_gpu)
-        if verbose:
-            if self._backend.name == "CUPY":
-                print(
-                    f"\nTime spent to solve : {t_gpu * 1e-3} s (GPU) /"
-                    f" {time.perf_counter() - t0} s (CPU)\n"
-                )
+            # The propagator depends on delta_z, k, the grid and the precision,
+            # any of which may have changed since the last run. _build_propagator
+            # is cache-backed, so an unchanged configuration is not recomputed.
+            if method == "RK4":
+                self.propagator = self._build_propagator_rk4(field_dtype)
             else:
-                print(f"\nTime spent to solve : {t_cpu} s (CPU)\n")
-        # _run_propagation restores the nonlinear coupling itself.
-        return_np_array = isinstance(E_in, np.ndarray)
-        if self._backend.is_device_backend:
-            if return_np_array:
+                self.propagator = self._build_propagator(field_dtype, delta_z)
+            self._send_propagator_to_gpu(field_dtype)
+            if verbose:
+                pbar = tqdm.tqdm(
+                    total=100,
+                    position=4,
+                    desc="Propagation",
+                    leave=False,
+                    unit="%",
+                    unit_scale=True,
+                )
+            if type(delta_z) is complex:
+                print("Warning: imaginary time evolution !")
+
+            with self._backend.timed() as timing:
+                A = self._run_propagation(
+                    A,
+                    A_sq,
+                    V,
+                    z,
+                    delta_z,
+                    precision,
+                    method,
+                    callback,
+                    callback_args,
+                    verbose,
+                    pbar if verbose else None,
+                )
+                # Before the clock stops: a queue submitted is not work done.
+                self._backend.synchronize(A)
+
+            if verbose:
+                pbar.n = 100
+                pbar.refresh()
+                pbar.close()
+                print(f"\n{timing}\n")
+            # _run_propagation restores the nonlinear coupling itself.
+            return_np_array = isinstance(E_in, np.ndarray)
+            if self._backend.is_device_backend and return_np_array:
                 A = self._backend.to_numpy(A)
-            self._retrieve_arrays_from_gpu()
 
         if plot:
             self.plot_field(A, z)
@@ -474,101 +452,58 @@ class NLSE:
 
         # First half-step (only for precision == "double")
         if precision == "double":
-            if self.nl_length > 0:
-                # Need A_sq for convolution — must keep separate
-                A_sq = kernels.square_mod(A, A_sq)
-                A_sq[:] = self._convolution(
-                    A_sq, self.nl_profile, mode="same", axes=self._last_axes
-                )
-                if V is None:
-                    A = kernels.nl_prop_without_V(
-                        A,
-                        A_sq,
-                        delta_z / 2,
-                        alpha_half,
-                        g,
-                        Isat_conv,
-                    )
-                else:
-                    A = kernels.nl_prop(
-                        A,
-                        A_sq,
-                        delta_z / 2,
-                        alpha_half,
-                        V_scaled,
-                        g,
-                        Isat_conv,
-                    )
-            else:
-                if V is None:
-                    A = kernels.square_mod_nl_prop(
-                        A,
-                        delta_z / 2,
-                        alpha_half,
-                        g,
-                        Isat_conv,
-                    )
-                else:
-                    A = kernels.square_mod_nl_prop_v(
-                        A,
-                        V_scaled,
-                        delta_z / 2,
-                        alpha_half,
-                        g,
-                        Isat_conv,
-                    )
+            A = self._nonlinear_step(A, A_sq, V_scaled, delta_z / 2)
 
         # Linear propagation in Fourier domain
         A = self._apply_linear_step(A, propagator, plans)
 
-        # Second half-step (always executed)
-        # Determine step size based on precision mode
+        # Second half-step (always executed), the whole step for Lie splitting
         dz_step = delta_z / 2 if precision == "double" else delta_z
+        return self._nonlinear_step(A, A_sq, V_scaled, dz_step)
+
+    def _nonlinear_step(self, A, A_sq, V_scaled, dz):
+        """Apply the real-space part of the step: interaction, potential, loss.
+
+        Both halves of a Strang step do exactly this and differed only in the
+        distance, so they are one method. It is also what brackets a merged
+        run -- see ``_merged_strang_bracket``.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            Field, modified in place on the array backends.
+        A_sq : np.ndarray
+            Scratch for the intensity. Only used by the non-local path, which
+            has to convolve it before the kernel reads it.
+        V_scaled : np.ndarray or None
+            Pre-scaled potential, or None.
+        dz : float
+            Distance this application advances by. May be negative, which is
+            how the bracket undoes its last half step.
+
+        Returns
+        -------
+        np.ndarray
+            The field.
+        """
+        kernels = self._backend.kernels
+        alpha_half = self._constant("_alpha_half")
+        g = self._constant("_g")
+        Isat_conv = self._constant("_Isat_conv")
 
         if self.nl_length > 0:
-            # Can't use fused kernel with convolution
+            # The convolution needs the intensity as an array of its own, so
+            # the kernel that computes it inline cannot be used.
             A_sq = kernels.square_mod(A, A_sq)
-            A_sq[:] = self._convolution(
+            A_sq[:] = self._backend.convolution(
                 A_sq, self.nl_profile, mode="same", axes=self._last_axes
             )
-            if V is None:
-                A = kernels.nl_prop_without_V(
-                    A,
-                    A_sq,
-                    dz_step,
-                    alpha_half,
-                    g,
-                    Isat_conv,
-                )
-            else:
-                A = kernels.nl_prop(
-                    A,
-                    A_sq,
-                    dz_step,
-                    alpha_half,
-                    V_scaled,
-                    g,
-                    Isat_conv,
-                )
-        else:
-            if V is None:
-                A = kernels.square_mod_nl_prop(
-                    A,
-                    dz_step,
-                    alpha_half,
-                    g,
-                    Isat_conv,
-                )
-            else:
-                A = kernels.square_mod_nl_prop_v(
-                    A,
-                    V_scaled,
-                    dz_step,
-                    alpha_half,
-                    g,
-                    Isat_conv,
-                )
-        return A
+            if V_scaled is None:
+                return kernels.nl_prop_without_V(A, A_sq, dz, alpha_half, g, Isat_conv)
+            return kernels.nl_prop(A, A_sq, dz, alpha_half, V_scaled, g, Isat_conv)
+        if V_scaled is None:
+            return kernels.square_mod_nl_prop(A, dz, alpha_half, g, Isat_conv)
+        return kernels.square_mod_nl_prop_v(A, V_scaled, dz, alpha_half, g, Isat_conv)
 
     def split_step_RK4(
         self,
@@ -602,6 +537,10 @@ class NLSE:
             The propagated field.
         """
         kernels = self._backend.kernels
+
+        # Whole-stage fused path: the slope never reaches memory.
+        if self._backend.has_fused_rk4_stage and self._can_fuse_rk4_stage(A):
+            return self._split_step_RK4_fused(A, V, propagator, plans, delta_z)
 
         # Whole-step fused fast path (MLX), single component only
         if self._backend.has_fused_rk4_step and self.nl_length == 0 and A.ndim == 2:
@@ -658,14 +597,177 @@ class NLSE:
 
         # Stage 4: k4 = f(A + h*k3)
         k = self._RK4_rhs(A_tmp, k, V, propagator, plans)
-        acc = kernels.rk4_accumulate(acc, 1.0, k)  # acc = k1+2*k2+2*k3+k4
-
-        # Final update: A += h/6 * acc
-        A = kernels.rk4_accumulate(A, h / 6, acc)
+        if self._backend.has_fused_rk4_final_update:
+            # A += h/6 * (acc + k4), without writing acc only to read it back
+            A = kernels.rk4_final_update(A, acc, k, h / 6)
+        else:
+            acc = kernels.rk4_accumulate(acc, 1.0, k)  # acc = k1+2*k2+2*k3+k4
+            # Final update: A += h/6 * acc
+            A = kernels.rk4_accumulate(A, h / 6, acc)
 
         self._rk4_k = k
         self._rk4_A_tmp = A_tmp
         self._rk4_acc = acc
+        return A
+
+    def _is_batched(self, A: np.ndarray, params: tuple = ()) -> bool:
+        """Whether this run carries a batch, of fields or of parameters.
+
+        An unbatched field is the grid axes and nothing else; anything above
+        that is a batch of simulations. A parameter given per simulation is
+        the other kind, and either rules out a kernel taking scalars and one
+        field.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            The field.
+        params : tuple
+            Parameters a kernel would take as scalars.
+
+        Returns
+        -------
+        bool
+            True if a batch is present.
+        """
+        if A.ndim > len(self._last_axes):
+            return True
+        return any(getattr(p, "ndim", 0) > 0 for p in params)
+
+    def _can_fuse_rk4_stage(self, A: np.ndarray) -> bool:
+        """Whether the whole-stage kernels can serve this run.
+
+        They take their parameters as scalars and index one field with a flat
+        id, so a batch goes the generic way; and they compute the intensity
+        from the field in registers, which a non-local run cannot do because
+        it has to convolve it first.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            The field.
+
+        Returns
+        -------
+        bool
+            True if the fused path applies.
+        """
+        return self.nl_length == 0 and not self._is_batched(A, self._fusable_params())
+
+    def _fusable_params(self) -> tuple:
+        """Return the parameters the whole-stage kernel takes as scalars."""
+        return (
+            self._constant("_alpha_half"),
+            self._constant("_g"),
+            self._constant("_Isat_conv"),
+        )
+
+    def _RK4_fused_stage(
+        self,
+        A_in: np.ndarray,
+        V: np.ndarray | None,
+        propagator: np.ndarray,
+        plans: list,
+        out: np.ndarray,
+        A: np.ndarray,
+        w: float,
+        c: float,
+        mode: int,
+    ) -> np.ndarray:
+        """Run one whole RK4 stage through the backend's fused kernel.
+
+        The one thing the coupled solver has to say differently, so that
+        ``_split_step_RK4_fused`` states the scheme once.
+
+        Parameters
+        ----------
+        A_in : np.ndarray
+            Field this stage evaluates the slope at.
+        V : np.ndarray or None
+            Potential field.
+        propagator : np.ndarray
+            Propagator matrix.
+        plans : list
+            FFT plan objects from the backend.
+        out : np.ndarray
+            Where this stage's result goes.
+        A : np.ndarray
+            The field the step started from.
+        w, c : float
+            Weights of this stage's slope in the accumulator and the output.
+        mode : int
+            0 to set the accumulator, 1 to add to it, 2 to spend it.
+
+        Returns
+        -------
+        np.ndarray
+            The array this stage wrote.
+        """
+        V_scaled = self._V_scaled
+        if V_scaled is None and V is not None:
+            V_scaled = V * self._constant("_k_half")
+        prop_fft = self._propagator_fft
+        return self._backend.kernels.rk4_stage_fused(
+            A_in,
+            self._rk4_k,
+            V_scaled,
+            prop_fft if prop_fft is not None else propagator,
+            plans[0],
+            self._rk4_acc,
+            out,
+            A,
+            self._constant("_alpha_half"),
+            self._constant("_g"),
+            self._constant("_Isat_conv"),
+            w,
+            c,
+            mode,
+            unnorm_ifft=(prop_fft is not None),
+        )
+
+    def _split_step_RK4_fused(
+        self,
+        A: np.ndarray,
+        V: np.ndarray | None,
+        propagator: np.ndarray,
+        plans: list,
+        delta_z: float,
+    ) -> np.ndarray:
+        """Take one RK4 step with each stage fused into a single kernel.
+
+        The same scheme as ``split_step_RK4``: four slopes, the first three
+        accumulated with weights 1, 2, 2 and the argument advanced by h/2,
+        h/2, h, then the field advanced by h/6 times the total. What differs
+        is that no slope is written to memory.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            Field to propagate, modified in place by the last stage.
+        V : np.ndarray or None
+            Potential field.
+        propagator : np.ndarray
+            Propagator matrix.
+        plans : list
+            FFT plan objects from the backend.
+        delta_z : float
+            Step to take.
+
+        Returns
+        -------
+        np.ndarray
+            The propagated field.
+        """
+        if not hasattr(self, "_rk4_k"):
+            self._allocate_rk4_buffers(A, "RK4")
+        A_tmp = self._rk4_A_tmp
+        h = delta_z
+        stage = self._RK4_fused_stage
+        #        argument  out     w    c      mode
+        stage(A, V, propagator, plans, A_tmp, A, 1.0, h / 2, 0)
+        stage(A_tmp, V, propagator, plans, A_tmp, A, 2.0, h / 2, 1)
+        stage(A_tmp, V, propagator, plans, A_tmp, A, 2.0, h, 1)
+        stage(A_tmp, V, propagator, plans, A, A, 1.0, h / 6, 2)
         return A
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
@@ -721,7 +823,7 @@ class NLSE:
         ax[2].set_xlabel(r"$k_x$ ($mm^{-1}$)")
         ax[2].set_ylabel(r"$k_y$ ($mm^{-1}$)")
         fig.colorbar(im2, ax=ax[2], shrink=0.6, label="Intensity (a.u.)")
-        plt.show()
+        show_if_possible()
 
     # Construction.
     def _resolved_nl_length(self, nl_length: float) -> float:
@@ -792,8 +894,14 @@ class NLSE:
         return (self.NX, self.NY, "RK4", float(self.k))
 
     def _compute_propagator_rk4(self) -> np.ndarray:
-        """Compute the raw dispersion operator for RK4 (no caching)."""
-        return (-1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k).astype(np.complex64)
+        """Compute the raw dispersion operator for RK4 (no caching).
+
+        Left at the width the grid gives it. ``_build_propagator_rk4`` casts
+        it to the field's, which is the one place that knows what the field
+        is: computing it narrow and widening it afterwards would carry
+        single-precision values in a double-precision array.
+        """
+        return -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k
 
     def _build_propagator(self, dtype: np.dtype, delta_z: float) -> np.ndarray:
         """Build the linear propagation matrix with caching.
@@ -818,18 +926,27 @@ class NLSE:
         self._propagator_cache[cache_key] = propagator
         return propagator
 
-    def _build_propagator_rk4(self) -> np.ndarray:
+    def _build_propagator_rk4(self, dtype: np.dtype) -> np.ndarray:
         """Build raw dispersion operator for RK4 with caching.
+
+        Parameters
+        ----------
+        dtype : np.dtype
+            Complex dtype of the field the operator will multiply. The GPU
+            kernels choose their precision from the field and index the
+            operator with the same flat id, so an operator of the other
+            width is read as the wrong type and comes back NaN. It is part
+            of the cache key for the same reason.
 
         Returns
         -------
         np.ndarray
-            The raw dispersion operator.
+            The raw dispersion operator, at the field's precision.
         """
-        cache_key = self._propagator_rk4_cache_key()
+        cache_key = (*self._propagator_rk4_cache_key(), np.dtype(dtype).str)
         if cache_key in self._propagator_cache:
             return self._propagator_cache[cache_key]
-        propagator = self._compute_propagator_rk4()
+        propagator = np.asarray(self._compute_propagator_rk4()).astype(dtype)
         self._propagator_cache[cache_key] = propagator
         return propagator
 
@@ -1241,13 +1358,12 @@ class NLSE:
             arr = (E_in * E_in.conj()).real
             # Use pre-computed grid factor to avoid runtime upcasting
             arr = arr * self._norm_grid_factor
-            if self._backend.name in ["CL", "MLX"]:
-                # CL/MLX: compute normalization on numpy then convert back.
+            if self._backend.normalizes_on_host:
                 arr_np = self._backend.to_numpy(arr)
                 E_in_np = self._backend.to_numpy(E_in)
                 integral = np.sum(arr_np, axis=self._last_axes)
                 integral = integral * self._norm_constant
-                E_00 = (self._norm_target / integral) ** 0.5
+                E_00 = self._normalization_factor(self._norm_target, integral)
                 result = (E_00.T * E_in_np.T).T.astype(E_in_np.dtype)
                 A = self._backend.from_numpy(result)
             else:
@@ -1260,14 +1376,38 @@ class NLSE:
                     target = self._backend.from_numpy(
                         np.asarray(target, dtype=integral.dtype)
                     )
-                E_00 = (target / integral) ** 0.5
+                E_00 = self._normalization_factor(target, integral)
                 A[:] = (E_00.T * E_in.T).T
         else:
-            if self._backend.name == "MLX":
-                A = E_in
-            else:
-                A[:] = E_in
+            A[:] = E_in
         return A, A_sq
+
+    @staticmethod
+    def _normalization_factor(target, integral):
+        """Return the scale that carries this field to the target power.
+
+        A field with no power in it has no factor that scales it to one, and
+        dividing anyway gives infinity where the caller asked for a beam --
+        which then multiplies the zeros it came from into NaN, and the run
+        reports nothing worse than a RuntimeWarning on the way past. A field
+        that is zero is left as it is instead. It is a legitimate initial
+        condition: a driven cavity starts from one.
+
+        Parameters
+        ----------
+        target : Any
+            Power asked for, per component where there are several.
+        integral : Any
+            Power the field carries.
+
+        Returns
+        -------
+        Any
+            The factor, 1 wherever the field carries nothing.
+        """
+        empty = integral == 0
+        safe = integral + empty  # 1 where the field is empty, untouched elsewhere
+        return ((target / safe) ** 0.5) * (1 - empty) + empty
 
     def _build_fft_plan(self, A: np.ndarray) -> list:
         """Build the FFT plan objects for propagation.
@@ -1288,9 +1428,16 @@ class NLSE:
         return plan
 
     def _allocate_rk4_buffers(self, A: np.ndarray, method: str) -> None:
-        """Pre-allocate scratch buffers for the RK4 stepper."""
+        """Pre-allocate scratch buffers for the RK4 stepper.
+
+        The buffers take the field's own precision. Pinning them to
+        complex64 made a double-precision run write the field into a stage
+        buffer half its width, and the FFT plan -- built from the field --
+        then met an array of the wrong dtype: pyfftw refused it outright and
+        cuFFT returned NaN.
+        """
         if method == "RK4":
-            dtype = np.complex64
+            dtype = self._field_dtype(A)
             self._rk4_k = self._backend.allocate_field(A.shape, dtype)
             self._rk4_A_tmp = self._backend.allocate_field(A.shape, dtype)
             self._rk4_acc = self._backend.allocate_field(A.shape, dtype)
@@ -1392,6 +1539,30 @@ class NLSE:
             return np.asarray(value)
         return np.asarray(self._backend.to_numpy(value))
 
+    @contextlib.contextmanager
+    def _arrays_on_device(self, field_dtype: np.dtype) -> Iterator[None]:
+        """Hold the solver's arrays on the device for the duration of a run.
+
+        V, nl_profile, the propagator and any batched parameter are moved onto
+        the device and put back afterwards, on the way out of a failed run as
+        well as a finished one. Left there, they break the next run rather than
+        the one that failed: from_numpy is handed a device array.
+
+        Parameters
+        ----------
+        field_dtype : np.dtype
+            Complex dtype of the field, so V goes at a matching width.
+
+        Yields
+        ------
+        None
+        """
+        self._send_arrays_to_gpu(field_dtype)
+        try:
+            yield
+        finally:
+            self._retrieve_arrays_from_gpu()
+
     def _send_arrays_to_gpu(self, field_dtype: np.dtype = np.complex64) -> None:
         """Send arrays to device using backend.
 
@@ -1481,9 +1652,13 @@ class NLSE:
             if prop_fft is not None:
                 return kernels.linear_step(A, prop_fft, plans[0], unnorm_ifft=True)
             return kernels.linear_step(A, propagator, plans[0])
+        # The pre-normalized propagator carries the inverse transform's 1/N,
+        # so the transform itself can skip it. A backend without a fused
+        # linear step reaches it here rather than through kernels.linear_step.
+        prop_fft = self._propagator_fft
         A = self._backend.fft(A, plans)
-        A = kernels.apply_propagator(A, propagator)
-        A = self._backend.ifft(A, plans)
+        A = kernels.apply_propagator(A, propagator if prop_fft is None else prop_fft)
+        A = self._backend.ifft(A, plans, normalize=prop_fft is None)
         return A
 
     def _RK4_rhs(
@@ -1534,15 +1709,12 @@ class NLSE:
                 unnorm_ifft=(prop_fft is not None),
             )
 
-        if self._backend.name == "MLX":
-            k = self._apply_linear_step(A_in, propagator, plans)
-        else:
-            k[:] = A_in
-            k = self._apply_linear_step(k, propagator, plans)
+        k[:] = A_in
+        k = self._apply_linear_step(k, propagator, plans)
 
         if self.nl_length > 0:
             A_sq = (A_in * A_in.conj()).real
-            A_sq[:] = self._convolution(
+            A_sq[:] = self._backend.convolution(
                 A_sq, self.nl_profile, mode="same", axes=self._last_axes
             )
             if V is None:
@@ -1600,6 +1772,66 @@ class NLSE:
     # _precompute_step_constants. Subclasses extend it with their own.
     _nonlinearity_attrs = ("n2",)
 
+    # Whether this solver's Lie step is exactly the inside of its Strang step.
+    # DDGPE's is not: it drives and it adds noise, so its steps are not a
+    # product of the same two operators.
+    _lie_step_is_strang_body = True
+
+    def _merges_strang_halves(self, precision: str) -> bool:
+        """Whether consecutive Strang steps may share their half steps.
+
+        A Strang step is ``N(h/2) L(h) N(h/2)``, so a run of them is
+
+            N(h/2) [L(h) N(h)] ... [L(h) N(h)] N(-h/2)
+
+        and the bracketed body is precisely a Lie step. Merging costs one
+        nonlinear application for the whole run instead of one per step, and
+        the loop body becomes what ``precision="single"`` already runs, so
+        there is no third stepper to keep in step with the other two.
+
+        It is exact only where ``N(a) N(b) == N(a + b)``. ``N`` rotates the
+        phase by an amount that depends on ``|A|^2``, so that holds when
+        ``|A|`` survives it: no loss, and no absorbing potential. With either,
+        the second application sees an intensity the first one changed, and
+        the two half steps are not one whole one.
+
+        Parameters
+        ----------
+        precision : str
+            Splitting the caller asked for. Only Strang has halves to merge.
+
+        Returns
+        -------
+        bool
+            True if the run may be merged.
+        """
+        if precision != "double" or not self._lie_step_is_strang_body:
+            return False
+        if self.nl_length > 0:
+            return False
+        # A Rabi coupling rides on the Lie step alone, so the body would
+        # apply it and the Strang step it stands in for would not.
+        if getattr(self, "omega", None) is not None:
+            return False
+        if not np.all(
+            np.asarray(self._as_host_array(self._constant("_alpha_half"))) == 0
+        ):
+            return False
+        V_scaled = self._as_host_array(self._V_scaled)
+        return V_scaled is None or not np.iscomplexobj(V_scaled)
+
+    def _open_strang_bracket(self, merged, A, A_sq, delta_z):
+        """Take the half step that precedes a merged run."""
+        if not merged:
+            return A
+        return self._nonlinear_step(A, A_sq, self._V_scaled, delta_z / 2)
+
+    def _close_strang_bracket(self, merged, A, A_sq, delta_z):
+        """Undo the half step the merged run's last body left over."""
+        if not merged:
+            return A
+        return self._nonlinear_step(A, A_sq, self._V_scaled, -delta_z / 2)
+
     def _run_propagation(
         self,
         A,
@@ -1638,11 +1870,15 @@ class NLSE:
         # backends (MLX) where kernels return new arrays.
         state = [A]
 
-        def _make_step(dz):
+        def _make_step(dz, body_precision=precision):
             """Build the per-step closure for a given step size.
 
             Rebuilt when an adaptive callback changes the step, so the step
             and the propagator it was built from cannot come apart.
+
+            ``body_precision`` is the splitting the loop body runs, which is
+            not always the one the caller asked for: a merged Strang run
+            takes Lie steps between two half steps of its own.
             """
             if method == "RK4":
 
@@ -1654,7 +1890,13 @@ class NLSE:
 
                 def _step():
                     state[0] = self.split_step(
-                        state[0], A_sq, V, self.propagator, self.plans, dz, precision
+                        state[0],
+                        A_sq,
+                        V,
+                        self.propagator,
+                        self.plans,
+                        dz,
+                        body_precision,
                     )
 
             return _step
@@ -1673,12 +1915,21 @@ class NLSE:
                 # Two segments rather than a mid-loop switch: the constants are
                 # baked into the CUDA graph that execute_loop captures, so each
                 # segment needs its own capture.
-                step = _make_step(delta_z)
+                merged = self._merges_strang_halves(precision)
+                step = _make_step(delta_z, "single" if merged else precision)
                 self._current_delta_z = delta_z
+                state[0] = self._open_strang_bracket(merged, state[0], A_sq, delta_z)
                 self._backend.execute_loop(step, n_steps_nl)
+                state[0] = self._close_strang_bracket(merged, state[0], A_sq, delta_z)
                 if n_steps > n_steps_nl:
                     self._disable_nonlinearity(V, precision)
+                    state[0] = self._open_strang_bracket(
+                        merged, state[0], A_sq, delta_z
+                    )
                     self._backend.execute_loop(step, n_steps - n_steps_nl)
+                    state[0] = self._close_strang_bracket(
+                        merged, state[0], A_sq, delta_z
+                    )
                 if remainder:
                     self._take_partial_step(
                         _make_step,
@@ -1764,7 +2015,10 @@ class NLSE:
                     step_fn = step_factory(delta_z)
             i += 1
             if verbose:
-                pbar.n = abs(z_prop) / z * 100
+                # Clamped: the last step covers the distance left over, and
+                # rounding can put z_prop a hair past z, which tqdm reports as
+                # a warning about a fraction outside [0, 1].
+                pbar.n = min(100.0, abs(z_prop) / z * 100)
                 pbar.refresh()
         if remainder:
             # An adaptive callback may have moved the step, so what is left is

@@ -189,10 +189,24 @@ jobs:
                   output-file-path: benchmark.json
                   github-token: ${{ secrets.GITHUB_TOKEN }}
                   auto-push: false
-                  # Alert if performance degrades by 200%
-                  alert-threshold: "200%"
+                  # Alert when a benchmark is 1.4x slower than its baseline.
+                  #
+                  # It was 200%, which is a benchmark taking twice as long --
+                  # loose enough that nothing short of an accident would fire
+                  # it. That was the right threshold for the measurement it
+                  # had: every solver benchmark took ten steps whatever the
+                  # backend, so on MLX 91% of the timing was the once-per-run
+                  # setup rather than the solver. The step counts are
+                  # calibrated per backend now (see BENCH_STEPS), and the
+                  # run-to-run spread measured locally is 2.9% median, 8.5%
+                  # worst. 1.4x leaves room for a shared CI runner being
+                  # noisier than a quiet laptop while still catching anything
+                  # that matters.
+                  alert-threshold: "140%"
                   # Comment on PRs with benchmark comparison
                   comment-on-alert: true
+                  # Left false deliberately: a run that fails on runner noise
+                  # gets ignored, and then so do the real alerts.
                   fail-on-alert: false
                   # Save cache between runs
                   external-data-json-path: ./cache/benchmark-data.json

@@ -1,10 +1,9 @@
 import numpy as np
 import pyfftw
 import pytest
+from helpers import as_numpy, assert_c_contiguous, make, random_field
 from NLSE import NLSE
 from scipy.constants import c, epsilon_0
-
-from .helpers import as_numpy, assert_c_contiguous, random_field
 
 if NLSE.__CUPY_AVAILABLE__:
     import cupy as cp
@@ -29,36 +28,8 @@ DZ_TEST = 1e-4
 
 
 def make_solver(backend="CPU", n=N, **overrides):
-    """Return a NLSE with this module's parameters.
-
-    Parameters
-    ----------
-    backend : str
-        Backend name.
-    n : int
-        Grid size, square.
-    **overrides
-        Any constructor argument, by keyword.
-
-    Returns
-    -------
-    NLSE
-        The solver.
-    """
-    params = {
-        "alpha": alpha,
-        "power": power,
-        "window": window,
-        "n2": n2,
-        "V": None,
-        "L": L,
-        "NX": n,
-        "NY": n,
-        "Isat": Isat,
-        "backend": backend,
-    }
-    params.update(overrides)
-    return NLSE(**params)
+    """Return a NLSE with this module's parameters."""
+    return make(NLSE, backend, n=n, **{"L": L, **overrides})
 
 
 def test_build_propagator(backend) -> None:
@@ -265,3 +236,84 @@ def test_cuda_graph() -> None:
                 f"Norm not conserved with CUDA graph "
                 f"(V={'yes' if has_V else 'no'}, method={method})"
             )
+
+
+def test_lossless_kernels_match_the_general_formula():
+    """Alpha == 0 takes a branch that drops the exponential.
+
+    exp(0) is 1, so the lossless step is a pure rotation and the branch is
+    exact rather than an approximation. It is worth ~1.5x on the CPU kernels,
+    which is only worth having if it computes the same thing: this checks the
+    branch against the formula it replaces, evaluated in double precision.
+    """
+    from NLSE.kernels import cpu as cpu_kernels
+
+    n = 128
+    rng = np.random.default_rng(0)
+    field = (rng.normal(size=(n, n)) + 1j * rng.normal(size=(n, n))).astype(
+        np.complex64
+    )
+    A_sq = (np.abs(field) ** 2).astype(np.float32)
+    dz, g, Isat = np.float32(1e-4), np.float32(1e-3), np.float32(1e5)
+
+    got = cpu_kernels.nl_prop_without_V(
+        field.copy(), A_sq, dz, np.float32(0.0), g, Isat
+    )
+
+    sat = 1.0 / (1.0 + A_sq.astype(np.float64) / np.float64(Isat))
+    expected = field.astype(np.complex128) * np.exp(
+        np.float64(dz) * 1j * np.float64(g) * A_sq.astype(np.float64) * sat
+    )
+
+    scale = float(np.max(np.abs(expected)))
+    assert np.max(np.abs(got - expected)) / scale < 1e-6, (
+        "the lossless branch does not agree with the exponential it replaces"
+    )
+
+
+def test_a_lossy_run_still_loses_power():
+    """And the branch must not be taken when there are losses to apply."""
+    from NLSE.kernels import cpu as cpu_kernels
+
+    n = 64
+    field = np.ones((n, n), dtype=np.complex64)
+    A_sq = np.ones((n, n), dtype=np.float32)
+    args = (np.float32(1e-2), np.float32(1e-3), np.float32(1e5))
+
+    lossless = cpu_kernels.nl_prop_without_V(
+        field.copy(), A_sq, args[0], np.float32(0.0), *args[1:]
+    )
+    lossy = cpu_kernels.nl_prop_without_V(
+        field.copy(), A_sq, args[0], np.float32(50.0), *args[1:]
+    )
+
+    assert np.abs(lossless[0, 0]) == pytest.approx(1.0, rel=1e-5), (
+        "a lossless step must preserve the amplitude"
+    )
+    assert np.abs(lossy[0, 0]) < 0.999, (
+        f"a lossy step must reduce it, got {np.abs(lossy[0, 0])}"
+    )
+
+
+def test_a_field_with_no_power_survives_normalization(backend) -> None:
+    """Normalizing a zero field must leave it zero, not make it NaN.
+
+    There is no factor that scales an empty field to a target power, and
+    dividing anyway gives infinity, which multiplies the zeros it came from
+    into NaN. Nothing downstream notices: the run completes and returns a
+    field of NaN, having said no more than "divide by zero encountered".
+
+    It is a legitimate initial condition -- a driven cavity starts from one --
+    so the field is left as it is.
+    """
+    import warnings
+
+    simu = make_solver(backend, n=32)
+    empty = np.zeros((32, 32), dtype=PRECISION_COMPLEX)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        out = as_numpy(simu, simu.out_field(empty, 1e-3, verbose=False, plot=False))
+    assert np.all(np.isfinite(out.view(np.float32))), (
+        f"an empty field came back with non-finite values. (Backend {backend})"
+    )
+    assert np.all(out == 0), f"an empty field should stay empty. (Backend {backend})"

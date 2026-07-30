@@ -1,9 +1,8 @@
 import numpy as np
 import pyfftw
+from helpers import as_numpy, assert_c_contiguous, random_field
 from NLSE import NLSE_3d
 from scipy.constants import c, epsilon_0
-
-from .helpers import as_numpy, assert_c_contiguous, random_field
 
 if NLSE_3d.__CUPY_AVAILABLE__:
     import cupy as cp

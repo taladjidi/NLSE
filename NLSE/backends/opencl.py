@@ -81,6 +81,7 @@ class OpenCLBackend(Backend):
     """
 
     has_linear_step = True
+    normalizes_on_host = True
     supports_unnormalized_ifft = True
     has_fused_split_step = True
     has_fused_rk4_rhs = True
@@ -114,6 +115,10 @@ class OpenCLBackend(Backend):
     def allocate_real_field(self, shape: tuple, dtype: np.dtype) -> Any:
         """Allocate real array on OpenCL device."""
         return cla.zeros(self._queue, shape, dtype)
+
+    def synchronize(self, array=None) -> None:
+        """Drain the command queue."""
+        self._queue.finish()
 
     def to_numpy(self, array: Any) -> np.ndarray:
         """Transfer from OpenCL device to CPU.
@@ -150,9 +155,16 @@ class OpenCLBackend(Backend):
         """Perform forward FFT."""
         return plan[0].fft(array, array)
 
-    def ifft(self, array: Any, plan: list) -> Any:
+    def ifft(self, array: Any, plan: list, normalize: bool = True) -> Any:
         """Perform inverse FFT."""
-        return plan[0].ifft(array, array)
+        if normalize:
+            return plan[0].ifft(array, array)
+        return plan[0].ifft_unnorm(array, array)
+
+    def norm(self, array: Any) -> float:
+        """Reduce on the device; only the scalar comes back."""
+        flat = array.reshape(-1)
+        return float(np.sqrt(cla.vdot(flat, flat).get().real))
 
     @property
     def kernels(self) -> Any:

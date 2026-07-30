@@ -1,9 +1,31 @@
 """Abstract base class for NLSE backends."""
 
+import contextlib
+import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+
+
+@dataclass
+class Timing:
+    """How long a propagation took.
+
+    ``device`` is the time the device itself reports, where it can: a wall
+    clock measures a queue being filled rather than the work being done.
+    """
+
+    wall: float = 0.0
+    device: float | None = None
+
+    def __str__(self) -> str:
+        """Return the line ``out_field`` prints when verbose."""
+        if self.device is None:
+            return f"Time spent to solve : {self.wall} s (CPU)"
+        return f"Time spent to solve : {self.device} s (GPU) / {self.wall} s (CPU)"
 
 
 def _dtype_key(dtype: Any) -> str:
@@ -74,6 +96,17 @@ class Backend(ABC):
     # Combine the accumulate and axpy of an RK4 stage into one launch.
     has_fused_rk4_stage_update = False
 
+    # kernels.rk4_stage_fused / kernels.rk4_stage_coupled_fused
+    # A whole RK4 stage -- linear part, slope and stage update -- with the
+    # slope spent from registers rather than written and read back.
+    # Supersedes has_fused_rk4_rhs and has_fused_rk4_stage_update where set.
+    has_fused_rk4_stage = False
+
+    # kernels.rk4_final_update(A, acc, k, w)
+    # Accumulate the fourth slope and update the field in one launch, rather
+    # than writing acc only to read it straight back.
+    has_fused_rk4_final_update = False
+
     # kernels.split_step_coupled_fused(
     #     A, propagator, V1_scaled, V2_scaled, dz, alpha1, alpha2,
     #     g11, g12, g22, Isat1, Isat2, precision, plan, omega=None,
@@ -91,6 +124,54 @@ class Backend(ABC):
     # value per launch instead, so their batched parameters must stay on the
     # host: CPU loops in _broadcast_batch, CL loops with global_offset.
     broadcasts_parameters_natively = False
+
+    # The field is normalized on the host: the reduction is done in numpy and
+    # the result sent back. For backends whose array type cannot do the
+    # reduction in place, or does it more slowly than the round trip costs.
+    normalizes_on_host = False
+
+    @property
+    def convolution(self) -> Callable | None:
+        """Return this backend's overlap-add convolution, or None.
+
+        Non-local interaction is a convolution between the field's intensity
+        and the non-local kernel. A backend without one cannot run a non-local
+        simulation, which is the whole of what ``nl_length > 0`` requires, so
+        this doubles as the capability check.
+        """
+        return None
+
+    def synchronize(self, array: Any = None) -> None:
+        """Block until work already submitted has finished.
+
+        A no-op where submission is execution. Elsewhere it is what makes a
+        wall-clock measurement mean anything, and MLX needs the array itself
+        since its graph is lazy.
+
+        Parameters
+        ----------
+        array : Any, optional
+            The array whose value is needed.
+        """
+
+    @contextlib.contextmanager
+    def timed(self) -> Iterator[Timing]:
+        """Time the enclosed region, filling in the Timing it yields.
+
+        Synchronize before leaving the block, or the wall time is the time
+        taken to queue the work.
+
+        Yields
+        ------
+        Timing
+            Filled in on exit.
+        """
+        timing = Timing()
+        start = time.perf_counter()
+        try:
+            yield timing
+        finally:
+            timing.wall = time.perf_counter() - start
 
     @property
     @abstractmethod
@@ -285,7 +366,7 @@ class Backend(ABC):
         pass
 
     @abstractmethod
-    def ifft(self, array: Any, plan: Any) -> Any:
+    def ifft(self, array: Any, plan: Any, normalize: bool = True) -> Any:
         """Perform inverse FFT.
 
         Parameters
@@ -294,6 +375,12 @@ class Backend(ABC):
             Input array
         plan : Any
             FFT plan
+        normalize : bool
+            Whether to divide by N. A backend that declares
+            ``supports_unnormalized_ifft`` must honour ``False`` here: the
+            caller has folded the factor into the propagator instead, and
+            silently normalizing anyway would divide the field by N twice.
+            One that does not declare it is never asked.
 
         Returns
         -------
@@ -302,6 +389,46 @@ class Backend(ABC):
 
         """
         pass
+
+    def norm(self, array: Any) -> float:
+        """Return the Euclidean norm of a field, as a host float.
+
+        The reduction runs where the array already is, so only the scalar
+        crosses the bus. A caller that needs a norm to make a host-side
+        decision -- choosing a step, say -- would otherwise bring the whole
+        field back for it, which on a device backend costs far more than the
+        arithmetic does. The scalar still forces a synchronization, because
+        the host cannot act on a number the device has not finished
+        computing; that part is not avoidable.
+
+        Parameters
+        ----------
+        array : Any
+            Field, on the host or on a device.
+
+        Returns
+        -------
+        float
+            Its Euclidean norm.
+        """
+        return float(np.linalg.norm(self.to_numpy(array)))
+
+    def copy_field(self, array: Any) -> Any:
+        """Return a duplicate of a field, without it leaving the device.
+
+        Parameters
+        ----------
+        array : Any
+            Field to duplicate.
+
+        Returns
+        -------
+        Any
+            The copy, on the same side as the original.
+        """
+        if hasattr(array, "copy"):
+            return array.copy()
+        return self.from_numpy(np.asarray(self.to_numpy(array)).copy())
 
     @property
     @abstractmethod

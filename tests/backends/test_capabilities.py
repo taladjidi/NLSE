@@ -6,10 +6,17 @@ AttributeError at propagation time, and a method present with the flag left
 False is silently dead code. Both are caught here rather than on hardware.
 """
 
+import ast
 import inspect
+import warnings
+from pathlib import Path
 
+import numpy as np
 import pytest
+from NLSE import NLSE
 from NLSE.backends import Backend, get_backend, list_available_backends
+from NLSE.backends.backend import Timing
+from scipy.constants import c, epsilon_0
 
 # Capability flag -> kernel methods it promises.
 CAPABILITY_METHODS = {
@@ -18,6 +25,8 @@ CAPABILITY_METHODS = {
     "has_fused_rk4_rhs": ["rk4_rhs_fused"],
     "has_fused_rk4_step": ["split_step_rk4_fused"],
     "has_fused_rk4_stage_update": ["rk4_set_and_axpy", "rk4_acc_and_axpy"],
+    "has_fused_rk4_final_update": ["rk4_final_update"],
+    "has_fused_rk4_stage": ["rk4_stage_fused", "rk4_stage_coupled_fused"],
     "has_fused_coupled_split_step": ["split_step_coupled_fused"],
     "has_fused_coupled_rk4_rhs": ["rk4_rhs_coupled_fused"],
 }
@@ -78,18 +87,42 @@ def test_required_kernels_are_present(backend_name):
 
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
-def test_unnormalized_ifft_implies_linear_step(backend_name):
-    """Folding 1/N into the propagator only makes sense with linear_step.
+def test_an_unnormalized_ifft_really_skips_the_factor(backend_name):
+    """A backend claiming the capability must actually honour it.
 
-    _update_propagator_fft builds the pre-normalized propagator whenever
-    supports_unnormalized_ifft is set, and only linear_step consumes it.
+    The caller folds 1/N into the propagator and then asks the transform to
+    skip it, so a backend that accepts ``normalize=False`` and normalizes
+    anyway divides the field by N twice -- which no correctness test would
+    attribute to the transform. Round-tripping is the direct check: with the
+    factor skipped the field comes back N times larger.
+
+    This replaces an assertion that the capability implied has_linear_step.
+    That was true only while the fused kernels were the sole consumer; the
+    generic linear step reads the pre-normalized propagator too, which is
+    how the CPU backend gets the saving without a fused entry point.
     """
     backend = get_backend(backend_name)
-    if backend.supports_unnormalized_ifft:
-        assert backend.has_linear_step, (
-            f"{backend_name} sets supports_unnormalized_ifft without "
-            f"has_linear_step, so the pre-normalized propagator is unused."
-        )
+    if not backend.supports_unnormalized_ifft:
+        return
+    n = 16
+    field = np.zeros((n, n), dtype=np.complex64)
+    field[n // 4, n // 4] = 1.0 + 0.5j
+    plans = backend.build_fft(field.shape, (-2, -1), np.complex64, field)
+
+    def round_trip(normalize):
+        A = backend.from_numpy(field.copy())
+        A = backend.fft(A, plans)
+        A = backend.ifft(A, plans, normalize=normalize)
+        return backend.to_numpy(A)
+
+    normalized = round_trip(True)
+    assert np.allclose(normalized, field, atol=1e-5), (
+        f"{backend_name} does not round-trip a normalized transform"
+    )
+    assert np.allclose(round_trip(False), field * (n * n), atol=1e-3), (
+        f"{backend_name} declares supports_unnormalized_ifft but its ifft "
+        f"normalized anyway, so the propagator's 1/N would be applied twice"
+    )
 
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
@@ -139,3 +172,255 @@ def test_fused_signatures_accept_the_documented_arguments(backend_name):
         assert got == params, (
             f"{backend_name}.{method} signature is {got}, expected {params}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Capabilities that replaced a check on the backend's name
+# ---------------------------------------------------------------------------
+
+SOLVERS = Path(__file__).resolve().parent.parent.parent / "NLSE" / "solvers"
+
+
+def name_checks_in(path):
+    """Return (line, source) for each comparison against a backend's name."""
+    found = []
+    for node in ast.walk(ast.parse(path.read_text())):
+        if not isinstance(node, ast.Compare):
+            continue
+        text = ast.unparse(node)
+        if "_backend.name" in text and isinstance(node.ops[0], (ast.Eq, ast.In)):
+            found.append((node.lineno, text))
+    return found
+
+
+def test_there_are_solvers_to_check():
+    """A glob matching nothing would make the test below vacuous."""
+    assert len(list(SOLVERS.glob("*.py"))) > 5
+
+
+@pytest.mark.parametrize("path", sorted(SOLVERS.glob("*.py")), ids=lambda p: p.name)
+def test_no_solver_branches_on_the_backend_name(path):
+    """Ask what a backend can do. Which one it is is not a capability."""
+    offenders = [f"{path.name}:{line}  {text}" for line, text in name_checks_in(path)]
+    assert not offenders, (
+        "branch on a capability rather than on the backend's identity:\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_a_backend_claiming_a_convolution_has_a_working_one(backend_name):
+    """``convolution`` doubles as the non-locality capability, so it must run."""
+    backend = get_backend(backend_name)
+    if backend.convolution is None:
+        pytest.skip("declares no convolution")
+
+    signal = backend.from_numpy(np.ones((8, 8), dtype=np.float32))
+    kernel = backend.from_numpy(np.ones((3, 3), dtype=np.float32))
+    out = np.asarray(backend.to_numpy(backend.convolution(signal, kernel, mode="same")))
+
+    assert out.shape == (8, 8)
+    assert out[4, 4] == pytest.approx(9.0), "a 3x3 box over ones is 9 in the interior"
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_synchronize_takes_an_array_or_nothing(backend_name):
+    """The solver calls it with the field; the contract allows neither."""
+    backend = get_backend(backend_name)
+    backend.synchronize()
+    backend.synchronize(backend.from_numpy(np.ones((4, 4), dtype=np.complex64)))
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_timed_reports_a_positive_wall_time(backend_name):
+    """And a device time only where the backend can measure one."""
+    backend = get_backend(backend_name)
+    with backend.timed() as timing:
+        arr = backend.from_numpy(np.ones((64, 64), dtype=np.complex64))
+        backend.synchronize(arr)
+
+    assert isinstance(timing, Timing)
+    assert timing.wall > 0, "wall time was not filled in on exit"
+    if timing.device is not None:
+        assert timing.device >= 0, "a reported device time cannot be negative"
+
+
+def test_the_timing_line_names_a_device_only_when_there_is_one():
+    """out_field prints this straight, so the wording lives with the data."""
+    assert str(Timing(wall=1.5)) == "Time spent to solve : 1.5 s (CPU)"
+    assert "GPU" in str(Timing(wall=1.5, device=0.5))
+    assert "GPU" not in str(Timing(wall=1.5))
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_the_buffer_route_carries_the_field_through(backend_name):
+    """Every backend stages through its pre-allocated buffer.
+
+    MLX used to skip that and let each operation allocate. Measured, the two
+    are within noise on MLX at every size and method, and CPU cannot take the
+    allocating route at all: pyfftw's plan is bound to its buffer and returns
+    NaN when handed another array. So there is one route, and this checks it.
+    """
+    waist = 2.23e-3
+    simu = NLSE(
+        alpha=0,
+        power=1.05,
+        window=4 * waist,
+        n2=-1e-9,
+        V=None,
+        L=1e-3,
+        NX=32,
+        NY=32,
+        Isat=1e5,
+        backend=backend_name,
+    )
+    field = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(np.complex64)
+
+    out, _ = simu._prepare_output_array(field.copy(), normalize=False)
+    np.testing.assert_allclose(
+        np.asarray(simu._backend.to_numpy(out)),
+        field,
+        rtol=1e-6,
+        err_msg=f"{backend_name} did not carry the field through unnormalized",
+    )
+
+    propagated = np.asarray(
+        simu.out_field(
+            field.copy(), 2e-3, verbose=False, plot=False, delta_z=1e-4, method="RK4"
+        )
+    )
+    assert np.all(np.isfinite(propagated)), (
+        f"{backend_name} produced non-finite values on its buffer route"
+    )
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_normalizing_gives_the_same_answer_by_either_route(backend_name):
+    """``normalizes_on_host`` picks the route; the result cannot depend on it."""
+    waist = 2.23e-3
+    simu = NLSE(
+        alpha=0,
+        power=1.05,
+        window=4 * waist,
+        n2=-1e-9,
+        V=None,
+        L=1e-3,
+        NX=32,
+        NY=32,
+        Isat=1e5,
+        backend=backend_name,
+    )
+    field = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(np.complex64)
+    out = np.asarray(
+        simu._backend.to_numpy(simu._prepare_output_array(field, normalize=True)[0])
+    )
+    integral = float(
+        np.sum(np.abs(out) ** 2) * simu.delta_X * simu.delta_Y * c * epsilon_0 / 2
+    )
+    assert integral == pytest.approx(simu.power, rel=1e-4)
+
+
+# ---------------------------------------------------------------------------
+# The FFT library the CPU backend was handed
+# ---------------------------------------------------------------------------
+
+
+SCALAR_WISDOM = b"(fftw-3.3.10 (fftwf_codelet_n1_8) (fftwf_codelet_t1_4))"
+VECTOR_WISDOM = b"(fftw-3.3.10 (fftwf_codelet_n2fv_64_avx) (fftwf_codelet_t2fv_4_sse2))"
+NEON_WISDOM = b"(fftw-3.3.10 (fftwf_codelet_n1fv_8_neon))"
+
+
+def fake_wisdom(monkeypatch, blob):
+    """Pin what FFTW reports it planned."""
+    from NLSE.backends import cpu as cpu_backend
+
+    monkeypatch.setattr(cpu_backend.pyfftw, "export_wisdom", lambda: (b"", blob, b""))
+
+
+def test_a_scalar_fftw_is_recognised(monkeypatch):
+    """A build with no vector codelets must be reported.
+
+    Which FFTW a pyfftw wheel is linked against decides most of a CPU step at
+    large grid sizes, and ``simd_alignment`` does not report it: it reads 4
+    both for the PyPI arm64 wheel, whose FFTW has no NEON codelets, and for
+    the conda-forge build that is four times faster. FFTW does say, in the
+    names of the codelets it plans, and that is what is read here.
+    """
+    from NLSE.backends import cpu as cpu_backend
+
+    monkeypatch.setattr(cpu_backend, "_warned_about_fft", False)
+    fake_wisdom(monkeypatch, SCALAR_WISDOM)
+    assert cpu_backend.fftw_lacks_simd() is True
+    with pytest.warns(RuntimeWarning, match="no vector codelets"):
+        assert cpu_backend.warn_if_fftw_lacks_simd() is True
+
+
+@pytest.mark.parametrize("blob", [VECTOR_WISDOM, NEON_WISDOM])
+def test_a_vectorized_fftw_is_left_alone(monkeypatch, blob):
+    """And a good build must not be accused, on either instruction set."""
+    from NLSE.backends import cpu as cpu_backend
+
+    monkeypatch.setattr(cpu_backend, "_warned_about_fft", False)
+    fake_wisdom(monkeypatch, blob)
+    assert cpu_backend.fftw_lacks_simd() is False
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert cpu_backend.warn_if_fftw_lacks_simd() is False
+
+
+def test_nothing_planned_yet_is_not_a_verdict(monkeypatch):
+    """Wisdom naming no codelets is no evidence, and must not be read as any."""
+    from NLSE.backends import cpu as cpu_backend
+
+    monkeypatch.setattr(cpu_backend, "_warned_about_fft", False)
+    fake_wisdom(monkeypatch, b"(fftw-3.3.10)")
+    assert cpu_backend.fftw_lacks_simd() is None
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert cpu_backend.warn_if_fftw_lacks_simd() is False
+
+
+def test_this_machines_fftw_is_judged_one_way_or_the_other():
+    """The probe has to work against the real library, not only a fake one.
+
+    Faked wisdom proves the parsing; this proves the parsing is pointed at
+    something. A pyfftw that has planned a transform must come back True or
+    False, never None.
+    """
+    from NLSE.backends import cpu as cpu_backend
+
+    array = cpu_backend.pyfftw.empty_aligned((64, 64), dtype="complex64")
+    cpu_backend.pyfftw.FFTW(array, array, direction="FFTW_FORWARD", axes=(-2, -1))
+    assert cpu_backend.fftw_lacks_simd() in (True, False)
+
+
+def test_a_transform_too_small_to_time_is_not_judged():
+    """A ratio between two dispatch overheads says nothing about FFTW.
+
+    This is what the verdict used to rest on, and at 32x32 it accused a
+    conda-forge build -- the fast one -- of being 2.2x slow on the strength
+    of 0.1 ms against 0.1 ms. Timing still decides whether cached wisdom has
+    gone stale, and acting on that discards the whole wisdom cache to replan,
+    so it is guarded by the same measurability floor.
+    """
+    from NLSE.backends import cpu as cpu_backend
+
+    tiny = np.ones((32, 32), dtype=np.complex64)
+    assert cpu_backend.measurable(tiny, 10.0) is False
+    big = np.ones((512, 512), dtype=np.complex64)
+    assert cpu_backend.measurable(big, 1e-6) is False
+    assert cpu_backend.measurable(big, 0.1) is True
+
+
+def test_the_fft_warning_is_issued_once(monkeypatch):
+    """A plan per grid size must not mean a warning per plan."""
+    from NLSE.backends import cpu as cpu_backend
+
+    monkeypatch.setattr(cpu_backend, "_warned_about_fft", False)
+    fake_wisdom(monkeypatch, SCALAR_WISDOM)
+
+    with pytest.warns(RuntimeWarning):
+        cpu_backend.warn_if_fftw_lacks_simd()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert cpu_backend.warn_if_fftw_lacks_simd() is True

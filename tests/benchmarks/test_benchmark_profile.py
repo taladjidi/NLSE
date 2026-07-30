@@ -48,10 +48,26 @@ g_k = 1e-3
 Isat_k = 1e4
 omega_k = 1e3
 
-# Steps every solver benchmark takes, whatever the solver, backend or
-# distance. Changing it changes every timing here, so numbers either side of
-# such a change are not comparable.
-BENCH_STEPS = 10
+# Steps a solver benchmark takes, per backend. Changing any of these changes
+# the timings here, so numbers either side of such a change are not comparable.
+#
+# One out_field call is a fixed setup -- FFT planning, propagator build, host
+# to device transfer -- plus the steps. Measured at NX=NY=64, the setup is
+# ~2.2 ms on MLX and ~2.8 ms on CL against per-step costs of 0.022 ms and
+# 0.37 ms. At ten steps for everyone, propagation was 9% of the MLX benchmark
+# and 57% of the CL one: they timed the constructor, not the solver, and no
+# regression alert could be set tight enough to mean anything.
+#
+# These give propagation at least ~80% of each run while keeping every
+# benchmark well under a second.
+BENCH_STEPS = {"CPU": 20, "CUPY": 200, "CL": 60, "MLX": 400}
+DEFAULT_BENCH_STEPS = 100
+
+
+def bench_steps(simu) -> int:
+    """Return the step count this solver's backend is calibrated for."""
+    return BENCH_STEPS.get(simu._backend.name, DEFAULT_BENCH_STEPS)
+
 
 # Get available backends
 BACKENDS = list_available_backends()
@@ -64,7 +80,7 @@ def skip_if_backend_unavailable(backend: str):
 
 
 def _propagate(simu, E_in, z, **kwargs):
-    """Propagate over z in exactly BENCH_STEPS steps.
+    """Propagate over z in exactly ``bench_steps(simu)`` steps.
 
     Parameters
     ----------
@@ -82,7 +98,7 @@ def _propagate(simu, E_in, z, **kwargs):
     np.ndarray
         The propagated field.
     """
-    dz = z / BENCH_STEPS
+    dz = z / bench_steps(simu)
     out = simu.out_field(E_in, z, verbose=False, plot=False, **kwargs, delta_z=dz)
     assert simu._current_delta_z == dz, (
         f"the step limiter reduced delta_z from {dz:.3e} to "
@@ -459,7 +475,7 @@ class TestCoupledSolverBenchmark:
                 verbose=False,
                 callback=[],
                 callback_args=[()],
-                delta_z=T / BENCH_STEPS,
+                delta_z=T / bench_steps(simu),
             )
 
         result = benchmark.pedantic(propagate, rounds=10, warmup_rounds=2)

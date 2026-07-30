@@ -1,8 +1,7 @@
 import numpy as np
+from helpers import as_numpy, assert_c_contiguous, make
 from NLSE import CNLSE
 from scipy.constants import c, epsilon_0
-
-from .helpers import as_numpy, assert_c_contiguous
 
 if CNLSE.__CUPY_AVAILABLE__:
     import cupy as cp
@@ -27,37 +26,8 @@ DZ_TEST = 1e-4
 
 
 def make_solver(backend="CPU", n=N, **overrides):
-    """Return a CNLSE with this module's parameters.
-
-    Parameters
-    ----------
-    backend : str
-        Backend name.
-    n : int
-        Grid size, square.
-    **overrides
-        Any constructor argument, by keyword.
-
-    Returns
-    -------
-    CNLSE
-        The solver.
-    """
-    params = {
-        "alpha": alpha,
-        "power": power,
-        "window": window,
-        "n2": n2,
-        "n12": n12,
-        "V": None,
-        "L": L,
-        "NX": n,
-        "NY": n,
-        "Isat": Isat,
-        "backend": backend,
-    }
-    params.update(overrides)
-    return CNLSE(**params)
+    """Return a CNLSE with this module's parameters."""
+    return make(CNLSE, backend, n=n, **overrides)
 
 
 def test_prepare_output_array(backend) -> None:
@@ -301,4 +271,29 @@ def test_an_array_norm_target_reaches_the_backend(monkeypatch) -> None:
     assert (2,) in seen, (
         f"the per-component target never went through the backend; "
         f"shapes converted were {seen}"
+    )
+
+
+def test_each_component_propagates_at_its_own_wavenumber(backend) -> None:
+    """Both propagators must read the wavenumber of their own component.
+
+    ``CNLSE.__init__`` sets ``k2 = k``, so a propagator built from ``k``
+    where it should use ``k2`` gives the right answer for every test that
+    leaves the default alone -- and the tests that check the formula take
+    their own expectation from ``simu.k2``, so they agree with it. Both
+    mutations survived the suite. This gives the second component a
+    different wavenumber, which is the only way the difference shows.
+    """
+    simu = make_solver(backend)
+    simu.k2 = 2 * np.pi / 795e-9
+    assert simu.k2 != simu.k, "the components must differ for this to test anything"
+
+    split = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
+    assert np.allclose(
+        split[1], np.exp(-1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k2 * DZ_TEST)
+    ), f"the split-step propagator ignores k2. (Backend {backend})"
+
+    rk4 = as_numpy(simu, simu._build_propagator_rk4(PRECISION_COMPLEX))
+    assert np.allclose(rk4[1], -1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k2), (
+        f"the RK4 dispersion operator ignores k2. (Backend {backend})"
     )

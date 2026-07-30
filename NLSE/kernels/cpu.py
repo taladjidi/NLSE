@@ -73,6 +73,18 @@ def _nl_prop_without_V(
     """
     A_flat = A.ravel()
     A_sq_flat = A_sq.ravel()
+    if alpha == 0:
+        # Lossless: the exponent is purely imaginary, so the step is a
+        # rotation. exp(0) is exactly 1, so this is the same result computed
+        # with cos and sin instead of a complex exponential.
+        for i in numba.prange(A_flat.size):
+            sat = 1 / (1 + A_sq_flat[i] / Isat)
+            theta = dz * g * A_sq_flat[i] * sat
+            c = np.cos(theta)
+            s = np.sin(theta)
+            a = A_flat[i]
+            A_flat[i] = complex(a.real * c - a.imag * s, a.real * s + a.imag * c)
+        return A
     for i in numba.prange(A_flat.size):
         # saturation
         sat = 1 / (1 + A_sq_flat[i] / Isat)
@@ -175,6 +187,16 @@ def _nl_prop_without_V_c(
     A1_flat = A1.ravel()
     A_sq_1_flat = A_sq_1.ravel()
     A_sq_2_flat = A_sq_2.ravel()
+    if alpha == 0:
+        # See _nl_prop_without_V: lossless is a rotation, not an exponential.
+        for i in numba.prange(A1_flat.size):
+            sat = 1 / (1 + A_sq_1_flat[i] / Isat1 + A_sq_2_flat[i] / Isat2)
+            theta = dz * (g11 * A_sq_1_flat[i] * sat + g12 * A_sq_2_flat[i] * sat)
+            c = np.cos(theta)
+            s = np.sin(theta)
+            a = A1_flat[i]
+            A1_flat[i] = complex(a.real * c - a.imag * s, a.real * s + a.imag * c)
+        return A1
     for i in numba.prange(A1_flat.size):
         # Saturation parameter
         sat = 1 / (1 + A_sq_1_flat[i] / Isat1 + A_sq_2_flat[i] / Isat2)
@@ -287,6 +309,17 @@ def _square_mod_nl_prop(
         Saturation
     """
     A_flat = A.ravel()
+    if alpha == 0:
+        # See _nl_prop_without_V: lossless is a rotation, not an exponential.
+        for i in numba.prange(A_flat.size):
+            a = A_flat[i]
+            A_sq_val = a.real * a.real + a.imag * a.imag
+            sat = 1 / (1 + A_sq_val / Isat)
+            theta = dz * g * A_sq_val * sat
+            c = np.cos(theta)
+            s = np.sin(theta)
+            A_flat[i] = complex(a.real * c - a.imag * s, a.real * s + a.imag * c)
+        return A
     for i in numba.prange(A_flat.size):
         A_sq_val = A_flat[i].real * A_flat[i].real + A_flat[i].imag * A_flat[i].imag
         sat = 1 / (1 + A_sq_val / Isat)
