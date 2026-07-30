@@ -1021,19 +1021,50 @@ def split_step_rk4_fused(
 
 
 def _make_split_step_coupled(precision, has_V, has_omega, axes):
+    """Build the fused coupled step for one shape of the problem.
+
+    Six variants over three choices: a potential or not, Rabi coupling or not,
+    and a whole step (single) against a Strang pair of halves (double). They
+    were written out as six bodies, so the interaction, saturation and loss
+    terms appeared six times and could drift apart between them -- which is
+    the failure this shape invites, because a run only takes one of the six.
+    Here the arithmetic appears once and is traced into whichever variant asks
+    for it.
+
+    What still varies is the argument list, and it has to: mx.compile traces
+    the arguments it is handed, so a potential that is absent cannot be passed
+    as None. Hence six signatures over one set of terms rather than six of
+    each. ``nonlinear`` takes V1/V2 as None for the variants without one,
+    which is resolved while tracing rather than per step.
+    """
+
+    def nonlinear(A1, A2, dz, alpha1, alpha2, g11, g12, g22, Isat1, Isat2, V1, V2):
+        """Apply the real-space terms to both components."""
+        sq1 = (A1 * mx.conj(A1)).real
+        sq2 = (A2 * mx.conj(A2)).real
+        sat = 1 / (1 + sq1 / Isat1 + sq2 / Isat2)
+        arg1 = 1j * (g11 * sq1 + g12 * sq2) * sat - alpha1 * sat
+        arg2 = 1j * (g22 * sq2 + g12 * sq1) * sat - alpha2 * sat
+        if V1 is not None:
+            arg1 = arg1 + 1j * V1
+            arg2 = arg2 + 1j * V2
+        return A1 * mx.exp(dz * arg1), A2 * mx.exp(dz * arg2)
+
+    def linear(A, propagator):
+        """Apply the dispersion, exactly, in Fourier space."""
+        return mx.fft.ifftn(mx.fft.fftn(A, axes=axes) * propagator, axes=axes)
+
+    def rabi(A1, A2, cos_val, sin_val):
+        """Rotate the two components into each other."""
+        return cos_val * A1 - 1j * sin_val * A2, cos_val * A2 - 1j * sin_val * A1
+
     if precision == "single" and not has_V and not has_omega:
 
         def _pure(A, propagator, dz, alpha1, alpha2, g11, g12, g22, Isat1, Isat2):
-            A = mx.fft.fftn(A, axes=axes)
-            A = A * propagator
-            A = mx.fft.ifftn(A, axes=axes)
-            A1 = A[0]
-            A2 = A[1]
-            sq1 = (A1 * mx.conj(A1)).real
-            sq2 = (A2 * mx.conj(A2)).real
-            sat = 1 / (1 + sq1 / Isat1 + sq2 / Isat2)
-            A1 = A1 * mx.exp(dz * (1j * (g11 * sq1 + g12 * sq2) * sat - alpha1 * sat))
-            A2 = A2 * mx.exp(dz * (1j * (g22 * sq2 + g12 * sq1) * sat - alpha2 * sat))
+            A = linear(A, propagator)
+            A1, A2 = nonlinear(
+                A[0], A[1], dz, alpha1, alpha2, g11, g12, g22, Isat1, Isat2, None, None
+            )
             return mx.stack([A1, A2])
 
     elif precision == "single" and not has_V and has_omega:
@@ -1052,19 +1083,11 @@ def _make_split_step_coupled(precision, has_V, has_omega, axes):
             cos_val,
             sin_val,
         ):
-            A = mx.fft.fftn(A, axes=axes)
-            A = A * propagator
-            A = mx.fft.ifftn(A, axes=axes)
-            A1 = A[0]
-            A2 = A[1]
-            sq1 = (A1 * mx.conj(A1)).real
-            sq2 = (A2 * mx.conj(A2)).real
-            sat = 1 / (1 + sq1 / Isat1 + sq2 / Isat2)
-            A1 = A1 * mx.exp(dz * (1j * (g11 * sq1 + g12 * sq2) * sat - alpha1 * sat))
-            A2 = A2 * mx.exp(dz * (1j * (g22 * sq2 + g12 * sq1) * sat - alpha2 * sat))
-            new_A1 = cos_val * A1 - 1j * sin_val * A2
-            new_A2 = cos_val * A2 - 1j * sin_val * A1
-            return mx.stack([new_A1, new_A2])
+            A = linear(A, propagator)
+            A1, A2 = nonlinear(
+                A[0], A[1], dz, alpha1, alpha2, g11, g12, g22, Isat1, Isat2, None, None
+            )
+            return mx.stack(list(rabi(A1, A2, cos_val, sin_val)))
 
     elif precision == "single" and has_V and not has_omega:
 
@@ -1082,21 +1105,20 @@ def _make_split_step_coupled(precision, has_V, has_omega, axes):
             Isat1,
             Isat2,
         ):
-            A = mx.fft.fftn(A, axes=axes)
-            A = A * propagator
-            A = mx.fft.ifftn(A, axes=axes)
-            A1 = A[0]
-            A2 = A[1]
-            sq1 = (A1 * mx.conj(A1)).real
-            sq2 = (A2 * mx.conj(A2)).real
-            sat = 1 / (1 + sq1 / Isat1 + sq2 / Isat2)
-            A1 = A1 * mx.exp(
-                dz
-                * (1j * (g11 * sq1 + g12 * sq2) * sat - alpha1 * sat + 1j * V1_scaled)
-            )
-            A2 = A2 * mx.exp(
-                dz
-                * (1j * (g22 * sq2 + g12 * sq1) * sat - alpha2 * sat + 1j * V2_scaled)
+            A = linear(A, propagator)
+            A1, A2 = nonlinear(
+                A[0],
+                A[1],
+                dz,
+                alpha1,
+                alpha2,
+                g11,
+                g12,
+                g22,
+                Isat1,
+                Isat2,
+                V1_scaled,
+                V2_scaled,
             )
             return mx.stack([A1, A2])
 
@@ -1118,55 +1140,30 @@ def _make_split_step_coupled(precision, has_V, has_omega, axes):
             cos_val,
             sin_val,
         ):
-            A = mx.fft.fftn(A, axes=axes)
-            A = A * propagator
-            A = mx.fft.ifftn(A, axes=axes)
-            A1 = A[0]
-            A2 = A[1]
-            sq1 = (A1 * mx.conj(A1)).real
-            sq2 = (A2 * mx.conj(A2)).real
-            sat = 1 / (1 + sq1 / Isat1 + sq2 / Isat2)
-            A1 = A1 * mx.exp(
-                dz
-                * (1j * (g11 * sq1 + g12 * sq2) * sat - alpha1 * sat + 1j * V1_scaled)
+            A = linear(A, propagator)
+            A1, A2 = nonlinear(
+                A[0],
+                A[1],
+                dz,
+                alpha1,
+                alpha2,
+                g11,
+                g12,
+                g22,
+                Isat1,
+                Isat2,
+                V1_scaled,
+                V2_scaled,
             )
-            A2 = A2 * mx.exp(
-                dz
-                * (1j * (g22 * sq2 + g12 * sq1) * sat - alpha2 * sat + 1j * V2_scaled)
-            )
-            new_A1 = cos_val * A1 - 1j * sin_val * A2
-            new_A2 = cos_val * A2 - 1j * sin_val * A1
-            return mx.stack([new_A1, new_A2])
+            return mx.stack(list(rabi(A1, A2, cos_val, sin_val)))
 
     elif precision == "double" and not has_V:
 
         def _pure(A, propagator, dz_half, alpha1, alpha2, g11, g12, g22, Isat1, Isat2):
-            A1 = A[0]
-            A2 = A[1]
-            sq1 = (A1 * mx.conj(A1)).real
-            sq2 = (A2 * mx.conj(A2)).real
-            sat = 1 / (1 + sq1 / Isat1 + sq2 / Isat2)
-            A1 = A1 * mx.exp(
-                dz_half * (1j * (g11 * sq1 + g12 * sq2) * sat - alpha1 * sat)
-            )
-            A2 = A2 * mx.exp(
-                dz_half * (1j * (g22 * sq2 + g12 * sq1) * sat - alpha2 * sat)
-            )
-            A = mx.stack([A1, A2])
-            A = mx.fft.fftn(A, axes=axes)
-            A = A * propagator
-            A = mx.fft.ifftn(A, axes=axes)
-            A1 = A[0]
-            A2 = A[1]
-            sq1 = (A1 * mx.conj(A1)).real
-            sq2 = (A2 * mx.conj(A2)).real
-            sat = 1 / (1 + sq1 / Isat1 + sq2 / Isat2)
-            A1 = A1 * mx.exp(
-                dz_half * (1j * (g11 * sq1 + g12 * sq2) * sat - alpha1 * sat)
-            )
-            A2 = A2 * mx.exp(
-                dz_half * (1j * (g22 * sq2 + g12 * sq1) * sat - alpha2 * sat)
-            )
+            args = (alpha1, alpha2, g11, g12, g22, Isat1, Isat2, None, None)
+            A1, A2 = nonlinear(A[0], A[1], dz_half, *args)
+            A = linear(mx.stack([A1, A2]), propagator)
+            A1, A2 = nonlinear(A[0], A[1], dz_half, *args)
             return mx.stack([A1, A2])
 
     else:  # double, has_V
@@ -1185,36 +1182,10 @@ def _make_split_step_coupled(precision, has_V, has_omega, axes):
             Isat1,
             Isat2,
         ):
-            A1 = A[0]
-            A2 = A[1]
-            sq1 = (A1 * mx.conj(A1)).real
-            sq2 = (A2 * mx.conj(A2)).real
-            sat = 1 / (1 + sq1 / Isat1 + sq2 / Isat2)
-            A1 = A1 * mx.exp(
-                dz_half
-                * (1j * (g11 * sq1 + g12 * sq2) * sat - alpha1 * sat + 1j * V1_scaled)
-            )
-            A2 = A2 * mx.exp(
-                dz_half
-                * (1j * (g22 * sq2 + g12 * sq1) * sat - alpha2 * sat + 1j * V2_scaled)
-            )
-            A = mx.stack([A1, A2])
-            A = mx.fft.fftn(A, axes=axes)
-            A = A * propagator
-            A = mx.fft.ifftn(A, axes=axes)
-            A1 = A[0]
-            A2 = A[1]
-            sq1 = (A1 * mx.conj(A1)).real
-            sq2 = (A2 * mx.conj(A2)).real
-            sat = 1 / (1 + sq1 / Isat1 + sq2 / Isat2)
-            A1 = A1 * mx.exp(
-                dz_half
-                * (1j * (g11 * sq1 + g12 * sq2) * sat - alpha1 * sat + 1j * V1_scaled)
-            )
-            A2 = A2 * mx.exp(
-                dz_half
-                * (1j * (g22 * sq2 + g12 * sq1) * sat - alpha2 * sat + 1j * V2_scaled)
-            )
+            args = (alpha1, alpha2, g11, g12, g22, Isat1, Isat2, V1_scaled, V2_scaled)
+            A1, A2 = nonlinear(A[0], A[1], dz_half, *args)
+            A = linear(mx.stack([A1, A2]), propagator)
+            A1, A2 = nonlinear(A[0], A[1], dz_half, *args)
             return mx.stack([A1, A2])
 
     return mx.compile(_pure)
