@@ -130,7 +130,12 @@ def as_float(value):
 
 
 def summarise_kernels(rows, top):
-    """Print per-kernel and per-phase GPU time."""
+    """Print per-kernel and per-phase GPU time.
+
+    Launch counts far below what the workload should produce mean the kernels
+    ran inside a replayed CUDA graph and are not itemised here. Add
+    --no-cuda-graph to trace_solvers.py to make every launch visible.
+    """
     entries = []
     for row in rows:
         name = column(row, "Name", "Kernel Name", "Operation") or "?"
@@ -245,13 +250,18 @@ def main(argv=None):
             print(f"  GPU kernel time / CUDA API time: {gpu_ns / api_ns:.2f}")
             if traced_run(tables["nvtx"] or []):
                 print(
-                    "  This report is of a trace_solvers.py run, which synchronizes\n"
-                    "  after every kernel and steps from Python instead of replaying\n"
-                    "  a CUDA graph. Most of that API time is the tracing. Profile\n"
-                    "  without --nvtx, or profile a plain script, to judge the ratio."
+                    "  This is a trace_solvers.py run: it synchronizes after every\n"
+                    "  kernel and steps from Python rather than replaying a CUDA\n"
+                    "  graph, so most of that API time is the tracing itself."
                 )
             else:
-                print("  A ratio well below 1 means the GPU is waiting on the driver.")
+                print(
+                    "  This only means the GPU is waiting on the driver if the\n"
+                    "  profile was one long propagation. A harness that repeats a\n"
+                    "  short run puts its setup, its transfers and its warmups in\n"
+                    "  the same total: `trace_solvers.py --plain 2000` is a workload\n"
+                    "  whose ratio can be read."
+                )
 
     summarise_nvtx(tables["nvtx"] or [])
     return 0

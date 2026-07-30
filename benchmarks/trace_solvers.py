@@ -347,6 +347,55 @@ def report(
         )
 
 
+@contextlib.contextmanager
+def without_cuda_graph(backend):
+    """Step from Python so every kernel launch is visible to a profiler.
+
+    CUPY captures one iteration into a CUDA graph and replays it. nsys then
+    itemises only the captured launches, so a 1440-step run reported 90
+    apply_propagator launches and a kernel table that described the warmup.
+    """
+
+    def plain(self, step_fn, n_iters):
+        for _ in range(n_iters):
+            step_fn()
+
+    with mock.patch.object(type(backend), "execute_loop", plain):
+        yield
+
+
+def plain_run(solver_name, backend_name, n, method, steps, no_graph=False):
+    """Propagate once, long, with nothing wrapped. A target for nsys.
+
+    Everything else here runs a workload several times and wraps it, which is
+    what makes the numbers attributable and what makes an nsys report of it
+    uninterpretable: the kernel table fills with warmups and the API time
+    fills with synchronisation. One long propagation is the only workload
+    whose profile describes the solver rather than the harness.
+    """
+    simu = build(solver_name, backend_name, n)
+    field = input_field(simu, solver_name)
+    run(simu, field, method)  # warm plans and autotuning, outside the profile
+
+    guard = without_cuda_graph(simu._backend) if no_graph else contextlib.nullcontext()
+    start = time.perf_counter()
+    with guard:
+        out = simu.out_field(
+            field.copy(),
+            steps * DELTA_Z,
+            verbose=False,
+            plot=False,
+            delta_z=DELTA_Z,
+            method=method,
+        )
+    simu._backend.synchronize(out)
+    elapsed = time.perf_counter() - start
+    print(
+        f"  {solver_name} / {backend_name} / {method} / {n}x{n}: "
+        f"{steps} steps in {elapsed * 1e3:.1f} ms, {elapsed / steps * 1e3:.3f} ms/step"
+    )
+
+
 def main(argv=None):
     """Parse arguments and trace every requested case."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -360,6 +409,17 @@ def main(argv=None):
         action="store_true",
         help="list every kernel separately, not just its phase",
     )
+    parser.add_argument(
+        "--plain",
+        type=int,
+        metavar="STEPS",
+        help="run one long propagation with nothing wrapped, for nsys",
+    )
+    parser.add_argument(
+        "--no-cuda-graph",
+        action="store_true",
+        help="step from Python so a profiler sees every launch, not a graph",
+    )
     args = parser.parse_args(argv)
 
     from NLSE.backends import list_available_backends
@@ -368,6 +428,16 @@ def main(argv=None):
         for solver_name in args.solvers:
             for n in args.sizes:
                 for method in args.methods:
+                    if args.plain:
+                        plain_run(
+                            solver_name,
+                            backend_name,
+                            n,
+                            method,
+                            args.plain,
+                            no_graph=args.no_cuda_graph,
+                        )
+                        continue
                     try:
                         result = trace(solver_name, backend_name, n, method, args.nvtx)
                     except Exception as exc:
