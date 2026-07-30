@@ -13,6 +13,15 @@ from typing import Any, TypedDict
 
 import numpy as np
 
+# Bumped whenever a cached timing stops meaning what it meant, so that a cache
+# written before the change is discarded rather than believed. It was written
+# into every cache from the start and never read, which is the same as not
+# having one: at 2 because the CPU backend's transform moved from pyFFTW to
+# scipy and got several times faster, and until this was compared, "auto"
+# would go on preferring whatever had beaten the old CPU timing -- for the
+# thirty days the only other check, the cache's age, allowed.
+CACHE_VERSION = "2"
+
 
 class BackendResult(TypedDict):
     """Results for a single backend benchmark."""
@@ -137,7 +146,7 @@ def benchmark_all_backends(
     from . import list_available_backends
 
     results: BenchmarkResults = {
-        "version": "1.0",
+        "version": CACHE_VERSION,
         "timestamp": datetime.now().isoformat(),
         "grid_size": list(grid_size),
         "platform": {
@@ -215,6 +224,25 @@ def load_benchmark_cache() -> BenchmarkResults | None:
 
         # Validate cache structure
         if "version" not in cache or "timestamp" not in cache:
+            return None
+
+        if cache["version"] != CACHE_VERSION:
+            print(
+                "Benchmark cache predates a change to what it timed, re-benchmarking..."
+            )
+            return None
+
+        # Recorded from the start and, like the version, never compared. A
+        # cache lives in the user's cache directory, which is inside a home
+        # directory that a lab machine and a laptop may well share, and the
+        # answer it holds is a statement about one machine's hardware.
+        cached_platform = cache.get("platform", {})
+        here = (platform.system(), platform.machine())
+        there = (cached_platform.get("system"), cached_platform.get("processor"))
+        if there != here:
+            print(
+                f"Benchmark cache was written on {there}, not {here}, re-benchmarking..."
+            )
             return None
 
         # Check if cache is stale (>30 days)
