@@ -390,6 +390,46 @@ class Backend(ABC):
         """
         pass
 
+    def norm(self, array: Any) -> float:
+        """Return the Euclidean norm of a field, as a host float.
+
+        The reduction runs where the array already is, so only the scalar
+        crosses the bus. A caller that needs a norm to make a host-side
+        decision -- choosing a step, say -- would otherwise bring the whole
+        field back for it, which on a device backend costs far more than the
+        arithmetic does. The scalar still forces a synchronization, because
+        the host cannot act on a number the device has not finished
+        computing; that part is not avoidable.
+
+        Parameters
+        ----------
+        array : Any
+            Field, on the host or on a device.
+
+        Returns
+        -------
+        float
+            Its Euclidean norm.
+        """
+        return float(np.linalg.norm(self.to_numpy(array)))
+
+    def copy_field(self, array: Any) -> Any:
+        """Return a duplicate of a field, without it leaving the device.
+
+        Parameters
+        ----------
+        array : Any
+            Field to duplicate.
+
+        Returns
+        -------
+        Any
+            The copy, on the same side as the original.
+        """
+        if hasattr(array, "copy"):
+            return array.copy()
+        return self.from_numpy(np.asarray(self.to_numpy(array)).copy())
+
     @property
     @abstractmethod
     def kernels(self) -> Any:

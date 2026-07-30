@@ -155,6 +155,10 @@ class CUPYBackend(Backend):
             return plan[0].ifft(array, array)
         return plan[0].ifft_unnorm(array, array)
 
+    def norm(self, array: Any) -> float:
+        """Reduce on the GPU; only the scalar comes back."""
+        return float(cp.linalg.norm(array))
+
     @property
     def kernels(self) -> Any:
         """Return CUDA C kernels (--use_fast_math, with broadcasting fallback)."""

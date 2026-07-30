@@ -161,6 +161,11 @@ class OpenCLBackend(Backend):
             return plan[0].ifft(array, array)
         return plan[0].ifft_unnorm(array, array)
 
+    def norm(self, array: Any) -> float:
+        """Reduce on the device; only the scalar comes back."""
+        flat = array.reshape(-1)
+        return float(np.sqrt(cla.vdot(flat, flat).get().real))
+
     @property
     def kernels(self) -> Any:
         """Return OpenCL kernels."""
