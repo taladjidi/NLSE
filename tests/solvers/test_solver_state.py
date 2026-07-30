@@ -7,13 +7,12 @@ state has to be refreshed rather than silently reused.
 
 import numpy as np
 import pytest
+from helpers import as_numpy, make
 from NLSE import CNLSE, DDGPE, GPE, NLSE
 from NLSE.backends import get_backend, list_available_backends
 from NLSE.callbacks import adapt_delta_z
 from NLSE.solvers.nlse import DEFAULT_MIN_STEPS, DEFAULT_PHASE_PER_STEP
 from scipy.constants import atomic_mass
-
-from .helpers import as_numpy
 
 PRECISION_COMPLEX = np.complex64
 
@@ -35,20 +34,7 @@ alpha = 0.0
 
 def make_solver(backend="CPU", **kwargs):
     """Build a small NLSE solver with the module defaults."""
-    params = {
-        "alpha": alpha,
-        "power": power,
-        "window": window,
-        "n2": n2,
-        "V": None,
-        "L": L,
-        "NX": N,
-        "NY": N,
-        "Isat": Isat,
-        "backend": backend,
-    }
-    params.update(kwargs)
-    return NLSE(**params)
+    return make(NLSE, backend, n=N, **{"L": L, "alpha": alpha, **kwargs})
 
 
 def gaussian_input():

@@ -28,6 +28,7 @@ exception is noted where it is asserted.
 
 import numpy as np
 import pytest
+from helpers import gaussian as beam, make as build
 from NLSE import CNLSE, NLSE, CNLSE_1d, NLSE_1d
 from NLSE.backends import get_backend, list_available_backends
 
@@ -85,86 +86,21 @@ def grid_shape(cls):
     return (N,) if one_dimensional(cls) else (N, N)
 
 
-def make(cls, backend, symmetric=False, **overrides):
-    """Return a solver of this class with this module's parameters.
+def make(cls, backend, **overrides):
+    """Return a solver of this class, its two components not alike.
 
-    A coupled solver gets the two components *different* physics, because its
-    constructor does not: it sets ``alpha2 = alpha``, ``n22 = n2``,
-    ``I_sat2 = I_sat`` and ``k2 = k``, so a test that leaves them alone runs
-    with g11 == g22, alpha1 == alpha2 and Isat1 == Isat2. Every kernel here
-    then reads the same number whichever component's parameter it means, and
-    swapping them changes nothing. Four such mutations survived the whole
-    suite before these were made to differ.
-
-    Parameters
-    ----------
-    cls : type
-        Solver class.
-    backend : str
-        Backend name.
-    symmetric : bool
-        Leave the components sharing one set of parameters, as the
-        constructor does. For the few tests that are about that.
-    **overrides
-        Any constructor argument, by keyword.
-
-    Returns
-    -------
-    NLSE
-        The solver.
+    ``symmetric=False`` is the point: the constructor sets alpha2 = alpha,
+    n22 = n2, I_sat2 = I_sat and k2 = k, so with the default every kernel
+    here reads the same number whichever component's parameter it means, and
+    swapping them changes nothing. Five such mutations survived the suite.
     """
-    params = {
-        "alpha": 20,
-        "power": 1.05,
-        "window": window,
-        "n2": -1.6e-9,
-        "V": None,
-        "L": L,
-        "NX": N,
-        "Isat": 10e4,
-        "backend": backend,
-    }
-    if coupled(cls):
-        params["n12"] = -1e-10
-    if not one_dimensional(cls):
-        params["NY"] = N
-    params.update(overrides)
-    solver = cls(**params)
-    if coupled(cls) and not symmetric:
-        solver.alpha2 = 0.5 * solver.alpha
-        solver.n22 = 0.4 * solver.n2
-        solver.I_sat2 = 0.25 * solver.I_sat
-        # The second component's wavenumber too, or its propagator is the
-        # first one's and reading the wrong one goes unnoticed.
-        solver.k2 = 2 * np.pi / 795e-9
-    return solver
+    return build(cls, backend, n=N, symmetric=False, **overrides)
 
 
 def gaussian(cls, dtype=np.complex64):
-    """Return a smooth field of the shape this solver takes.
-
-    A beam, not noise: a coupled RK4 run under a strong nonlinearity
-    amplifies a last-bit difference into a visible one, so an adversarial
-    field would measure the chaos rather than the kernels.
-
-    **The two components are given different widths.** With the same field in
-    both, ``|A1|^2`` equals ``|A2|^2`` and every kernel here reads the same
-    number whichever component it means -- so a cross term taking its
-    intensity from the wrong one produces no difference at all, and the tests
-    pass over it. A mutation of exactly that shape survived until the widths
-    were made to differ.
-    """
-    x = np.linspace(-window / 2, window / 2, N)
-    if one_dimensional(cls):
-        r2 = x**2
-    else:
-        X, Y = np.meshgrid(x, x)
-        r2 = X**2 + Y**2
-    first = np.exp(-r2 / waist**2)
-    if coupled(cls):
-        second = np.exp(-r2 / waist2**2)
-        return np.stack([first, second]).astype(dtype)
-    return first.astype(dtype)
+    """Return a smooth field of the shape this solver takes."""
+    shape = grid_shape(cls)
+    return beam((2, *shape) if coupled(cls) else shape, dtype=dtype)
 
 
 def fusion(monkeypatch, backend, level):

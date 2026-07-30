@@ -1,8 +1,7 @@
 import numpy as np
+from helpers import as_numpy, assert_c_contiguous, make
 from NLSE import NLSE_1d
 from scipy.constants import c, epsilon_0
-
-from .helpers import as_numpy, assert_c_contiguous
 
 PRECISION_COMPLEX = np.complex64
 PRECISION_REAL = np.float32
@@ -22,35 +21,8 @@ DZ_TEST = 1e-4
 
 
 def make_solver(backend="CPU", n=N, **overrides):
-    """Return a NLSE_1d with this module's parameters.
-
-    Parameters
-    ----------
-    backend : str
-        Backend name.
-    n : int
-        Grid size.
-    **overrides
-        Any constructor argument, by keyword.
-
-    Returns
-    -------
-    NLSE_1d
-        The solver.
-    """
-    params = {
-        "alpha": alpha,
-        "power": power,
-        "window": window,
-        "n2": n2,
-        "V": None,
-        "L": L,
-        "NX": n,
-        "Isat": Isat,
-        "backend": backend,
-    }
-    params.update(overrides)
-    return NLSE_1d(**params)
+    """Return a NLSE_1d with this module's parameters."""
+    return make(NLSE_1d, backend, n=n, **overrides)
 
 
 def test_build_propagator(backend) -> None:

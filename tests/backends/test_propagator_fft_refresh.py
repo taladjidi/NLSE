@@ -10,6 +10,7 @@ These only exercise a real code path on CUPY/CL, so they skip elsewhere.
 
 import numpy as np
 import pytest
+from helpers import make
 from NLSE import NLSE
 from NLSE.backends import list_available_backends
 
@@ -29,20 +30,7 @@ alpha = 0.0
 
 def make_solver(backend, **kwargs):
     """Build a small NLSE solver on the given backend."""
-    params = {
-        "alpha": alpha,
-        "power": power,
-        "window": window,
-        "n2": n2,
-        "V": None,
-        "L": L,
-        "NX": N,
-        "NY": N,
-        "Isat": Isat,
-        "backend": backend,
-    }
-    params.update(kwargs)
-    return NLSE(**params)
+    return make(NLSE, backend, n=N, **{"L": L, "alpha": alpha, **kwargs})
 
 
 def to_numpy(simu, array):

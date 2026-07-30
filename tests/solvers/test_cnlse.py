@@ -1,8 +1,7 @@
 import numpy as np
+from helpers import as_numpy, assert_c_contiguous, make
 from NLSE import CNLSE
 from scipy.constants import c, epsilon_0
-
-from .helpers import as_numpy, assert_c_contiguous
 
 if CNLSE.__CUPY_AVAILABLE__:
     import cupy as cp
@@ -27,37 +26,8 @@ DZ_TEST = 1e-4
 
 
 def make_solver(backend="CPU", n=N, **overrides):
-    """Return a CNLSE with this module's parameters.
-
-    Parameters
-    ----------
-    backend : str
-        Backend name.
-    n : int
-        Grid size, square.
-    **overrides
-        Any constructor argument, by keyword.
-
-    Returns
-    -------
-    CNLSE
-        The solver.
-    """
-    params = {
-        "alpha": alpha,
-        "power": power,
-        "window": window,
-        "n2": n2,
-        "n12": n12,
-        "V": None,
-        "L": L,
-        "NX": n,
-        "NY": n,
-        "Isat": Isat,
-        "backend": backend,
-    }
-    params.update(overrides)
-    return CNLSE(**params)
+    """Return a CNLSE with this module's parameters."""
+    return make(CNLSE, backend, n=n, **overrides)
 
 
 def test_prepare_output_array(backend) -> None:

@@ -1,10 +1,9 @@
 import numpy as np
 import pyfftw
 import pytest
+from helpers import as_numpy, assert_c_contiguous, make, random_field
 from NLSE import NLSE
 from scipy.constants import c, epsilon_0
-
-from .helpers import as_numpy, assert_c_contiguous, random_field
 
 if NLSE.__CUPY_AVAILABLE__:
     import cupy as cp
@@ -29,36 +28,8 @@ DZ_TEST = 1e-4
 
 
 def make_solver(backend="CPU", n=N, **overrides):
-    """Return a NLSE with this module's parameters.
-
-    Parameters
-    ----------
-    backend : str
-        Backend name.
-    n : int
-        Grid size, square.
-    **overrides
-        Any constructor argument, by keyword.
-
-    Returns
-    -------
-    NLSE
-        The solver.
-    """
-    params = {
-        "alpha": alpha,
-        "power": power,
-        "window": window,
-        "n2": n2,
-        "V": None,
-        "L": L,
-        "NX": n,
-        "NY": n,
-        "Isat": Isat,
-        "backend": backend,
-    }
-    params.update(overrides)
-    return NLSE(**params)
+    """Return a NLSE with this module's parameters."""
+    return make(NLSE, backend, n=n, **{"L": L, **overrides})
 
 
 def test_build_propagator(backend) -> None:

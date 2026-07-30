@@ -11,6 +11,7 @@ matplotlib.use("Agg")  # non-interactive backend for plot tests
 import numpy as np
 import pyfftw
 import pytest
+from helpers import make
 from NLSE import CNLSE, NLSE
 from NLSE.backends import list_available_backends
 from scipy.constants import c, epsilon_0
@@ -43,69 +44,18 @@ def make_nlse(backend="CPU", n=N, **overrides):
     Ninety-odd solver constructions in this file differed only in backend,
     grid size and one or two parameters; spelling each out in full made the
     difference between two tests the hardest thing to see in them.
-
-    Parameters
-    ----------
-    backend : str
-        Backend name.
-    n : int
-        Grid size, square.
-    **overrides
-        Any constructor argument, by keyword.
-
-    Returns
-    -------
-    NLSE
-        The solver.
     """
-    params = {
-        "alpha": alpha,
-        "power": power,
-        "window": window,
-        "n2": n2,
-        "V": None,
-        "L": L,
-        "NX": n,
-        "NY": n,
-        "Isat": Isat,
-        "backend": backend,
-    }
-    params.update(overrides)
-    return NLSE(**params)
+    return make(NLSE, backend, n=n, **overrides)
 
 
 def make_cnlse(backend="CPU", n=N, **overrides):
     """Return a CNLSE with this module's parameters.
 
-    Parameters
-    ----------
-    backend : str
-        Backend name.
-    n : int
-        Grid size, square.
-    **overrides
-        Any constructor argument, by keyword.
-
-    Returns
-    -------
-    CNLSE
-        The solver.
+    Ninety-odd solver constructions in this file differed only in backend,
+    grid size and one or two parameters; spelling each out in full made the
+    difference between two tests the hardest thing to see in them.
     """
-    params = {
-        "alpha": alpha,
-        "power": power,
-        "window": window,
-        "n2": n2,
-        "n12": n12,
-        "V": None,
-        "L": L,
-        "NX": n,
-        "NY": n,
-        "Isat": Isat,
-        "backend": backend,
-    }
-    params.update(overrides)
-    return CNLSE(**params)
+    return make(CNLSE, backend, n=n, **{"n12": n12, **overrides})
 
 
 class TestCPUCorrectness:

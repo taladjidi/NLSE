@@ -1,8 +1,7 @@
 import numpy as np
+from helpers import as_numpy, assert_c_contiguous, random_field
 from NLSE import GPE
 from scipy.constants import atomic_mass, hbar
-
-from .helpers import as_numpy, assert_c_contiguous, random_field
 
 PRECISION_COMPLEX = np.complex64
 PRECISION_REAL = np.float32

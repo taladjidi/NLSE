@@ -1,8 +1,7 @@
 import numpy as np
 import pytest
+from helpers import as_numpy, assert_c_contiguous
 from NLSE import DDGPE
-
-from .helpers import as_numpy, assert_c_contiguous
 
 if DDGPE.__CUPY_AVAILABLE__:
     import cupy as cp
