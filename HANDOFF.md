@@ -384,6 +384,207 @@ the method: 349 lines to 243. The tests only checked it ran, so
 Moved into the README: see **Troubleshooting a CUDA install** under
 Requirements, and the dev-extra note under Tests.
 
+### 13. Step constants have one definition
+
+The precompute wrote fixed-precision constants onto the solver for the
+kernels, and every other reader took them with a default that recomputed the
+same physics -- `getattr(self, "_g", self.k / 2 * self.n2 * c * epsilon_0)` at
+some fifty sites. A subclass that scaled a coupling differently was heard only
+by the precompute, which is how DDGPE's couplings came to be converted as an
+optical `n2`, putting its interaction rate 1e26 too high and its step limit at
+1e-26 m. `_step_constants()` is now the one table; `_constant()` reads the
+attribute once it exists and the table until then.
+
+Examples write through `examples/_output.output_path` into `examples/output/`,
+which let six `.gitignore` patterns go, including a repo-wide `*.npy` that
+would have hidden real data.
+
+### 14. Coupled solvers broadcast
+
+`CNLSE` and `CNLSE_1d` could not run a batch at all: three places read the
+component axis as literal 0 and 1, so a leading batch axis made the solver
+take simulation 0 for component 0. Nothing caught it because every
+broadcasting test built `NLSE`. Components go through `_component(i)` derived
+from `_last_axes`, with `_set_components` opposite `_take_components`.
+
+Two CUPY-only regressions followed and were fixed: a per-component
+normalization target left on the host (CuPy refuses a numpy operand against a
+device array), and batched constants keeping the component axis, which CPU
+tolerated and CuPy broadcast into `(count, count, NY, NX)`. Both are pinned by
+CPU tests now.
+
+CL and MLX refuse a batched coupled run through `_check_batch_support` rather
+than returning a wrong-shaped array, which MLX had been doing silently.
+
+### 15. The device transfers are paired
+
+`out_field` moved V, `nl_profile`, the propagator and any batched parameter
+onto the device at the top and brought them back eighty lines later with
+nothing between. Anything raising in between left them there, and the run that
+broke was the *next* one: on CL that surfaced as an unrelated `ValueError`
+from which the solver never recovered. `_arrays_on_device` is a context
+manager restoring in a `finally`.
+
+### 16. Simplification, reassessed
+
+Measured rather than eyeballed; most of what the ledger implied was left had
+already been taken by the ledger work. Comparing every override against the
+method it overrides, only three exceed 0.55 similarity, and the two that
+matter carry real physics differences. No dead code: `vortex`/`vortex_cp`
+looked dead but is a user-facing utility with its own tests. The two dispatch
+mechanisms were already one. 43% of the package is docstrings, so the 11.6k
+line count overstates it -- the code is ~5.6k across four backends.
+
+The one real finding was fourteen `self._backend.name == "..."` branches in
+the solvers, coexisting with the capability flags meant to replace them.
+
+### 17. Capabilities replace the backend name checks
+
+All fourteen are gone. `Backend.convolution` returns the overlap-add
+convolution or None, which retires the `oaconvolve` choice (written out twice
+verbatim) and the `nl_length` check too: a backend with no convolution is
+exactly one that cannot do non-locality. `Backend.synchronize()` and
+`Backend.timed()` replace ~25 lines of CUDA events, `queue.finish` and
+`mx.eval` inside `out_field`, plus a function-local `import mlx.core`.
+`normalizes_on_host` covers the CL/MLX normalization route.
+
+**`out_field`: 114 lines and 15 branches -> 91 and 8.**
+
+Two corrections the tests forced: the MLX flag was first called
+`arrays_are_immutable`, which is false, and then a mutation showed the renamed
+flag made no measurable difference at all, so it and both its branches were
+deleted. Fourteen name checks became four capabilities and two deletions.
+
+### 18. Performance, measured: there is no regression
+
+**No MLX regression, and none on any backend.** Against 3.0.0 every cell of an
+18-cell matrix lands between 0.99x and 1.06x.
+
+The 35% figure this session had been carrying was an artifact of timing a
+whole `out_field` and dividing by the step count, which charges the
+once-per-run setup to the steps. At NX=NY=64 the setup is ~2.2 ms on MLX
+against 0.022 ms per step, so a ten-step run was 91% constructor. My own first
+harness had the same flaw and reported a 1.6x MLX regression that reversed
+sign when run again.
+
+`profile_backends.py` takes the slope between two step counts, so setup
+subtracts out. `--baseline <rev>` compares against a git worktree of any
+revision and refuses to report if it imported the wrong tree.
+
+Benchmark step counts are calibrated per backend (`BENCH_STEPS`) so
+propagation is >=80% of each run, and the CI `alert-threshold` drops from 200%
+to 140% against a measured spread of 2.9% median, 8.5% worst.
+
+### 19. Why pyfftw was slow: the arm64 wheel has no NEON
+
+The PyPI wheel vendors its own FFTW, and that build has no SIMD:
+`pyfftw.simd_alignment == 4` (a vectorised build reports 16 or 32) and `nm`
+finds zero neon/simd/avx symbols in a 677 KB library where a SIMD build is
+several MB. Single-threaded pyfftw is 236 ms against scipy's 38 at 2048x2048,
+so not threading; in-place and out-of-place are the same, so not transposes.
+
+Unnoticed because x86 wheels are vectorised, because the gap only bites at
+large N (1.5 ms at 512, 35 at 2048, 159 at 4096), and because planning, wisdom
+and the stale-wisdom check all behave normally -- they plan scalar codelets
+well.
+
+`conda install -c conda-forge pyfftw` fixed it, 3.9x. It needed
+`pip uninstall pyfftw` first, since conda could not see the pip one and
+silently no-op'd. **conda-forge's build also reports `simd_alignment == 4`**,
+so that value does not discriminate, which is why the CPU backend times itself
+against scipy instead and warns.
+
+**A bigger win was behind it: stale FFTW wisdom**, cached on disk and
+outliving the library swap -- 34 ms against 8.8 ms for the same transform, and
+the old guard allowed 400 ms so never fired. The scipy comparison now decides
+whether to discard wisdom.
+
+**CPU split step end to end: 1024 7.5 -> 2.8 ms, 2048 39.8 -> 11.4 ms.**
+
+### 20. Why -fveclib bought nothing, and where CPU kernel time goes
+
+**`-fveclib=Accelerate` does fire** -- the build emits `_vexpf`, `_vsinf`,
+`_vcosf`; an earlier claim that it did not was a bad grep. Both loops
+vectorise, width 4. It bought nothing anyway. Lossless rotation at 2048x2048,
+all threads:
+
+| variant | time | GB/s |
+|---|---|---|
+| no maths at all -- the streaming floor | 0.492 ms | 170 |
+| inlined polynomial, ideal SIMD maths | 0.772 ms | 109 |
+| libm cosf/sinf, what C ships | 0.862 ms | 97 |
+| numba, what we ship | 1.725 ms | 49 |
+
+The floor agrees with `apply_propagator` at 181 GB/s. The distance between a
+scalar libm call and perfectly inlined SIMD maths is ~10%: at the libm point
+the loop is already 57% memory-bound.
+
+**Small arrays are slower, not faster**: 46 GB/s at 512x512 (cache-resident)
+against 99 at 2048x2048, because the OpenMP parallel region costs ~50-100 us
+to set up.
+
+numba's gap is general codegen, not a missing vector maths library: 2x above
+the same loop in C with the same layout, threads and libm. A C rewrite is
+worth ~2x on this kernel, 8-10% of a CPU step, against a compiler,
+per-platform wheels and an OpenMP runtime. Not taken.
+
+The cheap win was taken instead: **`alpha == 0` skips the exponential**, exact
+because exp(0) is 1. 1.60x on `nl_prop_without_V`, 1.52x on
+`square_mod_nl_prop`. Only the three kernels without a potential -- the V
+variants add `1j * V`, and a complex V puts a real term back in the exponent.
+
+### 21. Where the time goes inside a step (`benchmarks/trace_solvers.py`)
+
+Wraps the backend's kernels and transforms and attributes each phase.
+`--nvtx` pushes the same names as NVTX ranges; `--per-call` lists kernels
+individually; `--plain N --no-cuda-graph` runs one long unwrapped propagation,
+which is the only workload whose nsys profile describes the solver.
+
+At 1024x1024: NLSE CPU split 2.98 ms/step (transform 76%); NLSE CPU RK4 13.2
+ms (transform 67%); NLSE CL split 0.83 ms (one fused kernel, 85%); NLSE CL RK4
+3.72 ms (rhs 56%, **stage 38%**, 9 launches); NLSE MLX RK4 1.89 ms (**one
+fused kernel, 89%**, 1 launch).
+
+**RK4 costs 4.4x a split step because it runs 8 transforms against 2.**
+
+`--per-call` also shows the CPU inverse transform costing 28% more than the
+forward, because pyfftw normalises by 1/N. See plan item 2.
+
+### 22. CUPY, profiled properly: where a step actually goes
+
+One long propagation, nothing wrapped, every launch itemised. 29157 ms of GPU
+kernel time across four cases at 1024x1024.
+
+| phase | share | launches |
+|---|---|---|
+| transform | 36.5% | 80080 |
+| RK4 stage | 19.2% | 32032 |
+| **array copies** | **13.1%** | **56064** |
+| linear | 12.5% | 20020 |
+| RK4 rhs | 12.2% | 24024 |
+| nonlinear | 6.4% | 16016 |
+
+Per step: NLSE split 0.598 ms, NLSE RK4 3.750, CNLSE split 1.798, CNLSE RK4
+10.567.
+
+**GPU kernel time / CUDA API time is 0.87.** The GPU is busy; there is no
+launch-overhead problem. Earlier readings of this ratio (0.18, then 0.01) were
+artifacts of profiling a harness or a traced run rather than a propagation.
+
+**The copies are `_take_components`, confirmed exactly**: counting the call
+sites predicts 18.0 complex64 and 10.0 float32 copies per step across the four
+cases, and nsys measured 18.02 and 10.01. Entirely in the coupled solvers --
+NLSE never calls it -- where CNLSE RK4 makes 24 copies per step, ~192 MB of
+pure copying at this size.
+
+CL and MLX pay none of it, because their fused coupled kernels never split the
+field. That is plan item 1.
+
+**Tooling caveats learned the hard way**, all handled by the scripts now:
+profiling `profile_backends.py` measures its own warmups and transfers;
+profiling a traced run measures the tracing; and with CUDA graphs active nsys
+itemises only the captured launches, so a 7000-launch workload reported 90.
+
 ## Conventions used
 
 - Commit before mutation testing. `git checkout -- <file>` during a mutation
