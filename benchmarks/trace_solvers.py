@@ -167,11 +167,19 @@ class TracingKernels:
         return wrapped
 
 
+# Recorded like a kernel, then reported separately: the whole step, so the
+# time inside it but outside any kernel can be told apart from the time spent
+# in the loop around it.
+STEP_KEY = "__step__"
+
+
 @contextlib.contextmanager
-def tracing(backend, nvtx=False):
-    """Route a backend's kernels and transforms through a recorder."""
+def tracing(simu, nvtx=False):
+    """Route a solver's kernels, transforms and steps through a recorder."""
+    backend = simu._backend
     recorder = Recorder(backend, nvtx=nvtx)
     cls = type(backend)
+    solver_cls = type(simu)
     traced = TracingKernels(backend.kernels, recorder)
 
     real_fft, real_ifft = cls.fft, cls.ifft
@@ -196,11 +204,22 @@ def tracing(backend, nvtx=False):
     def timed_ifft(self, array, plan):
         return recorder.measure("ifft", real_ifft, self, array, plan)
 
+    real_step = solver_cls.split_step
+    real_rk4 = solver_cls.split_step_RK4
+
+    def timed_step(self, *args, **kwargs):
+        return recorder.measure(STEP_KEY, real_step, self, *args, **kwargs)
+
+    def timed_rk4(self, *args, **kwargs):
+        return recorder.measure(STEP_KEY, real_rk4, self, *args, **kwargs)
+
     with (
         mock.patch.object(cls, "kernels", property(lambda self: traced)),
         mock.patch.object(cls, "fft", timed_fft),
         mock.patch.object(cls, "ifft", timed_ifft),
         mock.patch.object(cls, "execute_loop", plain_loop),
+        mock.patch.object(solver_cls, "split_step", timed_step),
+        mock.patch.object(solver_cls, "split_step_RK4", timed_rk4),
     ):
         yield recorder
 
@@ -263,7 +282,7 @@ def trace(solver_name, backend_name, n, method, nvtx):
     run(simu, field, method)  # warm plans, JIT, autotuning
     untraced = min(run(simu, field, method) for _ in range(3))
 
-    with tracing(simu._backend, nvtx=nvtx) as recorder:
+    with tracing(simu, nvtx=nvtx) as recorder:
         traced = run(simu, field, method)
     return untraced, traced, recorder
 
@@ -273,12 +292,17 @@ def report(solver_name, backend_name, n, method, untraced, traced, recorder):
     by_phase = collections.Counter()
     calls_by_phase = collections.Counter()
     for name, seconds in recorder.seconds.items():
+        if name == STEP_KEY:
+            continue
         phase = PHASES.get(name, name)
         by_phase[phase] += seconds
         calls_by_phase[phase] += recorder.calls[name]
 
     in_kernels = sum(by_phase.values())
-    elsewhere = max(traced - in_kernels, 0.0)
+    in_steps = recorder.seconds.get(STEP_KEY, 0.0)
+    # The step calls the kernels, so its time contains theirs.
+    step_overhead = max(in_steps - in_kernels, 0.0)
+    around_steps = max(traced - in_steps, 0.0)
 
     print(f"\n=== {solver_name} / {backend_name} / {method} / {n}x{n} ===")
     print(
@@ -297,8 +321,13 @@ def report(solver_name, backend_name, n, method, untraced, traced, recorder):
             f" {calls_by_phase[phase] / STEPS:10.1f}"
         )
     print(
-        f"  {'not in a kernel':<22} {elsewhere / STEPS * 1e3:8.3f}ms "
-        f"{100 * elsewhere / traced:6.0f} %"
+        f"  {'step, outside kernels':<22} {step_overhead / STEPS * 1e3:8.3f}ms "
+        f"{100 * step_overhead / traced:6.0f} %"
+    )
+    print(
+        f"  {'outside the step':<22} {around_steps / STEPS * 1e3:8.3f}ms "
+        f"{100 * around_steps / traced:6.0f} %"
+        f"   (loop, callbacks, transfers, setup)"
     )
 
 
