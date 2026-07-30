@@ -134,6 +134,11 @@ def test_fused_signatures_accept_the_documented_arguments(backend_name):
     backend = get_backend(backend_name)
     kernels = backend.kernels
     expected = {
+        # linear_step was missing here, and MLX had drifted: it took
+        # (A, propagator, axes) with no unnorm_ifft, so a solver calling it
+        # the documented way raised TypeError on MLX alone. The solvers hid
+        # that by passing the argument only when it was True.
+        "linear_step": ["A", "propagator", "plan", "unnorm_ifft"],
         "split_step_fused": [
             "A",
             "propagator",

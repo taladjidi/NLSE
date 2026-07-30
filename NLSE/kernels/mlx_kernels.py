@@ -418,7 +418,9 @@ def _make_linear_step(axes):
 _LINEAR_STEP_CACHE: dict[tuple, object] = {}
 
 
-def linear_step(A: mx.array, propagator: mx.array, axes: tuple) -> mx.array:
+def linear_step(
+    A: mx.array, propagator: mx.array, plan: tuple, unnorm_ifft: bool = False
+) -> mx.array:
     """Apply fused linear propagation step (FFT + propagator + IFFT).
 
     Parameters
@@ -427,17 +429,22 @@ def linear_step(A: mx.array, propagator: mx.array, axes: tuple) -> mx.array:
         The field to propagate.
     propagator : mx.array
         The propagator matrix.
-    axes : tuple
-        FFT axes.
+    plan : tuple
+        FFT axes (MLX has no plan objects).
+    unnorm_ifft : bool
+        Accepted for signature compatibility with the other fused
+        backends and ignored: MLX always normalizes its inverse FFT.
+        MLX does not declare supports_unnormalized_ifft, so the solvers
+        only ever pass False.
 
     Returns
     -------
     mx.array
         The propagated field.
     """
-    if axes not in _LINEAR_STEP_CACHE:
-        _LINEAR_STEP_CACHE[axes] = _make_linear_step(axes)
-    return _LINEAR_STEP_CACHE[axes](A, propagator)
+    if plan not in _LINEAR_STEP_CACHE:
+        _LINEAR_STEP_CACHE[plan] = _make_linear_step(plan)
+    return _LINEAR_STEP_CACHE[plan](A, propagator)
 
 
 # ── Fused split step (nl_length == 0 only) ───────────────────────────────────
