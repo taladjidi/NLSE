@@ -372,6 +372,48 @@ class OpenCLKernels:
         """Return the global_offset argument, or None when there is none."""
         return (offset,) if offset else None
 
+    def _launch_coupled(self, kerns, base, V1, V2, gs, ls, buffers, n, params):
+        """Launch a coupled kernel, passing the potentials only if there are any.
+
+        The potential-free twin takes a shorter argument list rather than a
+        null pointer, so which arguments to pass is settled by the same fact
+        that settles which kernel to call. Written out at the call site that
+        is two things to keep in step, and it was written out three times.
+
+        Parameters
+        ----------
+        kerns : dict
+            Compiled kernels for this precision.
+        base : str
+            Kernel name, without a potential suffix; ``_v_kernel`` picks the
+            twin matching a real or complex V.
+        V1 : cla.Array or None
+            Potential for the first component. None means the whole run has
+            none, and selects the shorter argument list.
+        V2 : cla.Array or None
+            Potential for the second component. Passed with V1 or not at all.
+        gs : tuple
+            Global size.
+        ls : tuple or None
+            Local size.
+        buffers : tuple
+            The field buffers this kernel takes ahead of the potentials.
+        n : np.int32
+            Element count the kernel indexes with.
+        params : tuple
+            The physical parameters, already cast to the field's precision.
+
+        Returns
+        -------
+        cl.Event
+            Whatever the launch returns.
+        """
+        if V1 is not None:
+            return self._v_kernel(kerns, base, V1)(
+                self.queue, gs, ls, *buffers, V1.data, V2.data, n, *params
+            )
+        return kerns[base](self.queue, gs, ls, *buffers, n, *params)
+
     def linear_step(self, A, propagator, plan, unnorm_ifft=False):
         """Fused linear propagation: FFT + propagator multiply + IFFT.
 
@@ -1469,26 +1511,9 @@ class OpenCLKernels:
 
         # Double precision: NL half-step before linear
         if precision == "double":
-            if V1 is not None:
-                self._v_kernel(kerns, "coupled_nl_prop_c", V1)(
-                    self.queue,
-                    gs,
-                    ls,
-                    A.data,
-                    V1.data,
-                    V2.data,
-                    N_sq_i,
-                    *params,
-                )
-            else:
-                kerns["coupled_nl_prop_c"](
-                    self.queue,
-                    gs,
-                    ls,
-                    A.data,
-                    N_sq_i,
-                    *params,
-                )
+            self._launch_coupled(
+                kerns, "coupled_nl_prop_c", V1, V2, gs, ls, (A.data,), N_sq_i, params
+            )
 
         # Linear step: FFT → propagator multiply → IFFT (on full 2*N_sq)
         gs_full = (int(A.size),)
@@ -1501,26 +1526,9 @@ class OpenCLKernels:
             plan.ifft(A, A)
 
         # Nonlinear step
-        if V1 is not None:
-            self._v_kernel(kerns, "coupled_nl_prop_c", V1)(
-                self.queue,
-                gs,
-                ls,
-                A.data,
-                V1.data,
-                V2.data,
-                N_sq_i,
-                *params,
-            )
-        else:
-            kerns["coupled_nl_prop_c"](
-                self.queue,
-                gs,
-                ls,
-                A.data,
-                N_sq_i,
-                *params,
-            )
+        self._launch_coupled(
+            kerns, "coupled_nl_prop_c", V1, V2, gs, ls, (A.data,), N_sq_i, params
+        )
 
         # Rabi coupling (single precision only)
         if omega is not None:
@@ -1619,28 +1627,17 @@ class OpenCLKernels:
         params = self._cast_params(
             A_in.dtype, alpha1, alpha2, g11, g12, g22, Isat1, Isat2
         )
-        if V1 is not None:
-            self._v_kernel(kerns, "coupled_rk4_nl_rhs_c", V1)(
-                self.queue,
-                gs,
-                ls,
-                k.data,
-                A_in.data,
-                V1.data,
-                V2.data,
-                N_sq_i,
-                *params,
-            )
-        else:
-            kerns["coupled_rk4_nl_rhs_c"](
-                self.queue,
-                gs,
-                ls,
-                k.data,
-                A_in.data,
-                N_sq_i,
-                *params,
-            )
+        self._launch_coupled(
+            kerns,
+            "coupled_rk4_nl_rhs_c",
+            V1,
+            V2,
+            gs,
+            ls,
+            (k.data, A_in.data),
+            N_sq_i,
+            params,
+        )
 
         return k
 
