@@ -265,3 +265,60 @@ def test_cuda_graph() -> None:
                 f"Norm not conserved with CUDA graph "
                 f"(V={'yes' if has_V else 'no'}, method={method})"
             )
+
+
+def test_lossless_kernels_match_the_general_formula():
+    """Alpha == 0 takes a branch that drops the exponential.
+
+    exp(0) is 1, so the lossless step is a pure rotation and the branch is
+    exact rather than an approximation. It is worth ~1.5x on the CPU kernels,
+    which is only worth having if it computes the same thing: this checks the
+    branch against the formula it replaces, evaluated in double precision.
+    """
+    from NLSE.kernels import cpu as cpu_kernels
+
+    n = 128
+    rng = np.random.default_rng(0)
+    field = (rng.normal(size=(n, n)) + 1j * rng.normal(size=(n, n))).astype(
+        np.complex64
+    )
+    A_sq = (np.abs(field) ** 2).astype(np.float32)
+    dz, g, Isat = np.float32(1e-4), np.float32(1e-3), np.float32(1e5)
+
+    got = cpu_kernels.nl_prop_without_V(
+        field.copy(), A_sq, dz, np.float32(0.0), g, Isat
+    )
+
+    sat = 1.0 / (1.0 + A_sq.astype(np.float64) / np.float64(Isat))
+    expected = field.astype(np.complex128) * np.exp(
+        np.float64(dz) * 1j * np.float64(g) * A_sq.astype(np.float64) * sat
+    )
+
+    scale = float(np.max(np.abs(expected)))
+    assert np.max(np.abs(got - expected)) / scale < 1e-6, (
+        "the lossless branch does not agree with the exponential it replaces"
+    )
+
+
+def test_a_lossy_run_still_loses_power():
+    """And the branch must not be taken when there are losses to apply."""
+    from NLSE.kernels import cpu as cpu_kernels
+
+    n = 64
+    field = np.ones((n, n), dtype=np.complex64)
+    A_sq = np.ones((n, n), dtype=np.float32)
+    args = (np.float32(1e-2), np.float32(1e-3), np.float32(1e5))
+
+    lossless = cpu_kernels.nl_prop_without_V(
+        field.copy(), A_sq, args[0], np.float32(0.0), *args[1:]
+    )
+    lossy = cpu_kernels.nl_prop_without_V(
+        field.copy(), A_sq, args[0], np.float32(50.0), *args[1:]
+    )
+
+    assert np.abs(lossless[0, 0]) == pytest.approx(1.0, rel=1e-5), (
+        "a lossless step must preserve the amplitude"
+    )
+    assert np.abs(lossy[0, 0]) < 0.999, (
+        f"a lossy step must reduce it, got {np.abs(lossy[0, 0])}"
+    )
