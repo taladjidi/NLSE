@@ -163,6 +163,10 @@ class CUPYBackend(Backend):
         """Exponentiate without leaving this backend."""
         return cp.exp(array)
 
+    def sum(self, array: Any) -> float:
+        """Reduce without leaving this backend."""
+        return float(cp.sum(array))
+
     @property
     def kernels(self) -> Any:
         """Return CUDA C kernels (--use_fast_math, with broadcasting fallback)."""

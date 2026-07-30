@@ -814,7 +814,13 @@ class TestNLSEPropagator:
         assert prop1 is prop2  # same object from cache
 
     def test_propagator_double_precision(self):
-        """Double precision propagator has complex128 dtype."""
+        """Double precision propagator has complex128 dtype.
+
+        This one really is about the dtype asked for, unlike the split-step
+        tests nearby, which passed complex128 here and a complex64 field to
+        the kernel: precision="double" is the order of the splitting, not the
+        width of anything.
+        """
         simu = make_nlse("CPU", n=S)
         prop = as_numpy(simu, simu._build_propagator(np.complex128, DZ_TEST))
         assert prop.dtype == np.complex128
@@ -842,7 +848,7 @@ class TestNLSESplitStep:
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
-        prop = as_numpy(simu, simu._build_propagator(np.complex128, DZ_TEST))
+        prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
 
         simu.split_step(A, A_sq, None, prop, plans, DZ_TEST, precision="double")
         assert np.isfinite(A).all(), "Double precision split step produced NaN/Inf"
@@ -855,7 +861,7 @@ class TestNLSESplitStep:
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
-        prop = as_numpy(simu, simu._build_propagator(np.complex128, DZ_TEST))
+        prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
 
         simu.split_step(A, A_sq, V, prop, plans, DZ_TEST, precision="double")
         assert np.isfinite(A).all()
@@ -906,7 +912,7 @@ class TestNLSESplitStep:
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
         A, A_sq = simu._prepare_output_array(E_in, normalize=True)
         plans = simu._build_fft_plan(A)
-        prop = as_numpy(simu, simu._build_propagator(np.complex128, DZ_TEST))
+        prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
 
         simu.split_step(A, A_sq, None, prop, plans, DZ_TEST, precision="double")
         assert np.isfinite(A).all()

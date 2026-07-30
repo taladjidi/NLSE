@@ -800,10 +800,35 @@ def apply_propagator(A: np.ndarray, propagator: np.ndarray) -> np.ndarray:
     np.ndarray
         The modified field array A.
     """
+    # numba indexes both with the same loop and checks nothing. Handed a
+    # propagator of another shape or width it reads and writes past the end of
+    # one of them, and what surfaces is a segmentation fault inside the
+    # compiled kernel with no indication of which argument was wrong -- not an
+    # exception anything can catch or a traceback that names the caller.
     if A.ndim > propagator.ndim:
+        if A.shape[1:] != propagator.shape:
+            raise ValueError(
+                f"a batch of {A.shape} fields cannot share a {propagator.shape} "
+                f"propagator; the grid axes have to match"
+            )
+        if A.dtype != propagator.dtype:
+            raise ValueError(
+                f"field is {A.dtype} and propagator is {propagator.dtype}; "
+                f"the kernel reads both as the same width"
+            )
         for b in range(A.shape[0]):
             _apply_propagator(A[b], propagator)
         return A
+    if A.shape != propagator.shape:
+        raise ValueError(
+            f"field is {A.shape} and propagator is {propagator.shape}; "
+            f"they have to match"
+        )
+    if A.dtype != propagator.dtype:
+        raise ValueError(
+            f"field is {A.dtype} and propagator is {propagator.dtype}; "
+            f"the kernel reads both as the same width"
+        )
     return _apply_propagator(A, propagator)
 
 

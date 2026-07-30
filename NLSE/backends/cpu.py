@@ -360,6 +360,10 @@ class CPUBackend(Backend):
         """Exponentiate without leaving this backend."""
         return np.exp(array)
 
+    def sum(self, array: Any) -> float:
+        """Reduce without leaving this backend."""
+        return float(np.sum(array))
+
     @property
     def kernels(self) -> Any:
         """Return CPU kernels module."""

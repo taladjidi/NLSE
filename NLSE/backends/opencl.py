@@ -183,6 +183,13 @@ class OpenCLBackend(Backend):
         """Exponentiate without leaving this backend."""
         return clmath.exp(array)
 
+    def sum(self, array: Any) -> float:
+        """Reduce on the device, falling back as ``norm`` does."""
+        try:
+            return float(cla.sum(array).get())
+        except ModuleNotFoundError:
+            return super().sum(array)
+
     @property
     def kernels(self) -> Any:
         """Return OpenCL kernels."""

@@ -118,6 +118,10 @@ class MLXBackend(Backend):
         """Exponentiate without leaving this backend."""
         return mx.exp(array)
 
+    def sum(self, array: Any) -> float:
+        """Reduce without leaving this backend."""
+        return float(mx.sum(array))
+
     @property
     def kernels(self) -> Any:
         """Return MLX kernels module."""

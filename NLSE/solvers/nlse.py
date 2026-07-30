@@ -1039,6 +1039,150 @@ class NLSE:
         dict
             ``kinetic``, ``potential``, ``interaction`` and ``loss`` rates.
         """
+        if self._can_rate_on_device(A):
+            return self._energy_rates_on_device(A)
+        return self._energy_rates_on_host(A)
+
+    def _can_rate_on_device(self, A: np.ndarray) -> bool:
+        """Whether the rates can be reduced where the field is.
+
+        The device path indexes every array with one shape, so a parameter
+        carrying a value per simulation rules it out: only CUPY broadcasts one
+        of those natively, and pyopencl does not broadcast at all. It also
+        needs the transforms, which the caller may be asking before they are
+        planned.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            The field.
+
+        Returns
+        -------
+        bool
+            True if the device path applies.
+        """
+        if self.plans is None:
+            return False
+        batched = (
+            self._V_scaled,
+            self._constant("_g"),
+            self._constant("_Isat_conv"),
+            self._constant("_alpha_half"),
+        )
+        return not any(getattr(value, "ndim", 0) > 0 for value in batched[1:])
+
+    def _energy_rates_on_device(self, A: np.ndarray) -> dict[str, float]:
+        """Return the rates, reducing where the field already is.
+
+        The host version brings the field back and takes a numpy FFT of it,
+        and the transform is most of the cost -- 6.0 ms of 9.3 at 512x512,
+        against 0.41 for the transfer. The transform is planned already, so
+        this uses it.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            Normalized field, wherever the backend keeps it.
+
+        Returns
+        -------
+        dict
+            The rates, in radians per metre.
+        """
+        backend = self._backend
+        zero = {"kinetic": 0.0, "potential": 0.0, "interaction": 0.0, "loss": 0.0}
+        real_dtype = (
+            np.float32 if np.dtype(self._field_dtype(A)).itemsize == 8 else np.float64
+        )
+        weight = backend.allocate_real_field(A.shape, real_dtype)
+        weight = backend.kernels.square_mod(A, weight)
+        total = backend.sum(weight)
+        if total == 0:
+            return zero
+
+        # The transform is in place, so it gets a copy rather than the field.
+        spectrum_field = backend.copy_field(A)
+        spectrum_field = backend.fft(spectrum_field, self.plans)
+        spectrum = backend.allocate_real_field(A.shape, real_dtype)
+        spectrum = backend.kernels.square_mod(spectrum_field, spectrum)
+        spectral_total = backend.sum(spectrum)
+        dispersion = self._grid_on_device(
+            "rate", self._dispersion_operator(), real_dtype, A.shape
+        )
+        kinetic = (
+            backend.sum(spectrum * dispersion) / spectral_total
+            if spectral_total > 0
+            else 0.0
+        )
+
+        V_scaled = self._V_scaled
+        if V_scaled is None:
+            potential = absorption = 0.0
+        else:
+            host_V = self._as_host_array(V_scaled)
+            real_V = self._grid_on_device("V_re", np.real(host_V), real_dtype, A.shape)
+            imag_V = self._grid_on_device(
+                "V_im", np.abs(np.imag(host_V)), real_dtype, A.shape
+            )
+            potential = backend.sum(weight * real_V) / total
+            absorption = backend.sum(weight * imag_V) / total
+
+        g = float(np.max(np.abs(self._as_host_array(self._constant("_g")))))
+        Isat = float(self._as_host_array(self._constant("_Isat_conv")))
+        saturated = weight * weight / (real_dtype(1.0) + weight / real_dtype(Isat))
+        mean_intensity = backend.sum(saturated) / total
+        interaction = g * mean_intensity
+
+        alpha_half = float(
+            np.max(np.abs(self._as_host_array(self._constant("_alpha_half"))))
+        )
+        return {
+            "kinetic": abs(kinetic),
+            "potential": abs(potential),
+            "interaction": interaction,
+            "loss": alpha_half + absorption,
+        }
+
+    def _grid_on_device(self, name: str, values: Any, real_dtype: Any, shape: tuple):
+        """Return a grid-shaped quantity on the device, matching the field.
+
+        Stretched to the field's shape first. A coupled field carries a
+        component axis that the dispersion eigenvalues and the potential do
+        not, and pyopencl does not broadcast at all -- it raises rather than
+        stretching, and only for the coupled solvers, so the plain ones would
+        have shipped fine.
+
+        Parameters
+        ----------
+        name : str
+            What this is, to key the cache by.
+        values : Any
+            The quantity, on the host.
+        real_dtype : Any
+            Real width matching the field.
+        shape : tuple
+            Shape of the field it will multiply.
+
+        Returns
+        -------
+        Any
+            The quantity, where the field is.
+        """
+        key = (*self._propagator_rk4_cache_key(), np.dtype(real_dtype).str, shape, name)
+        if key not in self._dispersion_cache:
+            grid = np.ascontiguousarray(
+                np.broadcast_to(np.asarray(values).astype(real_dtype), shape)
+            )
+            self._dispersion_cache[key] = (
+                self._backend.from_numpy(grid)
+                if self._backend.is_device_backend
+                else grid
+            )
+        return self._dispersion_cache[key]
+
+    def _energy_rates_on_host(self, A: np.ndarray) -> dict[str, float]:
+        """Return the rates by bringing the field back. The reference."""
         A_np = np.asarray(self._backend.to_numpy(A))
         weight = np.abs(A_np) ** 2
         total = float(np.sum(weight))

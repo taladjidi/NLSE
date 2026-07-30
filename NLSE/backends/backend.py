@@ -434,6 +434,23 @@ class Backend(ABC):
         """
         return self.from_numpy(np.exp(self.to_numpy(array)))
 
+    def sum(self, array: Any) -> float:
+        """Return the sum of a real array, as a host float.
+
+        Reduced where the array is, so only the scalar crosses. See ``norm``.
+
+        Parameters
+        ----------
+        array : Any
+            Real-valued array.
+
+        Returns
+        -------
+        float
+            Its sum.
+        """
+        return float(np.sum(self.to_numpy(array)))
+
     def copy_field(self, array: Any) -> Any:
         """Return a duplicate of a field, without it leaving the device.
 
