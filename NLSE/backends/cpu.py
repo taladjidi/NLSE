@@ -31,6 +31,29 @@ _FFT_SLOWDOWN_FACTOR = 2.0
 _warned_about_fft = False
 
 
+def scipy_roundtrip_seconds(array: np.ndarray, axes: tuple) -> float:
+    """Return what scipy takes for the same transform pair.
+
+    Parameters
+    ----------
+    array : np.ndarray
+        Array to transform. Not modified.
+    axes : tuple
+        Axes to transform over.
+
+    Returns
+    -------
+    float
+        Seconds for a forward and inverse transform.
+    """
+    reference = array.copy()
+    start = time.perf_counter()
+    scipy_fft.ifftn(
+        scipy_fft.fftn(reference, axes=axes, workers=-1), axes=axes, workers=-1
+    )
+    return time.perf_counter() - start
+
+
 def warn_if_fft_is_slow(array: np.ndarray, seconds: float, axes: tuple) -> bool:
     """Warn once if pyfftw is far slower than scipy on the same transform.
 
@@ -57,13 +80,7 @@ def warn_if_fft_is_slow(array: np.ndarray, seconds: float, axes: tuple) -> bool:
     global _warned_about_fft
     if _warned_about_fft:
         return True
-    reference = array.copy()
-    start = time.perf_counter()
-    scipy_fft.ifftn(
-        scipy_fft.fftn(reference, axes=axes, workers=-1), axes=axes, workers=-1
-    )
-    scipy_seconds = time.perf_counter() - start
-
+    scipy_seconds = scipy_roundtrip_seconds(array, axes)
     if seconds <= _FFT_SLOWDOWN_FACTOR * scipy_seconds:
         return False
     _warned_about_fft = True
@@ -174,10 +191,17 @@ class CPUBackend(Backend):
             axes=axes,
         )
 
-        # Validate plans: a 1024x1024 FFT should take <100ms.
-        # Stale wisdom can cause 100x slowdowns.
-        import time
-
+        # Wisdom is cached on disk and outlives the FFTW it was recorded
+        # against. Swapping one build for another leaves plans that are valid
+        # but slow: on this machine a 2048x2048 pair took 34 ms on wisdom from
+        # the old library against 8.8 ms once it was discarded, a whole CPU
+        # step going from 40 ms to 12 ms.
+        #
+        # An absolute threshold cannot see that. The old one allowed 400 ms at
+        # this size, ten times the bad plan's cost, so it never fired. What
+        # separates a good plan from a stale one is the same measurement that
+        # separates a good FFTW build from a scalar one: how it compares to
+        # scipy on the same array.
         plan_fft(A, A)
         plan_ifft(A, A)
         t0 = time.perf_counter()
@@ -185,14 +209,7 @@ class CPUBackend(Backend):
         plan_ifft(A, A)
         t_roundtrip = time.perf_counter() - t0
 
-        # Heuristic: >200ms for a roundtrip means bad wisdom
-        n_elements = 1
-        for s in shape:
-            n_elements *= s
-        expected_max = max(0.2, n_elements / 1024**2 * 0.1)
-        warn_if_fft_is_slow(A, t_roundtrip, axes)
-
-        if t_roundtrip > expected_max:
+        if t_roundtrip > _FFT_SLOWDOWN_FACTOR * scipy_roundtrip_seconds(A, axes):
             pyfftw.forget_wisdom()
             plan_fft = pyfftw.FFTW(
                 A,
@@ -208,6 +225,14 @@ class CPUBackend(Backend):
                 threads=multiprocessing.cpu_count(),
                 axes=axes,
             )
+            plan_fft(A, A)
+            plan_ifft(A, A)
+            t0 = time.perf_counter()
+            plan_fft(A, A)
+            plan_ifft(A, A)
+            # Still slow with fresh wisdom means the library itself is slow,
+            # which no amount of replanning fixes.
+            warn_if_fft_is_slow(A, time.perf_counter() - t0, axes)
 
         # Restore array contents after planning
         A[:] = saved
