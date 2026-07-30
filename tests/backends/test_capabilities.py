@@ -8,6 +8,7 @@ False is silently dead code. Both are caught here rather than on hardware.
 
 import ast
 import inspect
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -291,3 +292,53 @@ def test_normalizing_gives_the_same_answer_by_either_route(backend_name):
         np.sum(np.abs(out) ** 2) * simu.delta_X * simu.delta_Y * c * epsilon_0 / 2
     )
     assert integral == pytest.approx(simu.power, rel=1e-4)
+
+
+# ---------------------------------------------------------------------------
+# The FFT library the CPU backend was handed
+# ---------------------------------------------------------------------------
+
+
+def test_a_scalar_fftw_build_is_reported(monkeypatch):
+    """A build without vector codelets must say so rather than be 6x slower.
+
+    Nothing else notices: planning, wisdom and the stale-wisdom timing check
+    all behave normally against scalar codelets. The PyPI arm64 wheel bundles
+    such a build, which cost about 4x on a CPU step at 2048x2048.
+    """
+    import pyfftw
+    from NLSE.backends import cpu as cpu_backend
+
+    monkeypatch.setattr(pyfftw, "simd_alignment", 4)
+    monkeypatch.setattr(cpu_backend, "_warned_about_simd", False)
+
+    with pytest.warns(RuntimeWarning, match="without SIMD"):
+        assert cpu_backend.warn_if_fftw_has_no_simd() is True
+
+
+def test_a_vectorised_fftw_build_is_not_reported(monkeypatch):
+    """And a good build must not cry wolf on every CPU solver built."""
+    import pyfftw
+    from NLSE.backends import cpu as cpu_backend
+
+    monkeypatch.setattr(pyfftw, "simd_alignment", 16)
+    monkeypatch.setattr(cpu_backend, "_warned_about_simd", False)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert cpu_backend.warn_if_fftw_has_no_simd() is False
+
+
+def test_the_warning_is_issued_once(monkeypatch):
+    """A solver per parameter sweep must not mean a warning per solver."""
+    import pyfftw
+    from NLSE.backends import cpu as cpu_backend
+
+    monkeypatch.setattr(pyfftw, "simd_alignment", 4)
+    monkeypatch.setattr(cpu_backend, "_warned_about_simd", False)
+
+    with pytest.warns(RuntimeWarning):
+        cpu_backend.warn_if_fftw_has_no_simd()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert cpu_backend.warn_if_fftw_has_no_simd() is True

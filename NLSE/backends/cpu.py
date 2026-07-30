@@ -2,6 +2,7 @@
 
 import multiprocessing
 import pickle
+import warnings
 from typing import Any
 
 import numpy as np
@@ -20,6 +21,46 @@ pyfftw.config.NUM_THREADS = multiprocessing.cpu_count()
 pyfftw.config.PLANNER_EFFORT = "FFTW_MEASURE"
 pyfftw.interfaces.cache.enable()
 
+# A SIMD build of FFTW asks for 16- or 32-byte alignment. 4 means the library
+# was compiled without vector codelets and is running scalar C, which is not
+# something the wisdom or the planner will tell you about: planning, caching
+# and the stale-wisdom check all behave normally, they just plan scalar code.
+_SIMD_ALIGNMENT_FLOOR = 8
+
+_warned_about_simd = False
+
+
+def warn_if_fftw_has_no_simd() -> bool:
+    """Warn once if the installed FFTW was built without vector instructions.
+
+    Measured on an Apple M3 Max at 2048x2048, the PyPI arm64 wheel's bundled
+    FFTW ran a transform pair in 35 ms against 5.4 ms for a vectorised build,
+    single-threaded 236 ms against 38 ms. The transform is ~90% of a CPU step
+    at that size, so it costs about 4x overall, silently.
+
+    Returns
+    -------
+    bool
+        True if a warning was issued or had already been issued.
+    """
+    global _warned_about_simd
+    if pyfftw.simd_alignment >= _SIMD_ALIGNMENT_FLOOR:
+        return False
+    if not _warned_about_simd:
+        _warned_about_simd = True
+        warnings.warn(
+            f"pyFFTW was built without SIMD support "
+            f"(pyfftw.simd_alignment == {pyfftw.simd_alignment}; a vectorised "
+            f"build reports 16 or 32), so FFTW is running scalar code. On this "
+            f"machine that has measured ~6x slower than a vectorised build, "
+            f"and the transform is most of a CPU step at large grid sizes. "
+            f"The PyPI arm64 wheel is one such build; "
+            f"`conda install -c conda-forge pyfftw` is not.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    return True
+
 
 class CPUBackend(Backend):
     """CPU backend using NumPy and pyFFTW.
@@ -28,6 +69,11 @@ class CPUBackend(Backend):
     the numba kernels are already single-pass, so there is no launch
     overhead to amortize.
     """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Build the backend, checking the FFT library it is about to use."""
+        super().__init__(*args, **kwargs)
+        warn_if_fftw_has_no_simd()
 
     @property
     def name(self) -> str:
