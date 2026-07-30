@@ -348,6 +348,10 @@ class CPUBackend(Backend):
         plan[1](array, array, normalise_idft=normalize)
         return array
 
+    def exp(self, array: Any) -> Any:
+        """Exponentiate without leaving this backend."""
+        return np.exp(array)
+
     @property
     def kernels(self) -> Any:
         """Return CPU kernels module."""

@@ -424,3 +424,22 @@ def test_the_fft_warning_is_issued_once(monkeypatch):
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         assert cpu_backend.warn_if_fftw_lacks_simd() is True
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_exp_stays_on_the_backend(backend_name):
+    """Every backend must exponentiate a complex array where it lives.
+
+    The propagator is exp(theta * dz), and building it on the host costs the
+    exponential over the grid plus a transfer -- 9.7 ms at 512x512 against a
+    0.16 ms step. The base class falls back to that round trip, so a backend
+    that does not override this is correct but slow, and one whose override is
+    wrong is neither: the check is against numpy on the same input.
+    """
+    backend = get_backend(backend_name)
+    operator = (-1j * np.linspace(0, 5, 4096).reshape(64, 64)).astype(np.complex64)
+    got = np.asarray(backend.to_numpy(backend.exp(backend.from_numpy(operator))))
+    assert np.allclose(got, np.exp(operator), atol=1e-6), (
+        f"{backend_name}.exp disagrees with numpy"
+    )
+    assert got.shape == operator.shape

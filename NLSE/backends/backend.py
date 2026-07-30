@@ -413,6 +413,27 @@ class Backend(ABC):
         """
         return float(np.linalg.norm(self.to_numpy(array)))
 
+    def exp(self, array: Any) -> Any:
+        """Return the element-wise exponential, where the array already is.
+
+        The linear propagator is ``exp(theta * dz)`` for a dispersion operator
+        that does not change between steps. Built on the host it costs the
+        exponential over the whole grid plus a transfer -- 9.7 ms at 512x512,
+        against a 0.16 ms step on CUPY -- which is invisible while the step is
+        fixed and dominates as soon as it is not.
+
+        Parameters
+        ----------
+        array : Any
+            Array to exponentiate.
+
+        Returns
+        -------
+        Any
+            The exponential, on the same side as the input.
+        """
+        return self.from_numpy(np.exp(self.to_numpy(array)))
+
     def copy_field(self, array: Any) -> Any:
         """Return a duplicate of a field, without it leaving the device.
 

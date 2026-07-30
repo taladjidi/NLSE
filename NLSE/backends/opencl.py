@@ -11,6 +11,7 @@ if not __PYOPENCL_AVAILABLE__:
     raise ImportError("PyOpenCL is not available - cannot import OpenCLBackend")
 
 import pyopencl as cl
+import pyopencl.clmath as clmath
 from pyopencl import array as cla
 from pyvkfft.opencl import VkFFTApp
 
@@ -165,6 +166,10 @@ class OpenCLBackend(Backend):
         """Reduce on the device; only the scalar comes back."""
         flat = array.reshape(-1)
         return float(np.sqrt(cla.vdot(flat, flat).get().real))
+
+    def exp(self, array: Any) -> Any:
+        """Exponentiate without leaving this backend."""
+        return clmath.exp(array)
 
     @property
     def kernels(self) -> Any:

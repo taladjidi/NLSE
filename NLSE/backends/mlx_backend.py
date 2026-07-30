@@ -114,6 +114,10 @@ class MLXBackend(Backend):
         axes = plan[0]
         return mx.fft.ifftn(array, axes=axes)
 
+    def exp(self, array: Any) -> Any:
+        """Exponentiate without leaving this backend."""
+        return mx.exp(array)
+
     @property
     def kernels(self) -> Any:
         """Return MLX kernels module."""

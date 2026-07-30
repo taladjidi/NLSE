@@ -159,6 +159,10 @@ class CUPYBackend(Backend):
         """Reduce on the GPU; only the scalar comes back."""
         return float(cp.linalg.norm(array))
 
+    def exp(self, array: Any) -> Any:
+        """Exponentiate without leaving this backend."""
+        return cp.exp(array)
+
     @property
     def kernels(self) -> Any:
         """Return CUDA C kernels (--use_fast_math, with broadcasting fallback)."""
