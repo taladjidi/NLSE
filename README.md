@@ -31,27 +31,18 @@ uv pip install ".[mlx]"      # MLX, for Apple silicon
 uv pip install ".[docs]"     # mkdocs, to build the documentation
 ```
 
-### Which FFTW you get
+### Which pyfftw you get
 
-The CPU backend spends most of a step in FFTW, and the two `pyfftw` builds are
-not equivalent. On Apple silicon the PyPI wheel bundles an FFTW with no NEON
-codelets and measures four times slower than the conda-forge one, so if you use
-conda, prefer it:
+The CPU backend spends most of a step in FFTW, and the two `pyfftw` builds
+differ in what they link rather than in what they do. Which one to prefer, and
+why neither is vectorized on Apple silicon, is under
+[Making sure PyFFTW is a fast one](#making-sure-pyfftw-is-a-fast-one).
 
-```bash
-pip uninstall pyfftw          # conda cannot see the wheel, and will otherwise no-op
-conda install -c conda-forge pyfftw
-rm ~/Library/Caches/NLSE/fft.wisdom   # plans recorded against the old library outlive it
-```
-
-The package warns at runtime when it plans a transform on a build without
-vector codelets, so you do not have to check by hand.
-
-The wheel also vendors its own copy of the OpenMP runtime rather than linking
-the one in your environment, which numba's thread pool also uses. Two copies
-coexist only if numba's is initialized first, and the CPU backend makes sure it
-is; nothing is required of you. The conda-forge build links the shared one and
-has no such constraint.
+One thing worth knowing at install time: the PyPI wheel vendors its own copy of
+the OpenMP runtime rather than linking the one in your environment, which
+numba's thread pool also uses. Two copies coexist only if numba's is
+initialized first, and the CPU backend makes sure it is, so nothing is required
+of you. The conda-forge build links the shared one and has no such constraint.
 
 ## Basic usage
 
@@ -106,20 +97,22 @@ If the code does not find Cupy, it will fall back to a CPU based implementation 
 #### Making sure PyFFTW is a fast one
 
 The transform is most of a CPU step at large grid sizes, and which FFTW your
-`pyfftw` is linked against decides how fast it is. **The PyPI wheel for arm64
-bundles an FFTW built with no NEON codelets and is about four times slower**
-than the conda-forge build. The x86 wheels are vectorized, which is why this
-mostly bites on Apple silicon.
+`pyfftw` is linked against decides how fast it is. The x86 wheels are
+vectorized. **On arm64 neither prebuilt build is** — not the PyPI wheel and not
+the conda-forge one — so swapping between them does not fix it, and there is
+currently no `pip install` or `conda install` that gets you a vectorized FFTW
+on Apple silicon. Only an FFTW built from source with NEON enabled does.
 
-NLSE warns once at import if it sees the slow case. To swap, in this order:
+NLSE warns once if it plans a transform on such a build, so you know which one
+you have rather than guessing.
 
-```bash
-pip uninstall pyfftw                  # conda cannot see it, and will otherwise no-op
-conda install -c conda-forge pyfftw
-rm ~/.cache/NLSE/fft.wisdom           # plans recorded against the old library outlive it
-```
+Measured on an M3 Max, that scalar FFTW is slower than the pocketfft in
+`scipy`, which NLSE already depends on and which *is* vectorized on arm64: 1.6
+ms against 0.6 at 512x512, and 37 ms against 6.5 at 2048x2048, with FFTW on 16
+threads for both. So on Apple silicon `pyfftw` is currently a cost rather than
+a saving.
 
-To check which you have, plan any transform and ask FFTW what it used:
+To check what you have, plan any transform and ask FFTW what it used:
 
 ```bash
 python -c "import pyfftw; A = pyfftw.empty_aligned((64, 64), dtype='complex64'); pyfftw.FFTW(A, A, axes=(-2, -1)); print(b''.join(pyfftw.export_wisdom()))"

@@ -137,8 +137,10 @@ def fftw_lacks_simd() -> bool | None:
     """Whether this FFTW plans without vector codelets, or None if unknown.
 
     Which FFTW a pyfftw wheel is linked against decides most of a CPU step at
-    large grid sizes: the PyPI arm64 wheel bundles a build with no NEON
-    codelets at all and is four times slower than the conda-forge one.
+    large grid sizes, and on arm64 neither prebuilt build is vectorized --
+    not the PyPI wheel and not the conda-forge one. So this is worth reporting
+    but not worth prescribing a fix for: there is no install that answers it,
+    only an FFTW built from source with NEON on.
 
     ``simd_alignment`` does not report it -- it read 4 for both of those. But
     FFTW records the codelets it planned, and names them for the instruction
@@ -180,16 +182,18 @@ def warn_if_fftw_lacks_simd() -> bool:
     warnings.warn(
         f"pyFFTW planned this transform with no vector codelets, so it is "
         f"linked against an FFTW built without vector instructions. The "
-        f"transform is most of a CPU step at large grid sizes, and such a "
-        f"build measures four times slower on Apple silicon.\n"
-        f"  The PyPI arm64 wheel bundles one; the conda-forge build does not. "
-        f"To swap, in this order:\n"
-        f"    pip uninstall pyfftw          # conda cannot see it, and will "
-        f"otherwise no-op\n"
-        f"    conda install -c conda-forge pyfftw\n"
-        f"    rm {get_cache_dir() / 'fft.wisdom'}   # plans recorded against "
-        f"the old library outlive it\n"
-        f"  To check afterwards, plan any transform and look at what FFTW "
+        f"transform is most of a CPU step at large grid sizes, and on an M3 "
+        f"Max this build measures 37 ms against scipy's 6.5 at 2048x2048, "
+        f"with FFTW on all threads.\n"
+        f"  On arm64 no prebuilt pyfftw answers this -- neither the PyPI "
+        f"wheel nor the conda-forge build is vectorized -- so swapping "
+        f"between them will not help, and only an FFTW built from source "
+        f"with NEON on will. On x86 the wheels are vectorized and seeing "
+        f"this means something else supplied the library.\n"
+        f"  If you do change it, discard the plans recorded against the old "
+        f"one, which outlive it:\n"
+        f"    rm {get_cache_dir() / 'fft.wisdom'}\n"
+        f"  To check what you have, plan any transform and look at what FFTW "
         f"says it used:\n"
         f'    python -c "import pyfftw,numpy as np;'
         f"A=pyfftw.empty_aligned((64,64),dtype='complex64');"
