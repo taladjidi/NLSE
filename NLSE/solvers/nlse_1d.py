@@ -76,10 +76,6 @@ class NLSE_1d(NLSE):
         """Return cache key for 1D propagator."""
         return (self.NX, float(delta_z), np.dtype(dtype).str, float(self.k))
 
-    def _compute_propagator(self, dtype: np.dtype, delta_z: float) -> np.ndarray:
-        """Compute the 1D linear propagation matrix."""
-        return np.exp(-1j * 0.5 * (self.Kx**2) / self.k * delta_z, dtype=dtype)
-
     def _propagator_rk4_cache_key(self) -> tuple:
         """Return cache key for 1D RK4 dispersion operator."""
         return (self.NX, "RK4", float(self.k))

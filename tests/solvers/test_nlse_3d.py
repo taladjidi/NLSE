@@ -65,14 +65,70 @@ def make_solver(backend="CPU", n=N, **overrides):
 
 
 def test_build_propagator(backend) -> None:
+    """Both dispersions advance by the step, because both are rates.
+
+    This asserted the temporal factor without the step, matching a propagator
+    that left it out. ``D0`` is documented in s^2/m, so ``D0/2 * Omega**2`` is
+    a phase per metre and the exponent is not dimensionless without a length.
+    """
     simu = make_solver(backend)
     prop = as_numpy(simu, simu._build_propagator(np.complex64, DZ_TEST))
-    prop_th = np.exp(-1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * DZ_TEST)
-    prop_th *= np.exp(-1j * simu.D0 / 2 * simu.Omega**2)
+    spatial = -1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k
+    temporal = -1j * simu.D0 / 2 * simu.Omega**2
+    prop_th = np.exp((spatial + temporal) * DZ_TEST)
     assert np.allclose(
         prop,
         prop_th,
     ), f"Propagator is wrong. (Backend {backend})"
+
+
+def test_a_linear_run_does_not_depend_on_the_step_count(backend) -> None:
+    """With no nonlinearity there is nothing for the splitting to get wrong.
+
+    The linear operator is applied exactly and there is no second operator for
+    it to fail to commute with, so the answer over a fixed distance is the same
+    however many steps it is taken in -- to round-off, not to a tolerance.
+
+    ``alpha`` has to go as well as ``n2``. Loss is saturable here, so with a
+    finite Isat it depends on the intensity, does not commute with the linear
+    part either, and leaves a splitting error of its own -- 1.2e-4, enough to
+    look exactly like the bug this is here to catch.
+
+    That makes this the test for a propagator that has lost its step. The
+    temporal dispersion here used to be applied whole every step, so the phase
+    a run picked up followed the number of steps rather than the distance:
+    four steps against sixteen differed by 2.6e-4 where complex64 round-off is
+    1e-7, and halving the step doubled the dispersion.
+    """
+    x = np.linspace(-window[0] / 2, window[0] / 2, 16)
+    t = np.linspace(-window[1] / 2, window[1] / 2, 16)
+    X, Y, T = np.meshgrid(x, x, t)
+    field = np.exp(-(X**2 + Y**2) / waist**2 - (T / duration) ** 2).astype(
+        PRECISION_COMPLEX
+    )
+
+    def run(steps):
+        solver = make_solver(backend, n=16, NZ=16, n2=0.0, alpha=0)
+        return as_numpy(
+            solver,
+            solver.out_field(
+                field.copy(),
+                L,
+                delta_z=L / steps,
+                verbose=False,
+                plot=False,
+                precision="double",
+                method="split_step",
+            ),
+        )
+
+    coarse, fine = run(4), run(16)
+    difference = np.max(np.abs(coarse - fine)) / np.max(np.abs(fine))
+    assert difference < 1e-5, (
+        f"a linear run changed by {difference:.3e} when the step count did, "
+        f"so something in the propagator is not scaled by the step. "
+        f"(Backend {backend})"
+    )
 
 
 def test_build_fft_plan(backend) -> None:

@@ -259,23 +259,6 @@ class DDGPE(CNLSE):
             float(self.k_z),
         )
 
-    def _compute_propagator(self, dtype: np.dtype, delta_z: float) -> np.ndarray:
-        """Compute the DDGPE polariton propagation matrices."""
-        propagator1 = np.exp(
-            -1j * (self.omega_exc * (1 + 0 * self.Kxx**2) - self.omega_pump) * delta_z,
-            dtype=dtype,
-        )
-        propagator2 = np.exp(
-            -1j
-            * (
-                self.omega_cav * np.sqrt(1 + (self.Kxx**2 + self.Kyy**2) / self.k_z**2)
-                - self.omega_pump
-            )
-            * delta_z,
-            dtype=dtype,
-        )
-        return np.array([propagator1, propagator2])
-
     def _propagator_rk4_cache_key(self) -> tuple:
         """Return cache key for DDGPE RK4 dispersion operator."""
         return (

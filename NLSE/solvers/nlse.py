@@ -4,6 +4,7 @@
 
 import contextlib
 import warnings
+from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from typing import Any
 
@@ -38,6 +39,13 @@ DEFAULT_PHASE_PER_STEP = 0.1
 # Fewest steps a default may take over the requested distance, so that a run
 # is something a callback can sample and a plot can show rather than one jump.
 DEFAULT_MIN_STEPS = 10
+
+# How many propagators to keep. Built where the field is, this costs one
+# exponential over the grid -- 0.059 ms at 512x512 on CUPY against 9.7 ms for
+# the host round trip it replaces -- so there is little left to cache and every
+# reason to bound it: a step chosen from a measured error asks for a new one
+# every few steps, and an unbounded cache then holds a field per distinct step.
+PROPAGATOR_CACHE_SIZE = 8
 
 
 # Backends that render to a file rather than a window. Calling show() on one
@@ -221,7 +229,11 @@ class NLSE:
         self._norm_constant = np.float32(c * epsilon_0 / 2)
 
         # Propagator cache for repeated calls with same parameters
-        self._propagator_cache: dict[tuple, np.ndarray] = {}
+        # Bounded, least-recently-used. Dispersion operators live apart:
+        # there are only a handful, one per grid and precision, and evicting
+        # one would cost the host build the propagators no longer pay.
+        self._propagator_cache: OrderedDict[tuple, Any] = OrderedDict()
+        self._dispersion_cache: dict[tuple, Any] = {}
 
     # The public surface: a solver is built, asked to propagate, and plotted.
     # split_step and split_step_RK4 are the single-step primitives out_field
@@ -882,13 +894,6 @@ class NLSE:
             float(self.k),
         )
 
-    def _compute_propagator(self, dtype: np.dtype, delta_z: float) -> np.ndarray:
-        """Compute the linear propagation matrix (no caching)."""
-        return np.exp(
-            -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k * delta_z,
-            dtype=dtype,
-        )
-
     def _propagator_rk4_cache_key(self) -> tuple:
         """Return cache key for the RK4 dispersion operator."""
         return (self.NX, self.NY, "RK4", float(self.k))
@@ -921,10 +926,43 @@ class NLSE:
         """
         cache_key = self._propagator_cache_key(dtype, delta_z)
         if cache_key in self._propagator_cache:
+            self._propagator_cache.move_to_end(cache_key)
             return self._propagator_cache[cache_key]
-        propagator = self._compute_propagator(dtype, delta_z)
+        operator = self._dispersion_on_device(dtype)
+        propagator = self._backend.exp(operator * np.dtype(dtype).type(delta_z))
         self._propagator_cache[cache_key] = propagator
+        while len(self._propagator_cache) > PROPAGATOR_CACHE_SIZE:
+            self._propagator_cache.popitem(last=False)
         return propagator
+
+    def _dispersion_on_device(self, dtype: np.dtype) -> Any:
+        """Return the dispersion operator, where the backend can use it.
+
+        Built on the host once per grid and precision, then left alone.
+
+        Parameters
+        ----------
+        dtype : np.dtype
+            Complex dtype of the field it will propagate.
+
+        Returns
+        -------
+        Any
+            The operator.
+        """
+        key = (*self._propagator_rk4_cache_key(), np.dtype(dtype).str, "device")
+        if key not in self._dispersion_cache:
+            if self._backend.is_device_backend:
+                # Built and transferred without going through the host cache,
+                # so the host copy is a temporary rather than a second full
+                # grid kept for the life of the solver.
+                operator = self._backend.from_numpy(
+                    np.asarray(self._compute_propagator_rk4()).astype(dtype)
+                )
+            else:
+                operator = self._build_propagator_rk4(dtype)
+            self._dispersion_cache[key] = operator
+        return self._dispersion_cache[key]
 
     def _build_propagator_rk4(self, dtype: np.dtype) -> np.ndarray:
         """Build raw dispersion operator for RK4 with caching.
@@ -944,10 +982,10 @@ class NLSE:
             The raw dispersion operator, at the field's precision.
         """
         cache_key = (*self._propagator_rk4_cache_key(), np.dtype(dtype).str)
-        if cache_key in self._propagator_cache:
-            return self._propagator_cache[cache_key]
+        if cache_key in self._dispersion_cache:
+            return self._dispersion_cache[cache_key]
         propagator = np.asarray(self._compute_propagator_rk4()).astype(dtype)
-        self._propagator_cache[cache_key] = propagator
+        self._dispersion_cache[cache_key] = propagator
         return propagator
 
     def _update_propagator_fft(self) -> None:
@@ -1576,7 +1614,10 @@ class NLSE:
             return
         for attr in self._gpu_array_attrs:
             val = getattr(self, attr, None)
-            if val is None:
+            if val is None or not isinstance(val, np.ndarray):
+                # Already where it belongs. The propagator is built there now,
+                # and from_numpy handed a device array does not complain about
+                # the type: it tries to enqueue a write *from* it.
                 continue
             if attr == "V":
                 val = np.ascontiguousarray(
@@ -1604,7 +1645,13 @@ class NLSE:
         field_dtype : np.dtype
             Complex dtype of the field, which the propagator already matches.
         """
-        if self._backend.is_device_backend and self.propagator is not None:
+        # _build_propagator leaves it on the device; the RK4 operator comes
+        # from the cache on the host, so only that still needs moving.
+        if (
+            self._backend.is_device_backend
+            and self.propagator is not None
+            and isinstance(self.propagator, np.ndarray)
+        ):
             self.propagator = self._backend.from_numpy(self.propagator)
         # The fused CUPY/CL linear step prefers _propagator_fft, so it has to
         # follow every rebuild.
@@ -2009,8 +2056,6 @@ class NLSE:
                     self._current_delta_z = delta_z
                     if method != "RK4":
                         self.propagator = self._build_propagator(dtype, delta_z)
-                        if self._backend.is_device_backend:
-                            self.propagator = self._backend.from_numpy(self.propagator)
                         self._update_propagator_fft()
                     step_fn = step_factory(delta_z)
             i += 1

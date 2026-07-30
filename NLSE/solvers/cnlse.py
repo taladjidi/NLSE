@@ -126,15 +126,6 @@ class CNLSE(NLSE):
             float(self.k2),
         )
 
-    def _compute_propagator(self, dtype: np.dtype, delta_z: float) -> np.ndarray:
-        """Compute the coupled linear propagation matrices."""
-        propagator1 = super()._compute_propagator(dtype, delta_z)
-        propagator2 = np.exp(
-            -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k2 * delta_z,
-            dtype=dtype,
-        )
-        return np.array([propagator1, propagator2])
-
     def _dispersion_operator(self) -> np.ndarray:
         """Return the dispersion eigenvalues of the faster component."""
         return 0.5 * (self.Kxx**2 + self.Kyy**2) / min(self.k, self.k2)

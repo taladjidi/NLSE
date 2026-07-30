@@ -103,12 +103,6 @@ class CNLSE_1d(CNLSE):
             float(self.k2),
         )
 
-    def _compute_propagator(self, dtype: np.dtype, delta_z: float) -> np.ndarray:
-        """Compute the 1D coupled linear propagation matrices."""
-        propagator1 = np.exp(-1j * 0.5 * (self.Kx**2) / self.k * delta_z, dtype=dtype)
-        propagator2 = np.exp(-1j * 0.5 * (self.Kx**2) / self.k2 * delta_z, dtype=dtype)
-        return np.array([propagator1, propagator2])
-
     def _propagator_rk4_cache_key(self) -> tuple:
         """Return cache key for 1D coupled RK4 dispersion operator."""
         return (self.NX, "RK4", float(self.k), float(self.k2))

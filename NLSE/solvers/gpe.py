@@ -102,13 +102,6 @@ class GPE(NLSE):
             float(self.m),
         )
 
-    def _compute_propagator(self, dtype: np.dtype, delta_z: float) -> np.ndarray:
-        """Compute the GPE linear propagation matrix."""
-        return np.exp(
-            -1j * 0.5 * hbar * (self.Kxx**2 + self.Kyy**2) / self.m * delta_z,
-            dtype=dtype,
-        )
-
     def _propagator_rk4_cache_key(self) -> tuple:
         """Return cache key for GPE RK4 dispersion operator."""
         return (self.NX, self.NY, "RK4", float(self.m))

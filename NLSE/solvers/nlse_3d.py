@@ -123,12 +123,6 @@ class NLSE_3d(NLSE):
             float(self.D0),
         )
 
-    def _compute_propagator(self, dtype: np.dtype, delta_z: float) -> np.ndarray:
-        """Compute the 3D linear propagation matrix (spatial + temporal)."""
-        prop_2d = super()._compute_propagator(dtype, delta_z)
-        prop_t = np.exp(-1j * self.D0 / 2 * self.Omega**2, dtype=dtype)
-        return prop_2d * prop_t
-
     def _propagator_rk4_cache_key(self) -> tuple:
         """Return cache key for 3D RK4 dispersion operator."""
         return (self.NX, self.NY, self.NZ, "RK4", float(self.k), float(self.D0))
