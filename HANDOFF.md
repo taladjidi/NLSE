@@ -16,15 +16,9 @@ tools, the FFTW wisdom fix, the `alpha == 0` kernel specialisation, the
 backend-capability conversion. Run the suite on the NVIDIA box, then merge.
 Everything below assumes it is in.
 
-**1. Fused coupled kernels for CUPY.** The measured payoff, and the largest
-single item left. Section 22 has the profile: `_take_components` copies
-components on device backends, costing **13.1% of GPU kernel time**, entirely
-in the coupled solvers; and CUPY's RK4 spends another **19.2%** in stage
-arithmetic across 32032 launches. CL and MLX pay neither, because their fused
-coupled kernels never split the field. Roughly a third of GPU kernel time,
-with two existing implementations to model on
-(`kernels/cl_source/kernels.cl`, `kernels/mlx_kernels.py`). Only testable on
-the NVIDIA machine, which is why it was left.
+**1. Fused coupled kernels for CUPY.** ~~The measured payoff, and the largest
+single item left.~~ **Done — see section 23.** It absorbed item 3 as well:
+the copies were counted twice, once as kernels and once as memcpys.
 
 **2. Let CPU skip the inverse FFT's normalisation.** `--per-call` shows the
 inverse transform costing 28% more than the forward (0.348 ms against 0.272)
@@ -33,10 +27,11 @@ because pyfftw normalises by 1/N. CL and CUPY avoid it by declaring
 CPU does not declare it. Four inverse transforms per RK4 step pay for it.
 Cheap, and testable anywhere.
 
-**3. Find the 11.3% of GPU time in memory operations.** 3725 ms of the steady
-2000-step CUPY profile, which should not happen when the field stays on the
-device for the whole run. Most likely per-step allocation zeroing. One look
-before assuming.
+**3. ~~Find the 11.3% of GPU time in memory operations.~~** Done, with item 1,
+and it was not allocation zeroing. It was `k[:] = A_in` at the head of each
+RK4 stage and `_set_components` writing the components back: both are
+device-to-device memcpys rather than kernels, which is why they appeared in a
+separate table and looked like a separate problem. Section 23.
 
 **4. mypy coverage.** The last ugliness-ledger item, deferred by request
 until the rest was done. `pyproject.toml` has an `ignore_errors` override for
@@ -584,6 +579,169 @@ field. That is plan item 1.
 profiling `profile_backends.py` measures its own warmups and transfers;
 profiling a traced run measures the tracing; and with CUDA graphs active nsys
 itemises only the captured launches, so a 7000-launch workload reported 90.
+
+### 23. CUPY stops copying, and RK4 stops writing what it reads back
+
+Plan items 1 and 3, which turned out to be one defect counted twice. **Per-step
+at 1024x1024: CNLSE RK4 10.626 -> 6.417 ms (-40%), CNLSE split 1.832 -> 1.208
+(-34%), NLSE RK4 3.784 -> 3.248 (-14%), NLSE split unchanged.** GPU kernel time
+over the four-case workload 29150 -> 22078 ms, memory operations 3774 -> 173.
+
+**The copies were 22.5% of GPU busy time, not 13.1%.** Section 22 read the
+kernel table alone, where `cupy_copy__*` accounted for 18.02 complex and 10.01
+float copies per step and matched `_take_components` exactly. It matched
+because the other half was in a table nobody had opened: 36036 device-to-device
+memcpys, 3596 ms, 369 GB. CuPy takes an elementwise-copy *kernel* for
+`.copy()` and a *memcpy* for a slice assignment, so the same defect landed in
+two tables and read as two problems. The full per-step accounting, which now
+closes exactly:
+
+| operation | per step | form |
+|---|---|---|
+| `_take_components`, complex | 18.0 | copy kernel |
+| `_take_components`, float32 | 10.0 | copy kernel |
+| `_set_components` write-back | 10.0 | DtoD memcpy |
+| `k[:] = A_in` at each RK4 stage | 8.0 | DtoD memcpy |
+
+CUPY declared none of the six fused capabilities. The backend docstring
+argued why: CUDA graphs remove the launch overhead fusion exists to amortize.
+That is right about launches and irrelevant here — **a graph replays a copy as
+faithfully as it replays arithmetic**. What the interleaved kernels save is
+traffic, not launches, and the ratio of GPU kernel time to CUDA API time was
+already 0.87, so there was no launch problem to solve.
+
+Four capabilities now declared, modelled on the OpenCL originals:
+`coupled_nl_prop_c`, `coupled_rk4_nl_rhs_c` and `rabi_coupling_interleaved`
+read both components from the one `(2, ...)` array; `rk4_rhs_fused` and
+`rk4_rhs_coupled_fused` let the transform move `A_in` into `k` instead of a
+copy doing it first, cuFFT plans being out-of-place already; and
+`rk4_set_and_axpy`/`rk4_acc_and_axpy` halve the stage-update launches. A fifth,
+`rk4_final_update`, closes the step as `A += h/6 * (acc + k4)` rather than
+writing `acc` only to read it straight back — four passes over memory where
+there were six.
+
+**CL and MLX refuse a batched coupled run, so their fused gate never needed a
+batch check. CUPY serves one**, and its raw kernels take scalars and one flat
+index, so `_can_fuse_components` now gates on the batch as well as on
+`nl_length`.
+
+**Every remaining kernel is at the card's bandwidth ceiling** — 203-208 GB/s
+across all eight on an RTX 3050. Nothing left is inefficient; what remains is
+passes over memory. `apply_propagator` alone is 16.5% and moves the minimum a
+separate kernel can, so removing it means folding the propagator multiply into
+the transform's store phase with cuFFT callbacks, which CuPy's plan API does
+not expose. Fusing each stage's RHS with its stage update would save perhaps
+8% more and needs a kernel per (stage kind x potential kind x coupled or not).
+
+**A round-off difference is not automatically round-off.** The first fused
+coupled RK4 differed from the generic path by 8.7e-5, which looked like
+float32 noise; it came from writing the accumulate as one expression where the
+kernel it replaces uses temporaries, and `--use_fast_math` contracted the two
+differently. The same re-association section 1 recorded. With that matched, one
+stage agrees to 7e-8 with component 2 bitwise identical, and a whole run agrees
+to 1e-8..4e-7 on a Gaussian beam. It still shows 6.6e-5 on a random-noise field
+under a violent nonlinearity, which is that system amplifying a last bit, not
+the kernels: **an adversarial initial condition measures the chaos, not the
+code.**
+
+`nsys_summary.py` now names the kernels that fall into `other` rather than
+letting them read as a residual: `rk4_final_update` silently became 4.4% of it.
+
+**Found, not fixed: complex128 coupled RK4 is broken on both CPU and CUPY**,
+and was before this work. CUPY returns all-NaN, CPU raises `Invalid output
+dtype` from pyfftw. `cnlse.py` allocates `_rk4_A_sq_c` as `np.float32`
+unconditionally where `nlse.py` uses `E_in.real.dtype`, and the CPU coupled
+RK4 path uses a plan built for complex64. No test covers the combination.
+
+### 24. An RK4 stage stops writing the slope it immediately reads back
+
+A stage computed its slope into `k`, and the stage update read `k` straight
+back: eight accesses per element where six will do. `square_mod_rk4_stage` and
+`coupled_rk4_stage_c` take the linear part as the transform left it, finish the
+slope in registers and spend it on the accumulator and the next stage's
+argument without it reaching memory.
+
+**One kernel serves all four stages**, with the stage kind as a `mode`
+parameter. It is uniform across the grid, so the branches cost nothing and each
+stage still touches only what it needs: stage 1 *sets* the accumulator rather
+than reading it, and stage 4 does not write it. Writing six kernels instead --
+three stage kinds by two solver families -- would have meant eighteen compiled
+variants after the V expansion, against six.
+
+**Bitwise identical to the path it replaces**, on every solver, every kind of
+potential and both precisions. That is the standard these should be held to:
+the arithmetic is unchanged, so any difference at all would be a
+re-association, and a tolerance would hide it.
+
+In stages 2-4 the argument and the output are the same buffer. Each thread
+reads and writes only its own index, so this is safe -- and worth knowing,
+because it also means the write hits a line the read has already brought in,
+which is why the kernel appears to exceed the card's bandwidth.
+
+**NLSE RK4 3.229 -> 2.867 ms/step, CNLSE RK4 6.411 -> 5.689** (-11% each).
+
+### 25. Every complex128 RK4 run was broken, on every backend
+
+Found while validating the fused kernels, and present without them. CUPY
+returned all-NaN and CPU raised `Invalid output dtype` from pyfftw. Three
+places pinned a width to single while the run's precision comes from the field:
+
+- `_allocate_rk4_buffers` allocated `complex64` scratch, so a double run wrote
+  the field into a stage buffer half its width and the FFT plan -- built from
+  the field -- met an array of the wrong dtype;
+- `CNLSE._allocate_rk4_buffers` did the same with `float32` for the intensity;
+- `_compute_propagator_rk4` ended in `.astype(np.complex64)`, in all six
+  implementations.
+
+The last is the one worth remembering: the GPU kernels choose single or double
+**from the field** and then index the operator with the same flat id, so an
+operator of the other width is read as the wrong type. `_field_dtype`'s
+docstring already described this exact failure in the other direction. The cast
+now happens once, in `_build_propagator_rk4`, which is the only place that
+knows what the field is -- computing the operator narrow and widening it
+afterwards would have carried single-precision values in a double array. Width
+is part of the cache key, or the cache hands back the other one.
+
+`split_step` was unaffected, which is why 809 tests passed over it: **nothing
+ran RK4 in double**. `tests/solvers/test_double_precision.py` does now, over
+five solver classes and every backend, and four mutations reinstating each
+pinned width all fail it.
+
+`_build_propagator_rk4` takes the dtype as a required argument rather than
+defaulting to complex64: a default is what let this go unnoticed, and there is
+no width a caller should get without asking.
+
+### 26. cuFFT callbacks: measured, works, not taken
+
+The last structural item, since `apply_propagator` is 18.3% of GPU kernel time
+and already at bandwidth -- the only way past it is to stop it being a separate
+pass. A cuFFT **store callback** on the forward transform applies the
+propagator as the transform writes its output.
+
+**It works on this machine and it is faster: 0.485 -> 0.402 ms** for
+fft/propagator/ifft at 1024x1024, bitwise identical, and it survives CUDA graph
+capture. The saving is exactly two passes over the field -- 16.8 MB at 203 GB/s
+is 83 us, and 83 us is what was measured. Extrapolated: ~2430 ms of the 19905,
+or **12%**.
+
+Not taken, and the reasons are about what it would cost everyone else:
+
+- **The legacy callback ABI is gone in CUDA 13.** `nvprune` fails on
+  `libcufft_static.a`. Only `cb_ver="jit"` works, so this is a hard dependency
+  on cuFFT JIT LTO.
+- **It needs headers the wheels do not ship.** The build wants `cufft.h`;
+  it is not in the pip `nvidia-*` packages, only in a system CUDA install. It
+  failed twice here before `CPATH` was set, on a machine with a full toolkit.
+- **The plan becomes tied to the propagator's address**, passed as callback
+  data at plan creation. The propagator is rebuilt whenever `delta_z` changes,
+  which `adapt_delta_z` does mid-run, so it would need a fixed buffer copied
+  into and a plan cache keyed on it. Two things currently independent become
+  entangled.
+- Plan construction is ~0.5 s.
+
+It would need a runtime probe and a fallback for every machine where the build
+fails. Worth revisiting if cuFFT JIT LTO becomes something the wheels carry.
+The probe is `scratchpad/cb_probe2.py` in the session directory if it is.
 
 ## Conventions used
 
