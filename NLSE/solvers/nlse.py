@@ -3,14 +3,12 @@
 """NLSE Main module."""
 
 import contextlib
-import multiprocessing
 import warnings
 from collections.abc import Callable, Iterator
 from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pyfftw
 import tqdm
 from scipy import special
 from scipy.constants import c, epsilon_0
@@ -25,10 +23,6 @@ from ..utils import (
 
 if __CUPY_AVAILABLE__:
     pass  # type: ignore[import-not-found]
-
-pyfftw.config.NUM_THREADS = multiprocessing.cpu_count()
-pyfftw.config.PLANNER_EFFORT = "FFTW_MEASURE"
-pyfftw.interfaces.cache.enable()
 
 # Explicit RK4 is stable for |lambda * dz| up to ~2*sqrt(2) along the
 # imaginary axis. Every solver's step limit is derived from it.

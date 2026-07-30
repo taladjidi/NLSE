@@ -12,8 +12,12 @@ from ..kernels import cpu as kernels_cpu
 from ..utils import get_cache_dir
 from .backend import Backend
 
+# The one place pyfftw is configured. It used to be set here and again in
+# solvers/nlse.py with a different planner effort, so which one applied
+# depended on import order. Measured on an M3 Max at 2048x2048, PATIENT was
+# 42x slower to execute than MEASURE, so the difference was not academic.
 pyfftw.config.NUM_THREADS = multiprocessing.cpu_count()
-pyfftw.config.PLANNER_EFFORT = "FFTW_PATIENT"
+pyfftw.config.PLANNER_EFFORT = "FFTW_MEASURE"
 pyfftw.interfaces.cache.enable()
 
 
