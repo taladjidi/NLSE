@@ -464,3 +464,30 @@ def test_norm_agrees_with_numpy(backend_name):
     assert got == pytest.approx(float(np.linalg.norm(field)), rel=1e-5), (
         f"{backend_name}.norm disagrees with numpy"
     )
+
+
+def test_a_backend_without_its_reduction_falls_back(monkeypatch):
+    """A missing optional dependency must cost speed, not the run.
+
+    pyopencl builds its reductions from a mako template and does not require
+    mako, so on a machine without it every reduction raises the first time one
+    is asked for -- inside a callback, partway through a propagation. With
+    mako installed the fallback is unreachable, so the failure is forced here:
+    otherwise this passes whether the fallback exists or not, which is how the
+    override shipped broken in the first place.
+    """
+    if "CL" not in AVAILABLE_BACKENDS:
+        pytest.skip("no OpenCL backend")
+    from NLSE.backends import opencl as opencl_backend
+
+    backend = get_backend("CL")
+    field = (np.linspace(-1, 1, 1024).reshape(32, 32) + 0.5j).astype(np.complex64)
+    on_device = backend.from_numpy(field)
+
+    def no_mako(*args, **kwargs):
+        raise ModuleNotFoundError("No module named 'mako'")
+
+    monkeypatch.setattr(opencl_backend.cla, "vdot", no_mako)
+    assert backend.norm(on_device) == pytest.approx(
+        float(np.linalg.norm(field)), rel=1e-5
+    ), "the fallback did not produce the norm"
