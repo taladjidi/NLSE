@@ -3,18 +3,41 @@
 import multiprocessing
 import pickle
 import re
+import sys
 import time
 import warnings
 from typing import Any
 
+import numba
+import numba.np.ufunc.parallel
 import numpy as np
 import numpy.typing as npt
-import pyfftw
-from scipy import fft as scipy_fft, signal
 
-from ..kernels import cpu as kernels_cpu
-from ..utils import get_cache_dir
-from .backend import Backend
+# Start numba's thread pool before FFTW's, and never the other way round.
+#
+# The two ship separate copies of the same OpenMP runtime -- pyfftw's PyPI
+# wheel bundles libomp.dylib under pyfftw/.dylibs, numba's omppool links the
+# one in the environment -- and a process can hold both, but only in that
+# order. Let FFTW's initialize first and the *first* prange in the process
+# segfaults, wherever it happens to be, which reads as a crash in whichever
+# kernel ran first rather than as the import conflict it is.
+#
+# Launching the pool here is enough, because this line runs before pyfftw is
+# loaded: this module is the only importer of it, and the package __init__
+# runs before any submodule. The window is gone if the caller imported pyfftw
+# already, and then the only safe layer is the one that owns no OpenMP
+# runtime. It measures ~6% slower on the kernels, which beats crashing.
+if "pyfftw" in sys.modules and not numba.np.ufunc.parallel._is_initialized:
+    # numba.config builds its attributes at import, so mypy sees none of them.
+    numba.config.THREADING_LAYER = "workqueue"  # type: ignore[attr-defined]
+numba.get_num_threads()
+
+import pyfftw  # noqa: E402
+from scipy import fft as scipy_fft, signal  # noqa: E402
+
+from ..kernels import cpu as kernels_cpu  # noqa: E402
+from ..utils import get_cache_dir  # noqa: E402
+from .backend import Backend  # noqa: E402
 
 # The one place pyfftw is configured. It used to be set here and again in
 # solvers/nlse.py with a different planner effort, so which one applied
