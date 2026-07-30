@@ -88,7 +88,7 @@ class Recorder:
         self.backend = backend
         self.seconds = collections.Counter()
         self.calls = collections.Counter()
-        self._nvtx = _nvtx_module() if nvtx else None
+        self._nvtx = _Nvtx.find() if nvtx else None
 
     def measure(self, name, fn, *args, **kwargs):
         """Call fn, forcing and timing its result so the time is its own.
@@ -122,17 +122,30 @@ def _forceable(out):
     return out
 
 
-def _nvtx_module():
-    """Return an NVTX module with range_push/range_pop, or a no-op stand-in."""
-    for name in ("nvtx", "cupy.cuda.nvtx"):
-        try:
-            module = __import__(name, fromlist=["range_push"])
-            if hasattr(module, "range_push"):
-                return module
-        except ImportError:
-            continue
-    print("  (nvtx requested but no nvtx module found; ranges disabled)")
-    return None
+class _Nvtx:
+    """Uniform push/pop over the several NVTX bindings that exist."""
+
+    def __init__(self, push, pop):
+        self.range_push = push
+        self.range_pop = pop
+
+    @staticmethod
+    def find():
+        """Return an _Nvtx, or None if nothing usable is installed."""
+        try:  # the nvtx package on PyPI
+            import nvtx
+
+            return _Nvtx(nvtx.push_range, nvtx.pop_range)
+        except (ImportError, AttributeError):
+            pass
+        try:  # CuPy ships its own, capitalised differently
+            from cupy.cuda import nvtx as cupy_nvtx
+
+            return _Nvtx(cupy_nvtx.RangePush, cupy_nvtx.RangePop)
+        except (ImportError, AttributeError):
+            pass
+        print("  (nvtx requested but no binding found; ranges disabled)")
+        return None
 
 
 class TracingKernels:
@@ -163,6 +176,20 @@ def tracing(backend, nvtx=False):
 
     real_fft, real_ifft = cls.fft, cls.ifft
 
+    def plain_loop(self, step_fn, n_iters):
+        """Run the steps from Python so each one's kernels are visible.
+
+        CUPY captures one iteration into a CUDA graph and replays it, so the
+        wrappers below would see the warmup and the capture and nothing else:
+        the first run of this reported 0.01 calls per step and put the whole
+        step in "not in a kernel". Bypassing the graph makes the phases
+        visible, at the cost of measuring the unreplayed path -- which is why
+        the untraced total is taken separately, with the graph in use. The gap
+        between the two is what graph replay is worth.
+        """
+        for _ in range(n_iters):
+            step_fn()
+
     def timed_fft(self, array, plan):
         return recorder.measure("fft", real_fft, self, array, plan)
 
@@ -173,6 +200,7 @@ def tracing(backend, nvtx=False):
         mock.patch.object(cls, "kernels", property(lambda self: traced)),
         mock.patch.object(cls, "fft", timed_fft),
         mock.patch.object(cls, "ifft", timed_ifft),
+        mock.patch.object(cls, "execute_loop", plain_loop),
     ):
         yield recorder
 
@@ -256,7 +284,8 @@ def report(solver_name, backend_name, n, method, untraced, traced, recorder):
     print(
         f"  {STEPS} steps: {untraced * 1e3:.2f} ms untraced, "
         f"{traced * 1e3:.2f} ms traced "
-        f"({traced / untraced:.2f}x, the cost of synchronizing each call)"
+        f"({traced / untraced:.2f}x: synchronizing each call, and on CUPY "
+        f"also stepping from Python instead of replaying a CUDA graph)"
     )
     print(f"  {'phase':<22} {'per step':>10} {'share':>7} {'calls/step':>11}")
     ordered = [p for p in PHASE_ORDER if p in by_phase]
