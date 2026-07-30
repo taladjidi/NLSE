@@ -743,6 +743,80 @@ It would need a runtime probe and a fallback for every machine where the build
 fails. Worth revisiting if cuFFT JIT LTO becomes something the wheels carry.
 The probe is `scratchpad/cb_probe2.py` in the session directory if it is.
 
+### 27. What the algorithm has left, measured
+
+`benchmarks/work_precision.py` answers the question a per-step timing cannot:
+what each method costs to reach a given accuracy. Same problem, same distance,
+one converged reference, the step swept as phase per step.
+
+**Split-step is the right method and it is already at the floor.** Every error
+curve has a minimum and rises again as the step shrinks -- on CPU, Lie is
+1.80e-4 at 0.1 rad and 1.59e-3 at 0.005, because 2512 steps accumulate more
+complex64 round-off than 126. So in the lossless regime the accuracy floor is
+the number representation, not the splitting order, and a 4th-order
+composition (Yoshida, Blanes-Moan) would pay 3x per step to reduce an error
+that is not what binds. Split-step is also at 2 transforms per step, the
+minimum for an operator split.
+
+**RK4 is dominated except below ~3e-5**, where it is the only option: it
+reaches 3.6e-6, an order better than split-step can, at ~40x the cost, and
+diverges above 0.2 rad per step.
+
+**Strang dominates Lie everywhere.** Both cost 2 transforms; Strang is 2-4x
+more accurate at equal step, so it buys a much larger one. CPU: Lie at 0.1 rad
+is 126 steps and 1.80e-4; Strang at 0.8 rad is 16 steps and 3.96e-5 -- 4.3x
+faster and 4.5x more accurate. The same on CUPY and CL.
+
+**But not in a lossy regime.** With `alpha=20` the error grows with the step
+instead: Strang at 0.8 rad is 1.21e-2 against the default's 2.88e-3. There the
+splitting error dominates and never reaches the round-off floor. A larger
+fixed default would quietly spoil absorbing-medium runs, which is why the gain
+belongs in an error-driven step (section 29) rather than a new constant.
+
+### 28. Three things taken from it
+
+**The CPU skips the inverse transform's 1/N** (plan item 2). FFTW's backward
+transform is unnormalized and pyfftw divides in a pass of its own, which costs
+a fifth of the transform -- an inverse runs 25% longer than a forward at 512,
+1024 and 2048. The flag was wired only to `kernels.linear_step`, which the CPU
+has no reason to implement; `ifft` takes a `normalize` argument instead.
+1024x1024: split 14.670 -> 13.843 ms/step, RK4 53.478 -> 50.633.
+
+**Consecutive Strang steps share their half steps.** A run of them is
+`N(h/2) [L(h) N(h)] ... N(-h/2)`, and the bracketed body is exactly a Lie
+step, so the loop body is the one `precision="single"` already runs and there
+is no third stepper. CPU 1.62x, CL 1.33x, CUPY 1.04x. Exact only where
+`N(a) N(b) == N(a+b)`, which needs `|A|` to survive `N`: no loss, no absorbing
+potential, no Rabi coupling, and DDGPE opts out. Forcing it on a lossy run
+doubles the error, so the guard is pinned by a test that measures the damage.
+
+**The step can be chosen by measuring** -- section 29.
+
+### 29. Why an error-driven step has to be capped, and floored
+
+`adapt_delta_z_to_error` takes the same distance whole and in halves and moves
+the step by the usual controller. 30 steps for 3.8e-5 where the fixed default
+takes 125 for 7.8e-5. Two failures found by running it, both instructive
+beyond this callback:
+
+- **The local error estimate has a round-off floor.** Below ~0.8 rad per step
+  the difference between one step and two halves is complex64 noise, flat at
+  ~3e-7 from 0.1 to 0.4 rad. Every tolerance above it reads as "no error" and
+  asks for a bigger step whatever the step is. Uncapped, the controller
+  doubles each time it fires and the answer is unrecognisable within three
+  adjustments -- 0.38 relative. **In complex64 a tolerance below ~1e-5 is not
+  resolvable at all**, and the physics cap, not the tolerance, is what sets
+  the step there.
+- **An unmeetable tolerance must stop shrinking.** Without a floor the
+  controller halves for ever: nothing raises, nothing diverges, the run just
+  never returns. The floor has to be absolute -- one computed as a fraction of
+  the step in force shrinks with it and never binds, which was the first
+  attempt.
+
+Both are tested by driving the controller directly. A test through a
+propagation could not reach the ceiling to exercise the cap, and could only
+ever time out on the floor.
+
 ## Conventions used
 
 - Commit before mutation testing. `git checkout -- <file>` during a mutation
