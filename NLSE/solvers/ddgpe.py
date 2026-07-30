@@ -290,11 +290,17 @@ class DDGPE(CNLSE):
 
     def _compute_propagator_rk4(self) -> np.ndarray:
         """Compute the raw DDGPE polariton dispersion operators for RK4."""
-        prop1 = -1j * (self.omega_exc - self.omega_pump)
         prop2 = -1j * (
             self.omega_cav * np.sqrt(1 + (self.Kxx**2 + self.Kyy**2) / self.k_z**2)
             - self.omega_pump
         )
+        # Broadcast to the grid. The exciton branch is dispersionless, so the
+        # expression for it is a scalar, and np.array of a scalar beside a grid
+        # is an inhomogeneous array rather than the pair it looks like: it
+        # raises, and has since numpy 1.24, so DDGPE could not run RK4 at all.
+        # Nothing covered it. The split step avoided this by writing the same
+        # broadcast as a multiplication by (1 + 0 * Kxx**2).
+        prop1 = np.full_like(prop2, -1j * (self.omega_exc - self.omega_pump))
         return np.array([prop1, prop2])
 
     def _dispersion_operator(self) -> np.ndarray:

@@ -355,3 +355,41 @@ def test_out_field(ddgpe_backend) -> None:
         delta_z=0.1 / 32,  # need to be adjusted automatically,
     )
     # test stationarity here
+
+
+def test_the_dispersion_operator_is_a_pair_of_grids(backend) -> None:
+    """Both branches must be grids, even the one with no dispersion in it.
+
+    The exciton branch does not depend on k, so the expression for it is a
+    scalar. Paired with the cavity grid by np.array that is an inhomogeneous
+    array, not the (2, NY, NX) it looks like, and numpy has raised on it since
+    1.24. It was unreachable while only RK4 read it and DDGPE exposes no RK4,
+    but the split step's propagator is built from it now.
+    """
+    simu = make_solver(backend)
+    operator = as_numpy(simu, simu._build_propagator_rk4(PRECISION_COMPLEX))
+    assert operator.shape == (2, N, N), (
+        f"the dispersion operator is {operator.shape}, not a pair of grids"
+    )
+    assert np.all(np.isfinite(operator.view(np.float32)))
+    # The exciton branch is flat, which is why it needed broadcasting at all.
+    assert np.allclose(operator[0], operator[0].flat[0])
+    assert not np.allclose(operator[1], operator[1].flat[0]), (
+        "the cavity branch should vary across the grid"
+    )
+
+
+def test_the_propagator_is_the_exponential_of_the_operator(backend) -> None:
+    """One statement of the linear physics, exponentiated for the step.
+
+    If these two ever disagree, the split step and anything built on the
+    operator are integrating different equations -- which is exactly what had
+    happened in NLSE_3d, where the split step left the step out of its
+    temporal dispersion entirely.
+    """
+    simu = make_solver(backend)
+    operator = as_numpy(simu, simu._build_propagator_rk4(np.complex128))
+    propagator = as_numpy(simu, simu._build_propagator(np.complex128, DZ_TEST))
+    assert np.allclose(propagator, np.exp(operator * DZ_TEST)), (
+        f"the propagator is not exp(operator * dz). (Backend {backend})"
+    )
