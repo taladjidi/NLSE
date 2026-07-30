@@ -20,12 +20,9 @@ Everything below assumes it is in.
 single item left.~~ **Done — see section 23.** It absorbed item 3 as well:
 the copies were counted twice, once as kernels and once as memcpys.
 
-**2. Let CPU skip the inverse FFT's normalisation.** `--per-call` shows the
-inverse transform costing 28% more than the forward (0.348 ms against 0.272)
-because pyfftw normalises by 1/N. CL and CUPY avoid it by declaring
-`supports_unnormalized_ifft` and folding the factor into the propagator once;
-CPU does not declare it. Four inverse transforms per RK4 step pay for it.
-Cheap, and testable anywhere.
+**2. ~~Let CPU skip the inverse FFT's normalisation.~~** Done — section 28.
+The flag was wired only to `kernels.linear_step`, which the CPU has no reason
+to implement, so `ifft` took a `normalize` argument instead. 5.6% per step.
 
 **3. ~~Find the 11.3% of GPU time in memory operations.~~** Done, with item 1,
 and it was not allocation zeroing. It was `k[:] = A_in` at the head of each
