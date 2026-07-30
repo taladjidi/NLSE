@@ -287,7 +287,9 @@ def trace(solver_name, backend_name, n, method, nvtx):
     return untraced, traced, recorder
 
 
-def report(solver_name, backend_name, n, method, untraced, traced, recorder):
+def report(
+    solver_name, backend_name, n, method, untraced, traced, recorder, detailed=False
+):
     """Print the phase breakdown for one case."""
     by_phase = collections.Counter()
     calls_by_phase = collections.Counter()
@@ -330,6 +332,20 @@ def report(solver_name, backend_name, n, method, untraced, traced, recorder):
         f"   (loop, callbacks, transfers, setup)"
     )
 
+    if not detailed:
+        return
+    print(
+        f"\n  {'call':<26} {'per step':>9} {'calls':>7} {'per call':>10} {'share':>7}"
+    )
+    for name, seconds in recorder.seconds.most_common():
+        if name == STEP_KEY:
+            continue
+        calls = recorder.calls[name]
+        print(
+            f"  {name:<26} {seconds / STEPS * 1e3:7.3f}ms {calls / STEPS:6.1f}"
+            f" {seconds / calls * 1e3:9.4f}ms {100 * seconds / traced:6.0f} %"
+        )
+
 
 def main(argv=None):
     """Parse arguments and trace every requested case."""
@@ -339,6 +355,11 @@ def main(argv=None):
     parser.add_argument("--backends", nargs="*")
     parser.add_argument("--sizes", nargs="*", type=int, default=[1024])
     parser.add_argument("--nvtx", action="store_true", help="emit NVTX ranges for nsys")
+    parser.add_argument(
+        "--per-call",
+        action="store_true",
+        help="list every kernel separately, not just its phase",
+    )
     args = parser.parse_args(argv)
 
     from NLSE.backends import list_available_backends
@@ -355,7 +376,14 @@ def main(argv=None):
                             f"/ {n}x{n} ===\n  {type(exc).__name__}: {exc}"
                         )
                         continue
-                    report(solver_name, backend_name, n, method, *result)
+                    report(
+                        solver_name,
+                        backend_name,
+                        n,
+                        method,
+                        *result,
+                        detailed=args.per_call,
+                    )
     return 0
 
 
