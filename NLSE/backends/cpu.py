@@ -2,12 +2,13 @@
 
 import multiprocessing
 import pickle
+import time
 import warnings
 from typing import Any
 
 import numpy as np
 import pyfftw
-from scipy import signal
+from scipy import fft as scipy_fft, signal
 
 from ..kernels import cpu as kernels_cpu
 from ..utils import get_cache_dir
@@ -21,44 +22,61 @@ pyfftw.config.NUM_THREADS = multiprocessing.cpu_count()
 pyfftw.config.PLANNER_EFFORT = "FFTW_MEASURE"
 pyfftw.interfaces.cache.enable()
 
-# A SIMD build of FFTW asks for 16- or 32-byte alignment. 4 means the library
-# was compiled without vector codelets and is running scalar C, which is not
-# something the wisdom or the planner will tell you about: planning, caching
-# and the stale-wisdom check all behave normally, they just plan scalar code.
-_SIMD_ALIGNMENT_FLOOR = 8
+# How much slower than scipy's pocketfft a pyfftw roundtrip may be before it
+# is worth telling someone. Two different FFTW builds of the same pyfftw
+# version measured 35 ms and 9 ms for the same transform pair on one machine,
+# so the spread between builds is far wider than this.
+_FFT_SLOWDOWN_FACTOR = 2.0
 
-_warned_about_simd = False
+_warned_about_fft = False
 
 
-def warn_if_fftw_has_no_simd() -> bool:
-    """Warn once if the installed FFTW was built without vector instructions.
+def warn_if_fft_is_slow(array: np.ndarray, seconds: float, axes: tuple) -> bool:
+    """Warn once if pyfftw is far slower than scipy on the same transform.
 
-    Measured on an Apple M3 Max at 2048x2048, the PyPI arm64 wheel's bundled
-    FFTW ran a transform pair in 35 ms against 5.4 ms for a vectorised build,
-    single-threaded 236 ms against 38 ms. The transform is ~90% of a CPU step
-    at that size, so it costs about 4x overall, silently.
+    Which FFTW a pyfftw wheel is linked against decides most of a CPU step at
+    large grid sizes, and nothing in the library reports it. ``simd_alignment``
+    does not: it read 4 both for the PyPI arm64 wheel, whose bundled FFTW has
+    no NEON codelets at all, and for the conda-forge build that is four times
+    faster. So this measures instead of asking.
+
+    Parameters
+    ----------
+    array : np.ndarray
+        The array that was transformed, used to time the comparison.
+    seconds : float
+        What the pyfftw roundtrip took.
+    axes : tuple
+        Axes the transform was over.
 
     Returns
     -------
     bool
         True if a warning was issued or had already been issued.
     """
-    global _warned_about_simd
-    if pyfftw.simd_alignment >= _SIMD_ALIGNMENT_FLOOR:
+    global _warned_about_fft
+    if _warned_about_fft:
+        return True
+    reference = array.copy()
+    start = time.perf_counter()
+    scipy_fft.ifftn(
+        scipy_fft.fftn(reference, axes=axes, workers=-1), axes=axes, workers=-1
+    )
+    scipy_seconds = time.perf_counter() - start
+
+    if seconds <= _FFT_SLOWDOWN_FACTOR * scipy_seconds:
         return False
-    if not _warned_about_simd:
-        _warned_about_simd = True
-        warnings.warn(
-            f"pyFFTW was built without SIMD support "
-            f"(pyfftw.simd_alignment == {pyfftw.simd_alignment}; a vectorised "
-            f"build reports 16 or 32), so FFTW is running scalar code. On this "
-            f"machine that has measured ~6x slower than a vectorised build, "
-            f"and the transform is most of a CPU step at large grid sizes. "
-            f"The PyPI arm64 wheel is one such build; "
-            f"`conda install -c conda-forge pyfftw` is not.",
-            RuntimeWarning,
-            stacklevel=2,
-        )
+    _warned_about_fft = True
+    warnings.warn(
+        f"pyFFTW is {seconds / scipy_seconds:.1f}x slower than scipy.fft on this "
+        f"machine ({seconds * 1e3:.1f} ms against {scipy_seconds * 1e3:.1f} ms for "
+        f"a {array.shape} transform pair), which usually means it is linked "
+        f"against an FFTW built without vector instructions. The transform is "
+        f"most of a CPU step at large grid sizes. Installing pyfftw from "
+        f"conda-forge rather than PyPI has measured 4x faster on Apple silicon.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
     return True
 
 
@@ -69,11 +87,6 @@ class CPUBackend(Backend):
     the numba kernels are already single-pass, so there is no launch
     overhead to amortize.
     """
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        """Build the backend, checking the FFT library it is about to use."""
-        super().__init__(*args, **kwargs)
-        warn_if_fftw_has_no_simd()
 
     @property
     def name(self) -> str:
@@ -177,6 +190,8 @@ class CPUBackend(Backend):
         for s in shape:
             n_elements *= s
         expected_max = max(0.2, n_elements / 1024**2 * 0.1)
+        warn_if_fft_is_slow(A, t_roundtrip, axes)
+
         if t_roundtrip > expected_max:
             pyfftw.forget_wisdom()
             plan_fft = pyfftw.FFTW(

@@ -299,46 +299,44 @@ def test_normalizing_gives_the_same_answer_by_either_route(backend_name):
 # ---------------------------------------------------------------------------
 
 
-def test_a_scalar_fftw_build_is_reported(monkeypatch):
-    """A build without vector codelets must say so rather than be 6x slower.
+def test_a_slow_fft_is_reported(monkeypatch):
+    """A pyfftw far slower than scipy must say so rather than be 4x slower.
 
-    Nothing else notices: planning, wisdom and the stale-wisdom timing check
-    all behave normally against scalar codelets. The PyPI arm64 wheel bundles
-    such a build, which cost about 4x on a CPU step at 2048x2048.
+    Nothing else notices. ``simd_alignment`` in particular does not: it reads
+    4 both for the PyPI arm64 wheel, whose FFTW has no NEON codelets, and for
+    the conda-forge build that is four times faster. Only timing separates
+    them, so only timing is checked.
     """
-    import pyfftw
     from NLSE.backends import cpu as cpu_backend
 
-    monkeypatch.setattr(pyfftw, "simd_alignment", 4)
-    monkeypatch.setattr(cpu_backend, "_warned_about_simd", False)
+    monkeypatch.setattr(cpu_backend, "_warned_about_fft", False)
+    array = np.ones((64, 64), dtype=np.complex64)
 
-    with pytest.warns(RuntimeWarning, match="without SIMD"):
-        assert cpu_backend.warn_if_fftw_has_no_simd() is True
+    with pytest.warns(RuntimeWarning, match="slower than scipy"):
+        assert cpu_backend.warn_if_fft_is_slow(array, 10.0, (-2, -1)) is True
 
 
-def test_a_vectorised_fftw_build_is_not_reported(monkeypatch):
-    """And a good build must not cry wolf on every CPU solver built."""
-    import pyfftw
+def test_a_healthy_fft_is_not_reported(monkeypatch):
+    """And a good build must not cry wolf on every plan built."""
     from NLSE.backends import cpu as cpu_backend
 
-    monkeypatch.setattr(pyfftw, "simd_alignment", 16)
-    monkeypatch.setattr(cpu_backend, "_warned_about_simd", False)
+    monkeypatch.setattr(cpu_backend, "_warned_about_fft", False)
+    array = np.ones((64, 64), dtype=np.complex64)
 
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        assert cpu_backend.warn_if_fftw_has_no_simd() is False
+        assert cpu_backend.warn_if_fft_is_slow(array, 1e-9, (-2, -1)) is False
 
 
-def test_the_warning_is_issued_once(monkeypatch):
-    """A solver per parameter sweep must not mean a warning per solver."""
-    import pyfftw
+def test_the_fft_warning_is_issued_once(monkeypatch):
+    """A plan per grid size must not mean a warning per plan."""
     from NLSE.backends import cpu as cpu_backend
 
-    monkeypatch.setattr(pyfftw, "simd_alignment", 4)
-    monkeypatch.setattr(cpu_backend, "_warned_about_simd", False)
+    monkeypatch.setattr(cpu_backend, "_warned_about_fft", False)
+    array = np.ones((64, 64), dtype=np.complex64)
 
     with pytest.warns(RuntimeWarning):
-        cpu_backend.warn_if_fftw_has_no_simd()
+        cpu_backend.warn_if_fft_is_slow(array, 10.0, (-2, -1))
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        assert cpu_backend.warn_if_fftw_has_no_simd() is True
+        assert cpu_backend.warn_if_fft_is_slow(array, 10.0, (-2, -1)) is True
