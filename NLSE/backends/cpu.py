@@ -21,7 +21,15 @@ from .backend import Backend
 # 42x slower to execute than MEASURE, so the difference was not academic.
 pyfftw.config.NUM_THREADS = multiprocessing.cpu_count()
 pyfftw.config.PLANNER_EFFORT = "FFTW_MEASURE"
-pyfftw.interfaces.cache.enable()
+
+# pyfftw.interfaces.cache.enable() used to be here. It caches the objects
+# pyfftw.interfaces.numpy_fft and friends build, and this backend calls none
+# of them -- it holds pyfftw.FFTW plans of its own, which is the whole of
+# _build_fft. So it bought nothing, and what it cost was a background
+# keepalive thread holding FFTW objects: a thread that segfaulted on macOS
+# during a run that also calls pyfftw.forget_wisdom() to discard stale plans.
+# That path is only reached where FFTW is slow enough to look stale, which is
+# why it showed on one machine and not another.
 
 # How much slower than scipy's pocketfft a pyfftw roundtrip may be before it
 # is worth telling someone. Two different FFTW builds of the same pyfftw
