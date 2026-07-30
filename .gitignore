@@ -36,5 +36,3 @@ NLSE/kernels/metal_native/
 .pytest_cache/
 NLSE/.cache/
 
-# Working notes for the refactor in progress, not part of the package.
-HANDOFF.md
