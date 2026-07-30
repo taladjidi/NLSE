@@ -386,10 +386,15 @@ def test_the_propagator_is_the_exponential_of_the_operator(backend) -> None:
     operator are integrating different equations -- which is exactly what had
     happened in NLSE_3d, where the split step left the step out of its
     temporal dispersion entirely.
+
+    At the precision every backend has, like its neighbour above: this asks
+    whether two expressions agree, which is not a question about float width,
+    and asking it in double excluded CL and MLX from an identity that holds
+    for them too.
     """
     simu = make_solver(backend)
-    operator = as_numpy(simu, simu._build_propagator_rk4(np.complex128))
-    propagator = as_numpy(simu, simu._build_propagator(np.complex128, DZ_TEST))
-    assert np.allclose(propagator, np.exp(operator * DZ_TEST)), (
+    operator = as_numpy(simu, simu._build_propagator_rk4(PRECISION_COMPLEX))
+    propagator = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
+    assert np.allclose(propagator, np.exp(operator * DZ_TEST), atol=1e-6), (
         f"the propagator is not exp(operator * dz). (Backend {backend})"
     )
