@@ -50,6 +50,8 @@ KERNEL_PHASES = [
     ("nl_prop", "nonlinear"),
     ("square_mod", "nonlinear"),
     ("rabi", "nonlinear"),
+    ("copy", "array copies"),
+    ("memcpy", "array copies"),
     ("elementwise", "cupy elementwise"),
 ]
 
@@ -164,6 +166,20 @@ def summarise_kernels(rows, top):
     return total
 
 
+def traced_run(rows):
+    """Whether these NVTX ranges came from trace_solvers.py.
+
+    Its ranges are kernel names, and it synchronizes after each one, so the
+    CUDA API time in such a report is mostly the cost of being watched.
+    """
+    kernels = {"linear_step", "apply_propagator", "square_mod", "rk4_axpy"}
+    for row in rows:
+        name = (column(row, "Range", "Name", "Operation") or "").lstrip(":")
+        if name in kernels:
+            return True
+    return False
+
+
 def summarise_nvtx(rows):
     """Print the NVTX ranges trace_solvers.py pushed, if any."""
     if not rows:
@@ -225,12 +241,17 @@ def main(argv=None):
             as_float(column(r, "Total Time (ns)", "Total Time")) for r in tables["api"]
         )
         print(f"\n  CUDA API time: {api_ns / 1e6:.2f} ms")
-        print(
-            f"  GPU kernel time / CUDA API time: {gpu_ns / api_ns:.2f}"
-            if api_ns
-            else ""
-        )
-        print("  A ratio well below 1 means the GPU is waiting on the driver.")
+        if api_ns:
+            print(f"  GPU kernel time / CUDA API time: {gpu_ns / api_ns:.2f}")
+            if traced_run(tables["nvtx"] or []):
+                print(
+                    "  This report is of a trace_solvers.py run, which synchronizes\n"
+                    "  after every kernel and steps from Python instead of replaying\n"
+                    "  a CUDA graph. Most of that API time is the tracing. Profile\n"
+                    "  without --nvtx, or profile a plain script, to judge the ratio."
+                )
+            else:
+                print("  A ratio well below 1 means the GPU is waiting on the driver.")
 
     summarise_nvtx(tables["nvtx"] or [])
     return 0
