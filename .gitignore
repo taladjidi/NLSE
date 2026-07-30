@@ -38,7 +38,7 @@ NLSE/.cache/
 
 # nsys writes its report next to wherever it was run, and one steady-state
 # profile is tens of MB. Read them with benchmarks/nsys_summary.py; the
-# numbers worth keeping go in HANDOFF.md, not the reports.
+# numbers worth keeping go in the commit message, not the reports.
 *.nsys-rep
 *.sqlite
 
