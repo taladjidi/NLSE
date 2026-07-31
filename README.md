@@ -33,6 +33,10 @@ uv pip install ".[docs]"
 mkdocs serve -f mkdocs-documentation/mkdocs.yml
 ```
 
+`mkdocs build --strict` from `mkdocs-documentation/` is what checks the links.
+It leaves warnings about unclosed `Div`s, which come from nbconvert rendering
+the tutorial notebook and are not mkdocs's own.
+
 ## Installation
 
 First clone the repository:
