@@ -5,9 +5,13 @@
     python benchmarks/profile_backends.py --baseline 3.0.0
     python benchmarks/profile_backends.py --baseline 3.0.0 --sizes 512 --solver NLSE
 
-With ``--baseline`` the same workload runs twice: once against the working
-tree, once against a git worktree of that revision, in a subprocess with the
-older package on ``sys.path``. The two runs are compared per cell.
+With ``--baseline`` the same workload runs against the working tree and
+against a git worktree of that revision, both in subprocesses, alternating a
+round at a time and swapping which side goes first. Measuring one side through
+and then the other put the machine's drift entirely on one side: with identical
+code on both sides that reported cells up to 1.19x slower, reproducibly. The
+table reports, per cell, how much that cell moved between rounds of the same
+code, and calls nothing a regression unless it moved by more than that.
 
 Steps are fixed rather than derived from the physics: the default step has
 changed since 3.0.0, and a run that takes a different number of steps measures
@@ -39,6 +43,18 @@ DELTA_Z = 1e-4
 STEPS_LOW = 20
 STEPS_HIGH = 220
 REPEATS = 5
+# Repeats and rounds when comparing two revisions. Measuring one side fully
+# and then the other put every bit of drift between them onto one side: with
+# *identical code* on both sides this reported 3 of 6 cells more than 10%
+# slower, up to 1.19x, and reproduced the direction on a second run. So the
+# sides alternate instead, one round each, and swap which goes first every
+# round. Both also run as subprocesses now -- measuring the working tree in
+# this process and the baseline in a child compared two different process
+# states as much as two revisions. REPEATS_PER_ROUND x ROUNDS is kept near
+# REPEATS so the total measurement is about what it was; the extra cost is
+# warmup, paid once per round per side rather than once per side.
+REPEATS_PER_ROUND = 2
+ROUNDS = 3
 
 DEFAULT_SIZES = (128, 256, 512)
 DEFAULT_METHODS = ("split_step", "RK4")
@@ -129,7 +145,7 @@ def time_run(nlse_module, solver_name, backend, n, method, steps, field, np):
     return time.perf_counter() - start
 
 
-def time_cell(nlse_module, solver_name, backend, n, method, np):
+def time_cell(nlse_module, solver_name, backend, n, method, np, repeats=REPEATS):
     """Return milliseconds per step, from the slope between two step counts.
 
     The two runs differ only in how many steps they take, so subtracting them
@@ -142,7 +158,7 @@ def time_cell(nlse_module, solver_name, backend, n, method, np):
         time_run(nlse_module, solver_name, backend, n, method, steps, field, np)
 
     lows, highs = [], []
-    for _ in range(REPEATS):
+    for _ in range(repeats):
         lows.append(
             time_run(nlse_module, solver_name, backend, n, method, STEPS_LOW, field, np)
         )
@@ -175,7 +191,7 @@ def run(args):
                 key = f"{args.solver}/{backend}/{n}/{method}"
                 try:
                     best, median = time_cell(
-                        nlse_module, args.solver, backend, n, method, np
+                        nlse_module, args.solver, backend, n, method, np, args.repeats
                     )
                     results[key] = {"best": best, "median": median}
                 except Exception as exc:  # a backend may not support a case
@@ -191,8 +207,54 @@ def run(args):
     return results
 
 
-def baseline_results(revision, args):
-    """Run the same workload against ``revision`` in a throwaway worktree."""
+def measure_tree(root, args):
+    """Measure every cell once against the package at ``root``, in a subprocess.
+
+    Parameters
+    ----------
+    root : str
+        Directory containing the ``NLSE`` package to import.
+    args : argparse.Namespace
+        The parsed command line, for the workload to measure.
+
+    Returns
+    -------
+    dict
+        The same mapping ``run`` returns.
+    """
+    cmd = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "--package-root",
+        root,
+        "--solver",
+        args.solver,
+        "--sizes",
+        *[str(s) for s in args.sizes],
+        "--methods",
+        *args.methods,
+        "--repeats",
+        str(REPEATS_PER_ROUND),
+        "--json",
+        "-",
+    ]
+    if args.backends:
+        cmd += ["--backends", *args.backends]
+    env = dict(os.environ, NLSE_QUIET="1")
+    out = subprocess.run(cmd, check=True, capture_output=True, text=True, env=env)
+    return json.loads(out.stdout)
+
+
+def against_baseline(revision, args):
+    """Measure the working tree and ``revision`` in alternating rounds.
+
+    Returns
+    -------
+    tuple of dict
+        Per-cell best for the working tree, the same for ``revision``, and the
+        round-to-round spread of each cell, which is what says whether a
+        difference means anything.
+    """
     tmp = Path(tempfile.mkdtemp(prefix="nlse-baseline-"))
     worktree = tmp / "tree"
     subprocess.run(
@@ -200,26 +262,17 @@ def baseline_results(revision, args):
         check=True,
         capture_output=True,
     )
+    here = str(Path(__file__).resolve().parent.parent)
+    samples = {"now": [], "old": []}
     try:
-        cmd = [
-            sys.executable,
-            str(Path(__file__).resolve()),
-            "--package-root",
-            str(worktree),
-            "--solver",
-            args.solver,
-            "--sizes",
-            *[str(s) for s in args.sizes],
-            "--methods",
-            *args.methods,
-            "--json",
-            "-",
-        ]
-        if args.backends:
-            cmd += ["--backends", *args.backends]
-        env = dict(os.environ, NLSE_QUIET="1")
-        out = subprocess.run(cmd, check=True, capture_output=True, text=True, env=env)
-        return json.loads(out.stdout)
+        for r in range(ROUNDS):
+            # Swap which side goes first, so being first is not worth anything
+            # over the whole measurement.
+            order = ("now", "old") if r % 2 == 0 else ("old", "now")
+            for side in order:
+                print(f"  round {r + 1}/{ROUNDS}, {side} ...", flush=True)
+                root = here if side == "now" else str(worktree)
+                samples[side].append(measure_tree(root, args))
     finally:
         subprocess.run(
             ["git", "worktree", "remove", "--force", str(worktree)],
@@ -227,28 +280,59 @@ def baseline_results(revision, args):
         )
         shutil.rmtree(tmp, ignore_errors=True)
 
+    best, noise = {}, {}
+    for side in ("now", "old"):
+        best[side] = {}
+        for key in samples[side][0]:
+            got = [r[key]["best"] for r in samples[side] if "best" in r.get(key, {})]
+            if got:
+                best[side][key] = min(got)
+                # How much this cell moved between rounds of the *same* code.
+                noise[key] = max(noise.get(key, 0.0), (max(got) - min(got)) / min(got))
+    return best["now"], best["old"], noise
 
-def compare(now, before, revision):
-    """Print a per-cell comparison, slowest regression first."""
+
+def compare(now, before, noise, revision):
+    """Print a per-cell comparison, slowest regression first.
+
+    A cell is only called slower or faster when it moved by more than this
+    machine moved the same code between rounds. Without that the table
+    reports the noise as a result.
+    """
     rows = []
-    for key, cell in now.items():
-        old = before.get(key, {})
-        if "best" not in cell or "best" not in old:
+    for key, new in now.items():
+        old = before.get(key)
+        if old is None:
             continue
-        rows.append((cell["best"] / old["best"], key, old["best"], cell["best"]))
+        rows.append((new / old, key, old, new, noise.get(key, 0.0)))
     rows.sort(reverse=True)
 
-    print(f"\n{'cell':<44} {revision:>11} {'now':>11} {'ratio':>8}")
+    print(f"\n{'cell':<40} {revision:>10} {'now':>10} {'ratio':>7} {'noise':>7}")
     print("-" * 78)
-    for ratio, key, old, new in rows:
-        flag = "  <-- slower" if ratio > 1.10 else ("  faster" if ratio < 0.90 else "")
-        print(f"{key:<44} {old:8.3f}ms {new:8.3f}ms {ratio:7.2f}x{flag}")
+    for ratio, key, old, new, cell_noise in rows:
+        floor = max(0.10, cell_noise)
+        flag = ""
+        if ratio > 1 + floor:
+            flag = "  <-- slower"
+        elif ratio < 1 - floor:
+            flag = "  faster"
+        print(
+            f"{key:<40} {old:7.3f}ms {new:7.3f}ms "
+            f"{ratio:6.2f}x {cell_noise * 100:5.1f}% {flag}"
+        )
 
-    slower = [r for r in rows if r[0] > 1.10]
+    if not rows:
+        print("\nNothing comparable.")
+        return
+    slower = [r for r in rows if r[0] > 1 + max(0.10, r[4])]
+    worst = max(r[4] for r in rows)
     print(
-        f"\n{len(slower)} of {len(rows)} cells more than 10% slower than {revision}."
-        if rows
-        else "\nNothing comparable."
+        f"\n{len(slower)} of {len(rows)} cells slower than {revision} by more than "
+        f"this machine's own scatter."
+    )
+    print(
+        f"Worst cell moved {worst * 100:.0f}% between rounds of identical code; "
+        f"anything under that is not a result."
     )
 
 
@@ -261,13 +345,31 @@ def main(argv=None):
     parser.add_argument("--backends", nargs="*")
     parser.add_argument("--sizes", nargs="*", type=int, default=list(DEFAULT_SIZES))
     parser.add_argument("--methods", nargs="*", default=list(DEFAULT_METHODS))
+    parser.add_argument(
+        "--repeats", type=int, default=REPEATS, help="timed repeats per cell (internal)"
+    )
     parser.add_argument("--json", help="write results as JSON ('-' for stdout)")
     args = parser.parse_args(argv)
+
+    if args.baseline:
+        # This process measures nothing itself: both sides go through the same
+        # kind of subprocess, alternating, so that neither the process a run
+        # happens in nor the order it happens in can be read as a difference
+        # between the revisions.
+        print(
+            f"{args.solver}: slope of {STEPS_LOW} vs {STEPS_HIGH} steps, "
+            f"best of {REPEATS_PER_ROUND} x {ROUNDS} alternating rounds\n"
+        )
+        now, before, noise = against_baseline(args.baseline, args)
+        if args.json and args.json != "-":
+            Path(args.json).write_text(json.dumps(now, indent=2))
+        compare(now, before, noise, args.baseline)
+        return 0
 
     if not args.json:
         print(
             f"{args.solver}: slope of {STEPS_LOW} vs {STEPS_HIGH} steps, "
-            f"best of {REPEATS}\n"
+            f"best of {args.repeats}\n"
         )
     results = run(args)
 
@@ -276,10 +378,6 @@ def main(argv=None):
         return 0
     if args.json:
         Path(args.json).write_text(json.dumps(results, indent=2))
-
-    if args.baseline:
-        print(f"\nmeasuring {args.baseline} ...", flush=True)
-        compare(results, baseline_results(args.baseline, args), args.baseline)
     return 0
 
 
