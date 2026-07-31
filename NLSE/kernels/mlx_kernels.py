@@ -1414,8 +1414,8 @@ _RK4_RHS_COUPLED_CACHE: dict[tuple, object] = {}
 def rk4_rhs_coupled_fused(
     A_in: mx.array,
     k: mx.array,
-    V1: mx.array | None,
-    V2: mx.array | None,
+    V1_scaled: mx.array | None,
+    V2_scaled: mx.array | None,
     propagator: mx.array,
     plan: tuple,
     alpha1: float,
@@ -1437,9 +1437,9 @@ def rk4_rhs_coupled_fused(
         Output buffer. Accepted for signature compatibility with the
         other fused backends and unused: MLX is functional, so the
         result is returned as a new array.
-    V1 : mx.array or None
+    V1_scaled : mx.array or None
         Pre-scaled potential, component 1.
-    V2 : mx.array or None
+    V2_scaled : mx.array or None
         Pre-scaled potential, component 2.
     propagator : mx.array
         RK4 propagator (dispersion operator).
@@ -1469,7 +1469,7 @@ def rk4_rhs_coupled_fused(
         The RHS result.
     """
     axes = plan
-    has_V = V1 is not None
+    has_V = V1_scaled is not None
     key = (has_V, axes)
     if key not in _RK4_RHS_COUPLED_CACHE:
         _RK4_RHS_COUPLED_CACHE[key] = _make_rk4_rhs_coupled(has_V, axes)
@@ -1485,8 +1485,8 @@ def rk4_rhs_coupled_fused(
         return fn(
             A_in,
             propagator,
-            V1,
-            V2,
+            V1_scaled,
+            V2_scaled,
             a1_mx,
             a2_mx,
             g11_mx,

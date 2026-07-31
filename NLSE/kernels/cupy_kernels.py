@@ -1292,8 +1292,8 @@ class CUDAKernels:
         self,
         A_in,
         k,
-        V1,
-        V2,
+        V1_scaled,
+        V2_scaled,
         propagator,
         plan,
         acc,
@@ -1319,7 +1319,7 @@ class CUDAKernels:
             Coupled field this stage evaluates the slope at (not modified).
         k : cp.ndarray
             Scratch buffer the transform writes into (modified in-place).
-        V1, V2 : cp.ndarray or None
+        V1_scaled, V2_scaled : cp.ndarray or None
             Pre-scaled potentials, one per component. Both None or neither.
         propagator : cp.ndarray
             Pre-computed propagator (pre-divided by N_fft when unnorm_ifft).
@@ -1357,9 +1357,9 @@ class CUDAKernels:
         kernels = self._get_kernels(A.dtype)
         N_sq = int(A.size) // 2
         params = self._cast(A.dtype, alpha1, alpha2, g11, g12, g22, Isat1, Isat2, w, c)
-        args = (k, A_in) + ((V1, V2) if V1 is not None else ())
+        args = (k, A_in) + ((V1_scaled, V2_scaled) if V1_scaled is not None else ())
         self._launch(
-            self._v_kernel(kernels, "coupled_rk4_stage_c", V1),
+            self._v_kernel(kernels, "coupled_rk4_stage_c", V1_scaled),
             N_sq,
             *args,
             acc,
@@ -1375,8 +1375,8 @@ class CUDAKernels:
         self,
         A,
         propagator,
-        V1,
-        V2,
+        V1_scaled,
+        V2_scaled,
         dz,
         alpha1,
         alpha2,
@@ -1403,7 +1403,7 @@ class CUDAKernels:
             Coupled field of shape (2, ...), modified in-place.
         propagator : cp.ndarray
             Pre-computed propagator for both components.
-        V1, V2 : cp.ndarray or None
+        V1_scaled, V2_scaled : cp.ndarray or None
             Pre-scaled potentials, one per component. Both None or neither.
         dz : float
             Nonlinear step (the whole step for single precision, half for
@@ -1437,13 +1437,13 @@ class CUDAKernels:
         params = self._cast(A.dtype, dz, alpha1, alpha2, g11, g12, g22, Isat1, Isat2)
 
         def nonlinear():
-            if V1 is not None:
+            if V1_scaled is not None:
                 self._launch(
-                    self._v_kernel(kernels, "coupled_nl_prop_c", V1),
+                    self._v_kernel(kernels, "coupled_nl_prop_c", V1_scaled),
                     N_sq,
                     A,
-                    V1,
-                    V2,
+                    V1_scaled,
+                    V2_scaled,
                     *params,
                     N_sq_i,
                 )
@@ -1480,8 +1480,8 @@ class CUDAKernels:
         self,
         A_in,
         k,
-        V1,
-        V2,
+        V1_scaled,
+        V2_scaled,
         propagator,
         plan,
         alpha1,
@@ -1501,7 +1501,7 @@ class CUDAKernels:
             Coupled input field of shape (2, ...), not modified.
         k : cp.ndarray
             Output buffer (modified in-place).
-        V1, V2 : cp.ndarray or None
+        V1_scaled, V2_scaled : cp.ndarray or None
             Pre-scaled potentials, one per component. Both None or neither.
         propagator : cp.ndarray
             Pre-computed propagator (pre-divided by N_fft when unnorm_ifft).
@@ -1536,14 +1536,14 @@ class CUDAKernels:
             plan.ifft(k, k)
 
         params = self._cast(A_in.dtype, alpha1, alpha2, g11, g12, g22, Isat1, Isat2)
-        if V1 is not None:
+        if V1_scaled is not None:
             self._launch(
-                self._v_kernel(kernels, "coupled_rk4_nl_rhs_c", V1),
+                self._v_kernel(kernels, "coupled_rk4_nl_rhs_c", V1_scaled),
                 N_sq,
                 k,
                 A_in,
-                V1,
-                V2,
+                V1_scaled,
+                V2_scaled,
                 *params,
                 N_sq_i,
             )

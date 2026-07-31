@@ -134,10 +134,11 @@ def test_fused_signatures_accept_the_documented_arguments(backend_name):
     backend = get_backend(backend_name)
     kernels = backend.kernels
     expected = {
-        # linear_step was missing here, and MLX had drifted: it took
-        # (A, propagator, axes) with no unnorm_ifft, so a solver calling it
-        # the documented way raised TypeError on MLX alone. The solvers hid
-        # that by passing the argument only when it was True.
+        # Every entry point the base class documents a signature for, not the
+        # three that used to be here. That gap is how MLX's linear_step came
+        # to take (A, propagator, axes) with no unnorm_ifft while CUPY and CL
+        # took the documented four: nothing compared them, and the solvers
+        # passed the argument only when it was True, which on MLX is never.
         "linear_step": ["A", "propagator", "plan", "unnorm_ifft"],
         "split_step_fused": [
             "A",
@@ -151,11 +152,52 @@ def test_fused_signatures_accept_the_documented_arguments(backend_name):
             "plan",
             "unnorm_ifft",
         ],
+        "rk4_rhs_fused": [
+            "A_in",
+            "k",
+            "V_scaled",
+            "propagator",
+            "plan",
+            "alpha",
+            "g",
+            "Isat",
+            "unnorm_ifft",
+        ],
+        "split_step_rk4_fused": [
+            "A",
+            "propagator",
+            "V_scaled",
+            "dz",
+            "alpha",
+            "g",
+            "Isat",
+            "plan",
+        ],
+        "rk4_set_and_axpy": ["acc", "out", "A", "k", "c"],
+        "rk4_acc_and_axpy": ["acc", "out", "A", "k", "w", "c"],
+        "split_step_coupled_fused": [
+            "A",
+            "propagator",
+            "V1_scaled",
+            "V2_scaled",
+            "dz",
+            "alpha1",
+            "alpha2",
+            "g11",
+            "g12",
+            "g22",
+            "Isat1",
+            "Isat2",
+            "precision",
+            "plan",
+            "omega",
+            "unnorm_ifft",
+        ],
         "rk4_rhs_coupled_fused": [
             "A_in",
             "k",
-            "V1",
-            "V2",
+            "V1_scaled",
+            "V2_scaled",
             "propagator",
             "plan",
             "alpha1",

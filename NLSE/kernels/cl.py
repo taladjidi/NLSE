@@ -1442,8 +1442,8 @@ class OpenCLKernels:
         self,
         A: cla.Array,
         propagator: cla.Array,
-        V1: cla.Array | None,
-        V2: cla.Array | None,
+        V1_scaled: cla.Array | None,
+        V2_scaled: cla.Array | None,
         dz: float,
         alpha1: float,
         alpha2: float,
@@ -1465,9 +1465,9 @@ class OpenCLKernels:
             Interleaved field (2, ...) modified in-place.
         propagator : cla.Array
             Pre-computed propagator for both components.
-        V1 : cla.Array or None
+        V1_scaled : cla.Array or None
             Pre-scaled potential for component 1.
-        V2 : cla.Array or None
+        V2_scaled : cla.Array or None
             Pre-scaled potential for component 2.
         dz : float
             Nonlinear step size (full for single, half for double).
@@ -1512,7 +1512,15 @@ class OpenCLKernels:
         # Double precision: NL half-step before linear
         if precision == "double":
             self._launch_coupled(
-                kerns, "coupled_nl_prop_c", V1, V2, gs, ls, (A.data,), N_sq_i, params
+                kerns,
+                "coupled_nl_prop_c",
+                V1_scaled,
+                V2_scaled,
+                gs,
+                ls,
+                (A.data,),
+                N_sq_i,
+                params,
             )
 
         # Linear step: FFT → propagator multiply → IFFT (on full 2*N_sq)
@@ -1527,7 +1535,15 @@ class OpenCLKernels:
 
         # Nonlinear step
         self._launch_coupled(
-            kerns, "coupled_nl_prop_c", V1, V2, gs, ls, (A.data,), N_sq_i, params
+            kerns,
+            "coupled_nl_prop_c",
+            V1_scaled,
+            V2_scaled,
+            gs,
+            ls,
+            (A.data,),
+            N_sq_i,
+            params,
         )
 
         # Rabi coupling (single precision only)
@@ -1551,8 +1567,8 @@ class OpenCLKernels:
         self,
         A_in: cla.Array,
         k: cla.Array,
-        V1: cla.Array | None,
-        V2: cla.Array | None,
+        V1_scaled: cla.Array | None,
+        V2_scaled: cla.Array | None,
         propagator: cla.Array,
         plan,
         alpha1: float,
@@ -1572,9 +1588,9 @@ class OpenCLKernels:
             Input field (not modified).
         k : cla.Array
             Output buffer (modified in-place).
-        V1 : cla.Array or None
+        V1_scaled : cla.Array or None
             Pre-scaled potential, component 1.
-        V2 : cla.Array or None
+        V2_scaled : cla.Array or None
             Pre-scaled potential, component 2.
         propagator : cla.Array
             Pre-computed propagator.
@@ -1630,8 +1646,8 @@ class OpenCLKernels:
         self._launch_coupled(
             kerns,
             "coupled_rk4_nl_rhs_c",
-            V1,
-            V2,
+            V1_scaled,
+            V2_scaled,
             gs,
             ls,
             (k.data, A_in.data),
