@@ -166,23 +166,34 @@ class DDGPE(CNLSE):
             Propagation time in s.
         i : int
             Propagation step.
+        noise : float
+            Amplitude of the noise, as a multiple of sqrt(gamma / 4 dX dY).
+            Zero, the default, adds nothing.
         """
-        rand1 = simu._random(
-            loc=0, scale=simu._current_delta_z, size=(simu.NY, simu.NX)
-        ) + 1j * simu._random(
-            loc=0, scale=simu._current_delta_z, size=(simu.NY, simu.NX)
-        )
-        rand2 = simu._random(
-            loc=0, scale=simu._current_delta_z, size=(simu.NY, simu.NX)
-        ) + 1j * simu._random(
-            loc=0, scale=simu._current_delta_z, size=(simu.NY, simu.NX)
-        )
-        A[..., 0, :, :] += (
-            noise * np.sqrt(simu.gamma / (4 * (simu.delta_X * simu.delta_Y))) * rand1
-        )
-        A[..., 1, :, :] += (
-            noise * np.sqrt((simu.gamma2) / (4 * (simu.delta_X * simu.delta_Y))) * rand2
-        )
+
+        def draw():
+            """Return one complex noise grid, on the host."""
+            scale = simu._current_delta_z
+            return simu._random(
+                loc=0, scale=scale, size=(simu.NY, simu.NX)
+            ) + 1j * simu._random(loc=0, scale=scale, size=(simu.NY, simu.NX))
+
+        area = 4 * (simu.delta_X * simu.delta_Y)
+        # Not A.dtype: MLX names its own dtypes and numpy cannot interpret
+        # them, and handing a complex128 draw to a complex64 field is how the
+        # noise arrives scaled by whatever the reinterpretation makes of it.
+        dtype = simu._field_dtype(A)
+        for component, gamma in ((0, simu.gamma), (1, simu.gamma2)):
+            delta = (noise * np.sqrt(gamma / area) * draw()).astype(dtype)
+            # Read, add, write back, rather than `A[..., c, :, :] += delta`.
+            # pyopencl accepts the in-place form on a slice and silently
+            # discards it -- no exception, and the field comes out exactly as
+            # if no noise had been asked for -- so this was doing nothing at
+            # all on the CL backend. The noise also has to reach the device
+            # before it can be added to something that lives there.
+            A[..., component, :, :] = A[
+                ..., component, :, :
+            ] + simu._backend.from_numpy(delta)
 
     @staticmethod
     def laser_excitation(

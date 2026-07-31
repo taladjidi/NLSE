@@ -398,3 +398,41 @@ def test_the_propagator_is_the_exponential_of_the_operator(backend) -> None:
     assert np.allclose(propagator, np.exp(operator * DZ_TEST), atol=1e-6), (
         f"the propagator is not exp(operator * dz). (Backend {backend})"
     )
+
+
+def test_add_noise_reaches_the_field(backend) -> None:
+    """The noise callback must actually perturb the field on every backend.
+
+    It wrote ``A[..., component, :, :] += delta``, and pyopencl accepts that
+    on a slice and silently discards it -- no exception raised, and the field
+    came back untouched. One call added 5e-20 on CL against 7.9e-5 on the CPU
+    and MLX, which is to say nothing at all.
+
+    One call rather than a propagation, because a propagation hides it: the
+    coupled solvers hand a callback a host copy at some steps, so a little of
+    the noise lands anyway and the run merely comes out quieter than it should
+    -- which is the harder failure to notice and the reason this is pinned at
+    the level where the write either happens or does not.
+
+    Parameters
+    ----------
+    backend : str
+        Backend to run on.
+    """
+    simu = make_solver(backend, n=32, gamma=0.07 / h_bar)
+    simu._current_delta_z = 1e-3
+    added = {}
+    for label, amplitude in (("quiet", 0.0), ("noisy", 1.0)):
+        np.random.seed(99)
+        field = simu._backend.from_numpy(np.zeros((2, 32, 32), dtype=PRECISION_COMPLEX))
+        DDGPE.add_noise(simu, field, 0.0, 0, amplitude)
+        added[label] = np.abs(np.asarray(as_numpy(simu, field))).max()
+
+    assert added["quiet"] == 0.0, (
+        f"asking for no noise perturbed the field anyway. (Backend {backend})"
+    )
+    assert added["noisy"] > 1e-6, (
+        f"add_noise left the field unchanged on {backend}: it ran without "
+        f"raising and wrote nothing, which is what an in-place add on a slice "
+        f"does on a backend that quietly drops it"
+    )
