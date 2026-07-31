@@ -275,6 +275,55 @@ single largest item in a CPU step. And the nonlinear kernels are the only ones
 far from bandwidth — they are compute-bound on transcendentals, not memory-bound,
 so bandwidth tricks do nothing for them and vice versa.
 
+## Doing less work
+
+Worth more than every kernel below put together, and measured with
+`benchmarks/work_precision.py`, which scores wall clock against error rather
+than against a step count.
+
+**The error has a minimum, and the default step is on the wrong side of it —
+open.** In complex64 split-step is not limited by the splitting but by
+round-off accumulating over steps, so refining past the optimum costs time and
+accuracy together. Measured on a self-focusing beam, 256², Strang:
+
+| rad/step | 0.05 | 0.1 (default) | 0.2 | **0.4** | 0.8 | 1.5 |
+|---|---|---|---|---|---|---|
+| time | 117 ms | 59 ms | 30 ms | **16 ms** | 8.5 ms | 5.2 ms |
+| rel. error | 2.1e-4 | 1.0e-4 | 5.5e-5 | **3.3e-5** | 4.3e-5 | 1.2e-4 |
+
+The optimum sits at 0.4–0.8 rad across a 16x range of propagation distance
+(0.4, 0.4, 0.8 at L = 1.25e-3, 5e-3, 2e-2), so it is not an artefact of one
+problem. Against the 0.1 default, 0.4 is **3.4–4x faster and 1.8–3.8x more
+accurate at the same time** — there is no trade being made.
+
+**RK4 wants the opposite step, and shares the constant.** Its optimum is
+~0.02 rad; at the shared 0.1 default it returns 5.6e-4 where 0.02 returns
+2.3e-6. So the one default is four times too fine for split-step and five times
+too coarse for RK4. It also means RK4 at its default is worse than split-step
+at *any* step, for six times the cost: split-step at 0.4 matches RK4 at 0.05 to
+within 2% of error and runs 42x faster.
+
+**Why this is not a one-line change**, and why the constant is still 0.1: the
+default is also where `adapt_delta_z_to_error` starts, and that controller's
+error estimate has a floor of ~0.8 rad — below it, one step and two halves
+differ by round-off rather than by splitting error. Started at 0.4 the estimate
+reads as "no error at all", the controller doubles the step until the answer is
+unrecognisable, and the run returns 28% error. Raising the default also lets
+`DEFAULT_MIN_STEPS` bind on shorter problems, at which point the step stops
+tracking the field. Both are caught by the suite. The fix is a design question
+— separate the fixed-step default from the adaptive controller's start, or cap
+the controller by the physics — not a constant.
+
+**Higher-order splitting (Yoshida, Blanes–Moan) — rejected without building
+it.** The textbook answer to "do less work" is a 4th-order composition, three
+Strang sub-steps per step for an error of O(dz⁴). It cannot pay here: the
+complex64 round-off floor caps split-step at ~3e-5 whatever the scheme, Strang
+already reaches it at 0.4 rad in 16 ms, and a 4th-order step costs three
+transform pairs. It would buy a coarser step to reach a floor already reached.
+*Challenge this* in complex128, where the floor moves down by orders of
+magnitude and the asymptotics come back — at 1e-9 a 4th-order scheme should win
+by a wide margin.
+
 ## Cross-cutting
 
 **Propagator caching — deployed.** Linear propagators are cached by
