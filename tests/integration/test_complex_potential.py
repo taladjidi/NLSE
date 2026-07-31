@@ -167,7 +167,7 @@ def test_the_imaginary_part_sets_the_direction(backend_name):
 @pytest.mark.parametrize(
     "field_dtype,expected",
     [(np.complex64, np.complex64), (np.complex128, np.complex128)],
-    ids=["single", "double"],
+    ids=["lie", "strang"],
 )
 def test_potential_dtype_follows_the_field(backend_name, field_dtype, expected):
     """V is transferred at the field's width, complex staying complex.

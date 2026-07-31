@@ -43,7 +43,7 @@ def main():
         L,
         verbose=True,
         plot=True,
-        precision="single",
+        splitting="lie",
     )
 
 

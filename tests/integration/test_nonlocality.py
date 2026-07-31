@@ -253,7 +253,7 @@ def test_nonlocality():
             L,
             verbose=False,
             plot=False,
-            precision="single",
+            splitting="lie",
             delta_z=1e-5,
         )
         arr = E.real * E.real + E.imag * E.imag
@@ -267,7 +267,7 @@ def test_nonlocality():
             L,
             verbose=False,
             plot=False,
-            precision="single",
+            splitting="lie",
             delta_z=1e-5,
         )
         arr = E.real * E.real + E.imag * E.imag
@@ -281,7 +281,7 @@ def test_nonlocality():
             L,
             verbose=False,
             plot=False,
-            precision="single",
+            splitting="lie",
             delta_z=1e-5,
         )
         arr = E.real * E.real + E.imag * E.imag
@@ -295,7 +295,7 @@ def test_nonlocality():
             L,
             verbose=False,
             plot=False,
-            precision="single",
+            splitting="lie",
             delta_z=1e-5,
         )
         arr = E.real * E.real + E.imag * E.imag
@@ -309,7 +309,7 @@ def test_nonlocality():
             L,
             verbose=False,
             plot=False,
-            precision="single",
+            splitting="lie",
         )
         arr = E.real * E.real + E.imag * E.imag
         arr *= simu_gpe.delta_X * simu_gpe.delta_Y

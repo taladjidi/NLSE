@@ -78,7 +78,7 @@ class Backend(ABC):
     supports_unnormalized_ifft = False
 
     # kernels.split_step_fused(
-    #     A, propagator, V_scaled, dz, alpha, g, Isat, precision, plan,
+    #     A, propagator, V_scaled, dz, alpha, g, Isat, splitting, plan,
     #     unnorm_ifft=False)
     # A whole single-component split step without returning to Python.
     has_fused_split_step = False
@@ -110,7 +110,7 @@ class Backend(ABC):
 
     # kernels.split_step_coupled_fused(
     #     A, propagator, V1_scaled, V2_scaled, dz, alpha1, alpha2,
-    #     g11, g12, g22, Isat1, Isat2, precision, plan, omega=None,
+    #     g11, g12, g22, Isat1, Isat2, splitting, plan, omega=None,
     #     unnorm_ifft=False)
     has_fused_coupled_split_step = False
 

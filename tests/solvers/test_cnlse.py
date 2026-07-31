@@ -191,7 +191,7 @@ def test_split_step(backend) -> None:
         simu.propagator,
         simu.plans,
         0,
-        precision="double",
+        splitting="strang",
     )
     np.testing.assert_allclose(
         as_numpy(simu, A),
@@ -208,7 +208,7 @@ def test_out_field(backend) -> None:
     E = np.ones((2, N, N), dtype=PRECISION_COMPLEX)
     simu = make_solver(backend, alpha=0)
     E = simu.out_field(
-        E, L, verbose=False, plot=False, precision="single", delta_z=DZ_TEST
+        E, L, verbose=False, plot=False, splitting="lie", delta_z=DZ_TEST
     )
     norm = np.sum(
         np.abs(E) ** 2 * simu.delta_X * simu.delta_Y * c * epsilon_0 / 2,

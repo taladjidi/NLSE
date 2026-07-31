@@ -205,7 +205,7 @@ def _trial_propagation(simu: NLSE, A: np.ndarray, step: float, count: int):
         simu._send_propagator_to_gpu()
         for _ in range(count):
             trial = simu.split_step(
-                trial, scratch, simu.V, simu.propagator, simu.plans, step, "double"
+                trial, scratch, simu.V, simu.propagator, simu.plans, step, "strang"
             )
     finally:
         simu.propagator, simu._propagator_fft = saved

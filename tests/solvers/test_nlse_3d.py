@@ -116,7 +116,7 @@ def test_a_linear_run_does_not_depend_on_the_step_count(backend) -> None:
                 delta_z=L / steps,
                 verbose=False,
                 plot=False,
-                precision="double",
+                splitting="strang",
                 method="split_step",
             ),
         )
@@ -258,7 +258,7 @@ def test_split_step(backend) -> None:
     if simu._backend.is_device_backend:
         simu._send_arrays_to_gpu()
     A = simu.split_step(
-        A, A_sq, simu.V, simu.propagator, simu.plans, 0, precision="double"
+        A, A_sq, simu.V, simu.propagator, simu.plans, 0, splitting="strang"
     )
     np.testing.assert_allclose(
         as_numpy(simu, A),
@@ -278,7 +278,7 @@ def test_out_field(backend) -> None:
     # short enough for the (saturated) absorption to be negligible. Pin the
     # step rather than propagate over whatever the solver would choose.
     E = simu.out_field(
-        E0, L / 1000, delta_z=L / 1000, verbose=False, plot=False, precision="single"
+        E0, L / 1000, delta_z=L / 1000, verbose=False, plot=False, splitting="lie"
     )
     norm = np.sum(np.abs(E) ** 2 * simu.delta_X * simu.delta_Y * simu.delta_T)
     norm *= c * epsilon_0 / 2

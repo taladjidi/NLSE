@@ -199,10 +199,10 @@ class CNLSE(NLSE):
         }
 
     def _precompute_step_constants(
-        self, V: np.ndarray | None, precision: str = "single"
+        self, V: np.ndarray | None, splitting: str = "lie"
     ) -> None:
         """Pre-compute constants for coupled propagation steps."""
-        super()._precompute_step_constants(V, precision)
+        super()._precompute_step_constants(V, splitting)
         self._V2_scaled = None if V is None else V * self._k2_half
         # The kernels see one component at a time, so the constants they take
         # must broadcast against a component rather than against the pair.
@@ -679,7 +679,7 @@ class CNLSE(NLSE):
         propagator: np.ndarray,
         plans: list,
         delta_z: float,
-        precision: str = "single",
+        splitting: str = "lie",
     ) -> np.ndarray:
         """Split step function for one propagation step.
 
@@ -700,9 +700,9 @@ class CNLSE(NLSE):
         delta_z : float
             Step to take. Must match the propagator, which was built
             from it.
-        precision : str, optional
+        splitting : str, optional
             Single or double application of the
-            nonlinear propagation step. Defaults to "single".
+            nonlinear propagation step. Defaults to "lie".
 
         Returns
         -------
@@ -742,11 +742,11 @@ class CNLSE(NLSE):
             A,
             (alpha_half, alpha2_half, g11, g12, g22, Isat_conv, Isat_conv2),
         ):
-            dz = delta_z / 2 if precision == "double" else delta_z
+            dz = delta_z / 2 if splitting == "strang" else delta_z
             prop, unnorm = self._fused_propagator(propagator)
             omega_half = (
                 self.omega / 2
-                if (precision == "single" and self.omega is not None)
+                if (splitting == "lie" and self.omega is not None)
                 else None
             )
             return kernels.split_step_coupled_fused(
@@ -762,14 +762,14 @@ class CNLSE(NLSE):
                 g22,
                 Isat_conv,
                 Isat_conv2,
-                precision,
+                splitting,
                 plans[0],
                 omega=omega_half,
                 unnorm_ifft=unnorm,
             )
 
         # First half-step (double precision only)
-        if precision == "double":
+        if splitting == "strang":
             A1, A2 = self._take_components(A)
             A_sq, A_sq_1, A_sq_2 = self._compute_A_sq_components(A, A_sq)
             A1, A2 = self._apply_nl_prop_c(
@@ -783,10 +783,10 @@ class CNLSE(NLSE):
         # Second half-step (always)
         A1, A2 = self._take_components(A)
         A_sq, A_sq_1, A_sq_2 = self._compute_A_sq_components(A, A_sq)
-        dz_step = delta_z / 2 if precision == "double" else delta_z
+        dz_step = delta_z / 2 if splitting == "strang" else delta_z
         A1, A2 = self._apply_nl_prop_c(A1, A2, A_sq_1, A_sq_2, dz_step, *nl_args)
 
-        if precision == "single" and self.omega is not None:
+        if splitting == "lie" and self.omega is not None:
             A1, A2 = self._backend.kernels.rabi_coupling(
                 A1, A2, delta_z, self.omega / 2
             )

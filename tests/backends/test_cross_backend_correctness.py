@@ -134,7 +134,7 @@ class TestCPUCorrectness:
             simu.propagator,
             simu.plans,
             0,
-            precision="double",
+            splitting="strang",
         )
 
         np.testing.assert_allclose(
@@ -183,7 +183,7 @@ class TestCPUCorrectness:
         simu = make_nlse("CPU", alpha=0)
 
         E_in = np.ones((N, N), dtype=PRECISION_COMPLEX)
-        E_out = simu.out_field(E_in, L, verbose=False, plot=False, precision="single")
+        E_out = simu.out_field(E_in, L, verbose=False, plot=False, splitting="lie")
 
         norm = np.sum(np.abs(E_out) ** 2 * simu.delta_X * simu.delta_Y)
         norm *= c * epsilon_0 / 2
@@ -291,7 +291,7 @@ class TestNLSEvsReference:
         simu = make_nlse(backend, alpha=0)
 
         E_in = np.ones((N, N), dtype=PRECISION_COMPLEX)
-        E_out = simu.out_field(E_in, L, verbose=False, plot=False, precision="single")
+        E_out = simu.out_field(E_in, L, verbose=False, plot=False, splitting="lie")
 
         norm = np.sum(np.abs(E_out) ** 2 * simu.delta_X * simu.delta_Y)
         norm *= c * epsilon_0 / 2
@@ -519,7 +519,7 @@ class TestCNLSEvsReferenceExtended:
     def test_coupled_propagation_double_split_step(self, backend):
         """CNLSE with the double-order split step matches the CPU reference.
 
-        precision="double" is the *splitting order* — the nonlinear step is
+        splitting="strang" is the *splitting order* — the nonlinear step is
         applied around the linear one rather than once per step. It is not
         float64, and with a complex64 field it needs no fp64 support, so
         every backend runs it.
@@ -540,10 +540,10 @@ class TestCNLSEvsReferenceExtended:
         E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
 
         E_ref = simu_ref.out_field(
-            E_in.copy(), L, verbose=False, plot=False, precision="double"
+            E_in.copy(), L, verbose=False, plot=False, splitting="strang"
         )
         E_test = simu_test.out_field(
-            E_in.copy(), L, verbose=False, plot=False, precision="double"
+            E_in.copy(), L, verbose=False, plot=False, splitting="strang"
         )
 
         assert not np.any(np.isnan(E_test)), (
@@ -573,7 +573,7 @@ class TestNLSECrossMethod:
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
 
         E_ss = simu_ss.out_field(
-            E_in.copy(), L, verbose=False, plot=False, precision="single"
+            E_in.copy(), L, verbose=False, plot=False, splitting="lie"
         )
         E_rk = simu_rk.out_field(
             E_in.copy(), L, verbose=False, plot=False, method="RK4"
@@ -602,7 +602,7 @@ class TestNLSECrossMethod:
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
 
         E_ss = simu_ss.out_field(
-            E_in.copy(), L, verbose=False, plot=False, precision="single"
+            E_in.copy(), L, verbose=False, plot=False, splitting="lie"
         )
         E_rk = simu_rk.out_field(
             E_in.copy(), L, verbose=False, plot=False, method="RK4"
@@ -647,7 +647,7 @@ class TestCNLSECrossMethod:
             L,
             verbose=False,
             plot=False,
-            precision="single",
+            splitting="lie",
             delta_z=self.dz_fine,
         )
         E_rk = simu_rk.out_field(
@@ -689,7 +689,7 @@ class TestCNLSECrossMethod:
             L,
             verbose=False,
             plot=False,
-            precision="single",
+            splitting="lie",
             delta_z=self.dz_fine,
         )
         E_rk = simu_rk.out_field(
@@ -815,7 +815,7 @@ class TestNLSEPropagator:
 
         This one really is about the dtype asked for, unlike the split-step
         tests nearby, which passed complex128 here and a complex64 field to
-        the kernel: precision="double" is the order of the splitting, not the
+        the kernel: splitting="strang" is the order of the splitting, not the
         width of anything.
         """
         simu = make_nlse("CPU", n=S)
@@ -847,7 +847,7 @@ class TestNLSESplitStep:
         plans = simu._build_fft_plan(A)
         prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
 
-        simu.split_step(A, A_sq, None, prop, plans, DZ_TEST, precision="double")
+        simu.split_step(A, A_sq, None, prop, plans, DZ_TEST, splitting="strang")
         assert np.isfinite(A).all(), "Double precision split step produced NaN/Inf"
 
     def test_double_precision_with_V(self):
@@ -860,7 +860,7 @@ class TestNLSESplitStep:
         plans = simu._build_fft_plan(A)
         prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
 
-        simu.split_step(A, A_sq, V, prop, plans, DZ_TEST, precision="double")
+        simu.split_step(A, A_sq, V, prop, plans, DZ_TEST, splitting="strang")
         assert np.isfinite(A).all()
 
     def test_single_precision_with_V(self):
@@ -873,7 +873,7 @@ class TestNLSESplitStep:
         plans = simu._build_fft_plan(A)
         prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
 
-        simu.split_step(A, A_sq, V, prop, plans, DZ_TEST, precision="single")
+        simu.split_step(A, A_sq, V, prop, plans, DZ_TEST, splitting="lie")
         assert np.isfinite(A).all()
 
     def test_nonlocal_propagation(self):
@@ -886,7 +886,7 @@ class TestNLSESplitStep:
         prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
 
         # Single precision path with nl_length
-        simu.split_step(A, A_sq, None, prop, plans, DZ_TEST, precision="single")
+        simu.split_step(A, A_sq, None, prop, plans, DZ_TEST, splitting="lie")
         assert np.isfinite(A).all()
 
     def test_nonlocal_with_V(self):
@@ -899,7 +899,7 @@ class TestNLSESplitStep:
         plans = simu._build_fft_plan(A)
         prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
 
-        simu.split_step(A, A_sq, V, prop, plans, DZ_TEST, precision="single")
+        simu.split_step(A, A_sq, V, prop, plans, DZ_TEST, splitting="lie")
         assert np.isfinite(A).all()
 
     def test_nonlocal_double_precision(self):
@@ -911,7 +911,7 @@ class TestNLSESplitStep:
         plans = simu._build_fft_plan(A)
         prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
 
-        simu.split_step(A, A_sq, None, prop, plans, DZ_TEST, precision="double")
+        simu.split_step(A, A_sq, None, prop, plans, DZ_TEST, splitting="strang")
         assert np.isfinite(A).all()
 
 
@@ -929,7 +929,7 @@ class TestNLSERK4:
             L,
             verbose=False,
             plot=False,
-            precision="RK4",
+            splitting="RK4",
         )
         assert E_out.shape == (S, S)
         assert np.isfinite(E_out).all(), "RK4 output contains NaN/Inf"
@@ -961,7 +961,7 @@ class TestNLSERK4:
             L,
             verbose=False,
             plot=False,
-            precision="RK4",
+            splitting="RK4",
         )
         assert np.isfinite(E_out).all()
 
@@ -1001,14 +1001,14 @@ class TestNLSERK4:
         assert rel_error < 0.01, f"RK4 power decay incorrect: {rel_error:.2%} error"
 
     def test_rk4_method_parameter(self):
-        """method='RK4' produces same result as precision='RK4' (backward compat)."""
+        """method='RK4' produces same result as splitting='RK4' (backward compat)."""
         simu1 = make_nlse("CPU", n=S)
         simu2 = make_nlse("CPU", n=S)
         XX, YY = np.meshgrid(simu1.X, simu1.Y)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
 
         E_old = simu1.out_field(
-            E_in.copy(), L, verbose=False, plot=False, precision="RK4"
+            E_in.copy(), L, verbose=False, plot=False, splitting="RK4"
         )
         E_new = simu2.out_field(E_in.copy(), L, verbose=False, plot=False, method="RK4")
 
@@ -1016,7 +1016,7 @@ class TestNLSERK4:
             E_new,
             E_old,
             rtol=1e-6,
-            err_msg="method='RK4' does not match precision='RK4'",
+            err_msg="method='RK4' does not match splitting='RK4'",
         )
 
 
@@ -1150,7 +1150,7 @@ class TestNLSEOutField:
         XX, YY = np.meshgrid(simu.X, simu.Y)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
 
-        E_out = simu.out_field(E_in, L, verbose=False, plot=False, precision="double")
+        E_out = simu.out_field(E_in, L, verbose=False, plot=False, splitting="strang")
         assert np.isfinite(E_out).all()
 
     def test_double_precision_with_potential(self):
@@ -1160,7 +1160,7 @@ class TestNLSEOutField:
         simu.V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
 
-        E_out = simu.out_field(E_in, L, verbose=False, plot=False, precision="double")
+        E_out = simu.out_field(E_in, L, verbose=False, plot=False, splitting="strang")
         assert np.isfinite(E_out).all()
 
 
@@ -1214,7 +1214,7 @@ class TestCNLSEExtended:
         E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
         E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
 
-        E_out = simu.out_field(E_in, L, verbose=False, plot=False, precision="double")
+        E_out = simu.out_field(E_in, L, verbose=False, plot=False, splitting="strang")
         assert E_out.shape == (2, S, S)
         assert np.isfinite(E_out).all()
 
@@ -1228,7 +1228,7 @@ class TestCNLSEExtended:
         E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
         E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
 
-        E_out = simu.out_field(E_in, L, verbose=False, plot=False, precision="single")
+        E_out = simu.out_field(E_in, L, verbose=False, plot=False, splitting="lie")
         assert E_out.shape == (2, S, S)
         assert np.isfinite(E_out).all()
 
@@ -1242,7 +1242,7 @@ class TestCNLSEExtended:
         E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
         E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
 
-        E_out = simu.out_field(E_in, L, verbose=False, plot=False, precision="double")
+        E_out = simu.out_field(E_in, L, verbose=False, plot=False, splitting="strang")
         assert E_out.shape == (2, S, S)
         assert np.isfinite(E_out).all()
 
@@ -1256,7 +1256,7 @@ class TestCNLSEExtended:
         E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
         E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
 
-        E_out = simu.out_field(E_in, L, verbose=False, plot=False, precision="single")
+        E_out = simu.out_field(E_in, L, verbose=False, plot=False, splitting="lie")
         assert E_out.shape == (2, S, S)
         assert np.isfinite(E_out).all()
         # Rabi coupling should transfer some power between components
@@ -1308,7 +1308,7 @@ class TestCNLSEExtended:
         E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
         E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
 
-        E_out = simu.out_field(E_in, L, verbose=False, plot=False, precision="double")
+        E_out = simu.out_field(E_in, L, verbose=False, plot=False, splitting="strang")
         assert E_out.shape == (2, S, S)
         assert np.isfinite(E_out).all()
 
@@ -1546,20 +1546,20 @@ class TestPropagatorMatchesFieldDtype:
     and Apple OpenCL, which has no fp64 at all, could not even build the
     propagator.
 
-    The cause was `precision`, which meant two things at once: the split-step
+    The cause was `splitting`, which meant two things at once: the split-step
     order (what the docstring documents) and the propagator's float width.
-    Only the first is `precision` now; the width follows the input field.
+    Only the first is `splitting` now; the width follows the input field.
     """
 
     def test_propagator_follows_a_single_precision_field(self, backend):
         """A complex64 field must not produce a complex128 propagator."""
         simu = make_nlse(backend, n=64)
         E = np.ones((64, 64), dtype=np.complex64)
-        simu.out_field(E, L, verbose=False, plot=False, precision="double")
+        simu.out_field(E, L, verbose=False, plot=False, splitting="strang")
         prop = simu.propagator
         prop = prop if isinstance(prop, np.ndarray) else simu._backend.to_numpy(prop)
         assert np.asarray(prop).dtype == np.complex64, (
-            f"{backend}: precision='double' built a "
+            f"{backend}: splitting='strang' built a "
             f"{np.asarray(prop).dtype} propagator for a complex64 field. The "
             f"kernels read it at the field's width, so it comes back NaN."
         )
@@ -1567,12 +1567,12 @@ class TestPropagatorMatchesFieldDtype:
     def test_precision_double_needs_no_fp64(self, backend):
         """The double-order split step must run on a device without fp64.
 
-        precision="double" is the splitting order, not float64. Requiring
+        splitting="strang" is the splitting order, not float64. Requiring
         fp64 for it made every fp64-less backend skip tests it could run.
         """
         simu = make_nlse(backend, n=64)
         E = np.exp(-(simu.XX**2 + simu.YY**2) / (2.23e-3) ** 2).astype(np.complex64)
-        out = simu.out_field(E.copy(), L, verbose=False, plot=False, precision="double")
+        out = simu.out_field(E.copy(), L, verbose=False, plot=False, splitting="strang")
         out = out if isinstance(out, np.ndarray) else simu._backend.to_numpy(out)
         assert np.all(np.isfinite(np.asarray(out))), (
             f"{backend}: the double-order split step produced non-finite "
@@ -1585,7 +1585,7 @@ class TestPropagatorMatchesFieldDtype:
         if not simu._backend.supports_double_precision():
             pytest.skip(f"{backend} has no fp64, so a complex128 field cannot run")
         E = np.ones((64, 64), dtype=np.complex128)
-        simu.out_field(E, L, verbose=False, plot=False, precision="double")
+        simu.out_field(E, L, verbose=False, plot=False, splitting="strang")
         prop = simu.propagator
         prop = prop if isinstance(prop, np.ndarray) else simu._backend.to_numpy(prop)
         assert np.asarray(prop).dtype == np.complex128, (

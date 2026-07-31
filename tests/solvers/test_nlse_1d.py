@@ -70,7 +70,7 @@ def test_split_step(backend) -> None:
     if simu._backend.is_device_backend:
         simu._send_arrays_to_gpu()
     A = simu.split_step(
-        A, A_sq, simu.V, simu.propagator, simu.plans, 0, precision="double"
+        A, A_sq, simu.V, simu.propagator, simu.plans, 0, splitting="strang"
     )
     np.testing.assert_allclose(
         as_numpy(simu, A),
@@ -85,7 +85,7 @@ def test_out_field(backend) -> None:
     simu = NLSE_1d(0, power, window, n2, None, L, NX=N, Isat=Isat, backend=backend)
     E0 = np.ones(N, dtype=PRECISION_COMPLEX)
     A = simu.out_field(
-        E0, DZ_TEST, delta_z=DZ_TEST, verbose=False, plot=False, precision="single"
+        E0, DZ_TEST, delta_z=DZ_TEST, verbose=False, plot=False, splitting="lie"
     )
     rho = A.real * A.real + A.imag * A.imag
     norm = (rho * simu.delta_X**2).sum(axis=simu._last_axes)

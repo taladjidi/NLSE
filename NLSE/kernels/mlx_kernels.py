@@ -454,8 +454,8 @@ def linear_step(
 # ── Fused split step (nl_length == 0 only) ───────────────────────────────────
 
 
-def _make_split_step(precision, has_V, axes):
-    if precision == "single" and not has_V:
+def _make_split_step(splitting, has_V, axes):
+    if splitting == "lie" and not has_V:
 
         def _pure(A, propagator, dz, alpha, g, Isat):
             A = mx.fft.fftn(A, axes=axes)
@@ -465,7 +465,7 @@ def _make_split_step(precision, has_V, axes):
             sat = 1 / (1 + A_sq / Isat)
             return A * mx.exp(dz * (1j * g * A_sq * sat - alpha * sat))
 
-    elif precision == "single" and has_V:
+    elif splitting == "lie" and has_V:
 
         def _pure(A, propagator, V_scaled, dz, alpha, g, Isat):
             A = mx.fft.fftn(A, axes=axes)
@@ -475,7 +475,7 @@ def _make_split_step(precision, has_V, axes):
             sat = 1 / (1 + A_sq / Isat)
             return A * mx.exp(dz * (1j * g * A_sq * sat - alpha * sat + 1j * V_scaled))
 
-    elif precision == "double" and not has_V:
+    elif splitting == "strang" and not has_V:
 
         def _pure(A, propagator, dz_half, alpha, g, Isat):
             A_sq = (A * mx.conj(A)).real
@@ -519,7 +519,7 @@ def split_step_fused(
     alpha: float,
     g: float,
     Isat: float,
-    precision: str,
+    splitting: str,
     plan: tuple,
     unnorm_ifft: bool = False,
 ) -> mx.array:
@@ -541,8 +541,8 @@ def split_step_fused(
         Nonlinear interaction strength.
     Isat : float
         Saturation intensity (converted units).
-    precision : str
-        "single" or "double" split step precision.
+    splitting : str
+        "lie" or "strang" split step splitting.
     plan : tuple
         FFT axes (MLX has no plan objects).
     unnorm_ifft : bool
@@ -555,9 +555,9 @@ def split_step_fused(
         The propagated field.
     """
     axes = plan
-    key = (precision, V_scaled is not None, axes)
+    key = (splitting, V_scaled is not None, axes)
     if key not in _SPLIT_STEP_CACHE:
-        _SPLIT_STEP_CACHE[key] = _make_split_step(precision, V_scaled is not None, axes)
+        _SPLIT_STEP_CACHE[key] = _make_split_step(splitting, V_scaled is not None, axes)
     fn = _SPLIT_STEP_CACHE[key]
     if V_scaled is not None:
         return fn(
@@ -1031,7 +1031,7 @@ def split_step_rk4_fused(
 # ── Fused coupled split step (nl_length == 0) ─────────────────────────────
 
 
-def _make_split_step_coupled(precision, has_V, has_omega, axes):
+def _make_split_step_coupled(splitting, has_V, has_omega, axes):
     """Build the fused coupled step for one shape of the problem.
 
     Six variants over three choices: a potential or not, Rabi coupling or not,
@@ -1069,7 +1069,7 @@ def _make_split_step_coupled(precision, has_V, has_omega, axes):
         """Rotate the two components into each other."""
         return cos_val * A1 - 1j * sin_val * A2, cos_val * A2 - 1j * sin_val * A1
 
-    if precision == "single" and not has_V and not has_omega:
+    if splitting == "lie" and not has_V and not has_omega:
 
         def _pure(A, propagator, dz, alpha1, alpha2, g11, g12, g22, Isat1, Isat2):
             A = linear(A, propagator)
@@ -1078,7 +1078,7 @@ def _make_split_step_coupled(precision, has_V, has_omega, axes):
             )
             return mx.stack([A1, A2])
 
-    elif precision == "single" and not has_V and has_omega:
+    elif splitting == "lie" and not has_V and has_omega:
 
         def _pure(
             A,
@@ -1100,7 +1100,7 @@ def _make_split_step_coupled(precision, has_V, has_omega, axes):
             )
             return mx.stack(list(rabi(A1, A2, cos_val, sin_val)))
 
-    elif precision == "single" and has_V and not has_omega:
+    elif splitting == "lie" and has_V and not has_omega:
 
         def _pure(
             A,
@@ -1133,7 +1133,7 @@ def _make_split_step_coupled(precision, has_V, has_omega, axes):
             )
             return mx.stack([A1, A2])
 
-    elif precision == "single" and has_V and has_omega:
+    elif splitting == "lie" and has_V and has_omega:
 
         def _pure(
             A,
@@ -1168,7 +1168,7 @@ def _make_split_step_coupled(precision, has_V, has_omega, axes):
             )
             return mx.stack(list(rabi(A1, A2, cos_val, sin_val)))
 
-    elif precision == "double" and not has_V:
+    elif splitting == "strang" and not has_V:
 
         def _pure(A, propagator, dz_half, alpha1, alpha2, g11, g12, g22, Isat1, Isat2):
             args = (alpha1, alpha2, g11, g12, g22, Isat1, Isat2, None, None)
@@ -1218,7 +1218,7 @@ def split_step_coupled_fused(
     g22: float,
     Isat1: float,
     Isat2: float,
-    precision: str,
+    splitting: str,
     plan: tuple,
     omega: float | None = None,
     unnorm_ifft: bool = False,
@@ -1251,8 +1251,8 @@ def split_step_coupled_fused(
         Saturation, component 1.
     Isat2 : float
         Saturation, component 2.
-    precision : str
-        "single" or "double".
+    splitting : str
+        "lie" or "strang".
     plan : tuple
         FFT axes (MLX has no plan objects).
     omega : float or None
@@ -1268,11 +1268,11 @@ def split_step_coupled_fused(
     """
     axes = plan
     has_V = V1_scaled is not None
-    has_omega = omega is not None and precision == "single"
-    key = (precision, has_V, has_omega, axes)
+    has_omega = omega is not None and splitting == "lie"
+    key = (splitting, has_V, has_omega, axes)
     if key not in _SPLIT_STEP_COUPLED_CACHE:
         _SPLIT_STEP_COUPLED_CACHE[key] = _make_split_step_coupled(
-            precision, has_V, has_omega, axes
+            splitting, has_V, has_omega, axes
         )
     fn = _SPLIT_STEP_COUPLED_CACHE[key]
     dz_mx = _to_mx(dz)

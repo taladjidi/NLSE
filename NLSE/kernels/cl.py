@@ -1312,7 +1312,7 @@ class OpenCLKernels:
         alpha: float,
         g: float,
         Isat: float,
-        precision: str,
+        splitting: str,
         plan,
         unnorm_ifft: bool = False,
     ) -> cla.Array:
@@ -1339,8 +1339,8 @@ class OpenCLKernels:
             Nonlinear interaction strength.
         Isat : float
             Saturation intensity (converted units).
-        precision : str
-            "single" or "double".
+        splitting : str
+            "lie" or "strang".
         plan : _VkFFTPlan
             Pre-built FFT plan.
         unnorm_ifft : bool
@@ -1361,8 +1361,8 @@ class OpenCLKernels:
             else:
                 self.square_mod_nl_prop(A, step, alpha, g, Isat)
 
-        # Double precision: NL half-step before linear step
-        if precision == "double":
+        # Strang: NL half-step before the linear step
+        if splitting == "strang":
             nonlinear(dz)
 
         # Linear step: FFT → propagator multiply → IFFT
@@ -1456,7 +1456,7 @@ class OpenCLKernels:
         g22: float,
         Isat1: float,
         Isat2: float,
-        precision: str,
+        splitting: str,
         plan,
         omega: float | None = None,
         unnorm_ifft: bool = False,
@@ -1489,8 +1489,8 @@ class OpenCLKernels:
             Saturation intensity, component 1.
         Isat2 : float
             Saturation intensity, component 2.
-        precision : str
-            "single" or "double".
+        splitting : str
+            "lie" or "strang".
         plan : VkFFT plan
             Pre-built FFT plan.
         omega : float or None
@@ -1513,8 +1513,8 @@ class OpenCLKernels:
             A.dtype, dz, alpha1, alpha2, g11, g12, g22, Isat1, Isat2
         )
 
-        # Double precision: NL half-step before linear
-        if precision == "double":
+        # Strang: NL half-step before the linear step
+        if splitting == "strang":
             self._launch_coupled(
                 kerns,
                 "coupled_nl_prop_c",
@@ -1550,7 +1550,7 @@ class OpenCLKernels:
             params,
         )
 
-        # Rabi coupling (single precision only)
+        # Rabi coupling (Lie splitting only)
         if omega is not None:
             cos_val = np.cos(omega * float(params[0]))  # omega * dz
             sin_val = np.sin(omega * float(params[0]))

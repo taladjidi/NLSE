@@ -138,7 +138,7 @@ def propagate(cls, backend_name, level, monkeypatch, method="RK4", dtype=None, *
         L,
         verbose=False,
         plot=False,
-        precision="single",
+        splitting="lie",
         method=method,
     )
     return np.asarray(solver._backend.to_numpy(out))
@@ -202,7 +202,7 @@ def test_the_fused_levels_agree_bitwise(backend_name, cls, kind, monkeypatch):
 @pytest.mark.parametrize("cls", SOLVERS, ids=lambda c: c.__name__)
 @pytest.mark.parametrize("level", ["stage", "rhs"])
 def test_each_rk4_level_matches_in_double(backend_name, cls, level, monkeypatch):
-    """The same, at the other precision."""
+    """The same, at the other splitting."""
     backend = get_backend(backend_name)
     if not getattr(backend, "has_fused_rk4_stage", False):
         pytest.skip(f"{backend_name} has no fused RK4 path")
@@ -255,7 +255,7 @@ def test_the_fused_split_step_carries_the_rabi_coupling(backend_name, monkeypatc
                     L,
                     verbose=False,
                     plot=False,
-                    precision="single",
+                    splitting="lie",
                     method="split_step",
                 )
             )
@@ -292,7 +292,7 @@ def test_the_top_level_is_the_one_taken(backend_name, cls, monkeypatch):
         monkeypatch.setattr(kernels, name, spy)
 
     solver.out_field(
-        gaussian(cls), L, verbose=False, plot=False, precision="single", method="RK4"
+        gaussian(cls), L, verbose=False, plot=False, splitting="lie", method="RK4"
     )
     assert counts.get(top, 0) > 0, (
         f"{cls.__name__} on {backend_name} never reached {top}: {counts}"
@@ -324,7 +324,7 @@ def test_a_fused_run_splits_no_components(backend_name, cls, method, monkeypatch
         monkeypatch.setattr(type(solver), name, spy)
 
     solver.out_field(
-        gaussian(cls), L, verbose=False, plot=False, precision="single", method=method
+        gaussian(cls), L, verbose=False, plot=False, splitting="lie", method=method
     )
     assert not calls, (
         f"{backend_name} declares a fused coupled path but {method} still "
@@ -384,7 +384,7 @@ def test_a_batched_run_still_gives_the_same_answer(backend_name, monkeypatch):
                 L,
                 verbose=False,
                 plot=False,
-                precision="single",
+                splitting="lie",
                 method="RK4",
             )
         )

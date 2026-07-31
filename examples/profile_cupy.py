@@ -88,7 +88,7 @@ def warmup(simu, E_0):
         z_warmup,
         verbose=False,
         plot=False,
-        precision="single",
+        splitting="lie",
         delta_z=DELTA_Z,
     )
     # Reset propagator so next call rebuilds cleanly
@@ -97,7 +97,7 @@ def warmup(simu, E_0):
     cp.cuda.Device().synchronize()
 
 
-def profile_method(simu, E_0, z_run, method, precision="single"):
+def profile_method(simu, E_0, z_run, method, splitting="lie"):
     """Profile one propagation method inside an NVTX range.
 
     Returns (cpu_seconds, gpu_milliseconds).
@@ -119,7 +119,7 @@ def profile_method(simu, E_0, z_run, method, precision="single"):
         z_run,
         verbose=False,
         plot=False,
-        precision=precision,
+        splitting=splitting,
         method=method,
         delta_z=DELTA_Z,
     )

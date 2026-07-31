@@ -626,7 +626,7 @@ class TestStepLimitWithBatchedParameters:
         """A batched g must reduce to one scalar step limit."""
         simu = make_solver(n2=self.batched_n2())
         E = self.batched_input(simu)
-        simu._precompute_step_constants(None, "single")
+        simu._precompute_step_constants(None, "lie")
         max_dz = simu._split_step_max_dz(E)
         assert np.isscalar(max_dz) or np.ndim(max_dz) == 0, (
             f"step limit must be a scalar, got {type(max_dz)} / {max_dz!r}"
@@ -637,12 +637,12 @@ class TestStepLimitWithBatchedParameters:
         """The limit must come from the largest nonlinear rate in the batch."""
         simu = make_solver(n2=self.batched_n2())
         E = self.batched_input(simu)
-        simu._precompute_step_constants(None, "single")
+        simu._precompute_step_constants(None, "lie")
         batched = simu._split_step_max_dz(E)
 
         # The strongest n2 in the batch alone must give the same limit.
         strongest = make_solver(n2=float(np.min(self.batched_n2()[:, 0, 0])))
-        strongest._precompute_step_constants(None, "single")
+        strongest._precompute_step_constants(None, "lie")
         single = strongest._split_step_max_dz(E[0])
 
         np.testing.assert_allclose(
@@ -857,7 +857,7 @@ class TestStepLimitEnergies:
         """Return a solver with its step constants and field ready."""
         simu = make_solver(V=V, backend=backend)
         E = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(PRECISION_COMPLEX)
-        simu._precompute_step_constants(V, "single")
+        simu._precompute_step_constants(V, "lie")
         A, _ = simu._prepare_output_array(E, True)
         return simu, A
 
@@ -927,7 +927,7 @@ class TestStepLimitEnergies:
         """
         linear, A = self.prepared(None)
         linear.n2 = 0.0
-        linear._precompute_step_constants(None, "single")
+        linear._precompute_step_constants(None, "lie")
         rates = linear._energy_rates(A)
         assert rates["kinetic"] > 0, "precondition: dispersion is present"
         assert linear._split_step_max_dz(A) == np.inf, (
@@ -966,7 +966,7 @@ class TestStepConstantTable:
     """Each step constant is defined once, by ``_step_constants``.
 
     ``_precompute_step_constants`` writes the table onto the solver as
-    fixed-precision attributes for the kernels. Readers that run before a
+    fixed-splitting attributes for the kernels. Readers that run before a
     propagation go through ``_constant``, which returns the attribute once it
     exists and the table's value until then. The two must agree.
     """
@@ -1017,7 +1017,7 @@ class TestStepConstantTable:
                 f"{name} was already set before any precompute"
             )
 
-        simu._precompute_step_constants(None, "single")
+        simu._precompute_step_constants(None, "lie")
 
         for name in names:
             assert getattr(simu, name, None) is not None, (
@@ -1031,7 +1031,7 @@ class TestStepConstantTable:
         step the kernels then take.
         """
         before = {k: float(np.asarray(v)) for k, v in simu._step_constants().items()}
-        simu._precompute_step_constants(None, "single")
+        simu._precompute_step_constants(None, "lie")
 
         for name, value in before.items():
             np.testing.assert_allclose(

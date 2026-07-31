@@ -38,6 +38,45 @@ if __CUPY_AVAILABLE__:
 # every few steps, and an unbounded cache then holds a field per distinct step.
 PROPAGATOR_CACHE_SIZE = 8
 
+# Yoshida's triple jump, which makes a fourth-order step out of three Strang
+# ones: S4(h) = S2(w1 h) S2(w0 h) S2(w1 h), with 2*w1 + w0 = 1. The middle
+# weight is negative, which is what buys the order and what makes the scheme
+# unsuitable for a lossy medium -- a backwards step there amplifies.
+_CBRT2 = 2.0 ** (1.0 / 3.0)
+YOSHIDA_WEIGHTS = (
+    1.0 / (2.0 - _CBRT2),
+    -_CBRT2 / (2.0 - _CBRT2),
+    1.0 / (2.0 - _CBRT2),
+)
+# The longest sub-step a Yoshida step takes, in units of the step itself. The
+# phase limits are written per real-space application, so they bind on this.
+YOSHIDA_SPAN = max(abs(w) for w in YOSHIDA_WEIGHTS)
+
+# What the splitting used to be called. "single" and "double" named the number
+# of nonlinear applications per step, which readers took for float width --
+# the more so because the field's dtype really does choose that, separately.
+# With a third scheme there is no "triple", so they are named for what they are.
+LEGACY_SPLITTING = {"single": "lie", "double": "strang"}
+SPLITTINGS = ("lie", "strang", "yoshida")
+
+
+def _splitting_from_legacy(splitting: str, precision: str | None) -> str:
+    """Return the splitting, accepting the old spelling and the old keyword."""
+    if precision is not None:
+        warnings.warn(
+            "out_field(precision=...) is now out_field(splitting=...), with "
+            "'single' and 'double' spelled 'lie' and 'strang'. The old keyword "
+            "still works and will be removed in a future release.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        splitting = precision
+    if splitting in LEGACY_SPLITTING:
+        return LEGACY_SPLITTING[splitting]
+    if splitting not in SPLITTINGS:
+        raise ValueError(f"splitting must be one of {SPLITTINGS}, got {splitting!r}")
+    return splitting
+
 
 # Backends that render to a file rather than a window. Calling show() on one
 # does nothing except warn, and a library should not warn a user for the
@@ -229,7 +268,7 @@ class NLSE(StepSize):
 
         # Propagator cache for repeated calls with same parameters
         # Bounded, least-recently-used. Dispersion operators live apart:
-        # there are only a handful, one per grid and precision, and evicting
+        # there are only a handful, one per grid and splitting, and evicting
         # one would cost the host build the propagators no longer pay.
         self._propagator_cache: OrderedDict[tuple, Any] = OrderedDict()
         self._dispersion_cache: dict[tuple, Any] = {}
@@ -253,12 +292,13 @@ class NLSE(StepSize):
         z: float,
         delta_z: float | complex | None = None,
         plot: bool = False,
-        precision: str = "single",
+        splitting: str = "lie",
         method: str = "split_step",
         verbose: bool = True,
         normalize: bool = True,
         callback: list[Callable] | Callable | None = None,
         callback_args: list[tuple] | tuple = (),
+        precision: str | None = None,
     ) -> np.ndarray:
         """Propagate the field at a distance z.
 
@@ -285,15 +325,26 @@ class NLSE(StepSize):
             convergence. Pass a complex value for imaginary time evolution.
         plot : bool, optional
             Plots the results. Defaults to False.
-        precision : str, optional
-            Order of the split step, *not* the floating-point width. Does a
-            "single" or a "double" application of the nonlinear term, giving
-            O(dz) or O(dz^3) accuracy. Defaults to "single".
+        splitting : str, optional
+            How the linear and nonlinear parts are composed, *not* the
+            floating-point width. Defaults to "lie".
+
+            - "lie": one nonlinear application per step, O(dz), one
+              transform pair.
+            - "strang": the nonlinear step split around the linear one,
+              O(dz^2) globally, and merged between consecutive steps so it
+              still costs one transform pair.
+            - "yoshida": three Strang sub-steps composed to O(dz^4), three
+              transform pairs. Worth it only in complex128 -- see the
+              warning it raises otherwise.
 
             The floating-point width comes from ``E_in``: pass a complex128
             field for float64 arithmetic, on a device that supports it. The
             propagator is built to match, because the kernels select their
             precision from the field and then read the propagator with it.
+        precision : str, optional
+            Deprecated spelling of ``splitting``, with "single" for "lie" and
+            "double" for "strang".
         method : str, optional
             Integration method: "split_step" or "RK4".
             Defaults to "split_step".
@@ -315,10 +366,11 @@ class NLSE(StepSize):
         np.ndarray
             Propagated field in proper units V/m.
         """
-        # Backward compat: precision="RK4" maps to method="RK4"
-        if precision == "RK4":
+        # Backward compat: splitting="RK4" maps to method="RK4"
+        if splitting == "RK4":
             method = "RK4"
-            precision = "single"
+            splitting = "lie"
+        splitting = _splitting_from_legacy(splitting, precision)
 
         assert (
             E_in.shape[self._last_axes[0] :] == self.XX.shape[self._last_axes[0] :]
@@ -337,7 +389,7 @@ class NLSE(StepSize):
             A, A_sq = self._prepare_output_array(E_in, normalize)
             self.plans = self._build_fft_plan(A)
             self._allocate_rk4_buffers(A, method)
-            self._precompute_step_constants(V, precision)
+            self._precompute_step_constants(V, splitting)
 
             # Settle the step before building anything that depends on it.
             if delta_z is None:
@@ -371,7 +423,7 @@ class NLSE(StepSize):
                     V,
                     z,
                     delta_z,
-                    precision,
+                    splitting,
                     method,
                     callback,
                     callback_args,
@@ -403,7 +455,7 @@ class NLSE(StepSize):
         propagator: np.ndarray,
         plans: list,
         delta_z: float,
-        precision: str = "single",
+        splitting: str = "lie",
     ) -> np.ndarray:
         """Split step function for one propagation step.
 
@@ -421,11 +473,11 @@ class NLSE(StepSize):
             List of FFT plan objects from backend.
         delta_z : float
             Step to take. Must match the propagator, which was built from it.
-        precision : str, optional
-            Order of the split step: "single" applies the nonlinear step
-            once, "double" splits it around the linear step. Not the
+        splitting : str, optional
+            Order of the split step: "lie" applies the nonlinear step
+            once, "strang" splits it around the linear step. Not the
             floating-point width, which follows the field. Defaults to
-            "single".
+            "lie".
 
         Returns
         -------
@@ -446,7 +498,7 @@ class NLSE(StepSize):
         # Fused fast path (CL, MLX). Not eligible with a nonlocal kernel,
         # which needs the convolution between |A|^2 and the nonlinear step.
         if self._backend.has_fused_split_step and self.nl_length == 0:
-            dz = delta_z / 2 if precision == "double" else delta_z
+            dz = delta_z / 2 if splitting == "strang" else delta_z
             prop, unnorm = self._fused_propagator(propagator)
             return kernels.split_step_fused(
                 A,
@@ -456,20 +508,20 @@ class NLSE(StepSize):
                 alpha_half,
                 g,
                 Isat_conv,
-                precision,
+                splitting,
                 plans[0],
                 unnorm_ifft=unnorm,
             )
 
-        # First half-step (only for precision == "double")
-        if precision == "double":
+        # First half-step (only for splitting == "strang")
+        if splitting == "strang":
             A = self._nonlinear_step(A, A_sq, V_scaled, delta_z / 2)
 
         # Linear propagation in Fourier domain
         A = self._apply_linear_step(A, propagator, plans)
 
         # Second half-step (always executed), the whole step for Lie splitting
-        dz_step = delta_z / 2 if precision == "double" else delta_z
+        dz_step = delta_z / 2 if splitting == "strang" else delta_z
         return self._nonlinear_step(A, A_sq, V_scaled, dz_step)
 
     def _nonlinear_step(self, A, A_sq, V_scaled, dz):
@@ -971,7 +1023,7 @@ class NLSE(StepSize):
     def _dispersion_on_device(self, dtype: np.dtype) -> Any:
         """Return the dispersion operator, where the backend can use it.
 
-        Built on the host once per grid and precision, then left alone.
+        Built on the host once per grid and splitting, then left alone.
 
         Parameters
         ----------
@@ -1260,7 +1312,7 @@ class NLSE(StepSize):
     def _allocate_rk4_buffers(self, A: np.ndarray, method: str) -> None:
         """Pre-allocate scratch buffers for the RK4 stepper.
 
-        The buffers take the field's own precision. Pinning them to
+        The buffers take the field's own splitting. Pinning them to
         complex64 made a double-precision run write the field into a stage
         buffer half its width, and the transform -- planned from the field --
         then met an array of the wrong dtype, which cuFFT answers with NaN
@@ -1314,7 +1366,7 @@ class NLSE(StepSize):
         return self._step_constants()[name] if value is None else value
 
     def _precompute_step_constants(
-        self, V: np.ndarray | None, precision: str = "single"
+        self, V: np.ndarray | None, splitting: str = "lie"
     ) -> None:
         """Pre-compute constants that are invariant across propagation steps.
 
@@ -1322,11 +1374,11 @@ class NLSE(StepSize):
         ----------
         V : np.ndarray or None
             Potential field.
-        precision : str
-            Order of the split step ("single" or "double"), used here only
+        splitting : str
+            Order of the split step ("lie" or "strang"), used here only
             to pick the width of the precomputed scalar constants.
         """
-        fp = np.float32 if precision == "single" else np.float64
+        fp = np.float32 if splitting == "lie" else np.float64
         for name, value in self._step_constants().items():
             # A batched parameter is an array and stays one; only scalars are
             # narrowed, so the kernels get a value of the right width.
@@ -1617,7 +1669,7 @@ class NLSE(StepSize):
     # product of the same two operators.
     _lie_step_is_strang_body = True
 
-    def _merges_strang_halves(self, precision: str) -> bool:
+    def _merges_strang_halves(self, splitting: str) -> bool:
         """Whether consecutive Strang steps may share their half steps.
 
         A Strang step is ``N(h/2) L(h) N(h/2)``, so a run of them is
@@ -1626,7 +1678,7 @@ class NLSE(StepSize):
 
         and the bracketed body is precisely a Lie step. Merging costs one
         nonlinear application for the whole run instead of one per step, and
-        the loop body becomes what ``precision="single"`` already runs, so
+        the loop body becomes what ``splitting="lie"`` already runs, so
         there is no third stepper to keep in step with the other two.
 
         It is exact only where ``N(a) N(b) == N(a + b)``. ``N`` rotates the
@@ -1637,7 +1689,7 @@ class NLSE(StepSize):
 
         Parameters
         ----------
-        precision : str
+        splitting : str
             Splitting the caller asked for. Only Strang has halves to merge.
 
         Returns
@@ -1645,7 +1697,7 @@ class NLSE(StepSize):
         bool
             True if the run may be merged.
         """
-        if precision != "double" or not self._lie_step_is_strang_body:
+        if splitting != "strang" or not self._lie_step_is_strang_body:
             return False
         if self.nl_length > 0:
             return False
@@ -1679,7 +1731,7 @@ class NLSE(StepSize):
         V,
         z,
         delta_z,
-        precision,
+        splitting,
         method,
         callback,
         callback_args,
@@ -1710,7 +1762,7 @@ class NLSE(StepSize):
         # backends (MLX) where kernels return new arrays.
         state = [A]
 
-        def _make_step(dz, body_precision=precision):
+        def _make_step(dz, body_precision=splitting):
             """Build the per-step closure for a given step size.
 
             Rebuilt when an adaptive callback changes the step, so the step
@@ -1755,14 +1807,14 @@ class NLSE(StepSize):
                 # Two segments rather than a mid-loop switch: the constants are
                 # baked into the CUDA graph that execute_loop captures, so each
                 # segment needs its own capture.
-                merged = self._merges_strang_halves(precision)
-                step = _make_step(delta_z, "single" if merged else precision)
+                merged = self._merges_strang_halves(splitting)
+                step = _make_step(delta_z, "lie" if merged else splitting)
                 self._current_delta_z = delta_z
                 state[0] = self._open_strang_bracket(merged, state[0], A_sq, delta_z)
                 self._backend.execute_loop(step, n_steps_nl)
                 state[0] = self._close_strang_bracket(merged, state[0], A_sq, delta_z)
                 if n_steps > n_steps_nl:
-                    self._disable_nonlinearity(V, precision)
+                    self._disable_nonlinearity(V, splitting)
                     state[0] = self._open_strang_bracket(
                         merged, state[0], A_sq, delta_z
                     )
@@ -1787,7 +1839,7 @@ class NLSE(StepSize):
                     pbar,
                     z_switch=self.L if n_steps_nl < n_steps else None,
                     V=V,
-                    precision=precision,
+                    splitting=splitting,
                     method=method,
                     dtype=self._field_dtype(A),
                 )
@@ -1809,7 +1861,7 @@ class NLSE(StepSize):
         pbar,
         z_switch=None,
         V=None,
-        precision="single",
+        splitting="lie",
         method="split_step",
         dtype=np.complex64,
     ):
@@ -1830,7 +1882,7 @@ class NLSE(StepSize):
         whole = z - remainder
         while abs(z_prop) < whole - 1e-12 * z:
             if z_switch is not None and not switched and abs(z_prop) >= z_switch:
-                self._disable_nonlinearity(V, precision)
+                self._disable_nonlinearity(V, splitting)
                 switched = True
             step_fn()
             # Advance before the callbacks, so the position they get is the one
@@ -1912,19 +1964,19 @@ class NLSE(StepSize):
             return n_steps
         return min(n_steps, int(np.ceil(self.L / abs(delta_z))))
 
-    def _disable_nonlinearity(self, V: np.ndarray | None, precision: str) -> None:
+    def _disable_nonlinearity(self, V: np.ndarray | None, splitting: str) -> None:
         """Zero the nonlinear coupling and re-derive the step constants.
 
         Parameters
         ----------
         V : np.ndarray or None
             Potential field, needed to re-derive the scaled potential.
-        precision : str
-            "single" or "double".
+        splitting : str
+            "lie" or "strang".
         """
         for attr in self._nonlinearity_attrs:
             setattr(self, attr, 0)
-        self._precompute_step_constants(V, precision)
+        self._precompute_step_constants(V, splitting)
 
     # Plotting helpers.
     def _to_plot_array(self, A_plot: np.ndarray, target_ndim: int) -> np.ndarray:

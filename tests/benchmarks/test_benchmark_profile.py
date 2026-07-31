@@ -277,7 +277,7 @@ class TestSolverBenchmark:
         E_in = _gaussian_field_2d(waist, simu.X, simu.Y)
 
         def propagate():
-            return _propagate(simu, E_in, 1e-3, precision="single")
+            return _propagate(simu, E_in, 1e-3, splitting="lie")
 
         result = benchmark.pedantic(propagate, rounds=10, warmup_rounds=2)
         assert result.shape == (N, N)
@@ -301,7 +301,7 @@ class TestSolverBenchmark:
         E_in = np.exp(-(simu.X**2) / waist**2).astype(PRECISION_COMPLEX)
 
         def propagate():
-            return _propagate(simu, E_in, 1e-3, precision="single")
+            return _propagate(simu, E_in, 1e-3, splitting="lie")
 
         result = benchmark.pedantic(propagate, rounds=10, warmup_rounds=2)
         assert result.shape == (N,)
@@ -333,7 +333,7 @@ class TestSolverBenchmark:
             E_in[:, :, i] = np.exp(-(XX**2 + YY**2) / waist**2)
 
         def propagate():
-            return _propagate(simu, E_in, 1e-3, precision="single")
+            return _propagate(simu, E_in, 1e-3, splitting="lie")
 
         result = benchmark.pedantic(propagate, rounds=5, warmup_rounds=1)
         assert result.shape == (N, N, N)
@@ -360,7 +360,7 @@ class TestSolverBenchmark:
         E_in = _gaussian_field_2d(waist, simu.X, simu.Y)
 
         def propagate():
-            return _propagate(simu, E_in, 1e-3, precision="single")
+            return _propagate(simu, E_in, 1e-3, splitting="lie")
 
         result = benchmark.pedantic(propagate, rounds=10, warmup_rounds=2)
         assert result.shape == (N, N)
@@ -393,7 +393,7 @@ class TestCoupledSolverBenchmark:
         E_in[1] = _gaussian_field_2d(waist * 1.2, simu.X, simu.Y) * 0.5
 
         def propagate():
-            return _propagate(simu, E_in, 1e-3, precision="single")
+            return _propagate(simu, E_in, 1e-3, splitting="lie")
 
         result = benchmark.pedantic(propagate, rounds=10, warmup_rounds=2)
         assert result.shape == (2, N, N)
@@ -420,7 +420,7 @@ class TestCoupledSolverBenchmark:
         E_in[1] = np.exp(-(simu.X**2) / (waist * 1.2) ** 2) * 0.5
 
         def propagate():
-            return _propagate(simu, E_in, 1e-3, precision="single")
+            return _propagate(simu, E_in, 1e-3, splitting="lie")
 
         result = benchmark.pedantic(propagate, rounds=10, warmup_rounds=2)
         assert result.shape == (2, N)
@@ -553,21 +553,21 @@ class TestGridScaling:
 class TestMethodAndOrder:
     """split_step against RK4, and the two split-step orders.
 
-    precision="double" splits the nonlinear step around the linear one, so
+    splitting="strang" splits the nonlinear step around the linear one, so
     it costs a second nonlinear application per step; RK4 is four stages.
     Neither was benchmarked.
     """
 
-    @pytest.mark.parametrize("precision", ["single", "double"])
+    @pytest.mark.parametrize("splitting", ["lie", "strang"])
     @pytest.mark.parametrize("backend", BACKENDS)
-    def test_split_step_order(self, benchmark, backend, precision):
+    def test_split_step_order(self, benchmark, backend, splitting):
         """Benchmark both split-step orders."""
         skip_if_backend_unavailable(backend)
         simu = _solver(backend, N)
         E_in = _field(simu, N)
         _timed(
             benchmark,
-            lambda: _propagate(simu, E_in, 1e-3, precision=precision),
+            lambda: _propagate(simu, E_in, 1e-3, splitting=splitting),
         )
 
     @pytest.mark.parametrize("backend", BACKENDS)

@@ -19,14 +19,14 @@ Each propagation step of size $\delta z$:
 
 The `precision` parameter controls the splitting scheme:
 
-**`precision="single"`** (default):
+**`splitting="lie"`** (default):
 
 - Applies the nonlinear operator once per step
 - Error: $\mathcal{O}(\delta z)$
 - Cost: 1 FFT pair per step
 - Best for: fast exploratory runs
 
-**`precision="double"`**:
+**`splitting="strang"`**:
 
 - Applies a half nonlinear step before and after the linear step (Strang splitting)
 - Error: $\mathcal{O}(\delta z^3)$
@@ -35,10 +35,10 @@ The `precision` parameter controls the splitting scheme:
 
 ```python
 # Single precision (faster)
-E_out = simu.out_field(E_in, L, precision="single")
+E_out = simu.out_field(E_in, L, splitting="lie")
 
 # Double precision (more accurate)
-E_out = simu.out_field(E_in, L, precision="double")
+E_out = simu.out_field(E_in, L, splitting="strang")
 ```
 
 ## RK4 Method
@@ -136,7 +136,7 @@ real number that rarely divides $z$.
 
 ## Tips
 
-- Start with `precision="single"` for quick iterations, switch to `"double"` for final results
+- Start with `splitting="lie"` for quick iterations, switch to `"double"` for final results
 - Use powers-of-2 grid sizes for optimal FFT performance
 - If the solver warns about step size reduction, consider using a finer initial grid or reducing the field power
 - For convergence studies, run with decreasing $\delta z$ and check that results stabilize

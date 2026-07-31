@@ -337,7 +337,7 @@ def compare(now, before, noise, revision):
     if worst > 0.20:
         print(
             "That floor is high enough to hide most changes. --rounds buys "
-            "precision (the per-side best is taken over more of them); a "
+            "splitting (the per-side best is taken over more of them); a "
             "quieter machine or fewer cells at once buys more."
         )
 

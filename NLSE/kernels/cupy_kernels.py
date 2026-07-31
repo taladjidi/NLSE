@@ -1,10 +1,10 @@
 """CUDA C kernels for CuPy backend.
 
 Pre-compiled CUDA C kernels with fused operations for maximum performance.
-Follows the same pattern as cl.py: load template, substitute precision
+Follows the same pattern as cl.py: load template, substitute splitting
 placeholders, compile once via cp.RawModule, cache, and invoke directly.
 
-Supports both single (float32/complex64) and double (float64/complex128) precision.
+Supports both single (float32/complex64) and double (float64/complex128) splitting.
 """
 
 from pathlib import Path
@@ -19,7 +19,7 @@ from .templating import COMPLEX_V_SUFFIX, REAL_V_SUFFIX
 # match: it keeps the names unmangled so get_function can find them.
 KERNEL_DECL = "__global__ void"
 
-# Module-level cache: precision string -> compiled cp.RawModule
+# Module-level cache: splitting string -> compiled cp.RawModule
 _COMPILED_MODULES = {}
 
 BLOCK_SIZE = 256
@@ -67,31 +67,31 @@ def _kernel_names():
     return _KERNEL_NAMES
 
 
-def _get_kernel_source(precision="single"):
-    """Generate CUDA C kernel source for specified precision.
+def _get_kernel_source(splitting="lie"):
+    """Generate CUDA C kernel source for specified splitting.
 
     Parameters
     ----------
-    precision : str
-        'single' for float32 or 'double' for float64
+    splitting : str
+        'lie' for float32 or 'strang' for float64
 
     Returns
     -------
     str
         String containing all kernel source code
     """
-    if precision == "single":
+    if splitting == "lie":
         fp_type = "float"
         fp2_type = "float2"
         fp_suffix = "f"
         sincos_func = "sincosf"
-    elif precision == "double":
-        fp_type = "double"
+    elif splitting == "strang":
+        fp_type = "strang"
         fp2_type = "double2"
         fp_suffix = ""
         sincos_func = "sincos"
     else:
-        raise ValueError(f"precision must be 'single' or 'double', got {precision}")
+        raise ValueError(f"splitting must be 'lie' or 'strang', got {splitting}")
 
     template = _expand_v_blocks(_load_kernel_template())
     source = template.replace("{{FP_TYPE}}", fp_type)
@@ -102,28 +102,28 @@ def _get_kernel_source(precision="single"):
     return source
 
 
-def _compile_kernels(precision="single"):
-    """Compile CUDA kernels for specified precision.
+def _compile_kernels(splitting="lie"):
+    """Compile CUDA kernels for specified splitting.
 
-    Uses module-level cache to compile only once per precision.
+    Uses module-level cache to compile only once per splitting.
 
     Parameters
     ----------
-    precision : str
-        'single' or 'double'
+    splitting : str
+        'lie' or 'strang'
 
     Returns
     -------
     cp.RawModule
         Compiled CUDA module
     """
-    if precision in _COMPILED_MODULES:
-        return _COMPILED_MODULES[precision]
+    if splitting in _COMPILED_MODULES:
+        return _COMPILED_MODULES[splitting]
 
-    source = _get_kernel_source(precision)
+    source = _get_kernel_source(splitting)
     module = cp.RawModule(code=source, options=("--use_fast_math",))
 
-    _COMPILED_MODULES[precision] = module
+    _COMPILED_MODULES[splitting] = module
     return module
 
 
@@ -222,28 +222,28 @@ class CUDAKernels:
             Dictionary of compiled kernel functions
         """
         if dtype == np.complex64:
-            precision = "single"
+            splitting = "lie"
         elif dtype == np.complex128:
-            precision = "double"
+            splitting = "strang"
         else:
             raise ValueError(
                 f"Unsupported dtype: {dtype}. Use complex64 or complex128."
             )
 
-        if precision not in self._kernels:
-            module = _compile_kernels(precision)
+        if splitting not in self._kernels:
+            module = _compile_kernels(splitting)
             # Keyed by the kernel's own name, so a V-reading kernel is reached
             # as <name> with no potential, <name>_v with a real one and
             # <name>_cv with a complex one -- see _v_kernel.
-            self._kernels[precision] = {
+            self._kernels[splitting] = {
                 name: module.get_function(name) for name in _kernel_names()
             }
 
-        return self._kernels[precision]
+        return self._kernels[splitting]
 
     @staticmethod
     def _cast(dtype, *values):
-        """Cast scalar parameters to appropriate precision.
+        """Cast scalar parameters to appropriate splitting.
 
         Parameters
         ----------
@@ -1385,7 +1385,7 @@ class CUDAKernels:
         g22,
         Isat1,
         Isat2,
-        precision,
+        splitting,
         plan,
         omega=None,
         unnorm_ifft=False,
@@ -1416,8 +1416,8 @@ class CUDAKernels:
             Cross-component interaction.
         Isat1, Isat2 : float
             Saturation intensities (converted units).
-        precision : str
-            "single" or "double".
+        splitting : str
+            "lie" or "strang".
         plan : _CuFFTPlan
             Pre-built FFT plan.
         omega : float or None
@@ -1451,7 +1451,7 @@ class CUDAKernels:
                 self._launch(kernels["coupled_nl_prop_c"], N_sq, A, *params, N_sq_i)
 
         # Double precision: a nonlinear half-step before the linear one
-        if precision == "double":
+        if splitting == "strang":
             nonlinear()
 
         plan.fft(A, A)

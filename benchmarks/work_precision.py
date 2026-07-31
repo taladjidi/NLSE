@@ -18,7 +18,7 @@ one that means the same thing across problems.
 
 The reference is complex128 with the phase per step 200x smaller than the
 finest measured point, and it is checked against a still finer one: a
-work-precision table drawn against an unconverged reference measures the
+work-splitting table drawn against an unconverged reference measures the
 reference.
 """
 
@@ -47,9 +47,9 @@ PHYSICS = {
 PHASES = (0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.4, 0.8, 1.5, 2.5)
 
 METHODS = (
-    ("split_step", "single"),
-    ("split_step", "double"),
-    ("RK4", "single"),
+    ("split_step", "lie"),
+    ("split_step", "strang"),
+    ("RK4", "lie"),
 )
 
 
@@ -77,7 +77,7 @@ def solver(backend, n, dtype):
     return _SOLVERS[key]
 
 
-def rates_of(simu, A, precision):
+def rates_of(simu, A, splitting):
     """Return the phase rates, for the field the solver will actually run.
 
     ``out_field`` normalizes the input to the requested power before it
@@ -87,15 +87,15 @@ def rates_of(simu, A, precision):
     requested step past the stability limit and made every run take one step.
     """
     prepared, _ = simu._prepare_output_array(A.copy(), normalize=True)
-    simu._precompute_step_constants(simu.V, precision)
+    simu._precompute_step_constants(simu.V, splitting)
     return simu._energy_rates(prepared)
 
 
-def run(backend, n, dtype, method, precision, phase, repeats=1):
+def run(backend, n, dtype, method, splitting, phase, repeats=1):
     """Propagate at this phase per step; return the field and the best time."""
     simu = solver(backend, n, dtype)
     A = field(n, dtype)
-    rates = rates_of(simu, A, precision)
+    rates = rates_of(simu, A, splitting)
     # The rate each method's own limit is written against: every term for
     # RK4, which approximates the whole right-hand side; the real-space terms
     # alone for split step, which applies the linear part exactly.
@@ -112,7 +112,7 @@ def run(backend, n, dtype, method, precision, phase, repeats=1):
         delta_z=delta_z,
         verbose=False,
         plot=False,
-        precision=precision,
+        splitting=splitting,
         method=method,
     )
     simu._backend.synchronize()
@@ -126,7 +126,7 @@ def run(backend, n, dtype, method, precision, phase, repeats=1):
             delta_z=delta_z,
             verbose=False,
             plot=False,
-            precision=precision,
+            splitting=splitting,
             method=method,
         )
         simu._backend.synchronize()
@@ -145,8 +145,8 @@ def error(got, reference):
 
 def reference_field(backend, n):
     """Return a converged solution, checked against a finer one."""
-    coarse, _, steps = run(backend, n, np.complex128, "split_step", "double", 2.5e-3)
-    finer, _, _ = run(backend, n, np.complex128, "split_step", "double", 1.25e-3)
+    coarse, _, steps = run(backend, n, np.complex128, "split_step", "strang", 2.5e-3)
+    finer, _, _ = run(backend, n, np.complex128, "split_step", "strang", 1.25e-3)
     drift = error(coarse, finer)
     print(f"  reference: {steps} steps, self-consistent to {drift:.2e}")
     if drift > 1e-9:
@@ -155,7 +155,7 @@ def reference_field(backend, n):
 
 
 def main(argv=None):
-    """Measure and print the work-precision table."""
+    """Measure and print the work-splitting table."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--backends", nargs="*", default=["CPU"])
     parser.add_argument("--size", type=int, default=256)
@@ -168,7 +168,7 @@ def main(argv=None):
         print(
             f"  {'method':<20} {'rad/step':>9} {'steps':>7} {'time':>9} {'rel err':>10}"
         )
-        for method, precision in METHODS:
+        for method, splitting in METHODS:
             for phase in PHASES:
                 try:
                     got, seconds, steps = run(
@@ -176,17 +176,17 @@ def main(argv=None):
                         args.size,
                         np.complex64,
                         method,
-                        precision,
+                        splitting,
                         phase,
                         args.repeats,
                     )
                 except Exception as exc:  # a step past a stability limit
                     print(
-                        f"  {method + '/' + precision:<20} {phase:9.3f} "
+                        f"  {method + '/' + splitting:<20} {phase:9.3f} "
                         f"{'-':>7} {'-':>9}   {type(exc).__name__}"
                     )
                     continue
-                name = f"{method}/{precision}"
+                name = f"{method}/{splitting}"
                 print(
                     f"  {name:<20} {phase:9.3f} {steps:7d} "
                     f"{seconds * 1e3:8.1f}ms {error(got, reference):10.2e}"

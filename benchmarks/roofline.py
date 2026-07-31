@@ -58,7 +58,7 @@ def fft_flops(n):
     return 10 * math.log2(n)
 
 
-def step_cost(method, precision, n, itemsize, has_V):
+def step_cost(method, splitting, n, itemsize, has_V):
     """Return (bytes, flops, transcendentals) per grid point for one step.
 
     Counted from what the solver dispatches: see `split_step_fused` and
@@ -73,7 +73,7 @@ def step_cost(method, precision, n, itemsize, has_V):
     if method == "split_step":
         # fft, propagator multiply, ifft, nonlinear step.
         nl_b, nl_f, nl_t = 2 * c + v, 14.0, 1.0
-        nonlinear = 2 if precision == "double" else 1
+        nonlinear = 2 if splitting == "strang" else 1
         return (
             2 * f + 3 * c + nonlinear * nl_b,
             2 * ffts + 6 + nonlinear * nl_f,
@@ -463,7 +463,7 @@ def measure_ceilings(device, verbose=False):
 # ── Step timing ──────────────────────────────────────────────────────────────
 
 
-def time_step(backend_name, n, method, precision, steps=12):
+def time_step(backend_name, n, method, splitting, steps=12):
     """Seconds per step, measured as a slope so setup cancels."""
     from NLSE import NLSE
 
@@ -491,7 +491,7 @@ def time_step(backend_name, n, method, precision, steps=12):
             normalize=False,
             delta_z=dz,
             method=method,
-            precision=precision,
+            splitting=splitting,
         )
         simu._backend.synchronize(out)
 
@@ -506,7 +506,7 @@ def time_step(backend_name, n, method, precision, steps=12):
 _OVERHEAD: dict = {}
 
 
-def overhead(backend_name, method, precision):
+def overhead(backend_name, method, splitting):
     """Seconds a step costs before it touches any data.
 
     Measured as a step on a 64x64 grid, where the arrays are a few tens of
@@ -514,9 +514,9 @@ def overhead(backend_name, method, precision):
     is most of the step, which is why fusing kernels pays there and bandwidth
     tricks do not.
     """
-    key = (backend_name, method, precision)
+    key = (backend_name, method, splitting)
     if key not in _OVERHEAD:
-        _OVERHEAD[key] = time_step(backend_name, 64, method, precision)
+        _OVERHEAD[key] = time_step(backend_name, 64, method, splitting)
     return _OVERHEAD[key]
 
 
@@ -528,7 +528,7 @@ def main(argv=None):
     parser.add_argument(
         "--cases",
         nargs="*",
-        default=["split_step:single", "split_step:double", "RK4:single"],
+        default=["split_step:lie", "split_step:strang", "RK4:lie"],
     )
     parser.add_argument(
         "--probes", action="store_true", help="show each probe, not just the best"
@@ -565,8 +565,8 @@ def main(argv=None):
                 continue
             ceiling = ceilings[device]
             for case in args.cases:
-                method, precision = case.split(":")
-                b, f, t = step_cost(method, precision, n, itemsize, has_V=False)
+                method, splitting = case.split(":")
+                b, f, t = step_cost(method, splitting, n, itemsize, has_V=False)
                 pts = n * n
                 floors = {
                     "memory": b * pts / (ceiling["stream"] * 1e9),
@@ -576,8 +576,8 @@ def main(argv=None):
                 which = max(floors, key=floors.get)
                 work = floors[which]
                 try:
-                    fixed = overhead(backend_name, method, precision)
-                    got = time_step(backend_name, n, method, precision)
+                    fixed = overhead(backend_name, method, splitting)
+                    got = time_step(backend_name, n, method, splitting)
                 except Exception as exc:
                     print(f"  {backend_name:<7} {case:<20} {type(exc).__name__}: {exc}")
                     continue

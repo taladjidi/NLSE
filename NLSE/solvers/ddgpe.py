@@ -265,10 +265,10 @@ class DDGPE(CNLSE):
         }
 
     def _precompute_step_constants(
-        self, V: np.ndarray | None, precision: str = "single"
+        self, V: np.ndarray | None, splitting: str = "lie"
     ) -> None:
         """Pre-compute constants for DDGPE propagation steps."""
-        super()._precompute_step_constants(V, precision)
+        super()._precompute_step_constants(V, splitting)
 
     def _propagator_cache_key(self, dtype: np.dtype, delta_z: float) -> tuple:
         """Return cache key for DDGPE propagator."""
@@ -356,7 +356,7 @@ class DDGPE(CNLSE):
         propagator: np.ndarray,
         plans: list,
         delta_z: float,
-        precision: str = "single",
+        splitting: str = "lie",
     ) -> np.ndarray:
         """Split step function for one propagation step.
 
@@ -377,9 +377,9 @@ class DDGPE(CNLSE):
         delta_z : float
             Step to take. Must match the propagator, which was built
             from it.
-        precision : str, optional
+        splitting : str, optional
             Single or double application of the nonlinear
-            propagation step. Defaults to "single".
+            propagation step. Defaults to "lie".
 
         Returns
         -------
@@ -394,7 +394,7 @@ class DDGPE(CNLSE):
         A1, A2 = self._take_components(A)
 
         # First half-step (double precision only)
-        if precision == "double":
+        if splitting == "strang":
             A_sq, A_sq_1, A_sq_2 = self._compute_A_sq_components(A, A_sq)
             if V is None:
                 A1 = kernels.nl_prop_without_V_c(
@@ -453,7 +453,7 @@ class DDGPE(CNLSE):
         A1, A2 = self._take_components(A)
         A_sq, A_sq_1, A_sq_2 = self._compute_A_sq_components(A, A_sq)
 
-        dz_step = delta_z / 2 if precision == "double" else delta_z
+        dz_step = delta_z / 2 if splitting == "strang" else delta_z
         if V is None:
             A1 = kernels.nl_prop_without_V_c(
                 A1,
@@ -502,7 +502,7 @@ class DDGPE(CNLSE):
                 self.I_sat,
                 self.I_sat2,
             )
-        if precision == "single" and self.omega is not None:
+        if splitting == "lie" and self.omega is not None:
             A1, A2 = kernels.rabi_coupling(A1, A2, delta_z, self.omega / 2)
 
         self._set_components(A, A1, A2)
@@ -515,7 +515,7 @@ class DDGPE(CNLSE):
         laser_excitation: Callable | None,
         delta_z: float | complex | None = None,
         plot: bool = False,
-        precision: str = "single",
+        splitting: str = "lie",
         verbose: bool = True,
         callback: list[Callable] | Callable | None = None,
         callback_args: list[tuple] | tuple | None = None,
@@ -539,9 +539,9 @@ class DDGPE(CNLSE):
             to pass the correct arguments to the callback_args.
         plot : bool, optional
             Whether to plot the results. Defaults to False.
-        precision : str, optional
+        splitting : str, optional
             Whether to apply the nonlinear terms in a
-            single or double step. Defaults to "single".
+            single or double step. Defaults to "lie".
         verbose : bool, optional
             Whether to print progress. Defaults to True.
         callback : list[callable] or callable, optional
@@ -569,7 +569,7 @@ class DDGPE(CNLSE):
             z=t,
             delta_z=delta_z,
             plot=plot,
-            precision=precision,
+            splitting=splitting,
             verbose=verbose,
             normalize=False,
             callback=callback,

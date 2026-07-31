@@ -72,7 +72,7 @@ def main():
         simu.L,
         verbose=True,
         plot=False,
-        precision="single",
+        splitting="lie",
         callback=callback_samples,
         delta_z=DELTA_Z,
     )
