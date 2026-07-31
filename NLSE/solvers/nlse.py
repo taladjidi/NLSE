@@ -562,8 +562,24 @@ class NLSE:
         if self._backend.has_fused_rk4_stage and self._can_fuse_rk4_stage(A):
             return self._split_step_RK4_fused(A, V, propagator, plans, delta_z)
 
-        # Whole-step fused fast path (MLX), single component only
-        if self._backend.has_fused_rk4_step and self.nl_length == 0 and A.ndim == 2:
+        # Whole-step fused fast path (MLX), single component only.
+        #
+        # That is what `A.ndim == len(self._last_axes)` says: a field with
+        # nothing but its spatial axes, so no component axis and no batch.
+        # It used to say `A.ndim == 2`, which is the same thing for this
+        # class and for nothing else. A coupled 1d field is (2, NX) and has
+        # ndim 2 as well, so CNLSE_1d took this kernel and let it read the
+        # component axis as a spatial one -- 5% off the CPU on MLX, the only
+        # backend that sets the flag, and step-size-independent because it is
+        # the wrong sum rather than a coarse one. The 2d coupled field is
+        # (2, NY, NX) and was excluded by the same accident that included the
+        # 1d one. Meanwhile NLSE_1d is (NX,) and was excluded from a path it
+        # can use.
+        if (
+            self._backend.has_fused_rk4_step
+            and self.nl_length == 0
+            and A.ndim == len(self._last_axes)
+        ):
             alpha_half = self._constant("_alpha_half")
             g = self._constant("_g")
             k_half = self._constant("_k_half")

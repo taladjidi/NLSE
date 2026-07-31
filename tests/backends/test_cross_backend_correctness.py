@@ -1346,6 +1346,65 @@ class TestCNLSEExtended:
         )
 
 
+# Solvers that take a method argument, with a field carrying only its spatial
+# axes -- which is exactly the shape the whole-step fused RK4 path claims.
+RK4_SOLVERS = {
+    "NLSE": (NLSE, (32, 32)),
+    "NLSE_1d": (NLSE_1d, (32,)),
+    "CNLSE": (CNLSE, (2, 16, 16)),
+    "CNLSE_1d": (CNLSE_1d, (2, 32)),
+}
+
+
+@pytest.mark.parametrize("backend_name", [b for b in AVAILABLE_BACKENDS if b != "CPU"])
+@pytest.mark.parametrize("solver_name", sorted(RK4_SOLVERS))
+def test_rk4_agrees_with_the_cpu(solver_name, backend_name):
+    """RK4 must integrate the same equation on every backend.
+
+    Nothing compared RK4 across backends for the coupled 1d solver, and the
+    fused-path tests skip MLX for RK4, so CNLSE_1d on MLX ran 5% away from the
+    CPU without anything noticing. The cause was a shape test: the whole-step
+    fused kernel is for a single component and asked `A.ndim == 2`, which a
+    coupled 1d field (2, NX) also satisfies.
+
+    Every solver here, not only that one, because the guard it got wrong is
+    shared by all of them and each has a different field shape.
+
+    Parameters
+    ----------
+    solver_name : str
+        Which solver to integrate.
+    backend_name : str
+        Backend to compare against the CPU.
+    """
+    cls, shape = RK4_SOLVERS[solver_name]
+    field = np.exp(-(np.linspace(-2, 2, int(np.prod(shape))) ** 2))
+    field = field.reshape(shape).astype(PRECISION_COMPLEX)
+
+    def run(backend):
+        simu = make(cls, backend, n=shape[-1])
+        return as_numpy(
+            simu,
+            simu.out_field(
+                field.copy(),
+                5e-4,
+                verbose=False,
+                plot=False,
+                delta_z=5e-6,
+                method="RK4",
+            ),
+        )
+
+    got, expected = run(backend_name), run("CPU")
+    np.testing.assert_allclose(
+        got,
+        expected,
+        rtol=1e-4,
+        atol=1e-4 * float(np.max(np.abs(expected))),
+        err_msg=f"{solver_name} RK4 on {backend_name} disagrees with the CPU",
+    )
+
+
 # Every solver that plots, which is every solver. NLSE_3d and GPE need their
 # own construction -- one takes a window per axis and the other is written in
 # atoms rather than watts -- so they cannot come through `make`, which is why
