@@ -109,7 +109,83 @@ def _sincos(x):
     )
 
 
-@numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
+# fdlibm __ieee754_exp, on |r| <= ln2/2 after x = k*ln2 + r.
+_INV_LN2 = 1.44269504088896338700e00
+_LN2_HI = 6.93147180369123816490e-01
+_LN2_LO = 1.90821492927058770002e-10
+_E1 = 1.66666666666666019037e-01
+_E2 = -2.77777777770155933842e-03
+_E3 = 6.61375632143793436117e-05
+_E4 = -1.65339022054652515390e-06
+_E5 = 4.13813679705723846039e-08
+
+# exp saturates outside this, so clamping the argument costs nothing and keeps
+# k inside the exponent field. Clamping k instead would leave the reduced r
+# large and hand the polynomial an argument it is not valid on.
+_EXP_HI = 710.0
+_EXP_LO = -746.0
+
+
+@numba.njit(inline="always", fastmath=_SINCOS_FASTMATH, cache=True)
+def _two_pow(k):
+    """Return ``2.0**k`` by writing the exponent field, for ``|k| < 1023``."""
+    return np.int64((k + 1023) << 52).view(np.float64)
+
+
+@numba.njit(inline="always", fastmath=_SINCOS_FASTMATH, cache=True)
+def _exp(x):
+    """Return ``exp(x)`` without a call the vectorizer cannot cross.
+
+    Accurate to 1 ulp. ``math.ldexp`` would be the obvious way to apply the
+    ``2**k``, and it is also a call: using it costs more than the polynomial
+    saves (0.85x against libm, where writing the exponent field gives 1.5x).
+
+    Parameters
+    ----------
+    x : float
+        The exponent.
+
+    Returns
+    -------
+    float
+        ``e**x``, saturating to ``inf`` and ``0`` outside the double range.
+    """
+    x = min(max(x, _EXP_LO), _EXP_HI)
+    k = np.rint(x * _INV_LN2)
+    hi = x - k * _LN2_HI
+    lo = k * _LN2_LO
+    r = hi - lo
+    z = r * r
+    c = r - z * (_E1 + z * (_E2 + z * (_E3 + z * (_E4 + z * _E5))))
+    y = 1.0 - ((lo - (r * c) / (2.0 - c)) - hi)
+    # In two halves: a single (k + 1023) << 52 overflows the field, and the
+    # wrap turns exp(-1e4) into inf rather than 0 -- the opposite answer,
+    # which then spreads through the field as NaN.
+    ki = np.int64(k)
+    half = ki >> 1
+    return y * _two_pow(half) * _two_pow(ki - half)
+
+
+@numba.njit(inline="always", fastmath=_SINCOS_FASTMATH, cache=True)
+def _cexp(w):
+    """Return ``exp(w)`` for complex ``w``, as ``exp(re) * (cos im + i sin im)``.
+
+    Parameters
+    ----------
+    w : complex
+        The exponent.
+
+    Returns
+    -------
+    complex
+        ``e**w``.
+    """
+    decay = _exp(w.real)
+    s, c = _sincos(w.imag)
+    return complex(decay * c, decay * s)
+
+
+@numba.njit(parallel=True, fastmath=_SINCOS_FASTMATH, cache=True, boundscheck=False)
 def _nl_prop(
     A: np.ndarray,
     A_sq: np.ndarray,
@@ -146,7 +222,7 @@ def _nl_prop(
         sat = 1 / (1 + A_sq_flat[i] / Isat)
         # Losses and interactions
         arg = -alpha * sat + 1j * g * A_sq_flat[i] * sat + 1j * V_flat[i]
-        A_flat[i] *= np.exp(dz * arg)
+        A_flat[i] *= _cexp(dz * arg)
     return A
 
 
@@ -195,11 +271,11 @@ def _nl_prop_without_V(
         sat = 1 / (1 + A_sq_flat[i] / Isat)
         # Losses and interactions
         arg = -alpha * sat + 1j * g * A_sq_flat[i] * sat
-        A_flat[i] *= np.exp(dz * arg)
+        A_flat[i] *= _cexp(dz * arg)
     return A
 
 
-@numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
+@numba.njit(parallel=True, fastmath=_SINCOS_FASTMATH, cache=True, boundscheck=False)
 def _nl_prop_c(
     A1: np.ndarray,
     A_sq_1: np.ndarray,
@@ -250,7 +326,7 @@ def _nl_prop_c(
         arg += 1j * (g11 * A_sq_1_flat[i] * sat + g12 * A_sq_2_flat[i] * sat)
         # Potential
         arg += 1j * V_flat[i]
-        A1_flat[i] *= np.exp(dz * arg)
+        A1_flat[i] *= _cexp(dz * arg)
     return A1
 
 
@@ -308,7 +384,7 @@ def _nl_prop_without_V_c(
         arg = -alpha * sat
         # Interactions
         arg += 1j * (g11 * A_sq_1_flat[i] * sat + g12 * A_sq_2_flat[i] * sat)
-        A1_flat[i] *= np.exp(dz * arg)
+        A1_flat[i] *= _cexp(dz * arg)
     return A1
 
 
@@ -427,11 +503,11 @@ def _square_mod_nl_prop(
         A_sq_val = A_flat[i].real * A_flat[i].real + A_flat[i].imag * A_flat[i].imag
         sat = 1 / (1 + A_sq_val / Isat)
         arg = -alpha * sat + 1j * g * A_sq_val * sat
-        A_flat[i] *= np.exp(dz * arg)
+        A_flat[i] *= _cexp(dz * arg)
     return A
 
 
-@numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
+@numba.njit(parallel=True, fastmath=_SINCOS_FASTMATH, cache=True, boundscheck=False)
 def _square_mod_nl_prop_v(
     A: np.ndarray,
     V: np.ndarray,
@@ -463,7 +539,7 @@ def _square_mod_nl_prop_v(
         A_sq_val = A_flat[i].real * A_flat[i].real + A_flat[i].imag * A_flat[i].imag
         sat = 1 / (1 + A_sq_val / Isat)
         arg = -alpha * sat + 1j * g * A_sq_val * sat + 1j * V_flat[i]
-        A_flat[i] *= np.exp(dz * arg)
+        A_flat[i] *= _cexp(dz * arg)
     return A
 
 
