@@ -720,12 +720,90 @@ the usual advice to keep grid sizes at low prime factors, not a lever.
 
 ## CUDA (CuPy)
 
-Not verified on this machine — CuPy is not installed on the development Mac, so
-nothing in this section has been measured here recently. The backend uses
-CuPy's VkFFT plans and `cupy.fuse` kernels. Treat CUDA-specific claims as
-unconfirmed until run on NVIDIA hardware.
+Not measured on the Mac this file is otherwise written from — CuPy is not
+installed there. The backend uses raw cuFFT plans and hand-written CUDA C
+kernels (`kernels/cuda_source/kernels.cu`), not the VkFFT plans and
+`cupy.fuse` kernels this section used to describe, and captures a step into a
+CUDA graph. Entries below say which machine they were run on.
+
+**Deployed: the propagator applied from a cuFFT store callback.** RTX 3050,
+CUDA 13.3, CuPy 14.1.1. A split step touched the field four times — the
+transform pair, the propagator multiply, the nonlinear step — and cuFFT will
+run a store callback as it writes each element of a transform's output. The
+multiply moves there: the pass that read the field, read the propagator and
+wrote the field back becomes one extra read inside a write that was already
+happening. Of the ~104 bytes per grid point a step moved, 24 were that pass and
+16 of them are gone.
+
+`benchmarks/propagator_fusion.py`, per-step cost from the 20→220 step slope,
+sides interleaved, noise measured as how far a side moved between rounds:
+
+| grid | unfused | fused | gain | noise |
+|---|---|---|---|---|
+| 256² | 0.020 ms | 0.018 ms | 1.12x | 15.3% |
+| 512² | 0.125 ms | 0.106 ms | **1.19x** | 3.8% |
+| 1024² | 0.556 ms | 0.482 ms | **1.15x** | 2.0% |
+| 2048² | 2.269 ms | 1.969 ms | **1.15x** | 1.1% |
+
+Also 1.13x for RK4 (512², 1024²) and 1.17x for CNLSE. The 256² cell is inside
+its own noise and claims nothing: at that size the step is launch-bound, which
+is what the CUDA graph already fixed. The isolated linear step — transform,
+multiply, transform — moves 1.19–1.21x at 512²–2048², so the step-level number
+is most of the kernel-level one rather than a fraction of it.
+
+**Four things had to be true, and the fourth is the design.** (1) The callback
+machinery has to be reachable: CuPy's *legacy* callbacks are not, on this
+machine or any pip-installed CuPy — they compile with nvcc against the static
+cuFFT and the wheels ship no `cufft.h`. The `cb_ver="jit"` route needs only
+nvrtc and nvJitLink, both present, and is what is used. (2) The result agrees
+with the separate multiply *bit for bit*, not to a tolerance, on every solver
+and method. (3) A callback plan captures into a CUDA graph and replays, so the
+fusion and the graph compose rather than exclude each other. (4) **cuFFT binds
+the callback's argument when the plan is created, and no propagator lives that
+long** — an adaptive step rebuilds it, Yoshida cycles three, the solver's cache
+hands back a different array whenever the step length changes. Bound directly,
+every one of those costs a plan: nvrtc, nvJitLink and cuFFT planning, tens of
+milliseconds, against a step of one. So the callback is handed a pointer to a
+16-byte block that points at the propagator, and the plan is built once per
+(shape, dtype) for the whole run. The block is rewritten by a one-thread kernel
+rather than a host copy, because a Yoshida step changes propagator part way
+through and a pageable host copy during a graph capture is not allowed.
+
+Two plans, not one: a callback fires in both directions, so a plan that applied
+the propagator on the way out would apply it again on the way back. The second
+plan measured no extra workspace at 2048².
+
+**What it does not cover.** CuPy reaches the callback machinery for
+multi-dimensional plans only — its 1D path raises `AttributeError` on
+`cb_load_aux_arr` inside `get_fft_plan`, a CuPy bug rather than a cuFFT limit —
+so `NLSE_1d` and `CNLSE_1d` keep the separate multiply. Everything reports
+whether it fused rather than assuming, and a run that cannot fuse loses the
+pass and nothing else. `NLSE_FUSE_PROPAGATOR=0` switches it off.
+
+`benchmarks/cufft_callback_probe.py` asked whether this was possible before any
+of it was written; it is deleted rather than left to claim the question is
+still open. Its four questions are the four answered above.
 
 ## Open
+
+**The nonlinear step as a store callback on the *inverse* transform.** The
+propagator fusion above removes one of the two passes a split step makes over
+the field outside the transforms; this would remove the other, leaving a step
+that is two transforms and nothing else. Unmeasured, and there is a real
+argument that it pays much less: the propagator multiply was pure traffic, while
+the nonlinear kernels run at 15% of bandwidth because they are bound on
+transcendentals (see *Where the time goes*), so the 16 bytes per point this
+saves may be dwarfed by what the same arithmetic costs inside a transform kernel
+whose occupancy it would cut. It also needs more than a pointer through the
+callback's block — the interaction strength, the loss, the saturation and the
+step all change with an adaptive stepper — so the block becomes a struct that
+the host rewrites per step rather than per propagator.
+
+**Whether a 1D plan can be made to take a callback.** `NLSE_1d` and `CNLSE_1d`
+cannot fuse, because CuPy's one-dimensional plan path raises on the way into
+`get_fft_plan` (`_JITCallbackManager` has no `cb_load_aux_arr`) — a CuPy bug,
+not a cuFFT limit, so it may fix itself. Reaching `PlanNd` for a rank-1
+transform, if it accepts one, would sidestep it without waiting.
 
 **An `alpha == 0` branch for `_nl_prop` and `_square_mod_nl_prop_v`.** They call
 `_cexp` unconditionally, but with a real potential and no loss their exponent is

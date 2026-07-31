@@ -203,3 +203,83 @@ def test_the_block_markers_are_consumed(dialect):
         f"{dialect}: a VBLOCK marker survived expansion, so its block was "
         f"never matched -- check that every marker is paired"
     )
+
+
+# The cuFFT store callbacks are the same idea one step further out: text
+# substituted here, compiled by nvrtc inside cuFFT, and so reachable by no
+# local test on a machine without an NVIDIA card. They are not in DIALECTS
+# because they declare no kernel -- a callback is a __device__ function.
+
+
+def code_of(source):
+    """Return the source without its comments.
+
+    The comments in fft_callbacks.cu name both widths, to say why the element
+    type is spelled as a vector type at all. Asserting against the file as
+    written therefore fails on the explanation rather than on the code.
+    """
+    return re.sub(r"//[^\n]*", "", source)
+
+
+@pytest.mark.parametrize(
+    "dtype,element", [("complex64", "float2"), ("complex128", "double2")]
+)
+def test_the_callback_is_generated_at_both_widths(dtype, element):
+    """A field's width must reach the callback's element type."""
+    source, symbol = templating.propagator_store_callback(dtype, batched=False)
+    code = code_of(source)
+    assert element in code, f"{dtype} did not substitute {element}"
+    other = "double2" if element == "float2" else "float2"
+    assert other not in code, (
+        f"{dtype} left {other} in the source, so one width's callback carries "
+        f"the other's arithmetic"
+    )
+    assert f"__device__ void {symbol}(" in code, (
+        f"the source does not define {symbol}, which is the name cuFFT is asked to link"
+    )
+
+
+def test_both_callbacks_are_defined():
+    """Batched or not, the name handed to cuFFT has to exist in the source."""
+    for batched in (False, True):
+        source, symbol = templating.propagator_store_callback("complex64", batched)
+        assert f"__device__ void {symbol}(" in source, f"batched={batched}: no {symbol}"
+    direct, batched = (
+        templating.STORE_CALLBACKS[False],
+        templating.STORE_CALLBACKS[True],
+    )
+    assert direct != batched, "the two callbacks share a name, so one is unreachable"
+
+
+def test_only_the_batched_callback_wraps_the_propagator():
+    """The remainder belongs to the batched callback and nowhere else.
+
+    It is the identity in every non-batched case and a 64-bit remainder per
+    element is not free, which is why there are two callbacks at all.
+    """
+    source, _ = templating.propagator_store_callback("complex64", batched=False)
+    bodies = code_of(source).split("__device__ void ")
+    direct = next(b for b in bodies if b.startswith(templating.STORE_CALLBACKS[False]))
+    wrapped = next(b for b in bodies if b.startswith(templating.STORE_CALLBACKS[True]))
+    assert "%" not in direct, (
+        "the direct callback wraps the propagator, which costs a remainder per "
+        "element to compute an index it already had"
+    )
+    assert "%" in wrapped, "the batched callback does not wrap the propagator"
+
+
+def test_the_callback_source_uses_only_known_placeholders():
+    """A placeholder nobody fills in reaches nvrtc verbatim."""
+    unknown = set(
+        templating.PLACEHOLDER.findall(templating.CALLBACK_SOURCE.read_text())
+    )
+    unknown -= templating.PLACEHOLDERS
+    assert not unknown, (
+        f"fft_callbacks.cu uses placeholders no backend fills in: {sorted(unknown)}"
+    )
+
+
+def test_an_unsupported_width_has_no_callback():
+    """A real field is not something cuFFT transforms here; say so."""
+    with pytest.raises(ValueError, match="float32"):
+        templating.propagator_store_callback("float32", batched=False)

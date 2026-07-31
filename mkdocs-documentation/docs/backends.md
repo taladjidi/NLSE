@@ -65,6 +65,13 @@ simu.backend = "CL"
 | `NLSE_BACKEND` | Force a specific backend (e.g., `"CPU"`, `"CUPY"`, `"CL"`, `"MLX"`) |
 | `NLSE_QUIET` | Suppress backend auto-selection messages when set |
 | `NLSE_FORCE_BENCHMARK` | Re-run FFT benchmarks even if cache exists |
+| `NLSE_FUSE_PROPAGATOR` | Set to `0` to stop CUPY applying the propagator from a cuFFT callback |
+
+`NLSE_FUSE_PROPAGATOR` is an escape hatch rather than a tuning knob. On CUPY
+the propagator multiply is normally folded into the forward transform, which
+computes the same thing in one pass fewer; setting it to `0` puts the multiply
+back in a kernel of its own. It is read when an FFT plan is built, so a session
+that changes it also has to call `simu._backend.clear_fft_plans()`.
 
 Example:
 
