@@ -8,8 +8,10 @@ A package to easily simulate all sorts of non linear Schrödinger equations. It 
 
 This file gets you running and explains the choices you have to make on the way
 in. Everything below the halfway mark is a summary; the full treatment lives in
-[`mkdocs-documentation/docs/`](mkdocs-documentation/docs/), and each section
-here links to its page rather than repeating it.
+[`mkdocs-documentation/docs/`](mkdocs-documentation/docs/) and is published at
+**<https://quantum-optics-lkb.github.io/NLSE/>**. Each section here links to its
+page rather than repeating it — the links point at the files, so they work in
+this repository whether or not you have the site open.
 
 | I want to… | Here | In the docs |
 |---|---|---|
@@ -33,9 +35,10 @@ uv pip install ".[docs]"
 mkdocs serve -f mkdocs-documentation/mkdocs.yml
 ```
 
-`mkdocs build --strict` from `mkdocs-documentation/` is what checks the links.
-It leaves warnings about unclosed `Div`s, which come from nbconvert rendering
-the tutorial notebook and are not mkdocs's own.
+`mkdocs build --strict` is what checks the links, and CI runs it on every push;
+a push to `main` publishes the result. The build leaves warnings about unclosed
+`Div`s, which come from nbconvert rendering the tutorial notebook and are not
+mkdocs's own.
 
 ## Installation
 

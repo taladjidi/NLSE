@@ -54,7 +54,7 @@ dev = [
 ]
 
 [project.urls]
-Documentation = "https://nlse.readthedocs.io"
+Documentation = "https://quantum-optics-lkb.github.io/NLSE/"
 Homepage = "https://github.com/Quantum-Optics-LKB/NLSE"
 Repository = "https://github.com/Quantum-Optics-LKB/NLSE"
 
