@@ -22,6 +22,7 @@ import pytest
 from helpers import make
 from NLSE import NLSE
 from NLSE.callbacks import adapt_delta_z_to_error
+from NLSE.solvers.step_size import COMPLEX64_OPTIMUM_PHASE
 
 N = 64
 L = 1e-3
@@ -202,3 +203,42 @@ def test_the_run_stays_finite(tolerance):
     got, steps = adaptive(tolerance)
     assert np.all(np.isfinite(got.view(np.float32)))
     assert steps, "no steps were taken"
+
+
+def test_it_stops_at_the_complex64_optimum():
+    """A tolerance it cannot meet must settle at the optimum, not below it.
+
+    In complex64 there is nothing under ~0.4 rad per step but round-off, so a
+    controller that keeps shrinking spends time to make the answer worse. The
+    floor is derived from the same rate the pi-per-step cap is, so it tracks a
+    self-focusing beam rather than being a fixed distance.
+    """
+    simu, prepared = prepared_solver()
+    cap = simu._split_step_max_dz(prepared)
+    optimum = cap * COMPLEX64_OPTIMUM_PHASE / np.pi
+
+    step = L / 100
+    for _ in range(60):
+        simu._current_delta_z = step
+        step = adapt_delta_z_to_error(
+            simu, prepared, 0.0, 0, 1e-14, 1, (0.5, 2.0), 0.9, None
+        )
+        assert step is not None
+
+    assert step == pytest.approx(optimum, rel=1e-3), (
+        f"settled at {step:.3e} rather than the {optimum:.3e} optimum"
+    )
+
+
+def test_an_explicit_min_step_still_wins():
+    """Naming a floor is deliberate, so the optimum must not override it."""
+    simu, prepared = prepared_solver()
+    finer = simu._split_step_max_dz(prepared) * COMPLEX64_OPTIMUM_PHASE / np.pi / 10
+
+    step = L / 100
+    for _ in range(60):
+        simu._current_delta_z = step
+        step = adapt_delta_z_to_error(
+            simu, prepared, 0.0, 0, 1e-14, 1, (0.5, 2.0), 0.9, finer
+        )
+    assert step == pytest.approx(finer, rel=1e-3)

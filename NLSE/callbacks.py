@@ -2,6 +2,7 @@ import numpy as np
 from scipy.constants import c, epsilon_0
 
 from .solvers.nlse import NLSE
+from .solvers.step_size import COMPLEX64_OPTIMUM_PHASE
 
 
 def sample(
@@ -323,7 +324,18 @@ def adapt_delta_z_to_error(
     cap = simu._split_step_max_dz(A)
     # Absolute, not relative to the step in force: a floor recomputed as a
     # fraction of the current step shrinks with it and never binds.
-    floor = min_step if min_step is not None else float(simu.L) / 1e5
+    if min_step is not None:
+        floor = min_step
+    elif np.dtype(simu._field_dtype(A)) == np.dtype(np.complex64):
+        # There is no accuracy below the optimum in complex64, only more
+        # round-off, so the controller stops there rather than buying error
+        # with time. The cap is pi rad per step, so the optimum is that
+        # fraction of it. An explicit min_step still wins: someone who names
+        # one is overriding this deliberately, often to sample more finely.
+        floor = max(float(simu.L) / 1e5, cap * COMPLEX64_OPTIMUM_PHASE / np.pi)
+    else:
+        floor = float(simu.L) / 1e5
+    floor = min(floor, cap)
     if error == 0:
         return float(min(step * bounds[1], cap))
 

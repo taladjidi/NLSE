@@ -314,15 +314,41 @@ tracking the field. Both are caught by the suite. The fix is a design question
 — separate the fixed-step default from the adaptive controller's start, or cap
 the controller by the physics — not a constant.
 
-**Higher-order splitting (Yoshida, Blanes–Moan) — rejected without building
-it.** The textbook answer to "do less work" is a 4th-order composition, three
-Strang sub-steps per step for an error of O(dz⁴). It cannot pay here: the
-complex64 round-off floor caps split-step at ~3e-5 whatever the scheme, Strang
-already reaches it at 0.4 rad in 16 ms, and a 4th-order step costs three
-transform pairs. It would buy a coarser step to reach a floor already reached.
-*Challenge this* in complex128, where the floor moves down by orders of
-magnitude and the asymptotics come back — at 1e-9 a 4th-order scheme should win
-by a wide margin.
+**The adaptive controller floored at the optimum — deployed.**
+`adapt_delta_z_to_error` used to shrink toward an absolute `L/1e5`, which in
+complex64 means shrinking past the optimum into pure round-off. A tolerance it
+cannot meet therefore bought error with time, and bought a great deal of both:
+
+| tolerance | floor | time | rel. error |
+|---|---|---|---|
+| 1e-6 | optimum | **18.2 ms** | **3.11e-05** |
+| 1e-6 | old `L/1e5` | 32.5 ms | 3.50e-01 |
+| 1e-8 | optimum | **23.2 ms** | **3.01e-05** |
+| 1e-8 | old `L/1e5` | 54,178 ms | 6.57e-02 |
+
+At 1e-8 that is **2,300x the speed and 2,200x the accuracy**. The floor is
+derived from the same rate as the π-per-step cap, so it tracks a self-focusing
+beam rather than being a fixed distance. An explicit `min_step` still wins:
+naming one is deliberate, often for sampling.
+
+**Yoshida for complex128 — deployed.** Three Strang sub-steps composed to
+O(dz⁴) for three transform pairs, built out of the existing step. In complex64
+it buys nothing, for the reason above, and warns. In complex128 the round-off
+floor is gone and it dominates outright, measured at 256²:
+
+| | rad/step | time | rel. error |
+|---|---|---|---|
+| yoshida | 0.8 | **31 ms** | 1.08e-09 |
+| strang | 0.005 | 1202 ms | 1.19e-09 |
+
+**38x the speed at equal accuracy**, and at the coarse end still 2x faster and
+65x more accurate than Strang's nearest point. Below ~1e-10 the table stops
+resolving it — that is the reference's own floor, not Yoshida's.
+
+The earlier entry here rejected higher-order splitting outright. That was right
+about complex64 and wrong to stop there: the argument reverses entirely with
+the round-off floor removed, which is the whole reason the scheme is keyed to
+the float width rather than offered as a default.
 
 ## Cross-cutting
 

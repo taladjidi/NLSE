@@ -35,6 +35,16 @@ RK4_STABILITY_RADIUS = 2.83
 # the complex64 round-off floor across three decades of step size.
 DEFAULT_PHASE_PER_STEP = 0.1
 
+# Phase per step where a complex64 split-step run is most accurate. Below it,
+# round-off accumulating over steps grows faster than the splitting error
+# falls, so a finer step costs time and accuracy together: at 0.05 rad the same
+# problem is twice the work of 0.4 and six times the error. Measured with
+# benchmarks/work_precision.py, and stable at 0.4-0.8 across a sixteenfold
+# range of propagation distance. It floors the adaptive controller rather than
+# setting the default, because the controller starts from the default and its
+# own error estimate goes blind above ~0.8 rad.
+COMPLEX64_OPTIMUM_PHASE = 0.4
+
 # Fewest steps a default may take over the requested distance, so that a run
 # is something a callback can sample and a plot can show rather than one jump.
 DEFAULT_MIN_STEPS = 10
