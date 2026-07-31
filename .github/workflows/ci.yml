@@ -210,3 +210,54 @@ jobs:
                   fail-on-alert: false
                   # Save cache between runs
                   external-data-json-path: ./cache/benchmark-data.json
+
+    docs:
+        name: Documentation
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v5
+
+            - name: Set up uv
+              uses: astral-sh/setup-uv@v9.0.0
+              with:
+                  enable-cache: true
+                  cache-dependency-glob: "pyproject.toml"
+
+            - name: Set up Python
+              uses: actions/setup-python@v6
+              with:
+                  python-version: "3.13"
+
+            - name: Install dependencies
+              run: uv pip install --system ".[docs]"
+
+            # --strict fails the build on a broken internal link, which is the
+            # failure mode that otherwise ships. It does not catch the
+            # "unclosed Div" warnings: those come from nbconvert rendering the
+            # tutorial notebook, not from mkdocs.
+            - name: Build the site
+              run: mkdocs build --strict -f mkdocs-documentation/mkdocs.yml
+
+            - name: Upload the site
+              if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+              uses: actions/upload-pages-artifact@v3
+              with:
+                  path: mkdocs-documentation/site
+
+    # Split from the build so a pull request still checks the docs without
+    # needing permission to publish them.
+    deploy-docs:
+        name: Deploy documentation
+        needs: docs
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        runs-on: ubuntu-latest
+        permissions:
+            pages: write
+            id-token: write
+        environment:
+            name: github-pages
+            url: ${{ steps.deployment.outputs.page_url }}
+        steps:
+            - name: Deploy to GitHub Pages
+              id: deployment
+              uses: actions/deploy-pages@v4

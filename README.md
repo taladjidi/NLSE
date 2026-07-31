@@ -4,6 +4,42 @@
 
 A package to easily simulate all sorts of non linear Schrödinger equations. It uses a [split-step spectral scheme](https://en.wikipedia.org/wiki/Split-step_method) to solve the equations.
 
+## Where to find things
+
+This file gets you running and explains the choices you have to make on the way
+in. Everything below the halfway mark is a summary; the full treatment lives in
+[`mkdocs-documentation/docs/`](mkdocs-documentation/docs/) and is published at
+**<https://quantum-optics-lkb.github.io/NLSE/>**. Each section here links to its
+page rather than repeating it — the links point at the files, so they work in
+this repository whether or not you have the site open.
+
+| I want to… | Here | In the docs |
+|---|---|---|
+| install it | [Installation](#installation) | [Installation](mkdocs-documentation/docs/installation.md) |
+| run something | [Basic usage](#basic-usage) | [Quick Start](mkdocs-documentation/docs/quick_start.md) |
+| know what equation it solves | [Physical situation](#physical-situation) | [Physics Background](mkdocs-documentation/docs/physics_problem.md) |
+| pick a solver class | [Inheritance](#inheritance) | [Solvers Overview](mkdocs-documentation/docs/solvers_overview.md) |
+| pick a splitting, or RK4 | [Propagation](#propagation) | [Numerical Methods](mkdocs-documentation/docs/numerical_methods.md) |
+| choose a step | [The propagation step](#the-propagation-step) | [Numerical Methods](mkdocs-documentation/docs/numerical_methods.md) |
+| choose a backend, or debug one | [GPU computing](#gpu-computing) | [Backends](mkdocs-documentation/docs/backends.md) |
+| watch or steer a run | [Callbacks](#callbacks) | [Callbacks](mkdocs-documentation/docs/callbacks.md) |
+| copy a working script | [`examples/`](examples/) | [Examples Gallery](mkdocs-documentation/docs/examples.md) |
+| look up a class or method | — | [API Reference](mkdocs-documentation/docs/reference/) |
+| know why the code is shaped this way | — | [Optimization log](docs/optimization-log.md) |
+| contribute | [Contributing](#contributing-and-issues) | [Contributing](mkdocs-documentation/docs/contributing.md) |
+
+To read the docs as a site rather than as files:
+
+```bash
+uv pip install ".[docs]"
+mkdocs serve -f mkdocs-documentation/mkdocs.yml
+```
+
+`mkdocs build --strict` is what checks the links, and CI runs it on every push;
+a push to `main` publishes the result. The build leaves warnings about unclosed
+`Div`s, which come from nbconvert rendering the tutorial notebook and are not
+mkdocs's own.
+
 ## Installation
 
 First clone the repository:
@@ -73,7 +109,7 @@ This code has been tested on the three main platforms: Linux, MacOs and Windows.
 
 ### GPU computing
 
-For optimal speed, this code uses your GPU (graphics card). For this, you need specific libraries. For Nvidia cards, you need a [CUDA](https://developer.nvidia.com/cuda-toolkit) install. For AMD cards, you need a [ROCm](https://rocmdocs.amd.com/en/latest/) install. Of course, you need to update your graphics driver to take full advantage of these. In any case we use [CuPy](cupy.dev) for the Python interface to these libraries.
+For optimal speed, this code uses your GPU (graphics card). For this, you need specific libraries. For Nvidia cards, you need a [CUDA](https://developer.nvidia.com/cuda-toolkit) install. For AMD cards, you need a [ROCm](https://rocmdocs.amd.com/en/latest/) install. Of course, you need to update your graphics driver to take full advantage of these. In any case we use [CuPy](https://cupy.dev) for the Python interface to these libraries.
 
 **The `cupy` dependency is not a required dependency in order to not break installation on platforms that do not support it !** It ships as the optional `gpu` extra: `uv pip install ".[gpu]"`.
 
@@ -370,106 +406,22 @@ from a measured error.
 In order to minimize duplication, all classes inherit from the main `NLSE` class according to the following graph:
 ![inheritance](img/inheritance_graph.png)
 
-### The `NLSE_1d` class
+Each solver's propagation equation is written out in
+[Solvers Overview](mkdocs-documentation/docs/solvers_overview.md#the-equation-each-solver-integrates),
+alongside what it costs and what it supports:
 
-`NLSE_1d` is a 1D specialization of `NLSE` for performance.
-It supports all of the features of the main `NLSE` class.
+| Class | Solves | Notes |
+|---|---|---|
+| [`NLSE`](mkdocs-documentation/docs/reference/nlse.md) | 2D paraxial propagation | the base every other class specialises |
+| [`NLSE_1d`](mkdocs-documentation/docs/reference/nlse_1d.md) | the same in 1D | a specialization for speed, same features |
+| [`NLSE_3d`](mkdocs-documentation/docs/reference/nlse_3d.md) | full 3D+1 with dispersion | space complexity goes as $N^3$; be careful |
+| [`CNLSE`](mkdocs-documentation/docs/reference/cnlse.md) | two coupled fields | back-reaction of a fluid on a defect, two-component problems |
+| [`CNLSE_1d`](mkdocs-documentation/docs/reference/cnlse_1d.md) | the same in 1D | |
+| [`GPE`](mkdocs-documentation/docs/reference/gpe.md) | 2D Gross–Pitaevskii | atomic units: masses in kg, times in s |
+| [`DDGPE`](mkdocs-documentation/docs/reference/ddgpe.md) | driven-dissipative coupled fields | built for exciton polaritons in microcavities |
 
-The propagation equation is:
-
-$$
-i\partial_{z}E = -\frac{1}{2k_0}\partial^2_x E +
--\frac{k_0}{2}\delta n(r) E - n_2 \frac{k_0}{2n}c\epsilon_0|E|^2E
-$$
-
-### The `NLSE_3d` class
-
-`NLSE_3d` solves the full paraxial propagation equation.
-
-**WARNING:** Since this solves a 3D+1 equation, this is computationally very intensive ! The space complexity scales as $N^3$ if $N$ is the field array size.
-
-The propagation equation is:
-
-$$
-i\partial_{z}E = -\frac{1}{2k_0}\nabla_{\perp}^2 E +
-\frac{D_0}{2}\partial^2_t E
--\frac{k_0}{2}\delta n(r) E - n_2 \frac{k_0}{2n}c\epsilon_0|E|^2E
-$$
-
-### The `CNLSE` class
-
-The `CNLSE` class is a coupled non-linear Schrödinger equation allowing to solve the following equation:
-
-$$
-\begin{split}
-i\frac{\partial\psi_f}{\partial z} &= -\frac{1}{2k_f}\nabla^2\psi_f -\frac{1}{2}n_2^f k_f c\epsilon_0|\psi_f|^2\psi_f + k_f n_2^{fd}c\epsilon_0|\psi_d|^2\psi_f-\frac{i\alpha_f}{2}\psi_f + \frac{\Omega}{2} \psi_d  \\
-i\frac{\partial\psi_d}{\partial z} &= -\frac{1}{2k_d}\nabla^2\psi_d -\frac{1}{2}n_2^d k_d c\epsilon_0|\psi_d|^2\psi_d + k_d n_2^{fd}c\epsilon_0|\psi_f|^2\psi_d-\frac{i\alpha_d}{2}\psi_d + \frac{\Omega}{2} \psi_f
-\end{split}
-$$
-
-This allows to describe the back reaction of the fluid onto the defect as well as two components scenarii.
-In order to "turn on" different terms, it suffices to set the parameters value to something other than `None`.
-When `None`, the solver does not apply the corresponding evolution term for optimal performance.
-
-### The `CNLSE_1d` class
-
-Similarly to `NLSE_1d`, the `CNLSE_1d` is a 1D specialization of `CNLSE` class.
-
-The propagation equation is:
-
-$$
-\begin{split}
-i\frac{\partial\psi_f}{\partial z} &= -\frac{1}{2k_f}\partial^2_x\psi_f -\frac{1}{2}n_2^f k_f c\epsilon_0|\psi_f|^2\psi_f + k_f n_2^{fd}c\epsilon_0|\psi_d|^2\psi_f-\frac{i\alpha_f}{2}\psi_f + \frac{\Omega}{2} \psi_d  \\
-i\frac{\partial\psi_d}{\partial z} &= -\frac{1}{2k_d}\partial^2_x\psi_d -\frac{1}{2}n_2^d k_d c\epsilon_0|\psi_d|^2\psi_d + k_d n_2^{fd}c\epsilon_0|\psi_f|^2\psi_d-\frac{i\alpha_d}{2}\psi_d + \frac{\Omega}{2} \psi_f
-\end{split}
-$$
-
-### The `GPE` class
-
-The `GPE` class allows to solve the 2D Gross-Pitaevskii equation describing the temporal evolution of a Bosonic field:
-
-$$
-i\partial_{t}\psi = -\frac{1}{2}\nabla^2\psi+V\psi+g|\psi|^2\psi.
-$$
-
-It follows exactly the same conventions as the other classes a part from the fact that since it describes atoms, the units are the "atomic" units (masses in kg, times in s).
-
-### The `DDGPE` class
-
-The DDGPE class allows to solve the temporal evolution of two coupled fields in a driven-dissipative context.
-
-It was designed to study problems like the evolution of exciton polaritons in microcavities.
-
-The equation solved in this context is the following:
-
-$$
-\begin{split}
-i\hbar \partial_t\psi_X(\textbf{r}, t)&=
-(\frac{\hbar^2}{2m_X}\nabla^2 +
-V_X(\textbf{r}) +
-\hbar g_X|\psi_X(\textbf{r}, t)|^2 -
-i\hbar\frac{\Gamma_X}{2})\psi_X(\textbf{r}, t)+
-\hbar\Omega_R\psi_C(\textbf{r}, t) \\
-i\hbar \partial_t \psi_C(\textbf{r}, t)&=
-(\frac{\hbar^2}{2m_C}\nabla^2 +
-V_C(\textbf{r})  -
-i\hbar\frac{\Gamma_C}{2})\psi_C(\textbf{r}, t) +
-\hbar\Omega_R\psi_X(\textbf{r}, t) +
-\hbar F_p(\textbf{r},t)
-\end{split}
-$$
-
-where
-
-- $\psi_X$ is the exciton field
-- $\psi_C$ is the cavity field
-- $V_X$ is the exciton potential
-- $V_C$ is the cavity potential
-- $g_X$ is the exciton interaction energy
-- $\Gamma_X$ is the exciton losses coefficient
-- $\Gamma_C$ is the cavity losses coefficient
-- $\Omega_R$ is the Rabi coupling between excitons and photons
-- $F_p$ is the pumping field impinging on the cavity
+Terms are turned off by leaving their parameter `None`, and the solver then
+skips the corresponding evolution term rather than multiplying by zero.
 
 ## Contributing and issues
 
