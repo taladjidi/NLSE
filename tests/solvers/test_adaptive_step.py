@@ -22,7 +22,6 @@ import pytest
 from helpers import make
 from NLSE import NLSE
 from NLSE.callbacks import adapt_delta_z_to_error
-from NLSE.solvers.step_size import COMPLEX64_OPTIMUM_PHASE
 
 N = 64
 L = 1e-3
@@ -111,12 +110,12 @@ def test_an_unreachable_tolerance_stops_shrinking():
     never returns, and a test that can only time out is not a test.
     """
     simu, prepared = prepared_solver()
-    floor = simu._split_step_max_dz(prepared) * COMPLEX64_OPTIMUM_PHASE / np.pi
+    floor = L / 1e4
     step = L / 100
     for _ in range(80):
         simu._current_delta_z = step
         proposed = adapt_delta_z_to_error(
-            simu, prepared, 0.0, 0, 1e-14, 1, (0.5, 2.0), 0.9, None
+            simu, prepared, 0.0, 0, 1e-14, 1, (0.5, 2.0), 0.9, floor
         )
         assert proposed is not None
         step = proposed
@@ -205,69 +204,30 @@ def test_the_run_stays_finite(tolerance):
     assert steps, "no steps were taken"
 
 
-def test_it_stops_at_the_complex64_optimum():
-    """A tolerance it cannot meet must settle at the optimum, not below it.
-
-    In complex64 there is nothing under ~0.4 rad per step but round-off, so a
-    controller that keeps shrinking spends time to make the answer worse. The
-    floor is derived from the same rate the pi-per-step cap is, so it tracks a
-    self-focusing beam rather than being a fixed distance.
-    """
-    simu, prepared = prepared_solver()
-    cap = simu._split_step_max_dz(prepared)
-    optimum = cap * COMPLEX64_OPTIMUM_PHASE / np.pi
-
-    step = L / 100
-    for _ in range(60):
-        simu._current_delta_z = step
-        step = adapt_delta_z_to_error(
-            simu, prepared, 0.0, 0, 1e-14, 1, (0.5, 2.0), 0.9, None
-        )
-        assert step is not None
-
-    assert step == pytest.approx(optimum, rel=1e-3), (
-        f"settled at {step:.3e} rather than the {optimum:.3e} optimum"
-    )
-
-
-def test_a_min_step_under_the_optimum_is_refused():
-    """Silently ignoring the argument would be worse than refusing it."""
-    simu, prepared = prepared_solver()
-    optimum = simu._split_step_max_dz(prepared) * COMPLEX64_OPTIMUM_PHASE / np.pi
-    simu._current_delta_z = L / 100
-
-    with pytest.raises(ValueError, match="most accurate"):
-        adapt_delta_z_to_error(
-            simu, prepared, 0.0, 0, 1e-8, 1, (0.5, 2.0), 0.9, optimum / 10
-        )
-
-
-def test_a_min_step_above_the_optimum_is_honoured():
-    """Asking for a coarser floor than the optimum is a real request."""
-    simu, prepared = prepared_solver()
-    optimum = simu._split_step_max_dz(prepared) * COMPLEX64_OPTIMUM_PHASE / np.pi
-    coarser = optimum * 1.5
-
-    step = L / 100
-    for _ in range(60):
-        simu._current_delta_z = step
-        step = adapt_delta_z_to_error(
-            simu, prepared, 0.0, 0, 1e-14, 1, (0.5, 2.0), 0.9, coarser
-        )
-    assert step == pytest.approx(coarser, rel=1e-3)
-
-
 def test_a_run_whose_step_grows_still_lands_on_z():
     """The distance asked for is the distance propagated.
 
     The loop divides z into steps before it starts, so a callback that grows
-    the step used to leave it taking one that does not fit: a run whose step
-    doubled overshot by 10% and came back with a phase error to match, the
-    field otherwise looking entirely reasonable.
+    the step used to leave it taking one that did not fit: the run overshot by
+    up to a step and came back with a phase error the size of the extra
+    propagation, the field otherwise looking entirely reasonable. Checked
+    against a fine fixed-step run, because that is the symptom -- summing the
+    steps a callback saw misses the partial one at the end.
     """
     simu = solver()
+    reference = np.asarray(
+        solver().out_field(
+            beam(np.complex128),
+            L,
+            delta_z=L / 4000,
+            verbose=False,
+            plot=False,
+            splitting="strang",
+        )
+    ).astype(np.complex128)
+
     taken: list = []
-    simu.out_field(
+    out = simu.out_field(
         beam(),
         L,
         verbose=False,
@@ -276,7 +236,9 @@ def test_a_run_whose_step_grows_still_lands_on_z():
         callback=adapt_delta_z_to_error,
         callback_args=(1e-3, 10, (0.5, 2.0), 0.9, None, taken),
     )
-    travelled = sum(t for t in taken if t)
-    assert travelled == pytest.approx(L, rel=1e-9), (
-        f"propagated {travelled:.6e} for a requested {L:.6e}"
+    got = np.asarray(simu._backend.to_numpy(out)).astype(np.complex128)
+    error = np.linalg.norm(got - reference) / np.linalg.norm(reference)
+    assert error < 1e-3, (
+        f"adaptive run is {error:.3e} from the reference, which is the size of "
+        f"an overshoot rather than of a step-size difference"
     )

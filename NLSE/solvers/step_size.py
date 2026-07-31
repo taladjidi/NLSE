@@ -32,24 +32,19 @@ RK4_STABILITY_RADIUS = 2.83
 # are ceilings (pi for split-step aliasing, 2.83 for RK4 stability); these are
 # where a default sits under them.
 #
-# Both are the measured optimum rather than a margin under the ceiling, and
-# the two methods want opposite steps. Split-step in complex64 is limited by
-# round-off accumulating over steps, not by the splitting, so its error has a
-# minimum: refining past ~0.4 rad costs time and accuracy together. RK4's
-# truncation error is still falling steeply at 0.02, and at 0.1 it returns
-# 5.6e-4 where 0.02 returns 2.3e-6. Measured with
-# benchmarks/work_precision.py; see docs/optimization-log.md.
-DEFAULT_PHASE_PER_STEP = 0.4
+# Split-step stays at 0.1 despite a measured optimum of 0.4 on a smooth beam,
+# because that optimum does not survive a field with spectral content of its
+# own. examples/fig2_turbulence.py carries kp = 2*pi*5e3 and aliases far below
+# the pi-per-step cap: 0.1 rad returns 11% error against a converged run and
+# 0.4 returns 140%, with the peak amplitude and the total power both visibly
+# wrong. The work-precision sweep that found 0.4 varied the distance sixteenfold
+# and never varied the physics, which is the hole it fell through.
+#
+# RK4 is a different story and does move: its truncation error is still falling
+# steeply at 0.02, where it returns 2.3e-6 against 5.6e-4 at 0.1, so the two
+# methods no longer share one number.
+DEFAULT_PHASE_PER_STEP = 0.1
 RK4_PHASE_PER_STEP = 0.02
-
-# The same optimum, used to bound the adaptive controller. It is stable at
-# 0.4-0.8 rad across a sixteenfold range of propagation distance, so in
-# complex64 the controller is held to that band: below it there is only
-# round-off, and above it the controller's own estimate goes blind -- one step
-# and two halves then differ by round-off rather than by splitting error, which
-# reads as "no error" and doubles the step until the answer is unrecognisable.
-COMPLEX64_OPTIMUM_PHASE = 0.4
-COMPLEX64_OPTIMUM_BAND = 2.0
 
 # Fewest steps a default may take over the requested distance, so that a run
 # is something a callback can sample and a plot can show rather than one jump.

@@ -2,7 +2,6 @@ import numpy as np
 from scipy.constants import c, epsilon_0
 
 from .solvers.nlse import NLSE
-from .solvers.step_size import COMPLEX64_OPTIMUM_BAND, COMPLEX64_OPTIMUM_PHASE
 
 
 def sample(
@@ -324,26 +323,16 @@ def adapt_delta_z_to_error(
     cap = simu._split_step_max_dz(A)
     # Absolute, not relative to the step in force: a floor recomputed as a
     # fraction of the current step shrinks with it and never binds.
-    if np.dtype(simu._field_dtype(A)) == np.dtype(np.complex64):
-        # In complex64 the step is held to the band around the optimum. Below
-        # it there is only round-off to gain; above it this controller's own
-        # estimate is round-off too, reads as "no error", and doubles the step
-        # until the answer is unrecognisable. The cap is pi rad per step, so
-        # both bounds are fractions of it and follow a self-focusing beam.
-        optimum = cap * COMPLEX64_OPTIMUM_PHASE / np.pi
-        if min_step is not None and min_step < optimum:
-            raise ValueError(
-                f"min_step={min_step:.3e} is below the {optimum:.3e} at which "
-                f"a complex64 run is most accurate. Smaller steps there cost "
-                f"time and accuracy together, because round-off accumulating "
-                f"over steps grows faster than the splitting error falls. "
-                f"Propagate a complex128 field if you need a finer step."
-            )
-        floor = min_step if min_step is not None else optimum
-        cap = min(cap, optimum * COMPLEX64_OPTIMUM_BAND)
-    else:
-        floor = min_step if min_step is not None else float(simu.L) / 1e5
-    floor = min(floor, cap)
+    # Absolute, not relative to the step in force: a floor recomputed as a
+    # fraction of the current step shrinks with it and never binds.
+    #
+    # Deliberately not the round-off optimum. There is such an optimum on a
+    # smooth beam, and flooring the controller at it was worth a great deal
+    # there, but on a field with spectral content of its own the splitting
+    # error at that step is enormous -- see DEFAULT_PHASE_PER_STEP. A floor
+    # that stops the controller resolving a hard problem while it reports
+    # success is worse than a slow run.
+    floor = min(min_step if min_step is not None else float(simu.L) / 1e5, cap)
     if error == 0:
         return float(min(step * bounds[1], cap))
 

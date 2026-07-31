@@ -309,7 +309,8 @@ Worth more than every kernel below put together, and measured with
 `benchmarks/work_precision.py`, which scores wall clock against error rather
 than against a step count.
 
-**The default step is the measured optimum — deployed.** In complex64
+**The default step is the measured optimum — REVERTED, and the reason is
+worth more than the entry.** In complex64
 split-step is not limited by the splitting but by round-off accumulating over
 steps, so refining past the optimum costs time and accuracy together. Measured
 on a self-focusing beam, 256², Strang:
@@ -331,8 +332,35 @@ too coarse for RK4. It also means RK4 at its default is worse than split-step
 at *any* step, for six times the cost: split-step at 0.4 matches RK4 at 0.05 to
 within 2% of error and runs 42x faster.
 
-`DEFAULT_PHASE_PER_STEP` is now 0.4 and `RK4_PHASE_PER_STEP` 0.02, and the
-consequences had to be handled rather than absorbed:
+**It does not generalise, and shipping it broke an example.** The sweep above
+varied the propagation distance sixteenfold and never varied the *physics*.
+`examples/fig2_turbulence.py` carries `kp = 2*pi*5e3` — spectral content of its
+own — and aliases far below the pi-per-step cap that the criterion is written
+against:
+
+| phase/step | steps | max abs A | rel. error |
+|---|---|---|---|
+| 0.400 | 333 | 3034 | **1.401** |
+| 0.100 | 1331 | 2860 | 0.115 |
+| 0.010 | 13310 | 2853 | 0.027 |
+
+A cliff, not a slope: 11% error becomes 140%, with the peak amplitude and the
+total power both visibly wrong. `DEFAULT_PHASE_PER_STEP` is back to 0.1. The
+adaptive floor went with it — a controller stopped at 0.4 rad on this problem
+would report success at 140% error, which is worse than a slow run.
+
+`RK4_PHASE_PER_STEP` stays at 0.02: that change makes the step *finer*, and
+error that only falls is safe to ship.
+
+**What a step criterion would have to measure.** The phase per step counts the
+potential and the interaction, on the reasoning that split-step applies the
+linear part exactly. True for a linear problem, but the splitting error goes
+as the commutator of the two parts, and a field with high-k content has a large
+one at a nonlinear phase per step that looks modest. Adding the kinetic rate
+does not fix it — here it is 70 against an interaction of 531. The quantity
+that predicts the cliff is spectral headroom, which nothing currently measures.
+
+The rest of that batch was kept, and the consequences it had to handle:
 
 - **The adaptive controller is held to a band**, `[optimum, 2 × optimum]`, in
   complex64. Its own error estimate goes blind above ~0.8 rad — one step and
