@@ -742,26 +742,68 @@ class TestStepLimitWithBatchedParameters:
 class TestPrecomputedConstants:
     """Precomputed step constants must reflect the current parameters."""
 
-    @pytest.mark.parametrize("attr,value", [("n2", -3.2e-9), ("alpha", 5.0)])
-    def test_changing_parameter_between_runs_is_picked_up(self, attr, value):
-        """Changing a physical parameter between runs must change the result."""
+    @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+    @pytest.mark.parametrize(
+        "attr,value",
+        [
+            ("n2", -3.2e-9),
+            ("alpha", 5.0),
+            ("Isat", 1e3),
+            # The one that goes to the device rather than staying a number,
+            # so the run after it has a copy that could be the old one.
+            ("V", None),
+        ],
+    )
+    def test_changing_parameter_between_runs_is_picked_up(
+        self, attr, value, backend_name
+    ):
+        """Changing a physical parameter between runs must change the result.
+
+        On every backend, because a stale value is not a property of the
+        arithmetic but of where the value is kept: a scalar is reread each
+        step, a potential is sent to the device once and a propagator is
+        cached by a key that has to mention everything it was built from.
+        Only the CPU was checked, which is the case with nothing to go stale.
+
+        Parameters
+        ----------
+        attr : str
+            Attribute to change between the two runs.
+        value : Any
+            What to change it to. None means build a potential on the grid,
+            which cannot be written as a constant here.
+        backend_name : str
+            Backend to run on.
+        """
         E = gaussian_input()
         z = 2e-3
 
-        reused = make_solver()
-        reused.out_field(E.copy(), z, verbose=False, plot=False, delta_z=1e-4)
-        setattr(reused, attr, value)
-        got = reused.out_field(E.copy(), z, verbose=False, plot=False, delta_z=1e-4)
+        def new_value(simu):
+            if attr != "V":
+                return value
+            r_sq = simu.XX**2 + simu.YY**2
+            return (-2e-4 * np.exp(-r_sq / (waist / 2) ** 2)).astype(np.float32)
 
-        fresh = make_solver(**{attr: value})
-        expected = fresh.out_field(E.copy(), z, verbose=False, plot=False, delta_z=1e-4)
+        reused = make_solver(backend_name)
+        reused.out_field(E.copy(), z, verbose=False, plot=False, delta_z=1e-4)
+        setattr(reused, attr, new_value(reused))
+        got = as_numpy(
+            reused,
+            reused.out_field(E.copy(), z, verbose=False, plot=False, delta_z=1e-4),
+        )
+
+        fresh = make_solver(backend_name)
+        setattr(fresh, attr, new_value(fresh))
+        expected = as_numpy(
+            fresh, fresh.out_field(E.copy(), z, verbose=False, plot=False, delta_z=1e-4)
+        )
 
         np.testing.assert_allclose(
             got,
             expected,
             rtol=1e-4,
             atol=1e-4 * float(np.max(np.abs(expected))),
-            err_msg=f"Changing {attr} between runs was not picked up",
+            err_msg=f"Changing {attr} between runs was not picked up on {backend_name}",
         )
 
 
