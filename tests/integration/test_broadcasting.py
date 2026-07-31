@@ -326,6 +326,60 @@ def test_coupled_batch_matches_individual_runs(backend_name, method, cls, grid):
 
 @pytest.mark.parametrize("backend_name", COUPLED_BATCH_BACKENDS)
 @pytest.mark.parametrize("cls,grid", COUPLED, ids=COUPLED_IDS)
+def test_a_coupled_batch_still_loses_light(backend_name, cls, grid):
+    """A batched coupled run must apply the real-space step, not skip it.
+
+    It skipped it. A component of a batched coupled field is strided --
+    (B, NX) out of (B, 2, NX) -- and the numba kernels open with A1.ravel(),
+    which copies rather than views when the input is not contiguous. The step
+    was applied to that copy and dropped when the kernel returned the argument
+    it had been handed, so every batched coupled run on the CPU propagated the
+    linear equation with its losses and its nonlinear phase missing.
+
+    The test above this one uses alpha=0, and a nonlinearity weak enough to
+    stay inside its tolerance, so it passed throughout. Losses are what makes
+    the omission impossible to miss: with alpha > 0 the amplitude has to fall
+    by exp(-alpha z / 2), and a run that skips the step comes back at exactly
+    the amplitude it started with.
+
+    A flat field, so the linear step is the identity and the only thing that
+    can change the amplitude is the step being tested.
+
+    Parameters
+    ----------
+    backend_name : str
+        Backend to run on.
+    cls : type
+        Coupled solver class.
+    grid : tuple
+        Its spatial shape.
+    """
+    alpha = 20.0
+    z = 3e-4
+    amplitude = 0.9
+
+    simu = make_coupled(cls, backend_name, N2_VALUES[0])
+    # Both, because the constructor only gives the second component the
+    # first's value as a default and they are separate parameters after that.
+    simu.alpha = alpha
+    simu.alpha2 = alpha
+    field = np.full((2, *grid), amplitude, dtype=PRECISION_COMPLEX)
+    batched = np.stack([field, field])
+
+    out = simu.out_field(
+        batched, z, verbose=False, plot=False, delta_z=5e-6, normalize=False
+    )
+    got = float(np.max(np.abs(np.asarray(as_numpy(simu, out))))) / amplitude
+
+    assert got == pytest.approx(np.exp(-alpha * z / 2), rel=1e-4), (
+        f"a batched coupled run on {backend_name} came back at {got:.6f} of "
+        f"its amplitude where {np.exp(-alpha * z / 2):.6f} was due; at 1.0 it "
+        f"applied no real-space step at all"
+    )
+
+
+@pytest.mark.parametrize("backend_name", COUPLED_BATCH_BACKENDS)
+@pytest.mark.parametrize("cls,grid", COUPLED, ids=COUPLED_IDS)
 def test_a_coupled_batch_keeps_the_components_apart(backend_name, cls, grid):
     """The batch axis must not be mistaken for the component axis.
 

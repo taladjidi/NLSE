@@ -275,11 +275,30 @@ class CNLSE(NLSE):
         A1 = A[self._component(0)]
         A2 = A[self._component(1)]
 
-        # GPU backends don't support offset arrays - make contiguous copies
+        # Contiguous, whoever is asking, because the kernels need it and
+        # neither of them says so.
+        #
+        # The device backends cannot index an offset array at all. The numba
+        # kernels can, and quietly do the wrong thing: they open with
+        # A1.ravel(), which returns a view of a contiguous array and a COPY of
+        # one that is not, so the step is applied to the copy and thrown away
+        # when the kernel returns the argument it was given. A coupled field
+        # is (2, NX) unbatched and each component is contiguous, so this never
+        # showed. Add a batch and it is (B, 2, NX), each component is a
+        # strided (B, NX), and every batched coupled run on the CPU silently
+        # dropped its whole real-space step -- losses and nonlinear phase --
+        # and propagated the linear equation instead.
+        #
+        # The copy is only made where the view is not already contiguous, so
+        # an unbatched run pays nothing and keeps writing through to A.
+        # _set_components puts the components back either way.
         if self._backend.is_device_backend:
             if hasattr(A1, "copy"):
                 A1 = A1.copy()
                 A2 = A2.copy()
+        elif not A1.flags.c_contiguous:
+            A1 = np.ascontiguousarray(A1)
+            A2 = np.ascontiguousarray(A2)
 
         return A1, A2
 
