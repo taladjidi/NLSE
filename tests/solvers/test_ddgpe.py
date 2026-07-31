@@ -2,9 +2,12 @@ import numpy as np
 import pytest
 from helpers import as_numpy, assert_c_contiguous
 from NLSE import DDGPE
+from NLSE.backends import list_available_backends
 
 if DDGPE.__CUPY_AVAILABLE__:
     import cupy as cp
+
+AVAILABLE_BACKENDS = list_available_backends()
 
 PRECISION_COMPLEX = np.complex64
 PRECISION_REAL = np.float32
@@ -298,11 +301,13 @@ def turn_on(
     F_laser_t[time >= t_up] = 1
 
 
-# CL backend is too slow for DDGPE propagation (unoptimized array-expression kernels)
-@pytest.mark.parametrize(
-    "ddgpe_backend",
-    list(["CPU"] + (["CUPY"] if DDGPE.__CUPY_AVAILABLE__ else [])),
-)
+# Every backend, which this did not do. It ran on CPU and CUPY only, excluded
+# with "CL backend is too slow for DDGPE propagation (unoptimized
+# array-expression kernels)" -- true when written and not since the native
+# kernels landed: this run takes 0.08 s on CL against 0.09 on the CPU. What
+# the exclusion cost was that laser_excitation destroyed the cavity component
+# on CL, in every DDGPE run, with nothing to notice it.
+@pytest.mark.parametrize("ddgpe_backend", AVAILABLE_BACKENDS)
 def test_out_field(ddgpe_backend) -> None:
     backend = ddgpe_backend
     simu = make_solver(backend)
@@ -435,4 +440,42 @@ def test_add_noise_reaches_the_field(backend) -> None:
         f"add_noise left the field unchanged on {backend}: it ran without "
         f"raising and wrote nothing, which is what an in-place add on a slice "
         f"does on a backend that quietly drops it"
+    )
+
+
+def test_laser_excitation_of_zero_leaves_the_field_alone(backend) -> None:
+    """Subtracting a pump of zero must not change anything.
+
+    ``A[..., 1, :, :] -= delta`` is what this did, and pyopencl takes that on
+    a slice, raises nothing, and leaves the slice holding zero instead of the
+    value. Since ``out_field`` always inserts this callback, every DDGPE run
+    on CL lost its whole cavity component on the first step -- a pump of
+    exactly zero still zeroed it -- and the exciton then drifted away through
+    the Rabi coupling, ending 87% off the CPU's answer after ten steps.
+
+    Zero profiles rather than real ones, because then the correct answer is
+    known exactly and needs no tolerance: the field must come back untouched.
+
+    Parameters
+    ----------
+    backend : str
+        Backend to run on.
+    """
+    simu = make_solver(backend, n=32)
+    simu._current_delta_z = 1e-3
+    before = np.ones((2, 32, 32), dtype=PRECISION_COMPLEX)
+    field = simu._backend.from_numpy(before.copy())
+    flat_r = np.zeros((32, 32), dtype=PRECISION_COMPLEX)
+    flat_t = np.zeros(4, dtype=PRECISION_COMPLEX)
+
+    DDGPE.laser_excitation(simu, field, 0.0, 0, flat_r, flat_t, flat_r, flat_t)
+
+    after = np.asarray(as_numpy(simu, field))
+    np.testing.assert_allclose(
+        after,
+        before,
+        err_msg=(
+            f"a zero pump changed the field on {backend}; the cavity "
+            f"component is what an in-place subtract on a slice destroys"
+        ),
     )

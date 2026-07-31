@@ -232,8 +232,21 @@ class DDGPE(CNLSE):
         F_probe_t : np.ndarray
             The temporal profile of the probe field.
         """
-        A[..., 1, :, :] -= F_pump_r * F_pump_t[i] * simu._current_delta_z * 1j
-        A[..., 1, :, :] -= F_probe_r * F_probe_t[i] * simu._current_delta_z * 1j
+        # Read, subtract, write back, and one profile at a time so that the
+        # arithmetic is the two subtractions it always was.
+        #
+        # `A[..., 1, :, :] -= delta` is what this said, and pyopencl takes that
+        # on a slice, raises nothing, and leaves the slice holding zero rather
+        # than the value it should. Since out_field always inserts this
+        # callback, every DDGPE run on CL lost its cavity component on the
+        # first step -- subtracting a pump of exactly zero still zeroed it --
+        # and the exciton then drifted away through the Rabi coupling.
+        dtype = simu._field_dtype(A)
+        for profile_r, profile_t in ((F_pump_r, F_pump_t), (F_probe_r, F_probe_t)):
+            delta = profile_r * profile_t[i] * simu._current_delta_z * 1j
+            if isinstance(delta, np.ndarray):
+                delta = simu._backend.from_numpy(delta.astype(dtype))
+            A[..., 1, :, :] = A[..., 1, :, :] - delta
 
     def _step_constants(self) -> dict[str, Any]:
         """Override the couplings, which DDGPE gives the kernels unconverted.
