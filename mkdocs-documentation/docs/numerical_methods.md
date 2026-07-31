@@ -82,13 +82,18 @@ not silently carry into the next.
 
 ### Automatic computation
 
-Left to itself, the solver chooses a step that imprints a fixed phase per step
-— `DEFAULT_PHASE_PER_STEP`, 0.1 rad — against the energy the field actually
-carries in each term:
+Left to itself, the solver chooses a step that imprints a fixed phase per step,
+against the energy the field actually carries in each term:
 
 $$
-\delta z = \frac{0.1}{\sum_\text{terms} \langle\psi|\hat{O}|\psi\rangle / \langle\psi|\psi\rangle}
+\delta z = \frac{\phi}{\sum_\text{terms} \langle\psi|\hat{O}|\psi\rangle / \langle\psi|\psi\rangle}
 $$
+
+The two methods want different phases and no longer share a number:
+
+- `DEFAULT_PHASE_PER_STEP` = 0.1 rad, for split-step.
+- `RK4_PHASE_PER_STEP` = 0.02 rad, for RK4, whose truncation error is still
+  falling steeply where split-step's has flattened.
 
 Those expectation values are the same quantities the stability and accuracy
 limits below are built from, so the default sits a fixed distance inside them
@@ -96,6 +101,15 @@ rather than at an arbitrary fraction of a length scale. Terms that do not bind
 are left out: split-step applies the linear part exactly in Fourier space, so
 only the real-space terms enter its step, while RK4 approximates the whole
 right-hand side and takes all of them.
+
+These are defaults, not guarantees. They are written against the phase the
+potential and the interaction imprint, on the reasoning that split-step applies
+the linear part exactly — but the splitting error goes as the commutator of the
+linear and nonlinear parts, and a field carrying strong spatial frequencies of
+its own has a large one at a phase per step that looks modest. A turbulent or
+sharply structured field can be badly under-resolved at the default; check it
+against a finer step, or drive the step from a measured error with
+[`adapt_delta_z_to_error`](callbacks.md).
 
 Weighting by the field matters. A tall potential in a corner the beam never
 reaches, or a high-$K$ corner with no spectral weight, would otherwise set the

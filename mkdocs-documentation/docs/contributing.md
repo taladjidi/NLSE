@@ -1,13 +1,13 @@
 # Contributing
 
-Contributions are welcome! You can open a pull request or create an issue on the [GitHub repository](https://github.com/Quantum-Optics-LKB/NLSE).
+Contributions are welcome! You can open a pull request or create an issue on the [GitHub repository](https://github.com/taladjidi/NLSE).
 
 ## Development Setup
 
 Clone the repository and install in development mode:
 
 ```bash
-git clone https://github.com/Quantum-Optics-LKB/NLSE.git
+git clone https://github.com/taladjidi/NLSE.git
 cd NLSE
 pip install -e ".[dev]"
 ```

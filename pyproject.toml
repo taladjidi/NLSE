@@ -55,8 +55,8 @@ dev = [
 
 [project.urls]
 Documentation = "https://taladjidi.github.io/NLSE/"
-Homepage = "https://github.com/Quantum-Optics-LKB/NLSE"
-Repository = "https://github.com/Quantum-Optics-LKB/NLSE"
+Homepage = "https://github.com/taladjidi/NLSE"
+Repository = "https://github.com/taladjidi/NLSE"
 
 # hatchling builds straight from the source tree into the archive. There is no
 # build/lib staging directory to go stale and no egg-info file list to cache,

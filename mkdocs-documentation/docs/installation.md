@@ -5,7 +5,7 @@
 Clone the repository and install with pip:
 
 ```bash
-git clone https://github.com/Quantum-Optics-LKB/NLSE.git
+git clone https://github.com/taladjidi/NLSE.git
 cd NLSE
 pip install .
 ```

@@ -41,7 +41,9 @@ $$
 where $K(\mathbf{r})$ is a non-local kernel, typically the Green function of a diffusion equation. The kernel is set via the `nl_length` parameter and uses a modified Bessel function $K_0$.
 
 !!! note
-    Non-local interactions are only supported on the CPU and CUPY backends.
+    Only CPU and CUPY have the convolution a non-local interaction needs.
+    Asking for one on OpenCL or MLX moves the run to a backend that has it,
+    with a warning saying which and why.
 
 ## Coupled NLSE (CNLSE)
 

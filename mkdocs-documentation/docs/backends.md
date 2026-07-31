@@ -80,9 +80,15 @@ python my_simulation.py
 |---------|-----|------|----|-----|
 | Single precision | Yes | Yes | Yes | Yes |
 | Double precision | Yes | Yes | Device-dependent | No |
-| Non-local interactions | Yes | Yes | No | No |
-| Broadcasting | No | Yes | No | No |
+| Non-local interactions | Yes | Yes | Falls back | Falls back |
+| Broadcasting | Yes | Yes | Yes | Yes |
 | Convolution | Yes | Yes | No | No |
+
+Every backend broadcasts, but not in the same way: CUPY and MLX hand the
+batched parameters to their kernels, while CPU and OpenCL take one
+simulation's values per launch and loop, so their gain is in the transforms
+rather than in the kernels. "Falls back" means the solver moves the run to a
+backend that can serve it and says so, rather than refusing.
 
 ## Performance Tips
 
@@ -99,7 +105,7 @@ FFTW is vectorized and on arm64 no prebuilt build is.
 
 ### CUPY
 
-CuPy achieves best performance through kernel fusion (`cupy.fuse`) which reduces memory bandwidth overhead. Broadcasting enables running many simulations in parallel on a single GPU.
+CuPy achieves best performance through kernel fusion (`cupy.fuse`) which reduces memory bandwidth overhead. It broadcasts a batch inside its kernels, so a parameter scan costs little more than one simulation.
 
 ### OpenCL
 

@@ -45,7 +45,7 @@ mkdocs's own.
 First clone the repository:
 
 ```bash
-git clone https://github.com/Quantum-Optics-LKB/NLSE.git
+git clone https://github.com/taladjidi/NLSE.git
 cd NLSE
 ```
 

@@ -1,6 +1,6 @@
 site_name: NLSE Documentation
 site_url: https://taladjidi.github.io/NLSE/
-repo_url: https://github.com/Quantum-Optics-LKB/NLSE
+repo_url: https://github.com/taladjidi/NLSE
 
 theme:
   name: "material"

@@ -334,8 +334,10 @@ E_out = simu.out_field(E_in, L)
 
 Array shapes must follow NumPy [broadcasting rules](https://numpy.org/doc/stable/user/basics.broadcasting.html).
 
-!!! warning
-    Broadcasting is only supported on the CUPY backend.
+!!! note
+    The batch axes come first and the grid axes last, so a scan over two
+    parameters on a 2D grid is a four-dimensional array. Memory is the limit:
+    every simulation in the batch holds its own field.
 
 ## Plotting
 
