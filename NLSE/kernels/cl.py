@@ -214,7 +214,17 @@ def _compile_kernels(context, precision="single"):
     # Compile with aggressive optimizations
     source = _get_kernel_source(precision)
     build_options = [
-        "-cl-fast-relaxed-math",  # All fast math optimizations
+        # Deliberately not -cl-fast-relaxed-math. That flag also puts division
+        # and sqrt into the relaxed-precision mode, where an implementation may
+        # answer with a reciprocal good to ~1e-3, and it may make that choice
+        # differently for two kernels that must agree to the bit. The
+        # saturation factor 1 / (1 + |A|^2 / Isat) is a division, so under
+        # saturation the no-V and zero-V twins came apart by 4e-4 on POCL --
+        # 3300 float32 ulps -- while staying bit-identical on Apple, NVIDIA and
+        # the CPU. These three ask for the same optimizations without the
+        # licence to round division badly.
+        "-cl-unsafe-math-optimizations",
+        "-cl-finite-math-only",
         "-cl-mad-enable",  # Allow fused multiply-add
     ]
 
