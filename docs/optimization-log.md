@@ -167,9 +167,59 @@ kernel to match.
 threads itself. Per-thread speed alone is not enough, which is the thing this
 measurement settles.
 
-So: **CPU and MLX are both done.** The CPU step reads 22–39% of floor only
-because 60% of it is an FFT with no better implementation available; everything
-we do control is at its ceiling.
+### Lowering the floor instead of chasing it
+
+Being at 60% of a floor is not the same as being finished, because the floor is
+a property of the algorithm we chose. What a step must move is 104 B/point:
+64 for the transform pair, 24 for the propagator multiply, 16 for the nonlinear
+kernel. The transform is closed, but the other 40 are ours.
+
+**A separable propagator — open, measured, not built.** The linear propagator
+is `exp(-i(kx²+ky²)dz/2k)`, which factors into
+`exp(-i·kx²dz/2k) · exp(-i·ky²dz/2k)` — verified rank-1 to 6.7e-8, float32 eps.
+So the N² array every step reads could be two N-vectors: **8 MiB → 16 KiB at
+1024², 32 MiB → 32 KiB at 2048²**, and the kernel drops from 24 B/point to 16.
+
+Measured on a prototype kernel, `A *= P` against `A *= py[i]*px[j]`:
+
+| | 1024² | 2048² | 4096² |
+|---|---|---|---|
+| CPU | 0.91x | **2.76x** | 1.93x |
+| MLX | 1.16x | **1.44x** | 1.41x |
+
+The 2048² CPU figure is larger than the 1.5x traffic ratio allows, because
+losing a whole grid puts the rest in cache: that kernel reads 345 GB/s against
+a 248 GB/s DRAM ceiling. At 1024² there is nothing to win — the propagator
+already fits — and it costs 9%.
+
+At the step level that is ~5% on CPU and ~8% on MLX at 2048², plus whatever the
+freed grid does for the transform, which is not measured. The work is not
+small: `apply_propagator` on four backends, the fused split-step and RK4 paths,
+the `1/N` currently folded into the propagator, the RK4 operator (a *sum*, so
+separable differently), NLSE_3d, and the batched paths.
+
+**Already built, so not a lever:** merging the Strang half-steps of adjacent
+steps. `_merges_strang_halves` and the bracket pair do it, which is why double
+precision costs about the same as single rather than twice.
+
+**Rejected this round**, all on the MLX fused nonlinear kernel, which reads
+110 GB/s against a 356 GB/s ceiling and looked like it had something wrong:
+
+- Spelling `|A|²` as `A.real² + A.imag²` or `abs(A)²` instead of
+  `(A·conj A).real` — 0.89x and 0.98x, inside 7–13% noise.
+- Writing the rotation out as `cos + i sin` instead of a complex `mx.exp` —
+  1.01x. Emitting it as a stacked real array instead: 0.29x.
+- **A hand-written Metal kernel** via `mx.fast.metal_kernel`, one pass, correct
+  to 4.4e-8 — **0.99x**. `mx.compile` was already matching raw Metal.
+
+That last one also kills the inference that made the kernel look wrong: 110 GB/s
+against the ceiling implied about three passes, and a kernel that provably makes
+one is no faster. The apparent gap was an artefact of comparing traffic models —
+`nl_prop` scores 237 GB/s only by counting a precomputed `A_sq` it did not have
+to compute, and the fused kernel does less total work than the pair it replaces
+(0.63 ms against 0.71 ms).
+
+So: **the only measured lever left on macOS is the separable propagator.**
 
 ### The NVIDIA box
 
