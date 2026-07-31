@@ -47,21 +47,39 @@ def gaussian_input():
 class TestPropagatorRefresh:
     """The linear propagator must track the current delta_z."""
 
-    def test_changing_delta_z_between_runs_rebuilds_propagator(self):
+    @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+    def test_changing_delta_z_between_runs_rebuilds_propagator(self, backend_name):
         """Reusing a solver after changing delta_z must not reuse the old propagator.
 
         The propagator carries exp(-i K^2 dz / 2k), so a stale one silently
         applies the wrong step size for the whole run.
+
+        On every backend, because what could go stale is not the arithmetic
+        but where the propagator is kept: the device backends hold it on the
+        device and derive a pre-normalized twin beside it, and both have to be
+        rebuilt when the step changes. Only the CPU was checked, which is the
+        case with the least to get wrong.
+
+        Parameters
+        ----------
+        backend_name : str
+            Backend to run on.
         """
         E = gaussian_input()
         z = 4e-3
 
-        reused = make_solver()
+        reused = make_solver(backend_name)
         reused.out_field(E.copy(), z, verbose=False, plot=False, delta_z=1e-4)
-        got = reused.out_field(E.copy(), z, verbose=False, plot=False, delta_z=1e-5)
+        got = as_numpy(
+            reused,
+            reused.out_field(E.copy(), z, verbose=False, plot=False, delta_z=1e-5),
+        )
 
-        fresh = make_solver()
-        expected = fresh.out_field(E.copy(), z, verbose=False, plot=False, delta_z=1e-5)
+        fresh = make_solver(backend_name)
+        expected = as_numpy(
+            fresh,
+            fresh.out_field(E.copy(), z, verbose=False, plot=False, delta_z=1e-5),
+        )
 
         np.testing.assert_allclose(
             got,
@@ -75,10 +93,17 @@ class TestPropagatorRefresh:
             ),
         )
 
-    def test_propagator_matches_delta_z_after_second_run(self):
-        """After a second out_field with a new delta_z, the propagator matches it."""
+    @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+    def test_propagator_matches_delta_z_after_second_run(self, backend_name):
+        """After a second out_field with a new delta_z, the propagator matches it.
+
+        Parameters
+        ----------
+        backend_name : str
+            Backend to run on.
+        """
         E = gaussian_input()
-        simu = make_solver()
+        simu = make_solver(backend_name)
         simu.out_field(E.copy(), 2e-3, verbose=False, plot=False, delta_z=1e-4)
         simu.out_field(E.copy(), 2e-3, verbose=False, plot=False, delta_z=1e-5)
 
@@ -86,7 +111,7 @@ class TestPropagatorRefresh:
             -1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * 1e-5
         ).astype(np.complex64)
         np.testing.assert_allclose(
-            np.asarray(simu.propagator),
+            np.asarray(as_numpy(simu, simu.propagator)),
             expected,
             rtol=1e-5,
             err_msg="Propagator does not correspond to the current delta_z",
