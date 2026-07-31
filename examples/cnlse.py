@@ -44,7 +44,6 @@ def main():
         verbose=True,
         plot=True,
         precision="single",
-        delta_z=0.5e-4,
     )
 
 
