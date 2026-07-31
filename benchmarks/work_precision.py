@@ -24,6 +24,7 @@ reference.
 
 import argparse
 import time
+import warnings
 
 import numpy as np
 from NLSE import NLSE
@@ -49,6 +50,7 @@ PHASES = (0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.4, 0.8, 1.5, 2.5)
 METHODS = (
     ("split_step", "lie"),
     ("split_step", "strang"),
+    ("split_step", "yoshida"),
     ("RK4", "lie"),
 )
 
@@ -93,6 +95,7 @@ def rates_of(simu, A, splitting):
 
 def run(backend, n, dtype, method, splitting, phase, repeats=1):
     """Propagate at this phase per step; return the field and the best time."""
+    warnings.simplefilter("ignore")
     simu = solver(backend, n, dtype)
     A = field(n, dtype)
     rates = rates_of(simu, A, splitting)
@@ -160,10 +163,17 @@ def main(argv=None):
     parser.add_argument("--backends", nargs="*", default=["CPU"])
     parser.add_argument("--size", type=int, default=256)
     parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument(
+        "--field",
+        default="complex64",
+        choices=["complex64", "complex128"],
+        help="float width of the run, which is not the splitting",
+    )
     args = parser.parse_args(argv)
 
     for backend in args.backends:
-        print(f"\n=== {backend}, {args.size}x{args.size}, complex64 ===")
+        field_dtype = getattr(np, args.field)
+        print(f"\n=== {backend}, {args.size}x{args.size}, {args.field} ===")
         reference = reference_field(backend, args.size)
         print(
             f"  {'method':<20} {'rad/step':>9} {'steps':>7} {'time':>9} {'rel err':>10}"
@@ -174,7 +184,7 @@ def main(argv=None):
                     got, seconds, steps = run(
                         backend,
                         args.size,
-                        np.complex64,
+                        field_dtype,
                         method,
                         splitting,
                         phase,

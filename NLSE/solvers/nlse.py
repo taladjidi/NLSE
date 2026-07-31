@@ -381,6 +381,7 @@ class NLSE(StepSize):
         ], "Type mismatch, E_in should be complex64 or complex128"
         self._check_batch_support(E_in)
         field_dtype = self._field_dtype(E_in)
+        self._warn_about_splitting(splitting, field_dtype)
         # Rebuilt below once delta_z is settled; drop the previous run's so
         # the transfer does not carry it.
         self.propagator = None
@@ -395,6 +396,10 @@ class NLSE(StepSize):
             if delta_z is None:
                 delta_z = self._default_delta_z(A, method, z)
             delta_z = self._capped_delta_z(delta_z, A, method)
+            if splitting == "yoshida":
+                # The phase limits are written per real-space application, and
+                # Yoshida's longest sub-step is 1.7 times the step itself.
+                delta_z = min(delta_z, self._split_step_max_dz(A) / YOSHIDA_SPAN)
 
             # The propagator depends on delta_z, k, the grid and the precision,
             # any of which may have changed since the last run. _build_propagator
@@ -402,6 +407,9 @@ class NLSE(StepSize):
             if method == "RK4":
                 self.propagator = self._build_propagator_rk4(field_dtype)
             else:
+                # Yoshida builds its own three alongside this one, which is
+                # still what a partial step and the solver's own reporting
+                # read.
                 self.propagator = self._build_propagator(field_dtype, delta_z)
             self._send_propagator_to_gpu()
             if verbose:
@@ -567,6 +575,141 @@ class NLSE(StepSize):
         if V_scaled is None:
             return kernels.square_mod_nl_prop(A, dz, alpha_half, g, Isat_conv)
         return kernels.square_mod_nl_prop_v(A, V_scaled, dz, alpha_half, g, Isat_conv)
+
+    def _warn_about_splitting(self, splitting: str, field_dtype: np.dtype) -> None:
+        """Say so when the splitting and the float width do not go together.
+
+        The two are chosen separately and the useful combinations are not the
+        obvious ones. In complex64 the answer is limited by round-off
+        accumulating over steps rather than by the splitting, so a
+        fourth-order scheme pays three transform pairs for accuracy the
+        arithmetic cannot hold. In complex128 that floor is gone and the
+        splitting is what is left, so Strang leaves a large factor on the
+        table. Both are measured in docs/optimization-log.md.
+
+        Parameters
+        ----------
+        splitting : str
+            The composition asked for.
+        field_dtype : np.dtype
+            Complex dtype the run will use.
+        """
+        single = np.dtype(field_dtype) == np.dtype(np.complex64)
+        if splitting == "yoshida":
+            if single:
+                warnings.warn(
+                    "splitting='yoshida' on a complex64 field: it costs three "
+                    "transform pairs per step for an order the arithmetic "
+                    "cannot use, because round-off over steps sets the error "
+                    "long before the splitting does. Pass a complex128 field, "
+                    "or use splitting='strang'.",
+                    stacklevel=3,
+                )
+            if self._has_loss():
+                warnings.warn(
+                    "splitting='yoshida' with loss: its middle sub-step runs "
+                    "backwards, which amplifies instead of decaying. The "
+                    "composition is still fourth order, but the intermediate "
+                    "field is not physical and may overflow.",
+                    stacklevel=3,
+                )
+        elif not single:
+            warnings.warn(
+                f"splitting={splitting!r} on a complex128 field: with the "
+                "round-off floor out of the way the splitting error is what "
+                "is left, and splitting='yoshida' reaches a given accuracy "
+                "for much less work.",
+                stacklevel=3,
+            )
+
+    def _has_loss(self) -> bool:
+        """Whether anything in the run removes norm from the field."""
+        if np.any(np.asarray(self.alpha) != 0):
+            return True
+        V = self.V
+        return V is not None and np.iscomplexobj(V) and np.any(np.imag(V) != 0)
+
+    def _yoshida_propagators(self, dtype: np.dtype, delta_z: float) -> list:
+        """Build and place the propagator each Yoshida sub-step needs.
+
+        Three sub-steps of different length need three propagators, and they
+        are built once per step size rather than per step. Each is kept with
+        its pre-normalized twin because ``_fused_propagator`` reads that twin
+        off the solver rather than off its argument, so swapping one without
+        the other would hand a kernel a propagator built for another distance.
+
+        Parameters
+        ----------
+        dtype : np.dtype
+            Complex dtype of the field.
+        delta_z : float
+            The whole Yoshida step.
+
+        Returns
+        -------
+        list
+            ``(propagator, propagator_fft)`` for each sub-step, in order.
+        """
+        saved = (self.propagator, self._propagator_fft)
+        pairs = []
+        try:
+            for weight in YOSHIDA_WEIGHTS:
+                self.propagator = self._build_propagator(dtype, weight * delta_z)
+                self._send_propagator_to_gpu()
+                pairs.append((self.propagator, self._propagator_fft))
+        finally:
+            self.propagator, self._propagator_fft = saved
+        return pairs
+
+    def split_step_yoshida(
+        self,
+        A: np.ndarray,
+        A_sq: np.ndarray,
+        V: np.ndarray | None,
+        propagators: list,
+        plans: list,
+        delta_z: float,
+    ) -> np.ndarray:
+        """Take one fourth-order Yoshida step.
+
+        Three Strang sub-steps with weights summing to one, the middle of them
+        backwards. That is what raises the order from two to four, and what
+        rules the scheme out for a lossy medium, where a backwards step
+        amplifies instead of decaying.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            Field, modified in place on the array backends.
+        A_sq : np.ndarray
+            Scratch for the intensity, used by the non-local path.
+        V : np.ndarray or None
+            Potential.
+        propagators : list
+            ``(propagator, propagator_fft)`` per sub-step, from
+            ``_yoshida_propagators``.
+        plans : list
+            FFT plans.
+        delta_z : float
+            The whole step. Each sub-step takes its own fraction of it.
+
+        Returns
+        -------
+        np.ndarray
+            The field.
+        """
+        saved = (self.propagator, self._propagator_fft)
+        try:
+            for (propagator, propagator_fft), weight in zip(
+                propagators, YOSHIDA_WEIGHTS
+            ):
+                self.propagator, self._propagator_fft = propagator, propagator_fft
+                A = self.split_step(
+                    A, A_sq, V, propagator, plans, weight * delta_z, "strang"
+                )
+        finally:
+            self.propagator, self._propagator_fft = saved
+        return A
 
     def split_step_RK4(
         self,
@@ -1777,6 +1920,16 @@ class NLSE(StepSize):
                 def _step():
                     state[0] = self.split_step_RK4(
                         state[0], V, self.propagator, self.plans, dz
+                    )
+            elif body_precision == "yoshida":
+                # Built here rather than per step: the three sub-steps have
+                # fixed lengths once dz is known, and this closure is remade
+                # whenever dz changes.
+                sub = self._yoshida_propagators(self._field_dtype(state[0]), dz)
+
+                def _step():
+                    state[0] = self.split_step_yoshida(
+                        state[0], A_sq, V, sub, self.plans, dz
                     )
             else:
 
