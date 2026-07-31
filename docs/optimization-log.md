@@ -263,8 +263,41 @@ temporaries. `rabi_coupling` became one launch instead of six plus a buffer
 allocation; `apply_propagator` one launch instead of an implicit `A *= prop`
 with a temporary. Both now run at 100% and 77% of best observed bandwidth.
 
-**`-cl-fast-relaxed-math -cl-mad-enable`, and a program cache — deployed.**
-The cache is keyed by `(context_hash, precision)`.
+**A program cache — deployed.** Keyed by `(context_hash, precision)`.
+
+**`-cl-fast-relaxed-math` — rejected on correctness; `-cl-mad-enable` alone.**
+It implies `-cl-unsafe-math-optimizations`, which permits reassociation, and a
+V-reading kernel and its generated no-V twin are not the same expression to
+reassociate: `g * A_sq * sat + V` against `g * A_sq * sat`. POCL ordered the
+multiplies differently in the two, so a potential of *exactly zero* moved the
+result by about an ulp. Over 20 steps that accumulates coherently into the
+nonlinear phase and reached 8.3e-7, eight times the tolerance in
+`tests/integration/test_zero_potential.py` — a red CI for months. Apple and
+NVIDIA compiled both twins alike and stayed bit-identical, which is why
+nothing local reproduced it.
+
+Measured on POCL 7.1, launching the two twins on one field: 1256 of 4096
+elements differ under `-cl-unsafe-math-optimizations` or
+`-cl-fast-relaxed-math`; none differ under `-cl-mad-enable`, under
+`-cl-finite-math-only`, or under no flags. Contraction is not the problem —
+`mad` is one rounding of the *same* expression.
+
+`-cl-finite-math-only` went too: it promises no infinity reaches the kernels,
+and `Isat` defaults to `np.inf`.
+
+Free on Apple within a noisy machine's resolution — 1.05x, 0.99x, 0.86x, 0.98x
+on 1024 split_step single and double, 2048 split_step and 1024 RK4, against
+per-cell noise of 23%, 12%, 25%, 7%. *Challenge this* on a quiet machine, but
+the correctness argument stands whatever the timing says: a relaxed flag can
+only come back with something that keeps the twins on the same bits.
+
+**Reproducing a POCL-only failure.** `conda create -n poclrepro -c conda-forge
+pocl pyopencl pyvkfft matplotlib numba scipy pytest`, then run with
+`PYTHONPATH` set to the repo. POCL is the only platform visible inside that
+env, so the CI backend runs locally without disturbing the Apple one. Two
+hypotheses were refuted from CI alone before this was tried, a full round trip
+each. Note arm64 POCL shows the ulp divergence but not the test failure, and
+fails `test_double_precision` for unrelated reasons.
 
 **Strided work-items — rejected** (branch `perf/cl-strided-kernels`,
 `406ed45`, `b9b9a36`, unmerged). CL is at parity with MLX on bandwidth and on

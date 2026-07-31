@@ -214,8 +214,12 @@ def _compile_kernels(context, precision="single"):
     # Compile with aggressive optimizations
     source = _get_kernel_source(precision)
     build_options = [
-        "-cl-fast-relaxed-math",  # All fast math optimizations
-        "-cl-mad-enable",  # Allow fused multiply-add
+        # No unsafe math, and so no -cl-fast-relaxed-math, which implies it:
+        # reassociation is free to round a V-reading kernel and its no-V twin
+        # differently, and on POCL a zero potential then changed the result.
+        # No -cl-finite-math-only either -- Isat defaults to np.inf and
+        # reaches these kernels as one. See docs/optimization-log.md.
+        "-cl-mad-enable",
     ]
 
     program = cl.Program(context, source).build(options=" ".join(build_options))
