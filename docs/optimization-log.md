@@ -138,19 +138,38 @@ Per-kernel attribution at 2048², against the ceilings above.
 `_exp` took it to the bound, and no further arithmetic trick can help. MLX's
 elementwise kernels sit at 85–94% of bandwidth.
 
-**What is left on both is the transform, and it is not ours.** Two substitutes
-were measured and both are worse: MLX's own CPU device is **11x slower** than
-scipy (57.6 ms against 5.3 ms at 2048²), and pyFFTW was rejected earlier for
-being unvectorized on arm64. Thread count is not it either — `workers=-1` is
-already the best of every setting from 1 to 16 (7.3x scaling on 12P+4E cores).
-The only untried candidate is binding Apple's Accelerate/vDSP, and vDSP wants
-split-complex layout, so the conversion may eat the win. *Challenge this* if
-someone benchmarks vDSP against pocketfft on a 2048² complex64 2D transform
-first — that measurement, not the binding, is the piece of work.
+**What is left on both is the transform, and every substitute measured is
+worse.** MLX's own CPU device is **11x slower** than scipy (57.6 ms against
+5.3 ms at 2048²). pyFFTW was rejected earlier for being unvectorized on arm64.
+Thread count is not it either — `workers=-1` beats every setting from 1 to 16
+(7.3x scaling on 12P+4E cores).
 
-So: **CPU and MLX are both done unless the transform is replaced.** The CPU
-step reads 22–39% of floor only because 60% of it is an FFT we do not control;
-everything we do control is at its ceiling.
+**Apple Accelerate / vDSP — rejected, measured.** It is correct through ctypes
+(`vDSP_fft2d_zip`, split-complex, max rel error 3.5e-7 against numpy) and
+genuinely **1.37x faster than pocketfft on one thread**, 26.4 ms against
+36.1 ms. It loses anyway, because vDSP has no threading of its own and
+pocketfft's does: **5.5 ms against 26.4 ms, so scipy wins by 4.8x** in the
+configuration actually used.
+
+Threading it by hand does not rescue it. Splitting rows and columns across a
+pool and calling `vDSP_fftm_zip` per chunk is *catastrophic* — 26.3 ms on one
+thread becomes 249 ms on two and never recovers (105 ms at 16). The strided
+column pass is what does it; giving each thread its own `FFTSetup` changes
+nothing, so it is the access pattern and not setup contention. The
+transpose-based way out fails on arithmetic: the contiguous row pass scales
+only 2.38x (1.97 → 0.83 ms), so four of them cost 3.3 ms, and the eight plane
+transposes a roundtrip needs cost more than scipy's entire roundtrip — 2.99 ms
+each naive, and even a perfect blocked transpose only ties. That is all before
+the split-complex conversion each step would need and before rewriting every
+kernel to match.
+
+*Challenge this* only with an FFT that is both faster per thread **and**
+threads itself. Per-thread speed alone is not enough, which is the thing this
+measurement settles.
+
+So: **CPU and MLX are both done.** The CPU step reads 22–39% of floor only
+because 60% of it is an FFT with no better implementation available; everything
+we do control is at its ceiling.
 
 ### The NVIDIA box
 
