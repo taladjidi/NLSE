@@ -33,7 +33,10 @@ def sample(
         Array to store the samples.
     """
     if i % save_every == 0:
-        E_samples[i // save_every] = A.copy()
+        # A is whatever the backend holds, and only the CPU one holds a numpy
+        # array. Assigning into E_samples copies, so nothing more is needed --
+        # it used to call A.copy(), which mlx arrays do not have.
+        E_samples[i // save_every] = simu._as_host_array(A)
 
 
 def norm(
@@ -65,7 +68,13 @@ def norm(
         Array to store the norms.
     """
     if i % save_every == 0:
-        norms[i // save_every] = (A.real * A.real + A.imag * A.imag).sum()
+        # On the host, because .sum() is not something every backend's array
+        # has -- pyopencl's does not -- and the answer is one number that has
+        # to reach a numpy array anyway.
+        A_host = simu._as_host_array(A)
+        norms[i // save_every] = (
+            A_host.real * A_host.real + A_host.imag * A_host.imag
+        ).sum()
 
 
 def evaluate_delta_n(
@@ -97,10 +106,14 @@ def evaluate_delta_n(
         The array of delta_n values.
     """
     if i % save_every == 0:
-        A_sq = A.real * A.real + A.imag * A.imag
-        delta_n[i // save_every] = (
-            c * epsilon_0 / 2 * simu.n2 * A_sq / (1 + A_sq / simu.I_sat)
-        )
+        # Everything on the host: A is the backend's array, and n2 and I_sat
+        # are scalars for an ordinary run but device arrays for a batched one
+        # that _send_arrays_to_gpu has already moved.
+        A_host = simu._as_host_array(A)
+        A_sq = A_host.real * A_host.real + A_host.imag * A_host.imag
+        n2 = simu._as_host_array(simu.n2)
+        I_sat = simu._as_host_array(simu.I_sat)
+        delta_n[i // save_every] = c * epsilon_0 / 2 * n2 * A_sq / (1 + A_sq / I_sat)
 
 
 def adapt_delta_z(
