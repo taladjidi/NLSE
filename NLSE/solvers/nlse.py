@@ -855,6 +855,14 @@ class NLSE:
         back to the local path, and say so, rather than quietly charge for a
         non-locality that is not there.
 
+        The other end was unguarded. The kernel is built six interaction
+        lengths wide, so it is ``(6 * nl_length / delta_X + 1)**2`` cells, and
+        a length given in the wrong unit takes that past what the machine has:
+        5 m on a 8.9 mm window is a 215281 x 215281 kernel, and the process is
+        killed while building it, with no traceback and nothing said. A range
+        longer than the window is not a grid that needs refining -- it is a
+        number that cannot mean what it says -- so it raises instead.
+
         Parameters
         ----------
         nl_length : float
@@ -865,6 +873,16 @@ class NLSE:
         float
             The same value, or 0 if the grid does not resolve it.
         """
+        window = self.NX * self.delta_X
+        if nl_length > window:
+            raise ValueError(
+                f"nl_length={nl_length:.3g} m is longer than the "
+                f"{window:.3g} m window, so every point would interact with "
+                f"every other and the kernel, six interaction lengths wide, "
+                f"would be {int(6 * nl_length // self.delta_X) + 1} cells "
+                f"across against a grid of {self.NX}. Check the units: "
+                f"nl_length is in metres."
+            )
         if nl_length <= 0 or nl_length // self.delta_X >= 1:
             return nl_length
         warnings.warn(

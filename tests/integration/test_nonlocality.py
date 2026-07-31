@@ -74,6 +74,43 @@ def test_an_unresolvable_nl_length_falls_back_to_local(backend):
     )
 
 
+@pytest.mark.parametrize("backend", list_available_backends())
+def test_an_nl_length_longer_than_the_window_is_refused(backend):
+    """Past the window there is no kernel to build, only a machine to fill.
+
+    The kernel is six interaction lengths wide, so its size grows as the
+    square of nl_length / delta_X with nothing bounding it above. Only the
+    lower end was checked. A length in the wrong unit -- 5 m instead of 5 um
+    on a 8.9 mm window -- asks for a 215281 x 215281 kernel, and the process
+    is killed part way through building it: no traceback, no message, exit
+    137, and on a shared machine possibly something else killed instead.
+
+    Refined grids do not help here and coarser ones make it worse, so this
+    raises rather than falling back the way an unresolvable length does.
+
+    Parameters
+    ----------
+    backend : str
+        Backend to run on. The check is on the grid, so it is the same on
+        every one, and it has to come before the convolution refusal or the
+        backends without a convolution would report the wrong problem.
+    """
+    with pytest.raises(ValueError, match="longer than the"):
+        NLSE(
+            alpha=0,
+            power=1.05,
+            window=4 * 2.23e-3,
+            n2=-1e-9,
+            V=None,
+            L=2e-4,
+            NX=64,
+            NY=64,
+            Isat=10e4,
+            nl_length=5.0,  # metres, on a 8.9 mm window
+            backend=backend,
+        )
+
+
 def test_a_resolved_nl_length_is_kept():
     """The fallback must not fire on a grid that does resolve the length."""
     simu = NLSE(
