@@ -71,16 +71,20 @@ spending effort on a kernel.
 
 | ceiling | GPU | CPU |
 |---|---|---|
-| streaming bandwidth | 416 GB/s | 242 GB/s |
-| fp32 fused multiply-add | 12.1 TFLOP/s | 0.52 TFLOP/s |
-| sin + cos + exp | 86.8 G/s | 2.5 G/s |
+| streaming bandwidth | 357–416 GB/s | 235–242 GB/s |
+| fp32 fused multiply-add | 10.2 TFLOP/s | 0.55 TFLOP/s |
+| sin + cos + exp | 87–89 G/s | 2.5–2.9 G/s |
 
-The GPU figure is 104% of the 400 GB/s rating, because at these sizes some of
+The GPU bandwidth brackets the 400 GB/s rating, because at these sizes part of
 the working set is served by cache rather than DRAM. The FMA figure is
-essentially the hardware limit (40 cores x 128 lanes x 2 at ~1.1 GHz). The
-transcendental gap is the one that matters: **the GPU does sin, cos and exp 35x
+essentially the hardware limit (40 cores x 128 lanes x 2 at ~1.1 GHz); a
+float4 probe reads 12.1, but scalar is what CUDA can also compile. The
+transcendental gap is the one that matters: **the GPU does sin, cos and exp 30x
 faster than the CPU**, which is why the nonlinear kernels dominate a CPU step
 and not a GPU one.
+
+The bandwidth ceiling itself moves about 15% between runs, so every percentage
+below carries that: nothing under ~15% apart is a difference.
 
 Compulsory traffic per grid point, counting each array a step must read and
 write once: **104 B** for single-precision split-step, **120 B** double,
@@ -110,9 +114,13 @@ ten times what Metal does to put a step on the GPU, and up to 1024² that is the
 whole story of CL against MLX. *Challenge this* by fusing CL's per-step
 launches further, which is the only thing that can help at those sizes.
 
-The 103% is the tool's resolution, not a kernel beating physics: the ceiling is
-one number measured at 128 MiB, and a 1024² working set gets more cache help
-than that. Read anything above ~90% as "at the bound".
+Cells at or just over 100% are the tool's resolution, not a kernel beating
+physics: the ceiling is one number measured at 128 MiB, and a 1024² working set
+gets more cache help than that. Read anything above ~90% as "at the bound".
+
+The CUDA probe is written and its generated source is syntax-checked, but it
+has never run — there is no CuPy on the Mac this was measured on. Treat the
+first numbers it prints on the NVIDIA box as unverified.
 
 ## Where the time goes
 

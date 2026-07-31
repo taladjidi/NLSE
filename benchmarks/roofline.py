@@ -87,25 +87,33 @@ KERNEL void copy_k(GLOBAL const float4* a, GLOBAL float4* b, int n, int reps) {
     int i = TID; int s = NTHREADS;
     for (int j = i; j < n; j += s) b[j] = a[j];
 }
-KERNEL void fma_k(GLOBAL const float4* a, GLOBAL float4* b, int n, int reps) {
+// Scalars, not float4: CUDA's float4 is a plain struct with no arithmetic
+// operators, so the vector spelling compiles only under OpenCL. Eight
+// independent chains give the pipeline enough to keep busy without them.
+KERNEL void fma_k(GLOBAL const float* a, GLOBAL float* b, int n, int reps) {
     int i = TID;
-    float4 x0 = a[i], x1 = x0 + 1.0f, x2 = x0 + 2.0f, x3 = x0 + 3.0f;
+    float x0 = a[i], x1 = x0 + 1.0f, x2 = x0 + 2.0f, x3 = x0 + 3.0f;
+    float x4 = x0 + 4.0f, x5 = x0 + 5.0f, x6 = x0 + 6.0f, x7 = x0 + 7.0f;
     for (int r = 0; r < reps; ++r) {
         x0 = x0 * 1.0000001f + 1e-7f; x1 = x1 * 1.0000001f + 1e-7f;
         x2 = x2 * 1.0000001f + 1e-7f; x3 = x3 * 1.0000001f + 1e-7f;
+        x4 = x4 * 1.0000001f + 1e-7f; x5 = x5 * 1.0000001f + 1e-7f;
+        x6 = x6 * 1.0000001f + 1e-7f; x7 = x7 * 1.0000001f + 1e-7f;
     }
-    b[i] = x0 + x1 + x2 + x3;
+    b[i] = x0 + x1 + x2 + x3 + x4 + x5 + x6 + x7;
 }
 KERNEL void trans_k(GLOBAL const float* a, GLOBAL float* b, int n, int reps) {
     int i = TID;
     float x = a[i], acc = 0.0f;
     for (int r = 0; r < reps; ++r) {
         float s = SIN(x + (float)r), c = COS(x + (float)r);
-        acc += s * c * exp(-fabs(x) * 1e-3f);
+        acc += s * c * EXP(-FABS(x) * 1e-3f);
     }
     b[i] = acc;
 }
 """
+
+FMA_CHAINS = 8  # independent accumulators per work item in fma_k
 
 CL_DIALECT = {
     "KERNEL": "__kernel",
@@ -114,6 +122,8 @@ CL_DIALECT = {
     "NTHREADS": "get_global_size(0)",
     "SIN": "sin",
     "COS": "cos",
+    "EXP": "exp",
+    "FABS": "fabs",
 }
 CUDA_DIALECT = {
     "KERNEL": 'extern "C" __global__',
@@ -122,6 +132,8 @@ CUDA_DIALECT = {
     "NTHREADS": "(gridDim.x * blockDim.x)",
     "SIN": "sinf",
     "COS": "cosf",
+    "EXP": "expf",
+    "FABS": "fabsf",
 }
 
 
@@ -269,17 +281,17 @@ def cl_ceilings(working_bytes):
     n = 1 << 24
     a = cla.to_device(q, rng.random(n, dtype=np.float32))
     b = cla.empty_like(a)
-    n4 = np.int32(n // 4)
     reps = np.int32(512)
+    m_fma = n // 8
     t = slope(
         lambda r: [
-            kern["fma_k"](q, (n // 4,), None, a.data, b.data, n4, reps)
+            kern["fma_k"](q, (m_fma,), None, a.data, b.data, np.int32(m_fma), reps)
             for _ in range(r)
         ],
         2,
         sync,
     )
-    fma = (n // 4) * 4 * 4 * int(reps) * 2 / t / 1e12
+    fma = m_fma * FMA_CHAINS * int(reps) * 2 / t / 1e9
 
     tr = np.int32(64)
     m = n // 16
@@ -291,7 +303,7 @@ def cl_ceilings(working_bytes):
         2,
         sync,
     )
-    return {"stream": stream, "fma": fma * 1e3, "trans": m * int(tr) / t / 1e9}
+    return {"stream": stream, "fma": fma, "trans": m * int(tr) / t / 1e9}
 
 
 def mlx_ceilings(working_bytes):
@@ -350,12 +362,16 @@ def cupy_ceilings(working_bytes):
     def launch(name, count, *args):
         kern[name]((max(count // block, 1),), (block,), args)
 
+    # np.int32 rather than Python ints: a Python int reaches the kernel as 64
+    # bits and does not match an `int` parameter.
+    i32 = np.int32
+
     def copy_at(elements):
         a = cp.random.random(elements, dtype=cp.float32)
         b = cp.empty_like(a)
 
         def once():
-            launch("copy_k", elements // 4, a, b, elements // 4, 1)
+            launch("copy_k", elements // 4, a, b, i32(elements // 4), i32(1))
             sync()
 
         once()
@@ -367,15 +383,22 @@ def cupy_ceilings(working_bytes):
     a = cp.random.random(n, dtype=cp.float32)
     b = cp.empty_like(a)
     reps = 512
+    m_fma = n // 8
     t = slope(
-        lambda r: [launch("fma_k", n // 4, a, b, n // 4, reps) for _ in range(r)],
+        lambda r: [
+            launch("fma_k", m_fma, a, b, i32(m_fma), i32(reps)) for _ in range(r)
+        ],
         2,
         sync,
     )
-    fma = (n // 4) * 4 * 4 * reps * 2 / t / 1e9
+    fma = m_fma * FMA_CHAINS * reps * 2 / t / 1e9
 
     tr, m = 64, n // 16
-    t = slope(lambda r: [launch("trans_k", m, a, b, m, tr) for _ in range(r)], 2, sync)
+    t = slope(
+        lambda r: [launch("trans_k", m, a, b, i32(m), i32(tr)) for _ in range(r)],
+        2,
+        sync,
+    )
     return {"stream": stream, "fma": fma, "trans": m * tr / t / 1e9}
 
 
