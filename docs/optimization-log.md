@@ -25,6 +25,9 @@ Use the tools, and interleave variants rather than running them in sequence.
 - `benchmarks/profile_kernels.py` — per-kernel roofline when the change is
   inside a kernel. Reproduces to 2–5%. Percentages are against the best rate
   observed in the same table, not a synthetic ceiling.
+- `benchmarks/roofline.py` — what the hardware allows, and how much of it a
+  step gets. Ask this *before* optimizing: a kernel already at 80% of a bound
+  has under 1.25x in it however it is rewritten.
 - A kernel-level win is not a step-level win. Check what share of a step the
   kernel actually holds before investing — see the roofline below.
 
@@ -59,6 +62,57 @@ differs in *only* the thing under test, **matching the fast-math flags too**.
 Comparing a restricted-fastmath kernel against a `fastmath=True` twin measures
 the flags, not the change: it made an exact polynomial look like it had error
 growing to 3e-8, when against a matched twin it was 3.5e-16 flat.
+
+## What the machine allows
+
+`benchmarks/roofline.py`. Measured ceilings on the M3 Max, and what one step
+must pay whatever it does. The point is to know how much room is left before
+spending effort on a kernel.
+
+| ceiling | GPU | CPU |
+|---|---|---|
+| streaming bandwidth | 416 GB/s | 242 GB/s |
+| fp32 fused multiply-add | 12.1 TFLOP/s | 0.52 TFLOP/s |
+| sin + cos + exp | 86.8 G/s | 2.5 G/s |
+
+The GPU figure is 104% of the 400 GB/s rating, because at these sizes some of
+the working set is served by cache rather than DRAM. The FMA figure is
+essentially the hardware limit (40 cores x 128 lanes x 2 at ~1.1 GHz). The
+transcendental gap is the one that matters: **the GPU does sin, cos and exp 35x
+faster than the CPU**, which is why the nonlinear kernels dominate a CPU step
+and not a GPU one.
+
+Compulsory traffic per grid point, counting each array a step must read and
+write once: **104 B** for single-precision split-step, **120 B** double,
+**624 B** for RK4. Two thirds of the split-step figure is the transform pair.
+
+Fraction of the floor reached (complex64, no potential):
+
+| | 512² | 1024² | 2048² | 4096² |
+|---|---|---|---|---|
+| CPU split_step | 27% | 25% | 27% | 27% |
+| CL split_step | 93% | 70% | 62% | 62% |
+| MLX split_step | 63% | 78% | 53% | 48% |
+| MLX RK4 | 89% | 103% | 72% | 70% |
+
+Three things follow.
+
+**The GPU backends are at 50-80% of a hard bound**, so the remaining headroom
+there is under 2x and mostly in the transform. **The CPU sits at 25-30%**, and
+above 1024² its binding ceiling is not bandwidth but flops and transcendentals
+— which is what the `_sincos` and `_exp` polynomials below were aimed at, and
+where what is left also lies.
+
+**Below 1024² nothing is bandwidth-bound; it is all dispatch.** Fixed cost per
+step, measured as a step on a 64² grid: **CL 0.44 ms, MLX 0.05 ms** for
+split_step, and 1.83 ms against 0.11 ms for RK4. Apple's OpenCL costs almost
+ten times what Metal does to put a step on the GPU, and up to 1024² that is the
+whole story of CL against MLX. *Challenge this* by fusing CL's per-step
+launches further, which is the only thing that can help at those sizes.
+
+The 103% is the tool's resolution, not a kernel beating physics: the ceiling is
+one number measured at 128 MiB, and a 1024² working set gets more cache help
+than that. Read anything above ~90% as "at the bound".
 
 ## Where the time goes
 
