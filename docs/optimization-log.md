@@ -154,6 +154,55 @@ makes the reduction exact — with it on, the error grows with the argument
 so it is the *caller's* flags that reach LLVM. Isolating that flag change on
 its own measured 0.97–1.02x, so it costs nothing; the win is all polynomial.
 
+**The same treatment for the lossy kernels — deployed** (2026-07-31). `_sincos`
+only reached the `alpha == 0` branch; with losses the exponent is complex and
+numba calls libm, which is why `nl_prop` stayed at 15% of bandwidth against
+`nl_prop_without_V`'s 28%. `_cexp` splits it as `exp(a+ib) = exp(a)(cos b + i sin b)`
+— the split the OpenCL kernel has always used — over a new `_exp`, at all six
+complex-exponential sites. Written through the complex argument rather than
+against `alpha`, so it holds for a real or a complex potential.
+
+| | complex64 1024²/2048² | complex128 1024²/2048² |
+|---|---|---|
+| libm (before) | 0.756 / 2.676 ms | 0.784 / 2.827 ms |
+| polynomial | 0.534 / 1.730 ms — **1.42x / 1.55x** | 0.580 / 1.938 ms — **1.35x / 1.46x** |
+
+1 ulp against numpy across the full double range; 5.1e-16 against a libm twin
+with matched arithmetic and flags in complex128, bit-identical in complex64;
+the work-precision table with losses on is unchanged to every printed digit.
+
+Two traps worth keeping. `math.ldexp` is the obvious way to apply the `2**k`
+and is *also a call*, which is the entire problem — with it the kernel measures
+0.85x, slower than the libm it replaced, while writing the exponent field
+directly gives 1.5x. And that write must happen in two halves: a single
+`(k + 1023) << 52` overflows the field for large `|k|`, and the wrap turned
+`exp(-1e4)` into `inf` instead of `0` — the opposite answer, which would spread
+through the field as NaN. The argument is clamped to where `exp` saturates
+anyway; clamping `k` instead would leave the polynomial an argument it is not
+valid on.
+
+**Why this stays on the CPU and is not shared C — considered, rejected.** The
+tempting move is one C implementation of `_sincos`/`_exp` for all four
+backends. It does not pay, and the reason is that the CPU's problem was never
+the arithmetic:
+
+- The **structure** is already shared. `cl_source/kernels.cl` splits the complex
+  exponential into `exp` and `sincos` exactly as `_cexp` now does, and that C is
+  already shared with CUDA through `kernels/templating.py`.
+- On the **GPUs there is no call to break**. OpenCL, CUDA and Metal lower `exp`
+  and `sincos` to hardware, and SIMT execution needs no auto-vectorization. A
+  hand-rolled polynomial there only adds registers, and register pressure is
+  the measured CL bottleneck. The ceiling is known: removing the CL exponential
+  *entirely* gains ~1.3x, and `native_exp`/`native_sin`/`native_cos` gained 2%,
+  inside the noise.
+- **numba cannot consume C** cheaply. Reaching a C routine per element means
+  ctypes/cffi — a call in the loop body, which is precisely what made the CPU
+  kernels slow. The LLVM-level route (`@intrinsic`) takes llvmlite IR, not C.
+
+So the duplication is one screenful of coefficients, and it buys each backend
+the form its own compiler wants. Revisit only if a backend ever loses its
+hardware transcendental.
+
 **Grid-stride and blocked loops — rejected** (2026-07-31). The idea was that
 `prange` over a flat range lets a thread start off a vector boundary and leaves
 a scalar remainder per chunk, so an explicitly blocked loop would let every
@@ -277,13 +326,15 @@ unconfirmed until run on NVIDIA hardware.
 
 ## Open
 
-**A vectorizable `exp` for the `alpha != 0` CPU kernels.** `_sincos` (above)
-only helps the lossless path. With losses the exponent is complex and the
-kernels call libm `exp`, so `nl_prop` still sits at 15% of bandwidth against
-`nl_prop_without_V`'s 28%. The same treatment applies — `exp(x)` reduces to
-`2^k · poly(r)` with pure arithmetic — and would also let `_nl_prop` and
-`_square_mod_nl_prop_v` gain the `alpha == 0` branch they lack today, since
-with a real potential their exponent is purely imaginary too.
+**An `alpha == 0` branch for `_nl_prop` and `_square_mod_nl_prop_v`.** They call
+`_cexp` unconditionally, but with a real potential and no loss their exponent is
+purely imaginary, so they could take `_sincos` alone and skip `_exp` entirely —
+the branch `_nl_prop_without_V` and `_square_mod_nl_prop` already have.
+
+**Whether CuPy should split its complex exponential.** `kernels/cupy.py` calls
+`cp.exp` on a complex array, where the OpenCL kernel splits into `exp` and
+`sincos` on reals. Whether that costs anything is unmeasured — CuPy is not
+installed on the development Mac.
 
 **Whether alignment matters once the nonlinear loops vectorize.** Grid-stride
 was rejected against loops that could not vectorize at all (see above). Now
