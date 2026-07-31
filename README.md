@@ -9,7 +9,7 @@ A package to easily simulate all sorts of non linear Schrödinger equations. It 
 This file gets you running and explains the choices you have to make on the way
 in. Everything below the halfway mark is a summary; the full treatment lives in
 [`mkdocs-documentation/docs/`](mkdocs-documentation/docs/) and is published at
-**<https://quantum-optics-lkb.github.io/NLSE/>**. Each section here links to its
+**<https://taladjidi.github.io/NLSE/>**. Each section here links to its
 page rather than repeating it — the links point at the files, so they work in
 this repository whether or not you have the site open.
 
