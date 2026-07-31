@@ -25,19 +25,77 @@ def _to_mx(val):
     return arr
 
 
+# Largest |u| = |2*alpha*dz| the solved step below is used at. See
+# _LOSS_SOLVED_LIMIT in kernels/cpu.py, the same number for the same reason.
+_LOSS_SOLVED_LIMIT = 0.1
+
+
 # ── Pure implementations (no side effects, return new arrays) ───────────────
 
 
-def _nl_prop_pure(A, A_sq, dz, alpha, V, g, Isat):
+def _nl_factor(A_sq, dz, alpha, g, Isat, V=None):
+    """Return what a real-space step multiplies the field by.
+
+    Every scalar real-space step in this file goes through here, because the
+    lossy part of it is not the exponential it looks like. ``_loss_factor`` in
+    kernels/cpu.py carries the derivation: freezing ``|A|^2`` across a step is
+    exact only while the step preserves it, which a pure rotation does and loss
+    does not, and the frozen form costs Lie, Strang and Yoshida alike their
+    order. With ``u = 2*alpha*dz`` the step applies ``g*|A|^2*P*dz`` for the
+    phase and ``sqrt(1 - P*u)`` for the amplitude.
+
+    Branch-free, since ``alpha`` arrives as a device scalar and a branch on it
+    would mean a synchronization. At ``u = 0`` the iteration returns ``sat``
+    and the amplitude factor is exactly 1, so a lossless step is unchanged.
+
+    Parameters
+    ----------
+    A_sq : mx.array
+        ``|A|^2`` entering the step.
+    dz : mx.array
+        Step length.
+    alpha : mx.array
+        Loss coefficient.
+    g : mx.array
+        Interaction strength.
+    Isat : mx.array
+        Saturation intensity.
+    V : mx.array or None
+        Scaled potential, if there is one.
+
+    Returns
+    -------
+    mx.array
+        The factor to multiply the field by.
+    """
     sat = 1 / (1 + A_sq / Isat)
-    arg = 1j * g * A_sq * sat - alpha * sat + 1j * V
-    return A * mx.exp(dz * arg)
+    u = 2 * alpha * dz
+    P_solved = sat
+    for _ in range(3):
+        Pu = P_solved * u
+        P_solved = sat * (1 - Pu * P_solved * (0.5 + Pu / 3 + Pu * Pu / 4))
+    # Above _LOSS_SOLVED_LIMIT the iteration is out of its range and the step
+    # is frozen instead, as it was before. Chosen per element, since alpha may
+    # carry a batch axis.
+    solved = mx.abs(u) <= _LOSS_SOLVED_LIMIT
+    P = mx.where(solved, P_solved, sat)
+    decay = mx.where(
+        solved,
+        mx.sqrt(mx.maximum(1 - P_solved * u, 0)),
+        mx.exp(-alpha * sat * dz),
+    )
+    arg = 1j * g * A_sq * P
+    if V is not None:
+        arg = arg + 1j * V
+    return decay * mx.exp(dz * arg)
+
+
+def _nl_prop_pure(A, A_sq, dz, alpha, V, g, Isat):
+    return A * _nl_factor(A_sq, dz, alpha, g, Isat, V)
 
 
 def _nl_prop_without_V_pure(A, A_sq, dz, alpha, g, Isat):
-    sat = 1 / (1 + A_sq / Isat)
-    arg = 1j * g * A_sq * sat - alpha * sat
-    return A * mx.exp(dz * arg)
+    return A * _nl_factor(A_sq, dz, alpha, g, Isat)
 
 
 def _nl_prop_c_pure(A1, A_sq_1, A_sq_2, dz, alpha, V, g11, g12, Isat1, Isat2):
@@ -58,16 +116,12 @@ def _square_mod_pure(A, _A_sq):
 
 def _square_mod_nl_prop_pure(A, dz, alpha, g, Isat):
     A_sq = (A * mx.conj(A)).real
-    sat = 1 / (1 + A_sq / Isat)
-    arg = 1j * g * A_sq * sat - alpha * sat
-    return A * mx.exp(dz * arg)
+    return A * _nl_factor(A_sq, dz, alpha, g, Isat)
 
 
 def _square_mod_nl_prop_v_pure(A, V, dz, alpha, g, Isat):
     A_sq = (A * mx.conj(A)).real
-    sat = 1 / (1 + A_sq / Isat)
-    arg = 1j * g * A_sq * sat - alpha * sat + 1j * V
-    return A * mx.exp(dz * arg)
+    return A * _nl_factor(A_sq, dz, alpha, g, Isat, V)
 
 
 def _apply_propagator_pure(A, propagator):
@@ -462,8 +516,7 @@ def _make_split_step(splitting, has_V, axes):
             A = A * propagator
             A = mx.fft.ifftn(A, axes=axes)
             A_sq = (A * mx.conj(A)).real
-            sat = 1 / (1 + A_sq / Isat)
-            return A * mx.exp(dz * (1j * g * A_sq * sat - alpha * sat))
+            return A * _nl_factor(A_sq, dz, alpha, g, Isat)
 
     elif splitting == "lie" and has_V:
 
@@ -472,38 +525,29 @@ def _make_split_step(splitting, has_V, axes):
             A = A * propagator
             A = mx.fft.ifftn(A, axes=axes)
             A_sq = (A * mx.conj(A)).real
-            sat = 1 / (1 + A_sq / Isat)
-            return A * mx.exp(dz * (1j * g * A_sq * sat - alpha * sat + 1j * V_scaled))
+            return A * _nl_factor(A_sq, dz, alpha, g, Isat, V_scaled)
 
     elif splitting == "strang" and not has_V:
 
         def _pure(A, propagator, dz_half, alpha, g, Isat):
             A_sq = (A * mx.conj(A)).real
-            sat = 1 / (1 + A_sq / Isat)
-            A = A * mx.exp(dz_half * (1j * g * A_sq * sat - alpha * sat))
+            A = A * _nl_factor(A_sq, dz_half, alpha, g, Isat)
             A = mx.fft.fftn(A, axes=axes)
             A = A * propagator
             A = mx.fft.ifftn(A, axes=axes)
             A_sq = (A * mx.conj(A)).real
-            sat = 1 / (1 + A_sq / Isat)
-            return A * mx.exp(dz_half * (1j * g * A_sq * sat - alpha * sat))
+            return A * _nl_factor(A_sq, dz_half, alpha, g, Isat)
 
     else:  # double, has_V
 
         def _pure(A, propagator, V_scaled, dz_half, alpha, g, Isat):
             A_sq = (A * mx.conj(A)).real
-            sat = 1 / (1 + A_sq / Isat)
-            A = A * mx.exp(
-                dz_half * (1j * g * A_sq * sat - alpha * sat + 1j * V_scaled)
-            )
+            A = A * _nl_factor(A_sq, dz_half, alpha, g, Isat, V_scaled)
             A = mx.fft.fftn(A, axes=axes)
             A = A * propagator
             A = mx.fft.ifftn(A, axes=axes)
             A_sq = (A * mx.conj(A)).real
-            sat = 1 / (1 + A_sq / Isat)
-            return A * mx.exp(
-                dz_half * (1j * g * A_sq * sat - alpha * sat + 1j * V_scaled)
-            )
+            return A * _nl_factor(A_sq, dz_half, alpha, g, Isat, V_scaled)
 
     return mx.compile(_pure)
 

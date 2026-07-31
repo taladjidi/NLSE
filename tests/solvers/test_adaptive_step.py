@@ -73,7 +73,7 @@ def prepared_solver():
     simu = solver()
     field = beam()
     prepared, _ = simu._prepare_output_array(field.copy(), normalize=True)
-    simu._precompute_step_constants(simu.V, "strang")
+    simu._precompute_step_constants(simu.V, np.complex64)
     simu.plans = simu._build_fft_plan(prepared)
     simu.propagator = simu._build_propagator(np.complex64, L / 100)
     return simu, prepared
@@ -132,7 +132,7 @@ def test_it_beats_the_fixed_default_it_replaces():
     simu = solver()
     field = beam()
     prepared, _ = simu._prepare_output_array(field.copy(), normalize=True)
-    simu._precompute_step_constants(simu.V, "strang")
+    simu._precompute_step_constants(simu.V, np.complex64)
     rates = simu._energy_rates(prepared)
     rate = rates["potential"] + rates["interaction"]
 

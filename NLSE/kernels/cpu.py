@@ -185,6 +185,83 @@ def _cexp(w):
     return complex(decay * c, decay * s)
 
 
+# How many passes of the iteration in _loss_factor to make. Each one raises the
+# order of the composition built on the sub-step by one: frozen is first order
+# overall, one pass makes it second (all Strang can use), three makes it fourth
+# (all Yoshida can use). Measured against a stiff solve of the sub-step, the
+# relative error falls as u^2, u^3, u^4, u^5 for zero to three passes.
+_LOSS_PASSES = 3
+
+# Largest |u| = |2*alpha*dz| the iteration is used at. It is a contraction only
+# while the step takes out a small fraction of the intensity, and the fraction
+# it actually sees is sat*u, so the bound has to hold at sat = 1 -- a medium
+# that does not saturate at all, where the iteration is least helped. Measured
+# against a stiff solve there, it beats the frozen step by 2.6x at u = 0.1 and
+# loses to it by u = 0.3; above ~1 it walks away and returns a *larger* field
+# than it was given, which is the failure that has to be impossible.
+#
+# Above this the kernels compute what they computed before. A propagation never
+# reaches it: LOSS_PER_STEP_LIMIT in solvers/step_size.py caps the step at half
+# of it. A caller invoking a kernel directly can, and gets the old answer
+# rather than a diverging one.
+_LOSS_SOLVED_LIMIT = 0.1
+
+
+@numba.njit(inline="always", fastmath=_SINCOS_FASTMATH, cache=True)
+def _loss_factor(sat, u):
+    """Return the saturation the interaction should see over a lossy step.
+
+    The real-space step is exact only where ``|A|^2`` is constant through it.
+    That is true of a pure rotation and false the moment there is loss: the
+    amplitude decays *inside* the step while the interaction goes on turning
+    the phase at the rate the step began with. Frozen like that, the sub-step
+    carries a local error of O(dz^2), and every composition built on it comes
+    out first order -- Lie, Strang and Yoshida alike, which is measurable and
+    was measured.
+
+    Two exact facts say what it should apply instead. With ``y = |A|^2``,
+    ``s(y) = 1/(1 + y/Isat)`` and ``u = 2*alpha*dz``::
+
+        dy/dz = -2*alpha*s*y,  dphi/dz = g*y*s   =>   dphi/dy = -g/(2*alpha)
+
+    so the phase over the step is exactly ``(g/(2*alpha))*(y0 - y_end)``
+    whatever the saturation does in between, and ``y_end`` is fixed by
+    ``ln y + y/Isat = ln y0 + y0/Isat - u``.
+
+    Returned is ``P = (1 - y_end/y0)/u``, which is that phase written as a
+    saturation: the step applies ``g*y0*P*dz`` where it applied
+    ``g*y0*sat*dz``, and scales the amplitude by ``sqrt(1 - P*u)`` where it
+    multiplied by ``exp(-alpha*sat*dz)``.
+
+    P rather than ``y_end`` because P is what makes the lossless case free:
+    at ``u = 0`` the iteration returns ``sat`` untouched and both expressions
+    collapse to the ones they replace, bit for bit.
+
+    The iteration is the fixed point of
+    ``P = sat*(1 - P^2*u*(1/2 + P*u/3 + P^2*u^2/4))``, whose bracket is the
+    series of ``(-log1p(-P*u) - P*u)/(P*u)^2``. It contracts while the step
+    loses well under half the intensity, which ``_split_step_max_dz`` is what
+    keeps it to.
+
+    Parameters
+    ----------
+    sat : float
+        Saturation at the ``|A|^2`` entering the step.
+    u : float
+        ``2*alpha*dz``: the fraction of intensity the step takes out.
+
+    Returns
+    -------
+    float
+        The saturation to evaluate the interaction at.
+    """
+    P = sat
+    for _ in range(_LOSS_PASSES):
+        Pu = P * u
+        P = sat * (1.0 - Pu * P * (0.5 + Pu / 3.0 + Pu * Pu / 4.0))
+    return P
+
+
 @numba.njit(parallel=True, fastmath=_SINCOS_FASTMATH, cache=True, boundscheck=False)
 def _nl_prop(
     A: np.ndarray,
@@ -217,12 +294,27 @@ def _nl_prop(
     A_flat = A.ravel()
     A_sq_flat = A_sq.ravel()
     V_flat = V.ravel()
+    u = 2 * alpha * dz
+    if abs(u) > _LOSS_SOLVED_LIMIT:
+        # Either lossless, where freezing |A|^2 is exact, or a step so lossy
+        # that solving it is out of reach. See _LOSS_SOLVED_LIMIT.
+        for i in numba.prange(A_flat.size):
+            # saturation
+            sat = 1 / (1 + A_sq_flat[i] / Isat)
+            # Losses and interactions
+            arg = -alpha * sat + 1j * g * A_sq_flat[i] * sat + 1j * V_flat[i]
+            A_flat[i] *= _cexp(dz * arg)
+        return A
+    # Lossy: the interaction is evaluated at the saturation the step averages
+    # out to rather than the one it starts at, and the decay comes out of the
+    # exponential. See _loss_factor. The potential's own absorption, if it has
+    # one, is left in the exponential -- the identity behind _loss_factor holds
+    # for one decay channel, and a complex potential is a second.
     for i in numba.prange(A_flat.size):
-        # saturation
         sat = 1 / (1 + A_sq_flat[i] / Isat)
-        # Losses and interactions
-        arg = -alpha * sat + 1j * g * A_sq_flat[i] * sat + 1j * V_flat[i]
-        A_flat[i] *= _cexp(dz * arg)
+        P = _loss_factor(sat, u)
+        arg = 1j * g * A_sq_flat[i] * P + 1j * V_flat[i]
+        A_flat[i] *= np.sqrt(1 - P * u) * _cexp(dz * arg)
     return A
 
 
@@ -266,12 +358,27 @@ def _nl_prop_without_V(
             a = A_flat[i]
             A_flat[i] = complex(a.real * c - a.imag * s, a.real * s + a.imag * c)
         return A
+    u = 2 * alpha * dz
+    if abs(u) > _LOSS_SOLVED_LIMIT:
+        # Too lossy a step to solve; the frozen one, as before. See
+        # _LOSS_SOLVED_LIMIT.
+        for i in numba.prange(A_flat.size):
+            sat = 1 / (1 + A_sq_flat[i] / Isat)
+            arg = -alpha * sat + 1j * g * A_sq_flat[i] * sat
+            A_flat[i] *= _cexp(dz * arg)
+        return A
+    # Lossy: see _loss_factor. sincos rather than a complex exponential,
+    # because what is left in the exponent is again purely imaginary once the
+    # decay is a factor of its own.
     for i in numba.prange(A_flat.size):
-        # saturation
         sat = 1 / (1 + A_sq_flat[i] / Isat)
-        # Losses and interactions
-        arg = -alpha * sat + 1j * g * A_sq_flat[i] * sat
-        A_flat[i] *= _cexp(dz * arg)
+        P = _loss_factor(sat, u)
+        decay = np.sqrt(1 - P * u)
+        s, c = _sincos(dz * g * A_sq_flat[i] * P)
+        a = A_flat[i]
+        A_flat[i] = complex(
+            decay * (a.real * c - a.imag * s), decay * (a.real * s + a.imag * c)
+        )
     return A
 
 
@@ -499,11 +606,27 @@ def _square_mod_nl_prop(
             s, c = _sincos(theta)
             A_flat[i] = complex(a.real * c - a.imag * s, a.real * s + a.imag * c)
         return A
+    u = 2 * alpha * dz
+    if abs(u) > _LOSS_SOLVED_LIMIT:
+        # See _LOSS_SOLVED_LIMIT: the frozen step, as before.
+        for i in numba.prange(A_flat.size):
+            a = A_flat[i]
+            A_sq_val = a.real * a.real + a.imag * a.imag
+            sat = 1 / (1 + A_sq_val / Isat)
+            arg = -alpha * sat + 1j * g * A_sq_val * sat
+            A_flat[i] *= _cexp(dz * arg)
+        return A
+    # Lossy: see _loss_factor, and _nl_prop_without_V for why sincos.
     for i in numba.prange(A_flat.size):
-        A_sq_val = A_flat[i].real * A_flat[i].real + A_flat[i].imag * A_flat[i].imag
+        a = A_flat[i]
+        A_sq_val = a.real * a.real + a.imag * a.imag
         sat = 1 / (1 + A_sq_val / Isat)
-        arg = -alpha * sat + 1j * g * A_sq_val * sat
-        A_flat[i] *= _cexp(dz * arg)
+        P = _loss_factor(sat, u)
+        decay = np.sqrt(1 - P * u)
+        s, c = _sincos(dz * g * A_sq_val * P)
+        A_flat[i] = complex(
+            decay * (a.real * c - a.imag * s), decay * (a.real * s + a.imag * c)
+        )
     return A
 
 
@@ -535,11 +658,22 @@ def _square_mod_nl_prop_v(
     """
     A_flat = A.ravel()
     V_flat = V.ravel()
+    u = 2 * alpha * dz
+    if abs(u) > _LOSS_SOLVED_LIMIT:
+        # Lossless, or too lossy to solve. See _LOSS_SOLVED_LIMIT.
+        for i in numba.prange(A_flat.size):
+            A_sq_val = A_flat[i].real * A_flat[i].real + A_flat[i].imag * A_flat[i].imag
+            sat = 1 / (1 + A_sq_val / Isat)
+            arg = -alpha * sat + 1j * g * A_sq_val * sat + 1j * V_flat[i]
+            A_flat[i] *= _cexp(dz * arg)
+        return A
+    # Lossy: see _loss_factor, and _nl_prop for what stays in the exponential.
     for i in numba.prange(A_flat.size):
         A_sq_val = A_flat[i].real * A_flat[i].real + A_flat[i].imag * A_flat[i].imag
         sat = 1 / (1 + A_sq_val / Isat)
-        arg = -alpha * sat + 1j * g * A_sq_val * sat + 1j * V_flat[i]
-        A_flat[i] *= _cexp(dz * arg)
+        P = _loss_factor(sat, u)
+        arg = 1j * g * A_sq_val * P + 1j * V_flat[i]
+        A_flat[i] *= np.sqrt(1 - P * u) * _cexp(dz * arg)
     return A
 
 

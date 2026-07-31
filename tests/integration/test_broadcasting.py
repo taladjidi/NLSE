@@ -458,7 +458,7 @@ def test_batched_constants_are_reduced_to_component_rank(cls, grid, rank):
     simu = make_coupled(cls, "CPU", N2_VALUES.reshape(shape))
     V = np.zeros(grid, dtype=np.float32)
 
-    simu._precompute_step_constants(V, "lie")
+    simu._precompute_step_constants(V, np.complex64)
 
     component_ndim = len(grid)
     for name in sorted(simu._step_constants()):
@@ -485,4 +485,4 @@ def test_a_parameter_varying_over_components_is_refused(cls, grid):
         cls, "CPU", np.array([-1e-9, -2e-9]).reshape(1, 2, *(1,) * len(grid))
     )
     with pytest.raises(ValueError, match="component axis"):
-        simu._precompute_step_constants(None, "lie")
+        simu._precompute_step_constants(None, np.complex64)

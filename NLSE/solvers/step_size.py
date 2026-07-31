@@ -50,6 +50,20 @@ RK4_PHASE_PER_STEP = 0.02
 # is something a callback can sample and a plot can show rather than one jump.
 DEFAULT_MIN_STEPS = 10
 
+# Most of the intensity, as a fraction, a single real-space step may take out:
+# u = 2*alpha*dz. The kernels solve that step rather than freezing |A|^2 across
+# it, and the iteration they solve it with is a contraction only while u stays
+# small. Measured against a stiff solve of the sub-step, it beats the frozen
+# form by 2.6x at u = 0.1 where the medium does not saturate at all, by five
+# orders where it does, and loses to it by u = 0.3. Half of the crossing point,
+# so that a step at the ceiling is still well inside the useful range.
+#
+# The kernels carry the same number as LOSS_SOLVED_LIMIT and fall back to the
+# frozen form above it, because a kernel called directly does not come through
+# here. This is the ceiling for a propagation, which is the looser job: a step
+# that takes out 5% of the intensity is already a poor step.
+LOSS_PER_STEP_LIMIT = 0.05
+
 
 class StepSize:
     """The step-size half of a solver, mixed into NLSE.
@@ -424,9 +438,45 @@ class StepSize:
         """
         rates = self._energy_rates(A)
         phase_rate = rates["potential"] + rates["interaction"]
-        if phase_rate == 0:
+        limit = np.inf if phase_rate == 0 else np.pi / phase_rate
+        return min(limit, self._loss_max_dz())
+
+    def _loss_max_dz(self) -> float:
+        """Return the largest step the lossy real-space step is solved at.
+
+        A second ceiling, and a much looser one in every problem that has been
+        run: it binds only where a single step would take out a large fraction
+        of the intensity.
+
+        The kernels solve the real-space step rather than freezing ``|A|^2``
+        through it (see ``_loss_factor`` in kernels/cpu.py), and the iteration
+        that does it contracts while ``u = 2*alpha*dz`` stays well below one.
+        ``LOSS_PER_STEP_LIMIT`` is where it is still comfortably converging;
+        past it the iteration walks away and the step returns a field larger
+        than the one it was given, which is a worse failure than a coarse
+        answer because it does not look like one.
+
+        Written against ``alpha`` and not against the loss energy rate, which
+        carries the saturation: the rate is the average over the grid and the
+        iteration has to converge at the point that saturates least, where the
+        saturation is 1 and the rate is ``alpha`` itself.
+
+        Returns
+        -------
+        float
+            Largest step keeping the intensity lost per step inside the
+            iteration's region, or infinity for a lossless medium.
+
+        """
+        # A batched run holds its parameters on the device, so alpha is not
+        # necessarily something numpy will convert.
+        alpha = self.alpha
+        if not isinstance(alpha, (int, float)):
+            alpha = self._backend.to_numpy(alpha)
+        peak = float(np.max(np.abs(np.asarray(alpha, dtype=float))))
+        if peak == 0:
             return np.inf
-        return np.pi / phase_rate
+        return LOSS_PER_STEP_LIMIT / (2 * peak)
 
     def _capped_delta_z(self, delta_z: float, A: np.ndarray, method: str) -> float:
         """Return delta_z, lowered if it leaves the method's convergence region.

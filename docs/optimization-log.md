@@ -420,6 +420,79 @@ about complex64 and wrong to stop there: the argument reverses entirely with
 the round-off floor removed, which is the whole reason the scheme is keyed to
 the float width rather than offered as a default.
 
+## Solving the lossy real-space step
+
+Not an optimization, but it belongs with them: it is the largest change in
+accuracy-per-unit-work in this file, and it was found by a benchmark.
+
+`benchmarks/work_precision.py --problem turbulence` draws the work-precision
+table for examples/fig2_turbulence.py, which is lossy (`alpha = 20` over 20 cm).
+Every splitting on it converged at **first order** — Strang and Yoshida
+included, both returning a drift ratio of 2.00 under step halving where their
+orders are 4 and 16. Switching the loss off on the same field recovered 3.57 and
+13.63, so it was the loss and not the turbulence.
+
+**The cause.** The real-space step applies `exp(-alpha*s*dz + i*g*|A|^2*s*dz)`
+with `|A|^2` read once, entering. That is the exact solution of the real-space
+equation only while the step preserves `|A|^2`: a pure rotation does, loss does
+not. The amplitude decays *inside* the step while the interaction keeps turning
+the phase at the rate the step began with, which is a local error of O(dz^2) —
+and no composition wrapped around a first-order step is better than first order,
+however many sub-steps it takes.
+
+**The fix.** Two exact facts. With `y = |A|^2`, `s(y) = 1/(1 + y/Isat)` and
+`u = 2*alpha*dz`, `dy/dz = -2*alpha*s*y` and `dphi/dz = g*y*s` give
+`dphi/dy = -g/(2*alpha)`, so the phase over a step is
+`(g/(2*alpha))*(y0 - y_end)` whatever the saturation does in between, and
+`y_end` is fixed by `ln y + y/Isat` falling by `u`. The kernels solve for
+`P = (1 - y_end/y0)/u` with three passes of a fixed-point iteration -- about 18
+flops and a sqrt, no transcendentals -- and apply `g*y0*P*dz` for the phase and
+`sqrt(1 - P*u)` for the amplitude. See `_loss_factor` in kernels/cpu.py.
+
+At `u = 0` the iteration returns `sat` and the amplitude factor is exactly 1, so
+**a lossless run is unchanged to the bit** and takes the same branch it always
+did. `profile_backends.py --baseline HEAD` finds no lossless cell slower beyond
+this machine's scatter.
+
+**What it bought**, on the turbulence problem at 256², complex128, against an
+RK4 reference self-consistent to 3e-11 (`--problem turbulence --field
+complex128`):
+
+| method | best error before | best error after | at matched cost |
+|---|---|---|---|
+| lie | 4.05e-3 | 3.42e-3 | 1.2x |
+| strang | 1.35e-3 | **1.96e-5** | **69x** |
+| yoshida | 8.82e-3 | **1.26e-6** | **7000x** |
+| RK4 | 5.08e-10 | 5.08e-10 | unchanged, as it must be |
+
+Yoshida floors at ~1.3e-6 there, which is not its own error: the splittings are
+scored against a reference built by a different method, so on a chaotic problem
+the floor is where uncorrelated round-off amplification lands. The RK4 rows are
+scored against RK4 and see their own round-off instead, which is why they go
+lower. That is a property of the table, not of the methods.
+
+The splittings were 14x behind RK4 at matched accuracy on this problem and are
+now within ~1.5x of it.
+
+**What it cost.** Sequential rather than interleaved, so read these as
+approximate: on a lossy run at 256², roughly +16% per step for Lie and +25% for
+Yoshida (the extra flops in a kernel that is already transcendental-bound), and
+~11% *faster* for Strang, because merging its touching half steps is now valid
+with loss and saves a nonlinear application per step. Against 69x and 7000x in
+accuracy, none of that is a trade.
+
+**Where it does not reach.** The identity holds for one decay channel and a real
+potential. An absorbing (complex) potential is a second channel and is still
+applied frozen, so it still costs the order — and still blocks the Strang merge.
+The coupled kernels are untouched: two components decaying at their own rates do
+not give `dphi/dy = const`.
+
+**A ceiling came with it.** The iteration is a contraction only while the step
+takes out a small fraction of the intensity, and past `u ~ 1` it diverges and
+returns a *larger* field than it was given. `LOSS_PER_STEP_LIMIT` caps a
+propagation at `u <= 0.05`, and the kernels fall back to the frozen step above
+`u = 0.1` so that a kernel called directly cannot amplify either.
+
 ## Cross-cutting
 
 **Propagator caching — deployed.** Linear propagators are cached by
@@ -785,6 +858,13 @@ of it was written; it is deleted rather than left to claim the question is
 still open. Its four questions are the four answered above.
 
 ## Open
+
+**The absorbing-potential and coupled halves of the lossy step.** The solved
+real-space step above covers one decay channel against a real potential. A
+complex potential adds a second, and the coupled solvers have one per component,
+and in neither case is `dphi/dy` constant, so both still freeze `|A|^2` and both
+are still first order. The coupled case is the one worth measuring first: it is
+where DDGPE lives, and DDGPE is driven and dissipative by construction.
 
 **The nonlinear step as a store callback on the *inverse* transform.** The
 propagator fusion above removes one of the two passes a split step makes over

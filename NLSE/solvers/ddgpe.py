@@ -265,10 +265,10 @@ class DDGPE(CNLSE):
         }
 
     def _precompute_step_constants(
-        self, V: np.ndarray | None, splitting: str = "lie"
+        self, V: np.ndarray | None, field_dtype: np.dtype = np.complex64
     ) -> None:
         """Pre-compute constants for DDGPE propagation steps."""
-        super()._precompute_step_constants(V, splitting)
+        super()._precompute_step_constants(V, field_dtype)
 
     def _propagator_cache_key(self, dtype: np.dtype, delta_z: float) -> tuple:
         """Return cache key for DDGPE propagator."""

@@ -6,6 +6,34 @@
 // <name> with no potential, <name>_v with a real one and <name>_cv with a
 // complex (absorbing) one. See _expand_v_blocks in kernels/cl.py.
 
+// The saturation the interaction should be evaluated at over a lossy step.
+// The CUDA twin of this, in cuda_source/kernels.cu, carries the derivation;
+// briefly: freezing |A|^2 across a step is exact only while the step preserves
+// it, which loss does not, and the frozen step costs every composition built
+// on it its order. With u = 2*alpha*dz this returns P = (1 - y_end/y0)/u, so
+// the step applies g*y0*P*dz for the phase and sqrt(1 - P*u) for the
+// amplitude. u == 0 returns early and a lossless run is unchanged to the bit.
+inline {{FP_TYPE}} nlse_loss_factor(const {{FP_TYPE}} sat, const {{FP_TYPE}} u) {
+    if (u == 0.0{{FP_SUFFIX}}) return sat;
+    {{FP_TYPE}} P = sat;
+    for (int pass = 0; pass < 3; ++pass) {
+        {{FP_TYPE}} Pu = P * u;
+        P = sat * (1.0{{FP_SUFFIX}} - Pu * P * (0.5{{FP_SUFFIX}}
+            + Pu / 3.0{{FP_SUFFIX}} + Pu * Pu * 0.25{{FP_SUFFIX}}));
+    }
+    return P;
+}
+
+// Largest |u| = |2*alpha*dz| the iteration above is used at, and why there is a
+// limit: it contracts only while the step takes out a small fraction of the
+// intensity, and the fraction it sees is sat*u, so the bound has to hold at
+// sat = 1. Measured against a stiff solve there it beats the frozen step by
+// 2.6x at u = 0.1 and loses to it by u = 0.3; near 1 it walks away and returns
+// a larger field than it was given. Above this the kernels compute what they
+// computed before -- see LOSS_PER_STEP_LIMIT in solvers/step_size.py, which
+// caps a propagation at half of it, so only a direct kernel call gets here.
+#define NLSE_LOSS_SOLVED_LIMIT 0.1
+
 // FUSED: square_mod + nl_prop
 // Combines square modulus calculation and nonlinear propagation in single kernel
 // Eliminates kernel launch overhead and one memory pass
@@ -24,11 +52,21 @@ __kernel void square_mod_nl_prop(
     {{FP2_TYPE}} A_val = A[idx];
     {{FP_TYPE}} A_sq_val = A_val.x * A_val.x + A_val.y * A_val.y;
 
-    // Apply nonlinear propagation immediately
+    // Apply nonlinear propagation immediately. The loss has left arg_real for
+    // exp_real_part, where the step is solved rather than frozen; what remains
+    // there is a complex potential's own absorption, zero in the other twins.
+    {{FP_TYPE}} u = 2.0{{FP_SUFFIX}} * alpha * dz;
     {{FP_TYPE}} sat = 1.0{{FP_SUFFIX}} / (1.0{{FP_SUFFIX}} + A_sq_val / Isat);
-    {{FP_TYPE}} arg_real = -(alpha * sat V_LOSS(V, idx - (int)get_global_offset(0))) * dz;
-    {{FP_TYPE}} arg_imag = (g * A_sq_val * sat V_PHASE(V, idx - (int)get_global_offset(0))) * dz;
-    {{FP_TYPE}} exp_real_part = exp(arg_real);
+    // Solved, or frozen as before where solving it is out of reach. Both
+    // branches are uniform across the grid: u is a scalar.
+    bool solved = u <= ({{FP_TYPE}})NLSE_LOSS_SOLVED_LIMIT
+        && u >= -({{FP_TYPE}})NLSE_LOSS_SOLVED_LIMIT;
+    {{FP_TYPE}} P = solved ? nlse_loss_factor(sat, u) : sat;
+    {{FP_TYPE}} alpha_left = solved ? 0.0{{FP_SUFFIX}} : alpha;
+    {{FP_TYPE}} amp = solved ? sqrt(1.0{{FP_SUFFIX}} - P * u) : 1.0{{FP_SUFFIX}};
+    {{FP_TYPE}} arg_real = -(alpha_left * sat V_LOSS(V, idx - (int)get_global_offset(0))) * dz;
+    {{FP_TYPE}} arg_imag = (g * A_sq_val * P V_PHASE(V, idx - (int)get_global_offset(0))) * dz;
+    {{FP_TYPE}} exp_real_part = amp * exp(arg_real);
     {{FP_TYPE}} cos_imag, sin_imag;
     sin_imag = sincos(arg_imag, &cos_imag);
     {{FP2_TYPE}} exp_arg = ({{FP2_TYPE}})(exp_real_part * cos_imag, exp_real_part * sin_imag);
@@ -81,10 +119,19 @@ __kernel void nl_prop(
     const {{FP_TYPE}} Isat
 ) {
     int idx = get_global_id(0);
+    // See square_mod_nl_prop above, and nlse_loss_factor for why P and not sat.
+    {{FP_TYPE}} u = 2.0{{FP_SUFFIX}} * alpha * dz;
     {{FP_TYPE}} sat = 1.0{{FP_SUFFIX}} / (1.0{{FP_SUFFIX}} + A_sq[idx] / Isat);
-    {{FP_TYPE}} arg_real = -(alpha * sat V_LOSS(V, idx - (int)get_global_offset(0))) * dz;
-    {{FP_TYPE}} arg_imag = (g * A_sq[idx] * sat V_PHASE(V, idx - (int)get_global_offset(0))) * dz;
-    {{FP_TYPE}} exp_real_part = exp(arg_real);
+    // Solved, or frozen as before where solving it is out of reach. Both
+    // branches are uniform across the grid: u is a scalar.
+    bool solved = u <= ({{FP_TYPE}})NLSE_LOSS_SOLVED_LIMIT
+        && u >= -({{FP_TYPE}})NLSE_LOSS_SOLVED_LIMIT;
+    {{FP_TYPE}} P = solved ? nlse_loss_factor(sat, u) : sat;
+    {{FP_TYPE}} alpha_left = solved ? 0.0{{FP_SUFFIX}} : alpha;
+    {{FP_TYPE}} amp = solved ? sqrt(1.0{{FP_SUFFIX}} - P * u) : 1.0{{FP_SUFFIX}};
+    {{FP_TYPE}} arg_real = -(alpha_left * sat V_LOSS(V, idx - (int)get_global_offset(0))) * dz;
+    {{FP_TYPE}} arg_imag = (g * A_sq[idx] * P V_PHASE(V, idx - (int)get_global_offset(0))) * dz;
+    {{FP_TYPE}} exp_real_part = amp * exp(arg_real);
     {{FP_TYPE}} cos_imag, sin_imag;
     sin_imag = sincos(arg_imag, &cos_imag);
     {{FP2_TYPE}} exp_arg = ({{FP2_TYPE}})(exp_real_part * cos_imag, exp_real_part * sin_imag);

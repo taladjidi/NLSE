@@ -13,6 +13,54 @@ path and the individual runs take the raw one.
 
 import cupy as cp
 
+# Largest |u| = |2*alpha*dz| the iteration below is used at. See
+# _LOSS_SOLVED_LIMIT in kernels/cpu.py, which is the same number for the same
+# reason.
+_LOSS_SOLVED_LIMIT = 0.1
+
+
+def _loss_factors(sat, u, alpha, dz):
+    """Return the saturation and the decay a lossy step should apply.
+
+    ``_loss_factor`` in kernels/cpu.py carries the derivation. Two differences
+    here, both because ``alpha`` may be an array -- which is what this module
+    exists for. The choice between the solved step and the frozen one is made
+    per element rather than per step, and there is no early return for the
+    lossless case: at ``u = 0`` the iteration returns ``sat`` untouched and the
+    decay is exactly 1, so a lossless run computes what it computed before.
+
+    Parameters
+    ----------
+    sat : cp.ndarray
+        Saturation at the ``|A|^2`` entering the step.
+    u : cp.ndarray or float
+        ``2*alpha*dz``: the fraction of intensity the step takes out.
+    alpha : cp.ndarray or float
+        Loss coefficient, for the frozen fallback.
+    dz : float
+        Step length, for the frozen fallback.
+
+    Returns
+    -------
+    tuple
+        ``(P, decay)`` -- the saturation to evaluate the interaction at, and
+        the factor to scale the amplitude by.
+    """
+    P = sat
+    for _ in range(3):
+        Pu = P * u
+        P = sat * (1 - Pu * P * (0.5 + Pu / 3 + Pu * Pu / 4))
+    # cp.abs, not abs: under cp.fuse the operands are proxies.
+    solved = cp.abs(u) <= _LOSS_SOLVED_LIMIT
+    return (
+        cp.where(solved, P, sat),
+        cp.where(
+            solved,
+            cp.sqrt(cp.maximum(1 - P * u, 0)),
+            cp.exp(-alpha * sat * dz),
+        ),
+    )
+
 
 @cp.fuse(kernel_name="nl_prop")
 def _nl_prop_fused(
@@ -27,15 +75,17 @@ def _nl_prop_fused(
     """Fused implementation of nl_prop."""
     # saturation
     sat = 1 / (1 + A_sq / Isat)
+    # Losses: solved across the step rather than frozen at its start, which is
+    # what leaves them out of the exponential below. See _loss_factors.
+    u = 2 * alpha * dz
+    P, decay = _loss_factors(sat, u, alpha, dz)
     # Interactions
-    arg = 1j * g * A_sq * sat
-    # Losses
-    arg += -alpha * sat
-    # Potential
+    arg = 1j * g * A_sq * P
+    # Potential, whose own absorption stays in the exponential
     arg += 1j * V
     arg *= dz
     cp.exp(arg, out=arg)
-    A *= arg
+    A *= decay * arg
 
 
 def nl_prop(
@@ -87,13 +137,14 @@ def _nl_prop_without_V_fused(
     """Fused implementation of nl_prop_without_V."""
     # saturation
     sat = 1 / (1 + A_sq / Isat)
+    # Losses: see _nl_prop_fused above, and _loss_factors.
+    u = 2 * alpha * dz
+    P, decay = _loss_factors(sat, u, alpha, dz)
     # Interactions
-    arg = 1j * g * A_sq * sat
-    # Losses
-    arg += -alpha * sat
+    arg = 1j * g * A_sq * P
     arg *= dz
     cp.exp(arg, out=arg)
-    A *= arg
+    A *= decay * arg
 
 
 def nl_prop_without_V(

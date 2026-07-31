@@ -199,11 +199,19 @@ class CNLSE(NLSE):
         }
 
     def _precompute_step_constants(
-        self, V: np.ndarray | None, splitting: str = "lie"
+        self, V: np.ndarray | None, field_dtype: np.dtype = np.complex64
     ) -> None:
         """Pre-compute constants for coupled propagation steps."""
-        super()._precompute_step_constants(V, splitting)
-        self._V2_scaled = None if V is None else V * self._k2_half
+        super()._precompute_step_constants(V, field_dtype)
+        # Through _scale_potential for the reason the first component's is: the
+        # second component's kernel reads this at the field's width as well.
+        self._V2_scaled = (
+            None
+            if V is None
+            else self._scale_potential(
+                V, self._k2_half, self._potential_dtype(V, field_dtype)
+            )
+        )
         # The kernels see one component at a time, so the constants they take
         # must broadcast against a component rather than against the pair.
         for name in (*self._step_constants(), "_V_scaled", "_V2_scaled"):

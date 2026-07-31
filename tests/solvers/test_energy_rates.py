@@ -51,7 +51,7 @@ def prepared(cls, backend, potential=None):
     beam = np.exp(-r2 / WAIST**2).astype(np.complex64)
     field = np.stack([beam, beam * 0.5]) if coupled(cls) else beam
     prepared_field, _ = solver._prepare_output_array(field, normalize=True)
-    solver._precompute_step_constants(solver.V, "strang")
+    solver._precompute_step_constants(solver.V, np.complex64)
     solver.plans = solver._build_fft_plan(prepared_field)
     return solver, prepared_field
 

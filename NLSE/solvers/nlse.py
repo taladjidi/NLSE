@@ -372,7 +372,7 @@ class NLSE(StepSize):
             A, A_sq = self._prepare_output_array(E_in, normalize)
             self.plans = self._build_fft_plan(A)
             self._allocate_rk4_buffers(A, method)
-            self._precompute_step_constants(V, splitting)
+            self._precompute_step_constants(V, field_dtype)
 
             # Settle the step before building anything that depends on it.
             if delta_z is None:
@@ -1522,20 +1522,42 @@ class NLSE(StepSize):
         value = getattr(self, name, None)
         return self._step_constants()[name] if value is None else value
 
+    @staticmethod
+    def _real_dtype(field_dtype: np.dtype) -> type:
+        """Return the real width that goes with a complex field width."""
+        return np.float32 if np.dtype(field_dtype) == np.complex64 else np.float64
+
     def _precompute_step_constants(
-        self, V: np.ndarray | None, splitting: str = "lie"
+        self, V: np.ndarray | None, field_dtype: np.dtype = np.complex64
     ) -> None:
         """Pre-compute constants that are invariant across propagation steps.
+
+        The width of everything here follows the *field*, which is the rule the
+        whole solver is written to: the GPU kernels pick single or double
+        precision from the field and then index the propagator, the potential
+        and the scratch buffers with it, so anything of the other width is read
+        as the wrong type. ``_field_dtype`` says it of the propagator and
+        test_double_precision.py of the RK4 buffers.
+
+        It used to follow the *splitting* -- float32 for Lie and float64 for
+        everything else -- which is a leftover from when "single" and "double"
+        named the splittings rather than the float width. It was wrong in both
+        directions. A complex64 Strang or Yoshida run scaled the potential by a
+        float64 scalar, and NEP 50 promotion handed a float64 array to a kernel
+        reading it through a ``float*``: NaN from the first step above 128x128,
+        and 30% wrong below it, which is worse for looking like an answer. A
+        complex128 Lie run had the opposite fault and rounded every physical
+        constant to float32.
 
         Parameters
         ----------
         V : np.ndarray or None
             Potential field.
-        splitting : str
-            Order of the split step ("lie" or "strang"), used here only
-            to pick the width of the precomputed scalar constants.
+        field_dtype : np.dtype
+            Complex dtype of the field this run propagates, which fixes the
+            width of every constant and of the scaled potential.
         """
-        fp = np.float32 if splitting == "lie" else np.float64
+        fp = self._real_dtype(field_dtype)
         for name, value in self._step_constants().items():
             # A batched parameter is an array and stays one; only scalars are
             # narrowed, so the kernels get a value of the right width.
@@ -1544,8 +1566,48 @@ class NLSE(StepSize):
                 name,
                 fp(value) if isinstance(value, (int, float, np.floating)) else value,
             )
-        self._V_scaled = None if V is None else V * self._k_half
+        self._V_scaled = (
+            None
+            if V is None
+            else self._scale_potential(
+                V, self._k_half, self._potential_dtype(V, field_dtype)
+            )
+        )
         self._update_propagator_fft()
+
+    @staticmethod
+    def _scale_potential(V: Any, k_half: Any, dtype: np.dtype) -> Any:
+        """Return ``V * k/2`` at the dtype the field asks of a potential.
+
+        Neither operand decides that. ``V`` is stored at whatever width it was
+        assigned at and the CPU backend never moves it, so it can be narrower
+        than the field; ``k_half`` is a numpy scalar, and NEP 50 promotion lets
+        it widen the product past the field. Both have been wrong here.
+
+        The dtype comes from ``_potential_dtype``, which is also what the
+        transfer uses -- so the width follows the field and the complexity
+        follows V. Not ``_real_dtype``: an absorbing potential is complex, and
+        casting it to a real dtype deletes the absorption without saying so.
+
+        Parameters
+        ----------
+        V : Any
+            Potential, wherever it lives.
+        k_half : Any
+            Half the wavenumber, scalar or batched.
+        dtype : np.dtype
+            What ``_potential_dtype`` asks for, given the field.
+
+        Returns
+        -------
+        Any
+            The scaled potential, at that dtype.
+
+        """
+        scaled = V * k_half
+        if np.dtype(scaled.dtype) != np.dtype(dtype):
+            scaled = scaled.astype(dtype)
+        return scaled
 
     # Moving arrays on and off the device.
     #
@@ -1839,10 +1901,22 @@ class NLSE(StepSize):
         there is no third stepper to keep in step with the other two.
 
         It is exact only where ``N(a) N(b) == N(a + b)``. ``N`` rotates the
-        phase by an amount that depends on ``|A|^2``, so that holds when
-        ``|A|`` survives it: no loss, and no absorbing potential. With either,
-        the second application sees an intensity the first one changed, and
-        the two half steps are not one whole one.
+        phase by an amount that depends on ``|A|^2``, so what it needs is for
+        ``N`` to be the exact solution of the real-space equation over its
+        step, and then composing two is solving over the sum.
+
+        **Loss used to break that and no longer does.** The kernels froze
+        ``|A|^2`` across the step, which is the exact solution only while the
+        step preserves it, so a second half step saw an intensity the first
+        had damped and the two were not one whole one. They now solve the step
+        instead (see ``_loss_factor`` in kernels/cpu.py), and both halves of
+        it telescope exactly: the phase over a step is
+        ``(g/(2*alpha))*(y0 - y_end)`` and the amplitude ``sqrt(y_end/y0)``,
+        and a product of two of those is the one over the sum.
+
+        An absorbing potential still breaks it. That decay is a second channel,
+        which the identity behind the solved step does not cover, so it is
+        still applied frozen and two halves of it are still not one whole one.
 
         Parameters
         ----------
@@ -1861,10 +1935,6 @@ class NLSE(StepSize):
         # A Rabi coupling rides on the Lie step alone, so the body would
         # apply it and the Strang step it stands in for would not.
         if getattr(self, "omega", None) is not None:
-            return False
-        if not np.all(
-            np.asarray(self._as_host_array(self._constant("_alpha_half"))) == 0
-        ):
             return False
         V_scaled = self._as_host_array(self._V_scaled)
         return V_scaled is None or not np.iscomplexobj(V_scaled)
@@ -1981,7 +2051,7 @@ class NLSE(StepSize):
                 self._backend.execute_loop(step, n_steps_nl)
                 state[0] = self._close_strang_bracket(merged, state[0], A_sq, delta_z)
                 if n_steps > n_steps_nl:
-                    self._disable_nonlinearity(V, splitting)
+                    self._disable_nonlinearity(V, self._field_dtype(state[0]))
                     state[0] = self._open_strang_bracket(
                         merged, state[0], A_sq, delta_z
                     )
@@ -2065,7 +2135,7 @@ class NLSE(StepSize):
                     self._update_propagator_fft()
                 step_fn = step_factory(delta_z)
             if z_switch is not None and not switched and abs(z_prop) >= z_switch:
-                self._disable_nonlinearity(V, splitting)
+                self._disable_nonlinearity(V, dtype)
                 switched = True
             step_fn()
             # Advance before the callbacks, so the position they get is the one
@@ -2147,19 +2217,22 @@ class NLSE(StepSize):
             return n_steps
         return min(n_steps, int(np.ceil(self.L / abs(delta_z))))
 
-    def _disable_nonlinearity(self, V: np.ndarray | None, splitting: str) -> None:
+    def _disable_nonlinearity(
+        self, V: np.ndarray | None, field_dtype: np.dtype
+    ) -> None:
         """Zero the nonlinear coupling and re-derive the step constants.
 
         Parameters
         ----------
         V : np.ndarray or None
             Potential field, needed to re-derive the scaled potential.
-        splitting : str
-            "lie" or "strang".
+        field_dtype : np.dtype
+            Complex dtype of the field, which fixes the width of the constants
+            being re-derived.
         """
         for attr in self._nonlinearity_attrs:
             setattr(self, attr, 0)
-        self._precompute_step_constants(V, splitting)
+        self._precompute_step_constants(V, field_dtype)
 
     # Plotting helpers.
     def _to_plot_array(self, A_plot: np.ndarray, target_ndim: int) -> np.ndarray:
