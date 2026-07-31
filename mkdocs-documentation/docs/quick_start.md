@@ -28,7 +28,7 @@ simu = NLSE(alpha, power, window, n2, V=None, L=L, NX=N, NY=N, Isat=Isat)
 E_in = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(np.complex64)
 
 # Propagate and get the output field in V/m
-E_out = simu.out_field(E_in, L, precision="single")
+E_out = simu.out_field(E_in, L, splitting="lie")
 ```
 
 ## 1D NLSE
@@ -47,7 +47,7 @@ L = 10e-3
 simu = NLSE_1d(alpha=20, power=power, window=window, n2=n2, V=None, L=L, NX=N)
 
 E_in = np.exp(-simu.X**2 / waist**2).astype(np.complex64)
-E_out = simu.out_field(E_in, L, precision="single")
+E_out = simu.out_field(E_in, L, splitting="lie")
 ```
 
 ## GPE (Gross-Pitaevskii)
@@ -74,7 +74,7 @@ simu.V = V
 
 # Gaussian initial state
 E_in = np.exp(-(simu.XX**2 + simu.YY**2) / (10e-6) ** 2).astype(np.complex64)
-E_out = simu.out_field(E_in, T, precision="single")
+E_out = simu.out_field(E_in, T, splitting="lie")
 ```
 
 ## Choosing a Backend
@@ -108,10 +108,10 @@ simu.backend = "CL"
 
 ```python
 # Single precision: O(dz) error, 1 FFT pair per step (default)
-E_out = simu.out_field(E_in, L, precision="single")
+E_out = simu.out_field(E_in, L, splitting="lie")
 
 # Double precision: O(dz^3) error, 2 FFT pairs per step
-E_out = simu.out_field(E_in, L, precision="double")
+E_out = simu.out_field(E_in, L, splitting="strang")
 
 # RK4 method instead of split-step
 E_out = simu.out_field(E_in, L, method="RK4")
@@ -125,7 +125,7 @@ waist_V = 70e-6
 V = -1e-4 * np.exp(-(simu.XX**2 + simu.YY**2) / waist_V**2)
 simu.V = V
 
-E_out = simu.out_field(E_in, L, precision="single")
+E_out = simu.out_field(E_in, L, splitting="lie")
 ```
 
 ## Using Callbacks
@@ -144,7 +144,7 @@ E_samples = np.zeros((n_steps // save_every + 1, N, N), dtype=np.complex64)
 E_out = simu.out_field(
     E_in, L,
     delta_z=delta_z,
-    precision="single",
+    splitting="lie",
     callback=sample,
     callback_args=(save_every, E_samples),
 )

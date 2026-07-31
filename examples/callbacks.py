@@ -53,7 +53,7 @@ def main():
         L,
         verbose=True,
         plot=True,
-        precision="single",
+        splitting="lie",
         callback=sample_norm,
         callback_args=(1,),
     )
@@ -69,7 +69,7 @@ def main():
         L,
         verbose=True,
         plot=True,
-        precision="single",
+        splitting="lie",
         callback=callbacks.adapt_delta_z,
         callback_args=(10, dzs),
     )

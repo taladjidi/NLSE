@@ -205,7 +205,7 @@ def _trial_propagation(simu: NLSE, A: np.ndarray, step: float, count: int):
         simu._send_propagator_to_gpu()
         for _ in range(count):
             trial = simu.split_step(
-                trial, scratch, simu.V, simu.propagator, simu.plans, step, "double"
+                trial, scratch, simu.V, simu.propagator, simu.plans, step, "strang"
             )
     finally:
         simu.propagator, simu._propagator_fft = saved
@@ -323,7 +323,16 @@ def adapt_delta_z_to_error(
     cap = simu._split_step_max_dz(A)
     # Absolute, not relative to the step in force: a floor recomputed as a
     # fraction of the current step shrinks with it and never binds.
-    floor = min_step if min_step is not None else float(simu.L) / 1e5
+    # Absolute, not relative to the step in force: a floor recomputed as a
+    # fraction of the current step shrinks with it and never binds.
+    #
+    # Deliberately not the round-off optimum. There is such an optimum on a
+    # smooth beam, and flooring the controller at it was worth a great deal
+    # there, but on a field with spectral content of its own the splitting
+    # error at that step is enormous -- see DEFAULT_PHASE_PER_STEP. A floor
+    # that stops the controller resolving a hard problem while it reports
+    # success is worse than a slow run.
+    floor = min(min_step if min_step is not None else float(simu.L) / 1e5, cap)
     if error == 0:
         return float(min(step * bounds[1], cap))
 

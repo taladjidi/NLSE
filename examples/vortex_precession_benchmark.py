@@ -69,7 +69,7 @@ for i, n in enumerate(sizes):
             simu.L,
             verbose=False,
             plot=False,
-            precision="single",
+            splitting="lie",
             delta_z=DELTA_Z,
         )
         ts[i, rep] = time.perf_counter() - t0

@@ -244,7 +244,7 @@ def kernel_calls(kernels, arrays, plan, pair_plan, dz=1e-4):
         ),
         "linear_step": lambda: kernels.linear_step(A, prop, plan),
         "split_step_fused": lambda: kernels.split_step_fused(
-            A, prop, V, dz, alpha, g, Isat, "single", plan
+            A, prop, V, dz, alpha, g, Isat, "lie", plan
         ),
         "rk4_rhs_fused": lambda: kernels.rk4_rhs_fused(
             A, k, V, prop, plan, alpha, g, Isat
@@ -265,7 +265,7 @@ def kernel_calls(kernels, arrays, plan, pair_plan, dz=1e-4):
             g,
             Isat,
             Isat2,
-            "single",
+            "lie",
             pair_plan,
         ),
         "rk4_rhs_coupled_fused": lambda: kernels.rk4_rhs_coupled_fused(

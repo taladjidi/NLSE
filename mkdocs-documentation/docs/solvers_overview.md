@@ -67,7 +67,7 @@ The main entry point is `out_field()`:
 E_out = simu.out_field(
     E_in,                # input field (normalized 0-1)
     z,                   # propagation distance
-    precision="single",  # "single" (O(dz)) or "double" (O(dz^3))
+    splitting="lie",  # "single" (O(dz)) or "double" (O(dz^3))
     method="split_step", # "split_step" or "RK4"
     callback=None,       # callback function(s)
     callback_args=(),    # additional callback arguments
@@ -189,7 +189,7 @@ E_in = np.zeros((2, 512, 512), dtype=np.complex64)
 E_in[0] = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2)  # component 1
 E_in[1] = 0  # component 2 starts empty
 
-E_out = simu.out_field(E_in, L, precision="single")
+E_out = simu.out_field(E_in, L, splitting="lie")
 # E_out.shape == (2, 512, 512)
 ```
 

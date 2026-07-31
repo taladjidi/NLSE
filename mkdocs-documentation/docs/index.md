@@ -44,7 +44,7 @@ simu = NLSE(alpha=20, power=power, window=window, n2=n2, V=None, L=L,
 E_in = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(np.complex64)
 
 # Propagate
-E_out = simu.out_field(E_in, L, precision="single")
+E_out = simu.out_field(E_in, L, splitting="lie")
 ```
 
 ## Getting Started

@@ -33,7 +33,7 @@ def main():
     simu.V = -1e-4 * np.exp(-(simu.XX**2 + simu.YY**2) / waist2**2).astype(
         PRECISION_COMPLEX
     )
-    simu.out_field(E_0, L, verbose=True, plot=True, precision="single")
+    simu.out_field(E_0, L, verbose=True, plot=True, splitting="lie")
 
 
 if __name__ == "__main__":

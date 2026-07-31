@@ -43,8 +43,8 @@ custom_cycler = (
 )
 plt.rc("axes", prop_cycle=custom_cycler)
 
-PRECISION = "single"
-if PRECISION == "double":
+PRECISION = "lie"
+if PRECISION == "strang":
     PRECISION_REAL = np.float64
     PRECISION_COMPLEX = np.complex128
 else:

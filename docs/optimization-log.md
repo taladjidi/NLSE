@@ -25,6 +25,9 @@ Use the tools, and interleave variants rather than running them in sequence.
 - `benchmarks/profile_kernels.py` — per-kernel roofline when the change is
   inside a kernel. Reproduces to 2–5%. Percentages are against the best rate
   observed in the same table, not a synthetic ceiling.
+- `benchmarks/roofline.py` — what the hardware allows, and how much of it a
+  step gets. Ask this *before* optimizing: a kernel already at 80% of a bound
+  has under 1.25x in it however it is rewritten.
 - A kernel-level win is not a step-level win. Check what share of a step the
   kernel actually holds before investing — see the roofline below.
 
@@ -60,6 +63,224 @@ Comparing a restricted-fastmath kernel against a `fastmath=True` twin measures
 the flags, not the change: it made an exact polynomial look like it had error
 growing to 3e-8, when against a matched twin it was 3.5e-16 flat.
 
+## What the machine allows
+
+`benchmarks/roofline.py`. Measured ceilings on the M3 Max, and what one step
+must pay whatever it does. The point is to know how much room is left before
+spending effort on a kernel.
+
+| ceiling | GPU | CPU |
+|---|---|---|
+| streaming bandwidth | 357–416 GB/s | 235–242 GB/s |
+| fp32 fused multiply-add | 10.2 TFLOP/s | 0.55 TFLOP/s |
+| sin + cos + exp | 87–89 G/s | 2.5–2.9 G/s |
+
+The GPU bandwidth brackets the 400 GB/s rating, because at these sizes part of
+the working set is served by cache rather than DRAM. The FMA figure is
+essentially the hardware limit (40 cores x 128 lanes x 2 at ~1.1 GHz); a
+float4 probe reads 12.1, but scalar is what CUDA can also compile. The
+transcendental gap is the one that matters: **the GPU does sin, cos and exp 30x
+faster than the CPU**, which is why the nonlinear kernels dominate a CPU step
+and not a GPU one.
+
+The bandwidth ceiling itself moves about 15% between runs, so every percentage
+below carries that: nothing under ~15% apart is a difference.
+
+Compulsory traffic per grid point, counting each array a step must read and
+write once: **104 B** for single-precision split-step, **120 B** double,
+**624 B** for RK4. Two thirds of the split-step figure is the transform pair.
+
+Fraction of the floor reached (complex64, no potential):
+
+| | 512² | 1024² | 2048² | 4096² |
+|---|---|---|---|---|
+| CPU split_step | 27% | 25% | 27% | 27% |
+| CL split_step | 93% | 70% | 62% | 62% |
+| MLX split_step | 63% | 78% | 53% | 48% |
+| MLX RK4 | 89% | 103% | 72% | 70% |
+
+Three things follow.
+
+**The GPU backends are at 50-80% of a hard bound**, so the remaining headroom
+there is under 2x and mostly in the transform. **The CPU sits at 25-30%**, and
+above 1024² its binding ceiling is not bandwidth but flops and transcendentals
+— which is what the `_sincos` and `_exp` polynomials below were aimed at, and
+where what is left also lies.
+
+**Below 1024² nothing is bandwidth-bound; it is all dispatch.** Fixed cost per
+step, measured as a step on a 64² grid: **CL 0.44 ms, MLX 0.05 ms** for
+split_step, and 1.83 ms against 0.11 ms for RK4. Apple's OpenCL costs almost
+ten times what Metal does to put a step on the GPU, and up to 1024² that is the
+whole story of CL against MLX. *Challenge this* by fusing CL's per-step
+launches further, which is the only thing that can help at those sizes.
+
+Bandwidth is measured in the DRAM regime and one number is used at every size,
+so a grid small enough to sit in cache can come out **above 100%**. That is the
+reading rather than an error: the grid beat DRAM and bandwidth is no longer
+what limits it. A size-dependent ceiling was tried and is worse — the probe's
+working set is a third of a step's, so it reports cache rates a step cannot
+reach and the percentages move with the probe instead of the code.
+
+### What is left on macOS
+
+Per-kernel attribution at 2048², against the ceilings above.
+
+| | time | share of step | of its own floor |
+|---|---|---|---|
+| CPU transform pair | 4.04 ms | 60% | 39% |
+| CPU `square_mod_nl_prop` | 1.31 ms | 19% | **at the sincos ceiling** |
+| CPU `apply_propagator` | 0.53 ms | 8% | 77% |
+| MLX transform pair | 1.31 ms | 68% | 58% |
+| MLX elementwise kernels | — | — | 85–94% |
+
+**The nonlinear kernels are finished on both.** The CPU one runs at
+3.2 Gelem/s against a machine ceiling of 3.0 — the polynomial `_sincos` and
+`_exp` took it to the bound, and no further arithmetic trick can help. MLX's
+elementwise kernels sit at 85–94% of bandwidth.
+
+**What is left on both is the transform, and every substitute measured is
+worse.** MLX's own CPU device is **11x slower** than scipy (57.6 ms against
+5.3 ms at 2048²). pyFFTW was rejected earlier for being unvectorized on arm64.
+Thread count is not it either — `workers=-1` beats every setting from 1 to 16
+(7.3x scaling on 12P+4E cores).
+
+**Apple Accelerate / vDSP — rejected, measured.** It is correct through ctypes
+(`vDSP_fft2d_zip`, split-complex, max rel error 3.5e-7 against numpy) and
+genuinely **1.37x faster than pocketfft on one thread**, 26.4 ms against
+36.1 ms. It loses anyway, because vDSP has no threading of its own and
+pocketfft's does: **5.5 ms against 26.4 ms, so scipy wins by 4.8x** in the
+configuration actually used.
+
+Threading it by hand does not rescue it. Splitting rows and columns across a
+pool and calling `vDSP_fftm_zip` per chunk is *catastrophic* — 26.3 ms on one
+thread becomes 249 ms on two and never recovers (105 ms at 16). The strided
+column pass is what does it; giving each thread its own `FFTSetup` changes
+nothing, so it is the access pattern and not setup contention. The
+transpose-based way out fails on arithmetic: the contiguous row pass scales
+only 2.38x (1.97 → 0.83 ms), so four of them cost 3.3 ms, and the eight plane
+transposes a roundtrip needs cost more than scipy's entire roundtrip — 2.99 ms
+each naive, and even a perfect blocked transpose only ties. That is all before
+the split-complex conversion each step would need and before rewriting every
+kernel to match.
+
+*Challenge this* only with an FFT that is both faster per thread **and**
+threads itself. Per-thread speed alone is not enough, which is the thing this
+measurement settles.
+
+### Lowering the floor instead of chasing it
+
+Being at 60% of a floor is not the same as being finished, because the floor is
+a property of the algorithm we chose. What a step must move is 104 B/point:
+64 for the transform pair, 24 for the propagator multiply, 16 for the nonlinear
+kernel. The transform is closed, but the other 40 are ours.
+
+**A separable propagator — open, measured, not built.** The linear propagator
+is `exp(-i(kx²+ky²)dz/2k)`, which factors into
+`exp(-i·kx²dz/2k) · exp(-i·ky²dz/2k)` — verified rank-1 to 6.7e-8, float32 eps.
+So the N² array every step reads could be two N-vectors: **8 MiB → 16 KiB at
+1024², 32 MiB → 32 KiB at 2048²**, and the kernel drops from 24 B/point to 16.
+
+Measured on a prototype kernel, `A *= P` against `A *= py[i]*px[j]`:
+
+| | 1024² | 2048² | 4096² |
+|---|---|---|---|
+| CPU | 0.91x | **2.76x** | 1.93x |
+| MLX | 1.16x | **1.44x** | 1.41x |
+
+The 2048² CPU figure is larger than the 1.5x traffic ratio allows, because
+losing a whole grid puts the rest in cache: that kernel reads 345 GB/s against
+a 248 GB/s DRAM ceiling. At 1024² there is nothing to win — the propagator
+already fits — and it costs 9%.
+
+At the step level that is ~5% on CPU and ~8% on MLX at 2048², plus whatever the
+freed grid does for the transform, which is not measured. The work is not
+small: `apply_propagator` on four backends, the fused split-step and RK4 paths,
+the `1/N` currently folded into the propagator, the RK4 operator (a *sum*, so
+separable differently), NLSE_3d, and the batched paths.
+
+**Already built, so not a lever:** merging the Strang half-steps of adjacent
+steps. `_merges_strang_halves` and the bracket pair do it, which is why double
+precision costs about the same as single rather than twice.
+
+**Rejected this round**, all on the MLX fused nonlinear kernel, which reads
+110 GB/s against a 356 GB/s ceiling and looked like it had something wrong:
+
+- Spelling `|A|²` as `A.real² + A.imag²` or `abs(A)²` instead of
+  `(A·conj A).real` — 0.89x and 0.98x, inside 7–13% noise.
+- Writing the rotation out as `cos + i sin` instead of a complex `mx.exp` —
+  1.01x. Emitting it as a stacked real array instead: 0.29x.
+- **A hand-written Metal kernel** via `mx.fast.metal_kernel`, one pass, correct
+  to 4.4e-8 — **0.99x**. `mx.compile` was already matching raw Metal.
+
+That last one also kills the inference that made the kernel look wrong: 110 GB/s
+against the ceiling implied about three passes, and a kernel that provably makes
+one is no faster. The apparent gap was an artefact of comparing traffic models —
+`nl_prop` scores 237 GB/s only by counting a precomputed `A_sq` it did not have
+to compute, and the fused kernel does less total work than the pair it replaces
+(0.63 ms against 0.71 ms).
+
+So: **the only measured lever left on macOS is the separable propagator.**
+
+**Folding the propagator into the transform (cuFFT callbacks) — open, probe
+written, nothing measured.** Better arithmetic than the separable propagator,
+because it removes the pass rather than shrinking it. cuFFT can run a store
+callback as it writes each element, which absorbs the propagator multiply
+entirely: **104 B/point becomes 88**, and a load callback on the inverse could
+take the nonlinear step too, for **72**. On a backend already at the bandwidth
+bound that is close to a straight 15–30%.
+
+`benchmarks/cufft_callback_probe.py` asks the four questions that decide
+whether it can be built, none of which can be answered on a machine without an
+NVIDIA GPU:
+
+1. Is `cupy.fft.config.set_cufft_callbacks` there at all? It is experimental,
+   compiles the callback with nvcc and links cufft statically, so it needs a
+   full toolkit rather than a driver.
+2. Does a store callback compute the right thing?
+3. **Does the callback see new values written into the aux array without the
+   plan being rebuilt?** The one that decides the design. Callbacks bind at
+   plan creation and the propagator changes whenever an adaptive step does, so
+   if the array can be overwritten in place the plan is built once per run —
+   and if not, every step change costs a plan and the idea is probably dead.
+4. Is it actually faster than the separate multiply?
+
+Two things to weigh before building on a green probe. It is CUDA-only, so it
+widens the gap between CUPY and the other three rather than lifting them
+together. And it puts a toolkit in the install path for anyone who wants it,
+which is a reasonable ask of this audience but not free.
+
+### The NVIDIA box
+
+Same tool, `CPU CUPY`, run 2026-07-31. **The CUDA and OpenCL probes agree to
+within 1% on all three ceilings** — 208 GB/s against 208, 8.10 TFLOP/s against
+8.11, 83.0 G/s against 84.1. Two independent implementations landing on the
+same numbers is what makes them the hardware rather than the framework.
+
+| ceiling | GPU | CPU |
+|---|---|---|
+| streaming bandwidth | 208 GB/s | 32 GB/s |
+| fp32 fused multiply-add | 8.1 TFLOP/s | 0.46 TFLOP/s |
+| sin + cos + exp | 84 G/s | 1.3 G/s |
+
+| of floor | 1024² | 2048² | 4096² |
+|---|---|---|---|
+| CPU split_step | 42% | 37% | 37% |
+| CUPY split_step single | 94% | 91% | 73% |
+| CUPY split_step double | 108% | 106% | 84% |
+| CUPY RK4 | 114% | 113% | 93% |
+
+**CuPy is at the bandwidth bound and has essentially nothing left**: at or over
+100% up to 2048², and 73–93% at 4096² where the grid no longer fits in cache.
+Dispatch there costs 0.011 ms per step, forty times less than Apple's OpenCL.
+
+The two machines differ in which ceiling binds the CPU, and it is the hardware
+rather than the code. That box streams **32 GB/s against the M3 Max's 240** — a
+desktop's dual-channel DDR against unified memory — so every CPU row there is
+memory-bound, where on the Mac flops and transcendentals bind above 1024². Its
+sin+cos+exp rate is also half the Mac's (1.3 against 2.5 G/s), consistent with
+`USING_SVML` being false on that x86 too while NEON vectorizes the polynomials.
+Conclusions about *which* CPU ceiling to attack do not transfer between them.
+
 ## Where the time goes
 
 `profile_kernels.py --backends CPU`, 2048², complex64. The split-step kernels
@@ -81,6 +302,123 @@ Two facts follow, and they drive most of what is below. The transform is the
 single largest item in a CPU step. And the nonlinear kernels are the only ones
 far from bandwidth — they are compute-bound on transcendentals, not memory-bound,
 so bandwidth tricks do nothing for them and vice versa.
+
+## Doing less work
+
+Worth more than every kernel below put together, and measured with
+`benchmarks/work_precision.py`, which scores wall clock against error rather
+than against a step count.
+
+**The default step is the measured optimum — REVERTED, and the reason is
+worth more than the entry.** In complex64
+split-step is not limited by the splitting but by round-off accumulating over
+steps, so refining past the optimum costs time and accuracy together. Measured
+on a self-focusing beam, 256², Strang:
+
+| rad/step | 0.05 | 0.1 (default) | 0.2 | **0.4** | 0.8 | 1.5 |
+|---|---|---|---|---|---|---|
+| time | 117 ms | 59 ms | 30 ms | **16 ms** | 8.5 ms | 5.2 ms |
+| rel. error | 2.1e-4 | 1.0e-4 | 5.5e-5 | **3.3e-5** | 4.3e-5 | 1.2e-4 |
+
+The optimum sits at 0.4–0.8 rad across a 16x range of propagation distance
+(0.4, 0.4, 0.8 at L = 1.25e-3, 5e-3, 2e-2), so it is not an artefact of one
+problem. Against the 0.1 default, 0.4 is **3.4–4x faster and 1.8–3.8x more
+accurate at the same time** — there is no trade being made.
+
+**RK4 wants the opposite step, and shares the constant.** Its optimum is
+~0.02 rad; at the shared 0.1 default it returns 5.6e-4 where 0.02 returns
+2.3e-6. So the one default is four times too fine for split-step and five times
+too coarse for RK4. It also means RK4 at its default is worse than split-step
+at *any* step, for six times the cost: split-step at 0.4 matches RK4 at 0.05 to
+within 2% of error and runs 42x faster.
+
+**It does not generalise, and shipping it broke an example.** The sweep above
+varied the propagation distance sixteenfold and never varied the *physics*.
+`examples/fig2_turbulence.py` carries `kp = 2*pi*5e3` — spectral content of its
+own — and aliases far below the pi-per-step cap that the criterion is written
+against:
+
+| phase/step | steps | max abs A | rel. error |
+|---|---|---|---|
+| 0.400 | 333 | 3034 | **1.401** |
+| 0.100 | 1331 | 2860 | 0.115 |
+| 0.010 | 13310 | 2853 | 0.027 |
+
+A cliff, not a slope: 11% error becomes 140%, with the peak amplitude and the
+total power both visibly wrong. `DEFAULT_PHASE_PER_STEP` is back to 0.1. The
+adaptive floor went with it — a controller stopped at 0.4 rad on this problem
+would report success at 140% error, which is worse than a slow run.
+
+`RK4_PHASE_PER_STEP` stays at 0.02: that change makes the step *finer*, and
+error that only falls is safe to ship.
+
+**What a step criterion would have to measure.** The phase per step counts the
+potential and the interaction, on the reasoning that split-step applies the
+linear part exactly. True for a linear problem, but the splitting error goes
+as the commutator of the two parts, and a field with high-k content has a large
+one at a nonlinear phase per step that looks modest. Adding the kinetic rate
+does not fix it — here it is 70 against an interaction of 531. The quantity
+that predicts the cliff is spectral headroom, which nothing currently measures.
+
+The rest of that batch was kept, and the consequences it had to handle:
+
+- **The adaptive controller is held to a band**, `[optimum, 2 × optimum]`, in
+  complex64. Its own error estimate goes blind above ~0.8 rad — one step and
+  two halves then differ by round-off rather than by splitting error, which
+  reads as "no error" and doubles the step until the answer is unrecognisable.
+  Starting it at the optimum without a cap returned 28% error.
+- **A `min_step` below the optimum raises** rather than being honoured or
+  silently ignored. Both of those are worse than saying why.
+- **`DEFAULT_MIN_STEPS` binds more often**, so on short problems the step is
+  set by the sampling floor rather than by the physics. That is the floor
+  doing its job, but it means a test asking whether the step tracks the field
+  has to propagate far enough that the phase target is what binds.
+
+**A step that grows must still land on `z` — fixed, and it was a real bug.**
+The loop divides `z` into steps before it starts, so a callback that *grows*
+the step left it taking one that did not fit. A run whose step doubled
+propagated 1.1e-3 for a requested 1.0e-3 and came back with a phase error to
+match — 0.283 relative, with the amplitude still correct to five figures, which
+is exactly the shape of wrongness nobody notices. Trimming the last step gives
+2.96e-06 on the same run. It predates all of this work; a shrinking step
+overshoots by at most one small step, which is why only raising the default
+exposed it.
+
+**The adaptive controller floored at the optimum — deployed.**
+`adapt_delta_z_to_error` used to shrink toward an absolute `L/1e5`, which in
+complex64 means shrinking past the optimum into pure round-off. A tolerance it
+cannot meet therefore bought error with time, and bought a great deal of both:
+
+| tolerance | floor | time | rel. error |
+|---|---|---|---|
+| 1e-6 | optimum | **18.2 ms** | **3.11e-05** |
+| 1e-6 | old `L/1e5` | 32.5 ms | 3.50e-01 |
+| 1e-8 | optimum | **23.2 ms** | **3.01e-05** |
+| 1e-8 | old `L/1e5` | 54,178 ms | 6.57e-02 |
+
+At 1e-8 that is **2,300x the speed and 2,200x the accuracy**. The floor is
+derived from the same rate as the π-per-step cap, so it tracks a self-focusing
+beam rather than being a fixed distance. An explicit `min_step` still wins:
+naming one is deliberate, often for sampling.
+
+**Yoshida for complex128 — deployed.** Three Strang sub-steps composed to
+O(dz⁴) for three transform pairs, built out of the existing step. In complex64
+it buys nothing, for the reason above, and warns. In complex128 the round-off
+floor is gone and it dominates outright, measured at 256²:
+
+| | rad/step | time | rel. error |
+|---|---|---|---|
+| yoshida | 0.8 | **31 ms** | 1.08e-09 |
+| strang | 0.005 | 1202 ms | 1.19e-09 |
+
+**38x the speed at equal accuracy**, and at the coarse end still 2x faster and
+65x more accurate than Strang's nearest point. Below ~1e-10 the table stops
+resolving it — that is the reference's own floor, not Yoshida's.
+
+The earlier entry here rejected higher-order splitting outright. That was right
+about complex64 and wrong to stop there: the argument reverses entirely with
+the round-off floor removed, which is the whole reason the scheme is keyed to
+the float width rather than offered as a default.
 
 ## Cross-cutting
 
@@ -329,6 +667,14 @@ entirely gains only ~1.3x on this backend, so the branch the CPU kernels carry
 is not worth adding here.
 
 ## MLX (Metal)
+
+**Rabi scalars computed on the host — deployed.** `cos_val =
+_to_mx(float(mx.cos(...)))` evaluated a single number on the GPU and dragged it
+back, stalling the queue twice per call. `math.cos` instead: **1.60x** on
+`rabi_coupling` at 2048² (1.200 → 0.752 ms, 112 → 178 GB/s) against 12.9%
+noise, at three sites including both fused coupled steps. Only reaches CNLSE
+and DDGPE with `omega` set, so the NLSE guard shows nothing — 0 of 18 cells
+moved.
 
 **One traced closure per physics case, not per signature — deployed**
 (`1ba3adf`). `_make_split_step_coupled` wrote six full bodies for

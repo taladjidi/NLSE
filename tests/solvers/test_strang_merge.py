@@ -6,7 +6,7 @@ A Strang step is ``N(h/2) L(h) N(h/2)``, so a run of them is
 
 and the bracketed body is exactly a Lie step. Merging costs one nonlinear
 application for the whole run rather than one per step, and the loop body
-becomes the one ``precision="single"`` already runs.
+becomes the one ``splitting="lie"`` already runs.
 
 It is exact only where ``N(a) N(b) == N(a + b)``, which needs ``|A|`` to
 survive ``N``: no loss and no absorbing potential. The tests that matter here
@@ -51,7 +51,7 @@ def propagate(solver, coupled=False, phase=0.1):
     """Run one propagation at a step giving this phase, in Strang splitting."""
     A = beam(coupled)
     prepared, _ = solver._prepare_output_array(A.copy(), normalize=True)
-    solver._precompute_step_constants(solver.V, "double")
+    solver._precompute_step_constants(solver.V, "strang")
     rates = solver._energy_rates(prepared)
     delta_z = phase / (rates["potential"] + rates["interaction"])
     out = solver.out_field(
@@ -60,7 +60,7 @@ def propagate(solver, coupled=False, phase=0.1):
         delta_z=delta_z,
         verbose=False,
         plot=False,
-        precision="double",
+        splitting="strang",
         method="split_step",
     )
     return np.asarray(solver._backend.to_numpy(out))
@@ -122,9 +122,9 @@ def test_the_loop_body_becomes_a_lie_step(backend_name):
     seen = []
     original = type(solver).split_step
 
-    def spy(self, A, A_sq, V, propagator, plans, delta_z, precision="single"):
-        seen.append(precision)
-        return original(self, A, A_sq, V, propagator, plans, delta_z, precision)
+    def spy(self, A, A_sq, V, propagator, plans, delta_z, splitting="lie"):
+        seen.append(splitting)
+        return original(self, A, A_sq, V, propagator, plans, delta_z, splitting)
 
     type(solver).split_step = spy
     try:
@@ -132,15 +132,15 @@ def test_the_loop_body_becomes_a_lie_step(backend_name):
     finally:
         type(solver).split_step = original
     assert seen, "the solver never took a split step"
-    assert seen.count("single") > 1, (
+    assert seen.count("lie") > 1, (
         f"a merged run should take Lie steps between its two half steps; "
         f"the body ran {sorted(set(seen))}"
     )
     # The distance left over after the whole steps is covered outside the
     # bracket, so it is a Strang step of its own. There is at most one.
-    assert seen.count("double") <= 1, (
+    assert seen.count("strang") <= 1, (
         f"only the remainder may fall outside the merged run; "
-        f"{seen.count('double')} steps did"
+        f"{seen.count('strang')} steps did"
     )
 
 
@@ -166,8 +166,8 @@ def test_the_merge_declines_where_it_is_not_exact(reason, overrides, cls):
             np.complex64
         )
     solver = build("CPU", cls=cls, **overrides)
-    solver._precompute_step_constants(solver.V, "double")
-    assert not solver._merges_strang_halves("double"), (
+    solver._precompute_step_constants(solver.V, "strang")
+    assert not solver._merges_strang_halves("strang"), (
         f"the merge must decline with {reason}"
     )
 
@@ -185,7 +185,7 @@ def test_declining_with_loss_is_worth_doing():
     guarded = propagate(solver).astype(np.complex128)
 
     forced = build("CPU", alpha=20)
-    forced._merges_strang_halves = lambda precision: precision == "double"
+    forced._merges_strang_halves = lambda splitting: splitting == "strang"
     merged = propagate(forced).astype(np.complex128)
 
     reference = propagate(build("CPU", alpha=20), phase=2e-3).astype(np.complex128)
@@ -202,17 +202,17 @@ def test_declining_with_loss_is_worth_doing():
 def test_the_merge_declines_for_lie_splitting():
     """Lie splitting has no halves to merge."""
     solver = build("CPU")
-    solver._precompute_step_constants(solver.V, "single")
-    assert not solver._merges_strang_halves("single")
+    solver._precompute_step_constants(solver.V, "lie")
+    assert not solver._merges_strang_halves("lie")
 
 
 def test_the_merge_declines_with_a_rabi_coupling():
     """The Rabi rotation rides on the Lie step, not on the Strang one."""
     solver = build("CPU", cls=CNLSE, omega=1e4)
-    solver._precompute_step_constants(solver.V, "double")
-    assert not solver._merges_strang_halves("double")
+    solver._precompute_step_constants(solver.V, "strang")
+    assert not solver._merges_strang_halves("strang")
     solver.omega = None
-    assert solver._merges_strang_halves("double")
+    assert solver._merges_strang_halves("strang")
 
 
 def test_a_driven_solver_opts_out():

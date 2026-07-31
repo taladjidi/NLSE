@@ -70,7 +70,7 @@ def grids(backend_name):
     return V, field
 
 
-def propagate(simu, field, method, precision="single"):
+def propagate(simu, field, method, splitting="lie"):
     """Propagate a copy of the field and return the result as numpy."""
     out = simu.out_field(
         field.copy(),
@@ -78,7 +78,7 @@ def propagate(simu, field, method, precision="single"):
         verbose=False,
         plot=False,
         method=method,
-        precision=precision,
+        splitting=splitting,
         normalize=False,
         delta_z=DELTA_Z,
     )
@@ -145,7 +145,7 @@ def test_double_precision_batch_matches_individual_runs(backend_name):
     """Broadcasting must hold in double precision too, where supported.
 
     The shared-grid wrap and the per-simulation launch are indexing, not
-    arithmetic, so they must be precision-agnostic. CL compiles a separate
+    arithmetic, so they must be splitting-agnostic. CL compiles a separate
     double-precision program, which is a second copy of every kernel.
     """
     backend = get_backend(backend_name)
@@ -157,12 +157,12 @@ def test_double_precision_batch_matches_individual_runs(backend_name):
 
     batched = make_solver(backend_name, n2_batched, 0.0, V)
     got = propagate(
-        batched, np.broadcast_to(field, (COUNT, N, N)), "split_step", "double"
+        batched, np.broadcast_to(field, (COUNT, N, N)), "split_step", "strang"
     )
 
     for index in range(COUNT):
         alone = make_solver(backend_name, float(N2_VALUES[index]), 0.0, V)
-        expected = propagate(alone, field, "split_step", "double")
+        expected = propagate(alone, field, "split_step", "strang")
         np.testing.assert_allclose(
             got[index],
             expected,
@@ -407,9 +407,10 @@ def test_a_coupled_batch_keeps_the_components_apart(backend_name, cls, grid):
 
 @pytest.mark.parametrize("backend_name", COUPLED_NO_BATCH)
 @pytest.mark.parametrize("cls,grid", COUPLED, ids=COUPLED_IDS)
-def test_backends_without_coupled_batching_refuse_it(backend_name, cls, grid):
-    """Refusing is the requirement; returning a reshaped array silently is not.
+def test_backends_without_coupled_batching_fall_back(backend_name, cls, grid):
+    """The batch is the run; the backend is how it is run, so the batch wins.
 
+    What must not happen is a reshaped array coming back silently.
     ``CNLSE._no_coupled_batch_backends`` is what keeps the tests above off
     these backends, so it has to match what the solvers do.
     """
@@ -418,10 +419,12 @@ def test_backends_without_coupled_batching_refuse_it(backend_name, cls, grid):
     batched = make_coupled(
         cls, backend_name, N2_VALUES.reshape((COUNT, 1, *(1,) * len(grid)))
     )
-    with pytest.raises(NotImplementedError, match=r"[Bb]roadcasting"):
-        propagate(
+    with pytest.warns(UserWarning, match=r"[Bb]roadcasting"):
+        got = propagate(
             batched, np.broadcast_to(field, (COUNT, 2, *grid)).copy(), "split_step"
         )
+    assert got.shape == (COUNT, 2, *grid)
+    assert batched._backend.name not in CNLSE._no_coupled_batch_backends
 
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
@@ -455,7 +458,7 @@ def test_batched_constants_are_reduced_to_component_rank(cls, grid, rank):
     simu = make_coupled(cls, "CPU", N2_VALUES.reshape(shape))
     V = np.zeros(grid, dtype=np.float32)
 
-    simu._precompute_step_constants(V, "single")
+    simu._precompute_step_constants(V, "lie")
 
     component_ndim = len(grid)
     for name in sorted(simu._step_constants()):
@@ -482,4 +485,4 @@ def test_a_parameter_varying_over_components_is_refused(cls, grid):
         cls, "CPU", np.array([-1e-9, -2e-9]).reshape(1, 2, *(1,) * len(grid))
     )
     with pytest.raises(ValueError, match="component axis"):
-        simu._precompute_step_constants(None, "single")
+        simu._precompute_step_constants(None, "lie")

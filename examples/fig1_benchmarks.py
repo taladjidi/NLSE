@@ -7,8 +7,8 @@ from _output import output_path
 from NLSE import NLSE
 from NLSE.backends import list_available_backends
 
-PRECISION = "single"
-if PRECISION == "double":
+PRECISION = "lie"
+if PRECISION == "strang":
     PRECISION_REAL = np.float64
     PRECISION_COMPLEX = np.complex128
 else:

@@ -40,7 +40,7 @@ def main() -> None:
         L,
         verbose=True,
         plot=False,
-        precision="single",
+        splitting="lie",
     )
 
 

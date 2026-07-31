@@ -110,7 +110,7 @@ def _compile_kernels(precision="single"):
     Parameters
     ----------
     precision : str
-        'single' or 'double'
+        'lie' or 'strang'
 
     Returns
     -------
@@ -1385,7 +1385,7 @@ class CUDAKernels:
         g22,
         Isat1,
         Isat2,
-        precision,
+        splitting,
         plan,
         omega=None,
         unnorm_ifft=False,
@@ -1416,8 +1416,8 @@ class CUDAKernels:
             Cross-component interaction.
         Isat1, Isat2 : float
             Saturation intensities (converted units).
-        precision : str
-            "single" or "double".
+        splitting : str
+            "lie" or "strang".
         plan : _CuFFTPlan
             Pre-built FFT plan.
         omega : float or None
@@ -1451,7 +1451,7 @@ class CUDAKernels:
                 self._launch(kernels["coupled_nl_prop_c"], N_sq, A, *params, N_sq_i)
 
         # Double precision: a nonlinear half-step before the linear one
-        if precision == "double":
+        if splitting == "strang":
             nonlinear()
 
         plan.fft(A, A)

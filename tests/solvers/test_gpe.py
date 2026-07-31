@@ -89,7 +89,7 @@ def test_out_field(backend) -> None:
     )
     psi_0 = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(PRECISION_COMPLEX)
     psi = simu.out_field(
-        psi_0, 1e-6, verbose=True, plot=False, precision="single", delta_z=1e-8
+        psi_0, 1e-6, verbose=True, plot=False, splitting="lie", delta_z=1e-8
     )
     norm = np.sum(np.abs(psi) ** 2 * simu.delta_X * simu.delta_Y)
     assert np.allclose(norm, simu.N, rtol=1e-4), (

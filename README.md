@@ -60,7 +60,7 @@ E_0 = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(np.complex64)
 V = -1e-4 * np.exp(-(simu.XX**2 + simu.YY**2) / waist2**2)
 
 simu = NLSE(alpha, power, window, n2, V, L, NX=N, NY=N, Isat=Isat, backend=backend)
-E = simu.out_field(E_0, L, verbose=True, plot=True, precision="single")
+E = simu.out_field(E_0, L, verbose=True, plot=True, splitting="lie")
 ```
 
 <!-- TODO ADD IMAGE !!! -->

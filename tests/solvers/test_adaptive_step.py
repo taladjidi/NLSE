@@ -50,7 +50,7 @@ def adaptive(tolerance, update_every=10, min_step=None):
         L,
         verbose=False,
         plot=False,
-        precision="double",
+        splitting="strang",
         method="split_step",
         callback=adapt_delta_z_to_error,
         callback_args=(tolerance, update_every, (0.5, 2.0), 0.9, min_step, taken),
@@ -73,7 +73,7 @@ def prepared_solver():
     simu = solver()
     field = beam()
     prepared, _ = simu._prepare_output_array(field.copy(), normalize=True)
-    simu._precompute_step_constants(simu.V, "double")
+    simu._precompute_step_constants(simu.V, "strang")
     simu.plans = simu._build_fft_plan(prepared)
     simu.propagator = simu._build_propagator(np.complex64, L / 100)
     return simu, prepared
@@ -132,7 +132,7 @@ def test_it_beats_the_fixed_default_it_replaces():
     simu = solver()
     field = beam()
     prepared, _ = simu._prepare_output_array(field.copy(), normalize=True)
-    simu._precompute_step_constants(simu.V, "double")
+    simu._precompute_step_constants(simu.V, "strang")
     rates = simu._energy_rates(prepared)
     rate = rates["potential"] + rates["interaction"]
 
@@ -144,7 +144,7 @@ def test_it_beats_the_fixed_default_it_replaces():
             delta_z=phase / rate,
             verbose=False,
             plot=False,
-            precision="double",
+            splitting="strang",
             method="split_step",
         )
         return np.asarray(s._backend.to_numpy(out)).astype(np.complex128)
@@ -183,7 +183,7 @@ def test_a_trial_leaves_the_run_untouched():
         L / 50,
         verbose=False,
         plot=False,
-        precision="double",
+        splitting="strang",
         method="split_step",
     )
     live = simu._backend.from_numpy(beam())
@@ -202,3 +202,43 @@ def test_the_run_stays_finite(tolerance):
     got, steps = adaptive(tolerance)
     assert np.all(np.isfinite(got.view(np.float32)))
     assert steps, "no steps were taken"
+
+
+def test_a_run_whose_step_grows_still_lands_on_z():
+    """The distance asked for is the distance propagated.
+
+    The loop divides z into steps before it starts, so a callback that grows
+    the step used to leave it taking one that did not fit: the run overshot by
+    up to a step and came back with a phase error the size of the extra
+    propagation, the field otherwise looking entirely reasonable. Checked
+    against a fine fixed-step run, because that is the symptom -- summing the
+    steps a callback saw misses the partial one at the end.
+    """
+    simu = solver()
+    reference = np.asarray(
+        solver().out_field(
+            beam(np.complex128),
+            L,
+            delta_z=L / 4000,
+            verbose=False,
+            plot=False,
+            splitting="strang",
+        )
+    ).astype(np.complex128)
+
+    taken: list = []
+    out = simu.out_field(
+        beam(),
+        L,
+        verbose=False,
+        plot=False,
+        splitting="strang",
+        callback=adapt_delta_z_to_error,
+        callback_args=(1e-3, 10, (0.5, 2.0), 0.9, None, taken),
+    )
+    got = np.asarray(simu._backend.to_numpy(out)).astype(np.complex128)
+    error = np.linalg.norm(got - reference) / np.linalg.norm(reference)
+    assert error < 1e-3, (
+        f"adaptive run is {error:.3e} from the reference, which is the size of "
+        f"an overshoot rather than of a step-size difference"
+    )

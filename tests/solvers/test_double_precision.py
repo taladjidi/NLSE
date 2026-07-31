@@ -1,6 +1,6 @@
 """Tests that a double-precision run stays double precision throughout.
 
-A run's precision is set by the dtype of the field handed to ``out_field``,
+A run's splitting is set by the dtype of the field handed to ``out_field``,
 and everything the step touches has to follow it: the scratch buffers, the
 intensity buffer the coupled solvers keep, and the dispersion operator RK4
 multiplies by.
@@ -87,7 +87,7 @@ def test_rk4_runs_in_double_precision(backend_name, cls):
         L,
         verbose=False,
         plot=False,
-        precision="single",
+        splitting="lie",
         method="RK4",
     )
     out = np.asarray(solver._backend.to_numpy(out))
@@ -118,7 +118,7 @@ def test_double_and_single_agree(backend_name, cls):
             L,
             verbose=False,
             plot=False,
-            precision="single",
+            splitting="lie",
             method="RK4",
         )
         return np.asarray(s._backend.to_numpy(out)).astype(np.complex128)

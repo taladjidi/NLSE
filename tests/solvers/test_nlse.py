@@ -174,7 +174,7 @@ def test_split_step(backend) -> None:
     if simu._backend.is_device_backend:
         simu._send_arrays_to_gpu()
     A = simu.split_step(
-        A, A_sq, simu.V, simu.propagator, simu.plans, 0, precision="double"
+        A, A_sq, simu.V, simu.propagator, simu.plans, 0, splitting="strang"
     )
     np.testing.assert_allclose(
         as_numpy(simu, A),
@@ -191,7 +191,7 @@ def test_out_field(backend) -> None:
     E = np.ones((N, N), dtype=PRECISION_COMPLEX)
     simu = make_solver(backend, alpha=0)
     E = simu.out_field(
-        E, L, verbose=False, plot=False, precision="single", delta_z=DZ_TEST
+        E, L, verbose=False, plot=False, splitting="lie", delta_z=DZ_TEST
     )
     norm = np.sum(np.abs(E) ** 2 * simu.delta_X * simu.delta_Y)
     norm *= c * epsilon_0 / 2
@@ -219,7 +219,7 @@ def test_cuda_graph() -> None:
                 L,
                 verbose=False,
                 plot=False,
-                precision="single",
+                splitting="lie",
                 method=method,
                 delta_z=DZ_TEST,
             )

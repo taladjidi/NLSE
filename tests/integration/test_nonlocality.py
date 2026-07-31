@@ -19,17 +19,19 @@ UNSUPPORTED = [
 
 
 @pytest.mark.parametrize("backend", UNSUPPORTED)
-def test_unsupported_backends_refuse_nonlocality(backend):
-    """A backend without the convolution must say so, not compute silently.
+def test_unsupported_backends_fall_back_for_nonlocality(backend):
+    """A backend without the convolution must hand the run to one that has it.
 
-    The list above is what keeps the rest of this file off those backends, so
-    it has to match what the solvers actually do.
+    The backend is a performance choice and the non-locality is physics, so
+    the physics wins and the swap is announced. What must not happen is a
+    silent local run, which is a different problem returning a plausible
+    field.
 
-    The grid has to resolve nl_length, or there is no non-locality to refuse:
-    below one cell the solver drops it and runs local, which these backends
-    can do perfectly well.
+    The grid has to resolve nl_length, or there is nothing to fall back for:
+    below one cell the solver drops the non-locality and runs local, which
+    these backends do perfectly well.
     """
-    with pytest.raises(NotImplementedError, match=r"[Nn]on-local"):
+    with pytest.warns(UserWarning, match=r"non-local"):
         NLSE(
             alpha=0,
             power=1.05,
@@ -43,6 +45,27 @@ def test_unsupported_backends_refuse_nonlocality(backend):
             nl_length=60e-6,
             backend=backend,
         )
+
+
+@pytest.mark.parametrize("backend", UNSUPPORTED)
+def test_the_fallback_lands_on_a_backend_that_can_convolve(backend):
+    """Announcing a swap is no use if the solver stays where it was."""
+    with pytest.warns(UserWarning, match=r"non-local"):
+        simu = NLSE(
+            alpha=0,
+            power=1.05,
+            window=4 * 2.23e-3,
+            n2=-1e-9,
+            V=None,
+            L=2e-4,
+            NX=512,
+            NY=512,
+            Isat=10e4,
+            nl_length=60e-6,
+            backend=backend,
+        )
+    assert simu._backend.convolution is not None
+    assert simu._backend.name != backend
 
 
 @pytest.mark.parametrize("backend", list_available_backends())
@@ -253,7 +276,7 @@ def test_nonlocality():
             L,
             verbose=False,
             plot=False,
-            precision="single",
+            splitting="lie",
             delta_z=1e-5,
         )
         arr = E.real * E.real + E.imag * E.imag
@@ -267,7 +290,7 @@ def test_nonlocality():
             L,
             verbose=False,
             plot=False,
-            precision="single",
+            splitting="lie",
             delta_z=1e-5,
         )
         arr = E.real * E.real + E.imag * E.imag
@@ -281,7 +304,7 @@ def test_nonlocality():
             L,
             verbose=False,
             plot=False,
-            precision="single",
+            splitting="lie",
             delta_z=1e-5,
         )
         arr = E.real * E.real + E.imag * E.imag
@@ -295,7 +318,7 @@ def test_nonlocality():
             L,
             verbose=False,
             plot=False,
-            precision="single",
+            splitting="lie",
             delta_z=1e-5,
         )
         arr = E.real * E.real + E.imag * E.imag
@@ -309,7 +332,7 @@ def test_nonlocality():
             L,
             verbose=False,
             plot=False,
-            precision="single",
+            splitting="lie",
         )
         arr = E.real * E.real + E.imag * E.imag
         arr *= simu_gpe.delta_X * simu_gpe.delta_Y

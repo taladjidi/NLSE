@@ -28,12 +28,23 @@ from scipy.constants import c, epsilon_0
 # imaginary axis. Every solver's step limit is derived from it.
 RK4_STABILITY_RADIUS = 2.83
 
-# Phase in radians the default step imprints per step. The limits are
-# ceilings (pi for split-step aliasing, 2.83 for RK4 stability); this is where
-# a default sits under them. Measured: RK4 is at its accuracy floor by 0.15
-# and gains nothing below, and split-step's discretisation error stays under
-# the complex64 round-off floor across three decades of step size.
+# Phase in radians the default step imprints per step, per method. The limits
+# are ceilings (pi for split-step aliasing, 2.83 for RK4 stability); these are
+# where a default sits under them.
+#
+# Split-step stays at 0.1 despite a measured optimum of 0.4 on a smooth beam,
+# because that optimum does not survive a field with spectral content of its
+# own. examples/fig2_turbulence.py carries kp = 2*pi*5e3 and aliases far below
+# the pi-per-step cap: 0.1 rad returns 11% error against a converged run and
+# 0.4 returns 140%, with the peak amplitude and the total power both visibly
+# wrong. The work-precision sweep that found 0.4 varied the distance sixteenfold
+# and never varied the physics, which is the hole it fell through.
+#
+# RK4 is a different story and does move: its truncation error is still falling
+# steeply at 0.02, where it returns 2.3e-6 against 5.6e-4 at 0.1, so the two
+# methods no longer share one number.
 DEFAULT_PHASE_PER_STEP = 0.1
+RK4_PHASE_PER_STEP = 0.02
 
 # Fewest steps a default may take over the requested distance, so that a run
 # is something a callback can sample and a plot can show rather than one jump.
@@ -328,11 +339,13 @@ class StepSize:
         rates = self._energy_rates(A) if A is not None else self._estimated_rates()
         if method == "RK4":
             rate = sum(rates.values())
+            phase = RK4_PHASE_PER_STEP
         else:
             rate = rates["potential"] + rates["interaction"]
+            phase = DEFAULT_PHASE_PER_STEP
         # A rate of zero means nothing rotates the phase, so only the bound
         # below decides.
-        dz = DEFAULT_PHASE_PER_STEP / rate if rate > 0 else np.inf
+        dz = phase / rate if rate > 0 else np.inf
 
         span = abs(float(z)) if z is not None else float(self.L)
         if span > 0:
