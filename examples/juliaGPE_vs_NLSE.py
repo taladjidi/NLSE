@@ -1,3 +1,6 @@
+import pathlib
+import sys
+
 import matplotlib.pyplot as plt
 import numpy as np
 from _output import output_path
@@ -35,6 +38,25 @@ custom_cycler = (
     + (cycler(markerfacecolor=fills))
 )
 plt.rc("axes", prop_cycle=custom_cycler)
+
+NEEDED = (
+    "python_vortex_precession_CPU_times.npy",
+    "python_vortex_precession_CPU_sizes.npy",
+    "python_vortex_precession_GPU_times.npy",
+    "python_vortex_precession_GPU_sizes.npy",
+    "julia_vortex_precession_times.npy",
+    "julia_vortex_precession_sizes.npy",
+)
+_missing = [name for name in NEEDED if not pathlib.Path(name).exists()]
+if _missing:
+    print(
+        "This plots timings that two other runs produce; "
+        f"{len(_missing)} of {len(NEEDED)} files are not here yet "
+        f"(first: {_missing[0]}).\n"
+        "Run examples/vortex_precession_benchmark.py for the Python side, and "
+        "the Julia benchmark for the other."
+    )
+    sys.exit(0)
 
 ts_py_CPU = np.load("python_vortex_precession_CPU_times.npy")
 sizes_py_CPU = np.load("python_vortex_precession_CPU_sizes.npy")

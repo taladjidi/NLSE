@@ -32,11 +32,21 @@ Open reports::
     ncu-ui  profile_cupy_kernels.ncu-rep
 """
 
+import sys
 import time
 
-import cupy as cp
 import numpy as np
 from NLSE import NLSE
+
+try:
+    import cupy as cp
+except ImportError:
+    print(
+        "This example profiles the CUDA backend with nsys/ncu and needs cupy "
+        "and an NVIDIA GPU. Nothing to profile here; see the module docstring "
+        "for how to run it on a machine that has them."
+    )
+    sys.exit(0)
 
 # Propagation step, passed to out_field and used by the plots below.
 DELTA_Z = 0.5e-4

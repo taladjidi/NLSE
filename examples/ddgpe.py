@@ -1,4 +1,3 @@
-import cupy as cp
 import matplotlib.pyplot as plt
 import numpy as np
 from NLSE import DDGPE
@@ -18,7 +17,7 @@ def turn_on(
     ----------
     F_laser_t : np.ndarray
         self.F_pump_t as defined in class ggpe,
-        cp.ones((int(self.t_max//self.dt)), dtype=cp.complex64)
+        np.ones(int(self.t_max // self.dt), dtype=np.complex64)
     time : np.ndarray
         array with the value of the time at each discretized
         step
@@ -101,9 +100,9 @@ def main():
     callback = [callback_sample]
     callback_args = [
         [
-            cp.asarray(F_pump_r),
+            np.asarray(F_pump_r),
             F_pump_t,
-            cp.asarray(F_probe_r),
+            np.asarray(F_probe_r),
             F_probe_t,
         ],
         [save_every, sample1, sample2, sample3],

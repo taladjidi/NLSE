@@ -2,7 +2,7 @@ import numpy as np
 from NLSE import NLSE
 
 PRECISION_COMPLEX = np.complex64
-PRECISION_REAL = np.float32x
+PRECISION_REAL = np.float32
 
 
 def main():

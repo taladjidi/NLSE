@@ -1,6 +1,7 @@
 """Backend implementations for NLSE solvers."""
 
 import os
+import warnings
 from collections.abc import Callable
 
 from ..utils import say
@@ -131,25 +132,37 @@ def get_backend(name: str, grid_size: tuple = (2048, 2048)) -> Backend:
         name = get_optimal_backend(grid_size, force_benchmark=_FORCE_BENCHMARK)
         say(f"Auto-selected FFT backend: {name}")
 
-    # Validate before consulting the cache, so an unavailable backend raises
-    # the same way whether or not something asked for it earlier.
-    build: type[Backend]
-    if name == "CPU":
-        build = CPUBackend
-    elif name == "CUPY":
-        if not _CUPY_AVAILABLE:
-            raise ValueError("CUPY backend not available - install cupy")
-        build = CUPYBackend
-    elif name == "CL":
-        if not _OPENCL_AVAILABLE:
-            raise ValueError("OpenCL backend not available - install pyopencl")
-        build = OpenCLBackend
-    elif name == "MLX":
-        if not _MLX_AVAILABLE:
-            raise ValueError("MLX backend not available - install mlx")
-        build = MLXBackend
+    # A backend that is not installed is answered with the fastest one that
+    # is, rather than by refusing: the backend is how a run goes, not what it
+    # computes, and a script that names one is portable only if naming it is
+    # a preference. A name that is not a backend at all is still an error --
+    # that is a typo, and guessing at it would hide the typo.
+    builders: dict = {"CPU": (True, CPUBackend, "")}
+    if _CUPY_AVAILABLE:
+        builders["CUPY"] = (True, CUPYBackend, "")
     else:
+        builders["CUPY"] = (False, None, "install cupy")
+    if _OPENCL_AVAILABLE:
+        builders["CL"] = (True, OpenCLBackend, "")
+    else:
+        builders["CL"] = (False, None, "install pyopencl")
+    if _MLX_AVAILABLE:
+        builders["MLX"] = (True, MLXBackend, "")
+    else:
+        builders["MLX"] = (False, None, "install mlx")
+
+    if name not in builders:
         raise ValueError(f"Unknown backend: {name}")
+    ok, build, how = builders[name]
+    if not ok:
+        replacement = backends_by_speed(grid_size)[0]
+        warnings.warn(
+            f"The {name} backend is not installed here, so {replacement} will "
+            f"be used instead — the fastest one available. {how.capitalize()} "
+            f"to use {name}, or pass backend='{replacement}' to silence this.",
+            stacklevel=2,
+        )
+        return get_backend(replacement, grid_size)
 
     if name not in _BACKEND_CACHE:
         _BACKEND_CACHE[name] = build()
