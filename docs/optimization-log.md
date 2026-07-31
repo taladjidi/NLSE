@@ -221,6 +221,34 @@ to compute, and the fused kernel does less total work than the pair it replaces
 
 So: **the only measured lever left on macOS is the separable propagator.**
 
+**Folding the propagator into the transform (cuFFT callbacks) — open, probe
+written, nothing measured.** Better arithmetic than the separable propagator,
+because it removes the pass rather than shrinking it. cuFFT can run a store
+callback as it writes each element, which absorbs the propagator multiply
+entirely: **104 B/point becomes 88**, and a load callback on the inverse could
+take the nonlinear step too, for **72**. On a backend already at the bandwidth
+bound that is close to a straight 15–30%.
+
+`benchmarks/cufft_callback_probe.py` asks the four questions that decide
+whether it can be built, none of which can be answered on a machine without an
+NVIDIA GPU:
+
+1. Is `cupy.fft.config.set_cufft_callbacks` there at all? It is experimental,
+   compiles the callback with nvcc and links cufft statically, so it needs a
+   full toolkit rather than a driver.
+2. Does a store callback compute the right thing?
+3. **Does the callback see new values written into the aux array without the
+   plan being rebuilt?** The one that decides the design. Callbacks bind at
+   plan creation and the propagator changes whenever an adaptive step does, so
+   if the array can be overwritten in place the plan is built once per run —
+   and if not, every step change costs a plan and the idea is probably dead.
+4. Is it actually faster than the separate multiply?
+
+Two things to weigh before building on a green probe. It is CUDA-only, so it
+widens the gap between CUPY and the other three rather than lifting them
+together. And it puts a toolkit in the install path for anyone who wants it,
+which is a reasonable ask of this audience but not free.
+
 ### The NVIDIA box
 
 Same tool, `CPU CUPY`, run 2026-07-31. **The CUDA and OpenCL probes agree to
