@@ -223,9 +223,21 @@ def test_components_round_trip_when_taken_by_copy(monkeypatch) -> None:
     """Components taken by copy must be written back.
 
     On a device backend ``_take_components`` copies, so the result of a
-    nonlinear step reaches the field only through ``_set_components``. On CPU the components are views and the write-back is a no-op, which
-    leaves CUPY as the only backend where dropping it would show. Forcing the
-    copy branch puts that under test here too.
+    nonlinear step reaches the field only through ``_set_components``.
+
+    On the CPU it depends on the shape, which is not what this said and is
+    the reason a bug got past it. An unbatched component is contiguous and
+    comes back as a view, so the write-back is a no-op there and dropping it
+    would not show. A batched one is strided, and since the numba kernels
+    flatten with ravel -- a view of a contiguous array, a copy of a strided
+    one -- it has to be copied as well, or the step is applied to a temporary
+    and lost. Both are exercised below.
+
+    Monkeypatching is_device_backend forces the copy branch, which covers
+    CUPY from a machine without it. It also means this test passed throughout
+    the period when the host branch was returning strided views and every
+    batched coupled run on the CPU was dropping its real-space step: the
+    branch under test was not the broken one.
     """
     from NLSE.backends.backend import Backend
 
