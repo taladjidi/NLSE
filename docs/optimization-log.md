@@ -21,7 +21,10 @@ Use the tools, and interleave variants rather than running them in sequence.
   Runs the same workload against the working tree and a git worktree of `<rev>`
   in a subprocess. It measures the *slope* between two step counts, so setup
   (FFT planning, propagator build, transfers) cancels instead of being divided
-  out. This is the one that decides whether a change ships.
+  out. This is the one that decides whether a change ships. It runs lossless
+  by default, which is the case every revision has in common; `--alpha 20`
+  measures the solved real-space step instead, and the two answer differently
+  on MLX.
 - `benchmarks/profile_kernels.py` — per-kernel roofline when the change is
   inside a kernel. Reproduces to 2–5%. Percentages are against the best rate
   observed in the same table, not a synthetic ceiling.
@@ -454,6 +457,13 @@ At `u = 0` the iteration returns `sat` and the amplitude factor is exactly 1, so
 did. `profile_backends.py --baseline HEAD` finds no lossless cell slower beyond
 this machine's scatter.
 
+That last sentence held on the backends that branch at runtime and **not on
+MLX**, where both arms of an `mx.where` are evaluated and a lossless step came
+out 1.45x slower. Fixed by compiling a lossless graph — see *MLX (Metal)*.
+The lesson generalizes past this change: "the branch is not taken" is a
+statement about C-like backends, and on a graph backend it has to be measured
+rather than argued.
+
 **What it bought**, on the turbulence problem at 256², complex128, against an
 RK4 reference self-consistent to 3e-11 (`--problem turbulence --field
 complex128`):
@@ -509,10 +519,13 @@ double precision. All four are fixed; none of the four is verified on Metal.
 Anyone picking this up on a Mac should run the suite first and treat a green run
 as the first evidence that the MLX side of it works.
 
-Still open there, and cheap to answer with a Mac in hand: whether the solved
-lossy step costs MLX what it costs the others (~16% on Lie, ~25% on Yoshida,
-net-negative on Strang), and whether `mx.compile` folds the extra iteration in
-for free the way it folded the hand-written Metal kernel in.
+**Answered on an M3 Max, 2026-08-01.** The suite is green there (1199 passed).
+The two questions this paragraph left open are now measured, and the second
+one's answer was no: `mx.compile` does **not** fold the extra iteration in for
+free. It cost a lossless run 1.45x, which is a regression the NVIDIA guard
+could not see, and it costs a lossy MLX step ~1.5x where CPU and CL pay
+nothing measurable. Both are written up under *MLX (Metal)*; the lossless half
+is fixed and pinned by a test, the lossy half stands.
 
 ## Cross-cutting
 
@@ -761,6 +774,49 @@ entirely gains only ~1.3x on this backend, so the branch the CPU kernels carry
 is not worth adding here.
 
 ## MLX (Metal)
+
+**A lossless graph for a lossless run — deployed** (2026-08-01). The solved
+lossy step made a *lossless* MLX split step **1.45x slower** — 0.104 → 0.153
+ms/step at 512², 0.043 → 0.063 at 256², against 4-8% noise, while CPU and CL
+were unmoved at 1.00-1.07x. Nothing was wrong with the answer: at `u = 0` the
+iteration returns `sat` and the decay is exactly 1. What it cost was that
+`_nl_factor` chooses between the solved and the frozen step with `mx.where`,
+**and MLX evaluates both arms** — so every lossless step paid three
+fixed-point iterations, a `sqrt`, and the frozen arm's `exp`. The other
+backends branch at runtime in C and skip all of it, which is why only this one
+regressed and why the NVIDIA-box guard never saw it.
+
+`alpha` is read on the host, so the factor can be chosen when the graph is
+compiled instead of per element. `_make_split_step` takes the loss as a
+compile key and `_is_lossless` decides it; the lossless graph is bit-identical
+to the general one, which `tests/backends/test_mlx.py` pins on all four
+splitting × potential cases. Back to **0.93-0.96x**, 0 of 6 cells slower.
+
+A device scalar is never called lossless — reading one costs a
+synchronization, and the general kernel is correct at any `alpha`.
+
+**Choosing the lossy arm on the host too — rejected, measured** (2026-08-01).
+`u = 2*alpha*dz` is a host scalar whenever `alpha` is, so the solved arm could
+be emitted alone, dropping two selects and the frozen arm's exponential. It
+measured **1.54x against 1.51x** on 5-7% noise: nothing. What the solved step
+costs MLX is the iteration itself, not the arm it carries alongside it.
+*Challenge this* with a hand-written Metal kernel, where the iteration would
+not be a chain of graph nodes.
+
+**What the solved lossy step costs on the M3 Max** (2026-08-01), the question
+left open below. Against `main` at `alpha = 20`, `--alpha 20` on the guard:
+
+| backend | 256² | 512² |
+|---|---|---|
+| CPU | 1.02x | 0.98-1.09x |
+| CL | 1.00x | 0.96-1.03x |
+| MLX | **1.54x** | **1.51x** |
+
+CPU and CL are inside their own noise — the ~16% the NVIDIA box measured for
+Lie does not appear here. MLX pays much more than any of them, for the reason
+in the rejection above. Against 69x and 7000x in accuracy it is still not a
+trade, but it is the one backend where the choice is worth making
+deliberately.
 
 **Rabi scalars computed on the host — deployed.** `cos_val =
 _to_mx(float(mx.cos(...)))` evaluated a single number on the GPU and dragged it

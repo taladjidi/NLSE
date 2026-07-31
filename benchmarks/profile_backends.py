@@ -87,11 +87,16 @@ def load_package(root: str | None):
     return NLSE
 
 
-def build(nlse_module, solver_name, backend, n):
-    """Return a solver of the requested kind on the requested backend."""
+def build(nlse_module, solver_name, backend, n, alpha=0.0):
+    """Return a solver of the requested kind on the requested backend.
+
+    ``alpha`` is 0 by default because a lossless run is the case every
+    revision has in common. Above 0 it selects the solved real-space step,
+    which is the only way to ask this tool what that step costs.
+    """
     cls = getattr(nlse_module, solver_name)
     kwargs = {
-        "alpha": 0.0,
+        "alpha": alpha,
         "power": POWER,
         "window": 4 * WAIST,
         "n2": N2,
@@ -130,9 +135,9 @@ def propagate(simu, field, method, steps):
     return simu.out_field(field.copy(), steps * DELTA_Z, **kwargs)
 
 
-def time_run(nlse_module, solver_name, backend, n, method, steps, field, np):
+def time_run(nlse_module, solver_name, backend, n, method, steps, field, np, alpha=0.0):
     """Return seconds for one whole run of ``steps`` steps."""
-    simu = build(nlse_module, solver_name, backend, n)
+    simu = build(nlse_module, solver_name, backend, n, alpha)
     sync = getattr(simu._backend, "synchronize", None)
     start = time.perf_counter()
     out = propagate(simu, field, method, steps)
@@ -145,26 +150,46 @@ def time_run(nlse_module, solver_name, backend, n, method, steps, field, np):
     return time.perf_counter() - start
 
 
-def time_cell(nlse_module, solver_name, backend, n, method, np, repeats=REPEATS):
+def time_cell(
+    nlse_module, solver_name, backend, n, method, np, repeats=REPEATS, alpha=0.0
+):
     """Return milliseconds per step, from the slope between two step counts.
 
     The two runs differ only in how many steps they take, so subtracting them
     removes the once-per-run cost entirely. Repeats alternate between the two
     lengths so that any drift over the measurement lands on both.
     """
-    simu = build(nlse_module, solver_name, backend, n)
+    simu = build(nlse_module, solver_name, backend, n, alpha)
     field = input_field(simu, solver_name, np)
     for steps in (STEPS_LOW, STEPS_HIGH):  # warm plans, JIT, autotuning
-        time_run(nlse_module, solver_name, backend, n, method, steps, field, np)
+        time_run(nlse_module, solver_name, backend, n, method, steps, field, np, alpha)
 
     lows, highs = [], []
     for _ in range(repeats):
         lows.append(
-            time_run(nlse_module, solver_name, backend, n, method, STEPS_LOW, field, np)
+            time_run(
+                nlse_module,
+                solver_name,
+                backend,
+                n,
+                method,
+                STEPS_LOW,
+                field,
+                np,
+                alpha,
+            )
         )
         highs.append(
             time_run(
-                nlse_module, solver_name, backend, n, method, STEPS_HIGH, field, np
+                nlse_module,
+                solver_name,
+                backend,
+                n,
+                method,
+                STEPS_HIGH,
+                field,
+                np,
+                alpha,
             )
         )
 
@@ -191,7 +216,14 @@ def run(args):
                 key = f"{args.solver}/{backend}/{n}/{method}"
                 try:
                     best, median = time_cell(
-                        nlse_module, args.solver, backend, n, method, np, args.repeats
+                        nlse_module,
+                        args.solver,
+                        backend,
+                        n,
+                        method,
+                        np,
+                        args.repeats,
+                        args.alpha,
                     )
                     results[key] = {"best": best, "median": median}
                 except Exception as exc:  # a backend may not support a case
@@ -235,6 +267,8 @@ def measure_tree(root, args):
         *args.methods,
         "--repeats",
         str(REPEATS_PER_ROUND),
+        "--alpha",
+        str(args.alpha),
         "--json",
         "-",
     ]
@@ -359,6 +393,12 @@ def main(argv=None):
         type=int,
         default=ROUNDS,
         help="alternating rounds per side; raise it on a noisy machine",
+    )
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=0.0,
+        help="loss coefficient; above 0 measures the solved real-space step",
     )
     parser.add_argument("--json", help="write results as JSON ('-' for stdout)")
     args = parser.parse_args(argv)

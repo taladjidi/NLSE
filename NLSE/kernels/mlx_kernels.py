@@ -44,9 +44,12 @@ def _nl_factor(A_sq, dz, alpha, g, Isat, V=None):
     order. With ``u = 2*alpha*dz`` the step applies ``g*|A|^2*P*dz`` for the
     phase and ``sqrt(1 - P*u)`` for the amplitude.
 
-    Branch-free, since ``alpha`` arrives as a device scalar and a branch on it
-    would mean a synchronization. At ``u = 0`` the iteration returns ``sat``
-    and the amplitude factor is exactly 1, so a lossless step is unchanged.
+    Branch-free *per element*, since ``alpha`` may carry a batch axis and a
+    branch on a device value would mean a synchronization. At ``u = 0`` the
+    iteration returns ``sat`` and the amplitude factor is exactly 1, so a
+    lossless step is unchanged -- but it is not free, because both arms of
+    every ``mx.where`` are evaluated. ``_nl_factor_lossless`` is what a
+    lossless run actually takes; see ``_is_lossless``.
 
     Parameters
     ----------
@@ -90,12 +93,82 @@ def _nl_factor(A_sq, dz, alpha, g, Isat, V=None):
     return decay * mx.exp(dz * arg)
 
 
+def _nl_factor_lossless(A_sq, dz, g, Isat, V=None):
+    """Return the same factor for ``alpha = 0``, without the loss arithmetic.
+
+    A pure rotation preserves ``|A|^2``, so freezing it is exact and there is
+    nothing to solve. This is what ``_nl_factor`` reduces to at ``u = 0``,
+    term by term: the iteration returns ``sat`` and the decay is exactly 1.
+
+    Parameters
+    ----------
+    A_sq : mx.array
+        ``|A|^2`` entering the step.
+    dz : mx.array
+        Step length.
+    g : mx.array
+        Interaction strength.
+    Isat : mx.array
+        Saturation intensity.
+    V : mx.array or None
+        Scaled potential, if there is one.
+
+    Returns
+    -------
+    mx.array
+        The factor to multiply the field by.
+    """
+    sat = 1 / (1 + A_sq / Isat)
+    arg = 1j * g * A_sq * sat
+    if V is not None:
+        arg = arg + 1j * V
+    return mx.exp(dz * arg)
+
+
+def _is_lossless(alpha):
+    """Say whether ``alpha`` is a host zero, which needs no device read.
+
+    A device scalar cannot be tested without synchronizing, so an
+    ``mx.array`` is never taken as lossless -- it only means the general
+    kernel runs, which is correct at any ``alpha``.
+
+    Emitting only the arm a *lossy* host scalar takes was tried too, since
+    ``u = 2*alpha*dz`` is known there as well. It saves two selects and an
+    exponential and measured nothing (1.54x against 1.51x, on 5-7% noise):
+    what the solved step costs MLX is the iteration, not the arm it drops.
+
+    Parameters
+    ----------
+    alpha : float or mx.array
+        Loss coefficient as the caller passed it.
+
+    Returns
+    -------
+    bool
+        True when the lossless kernel may be used.
+    """
+    if isinstance(alpha, mx.array):
+        return False
+    try:
+        return float(alpha) == 0.0
+    except (TypeError, ValueError):  # batched: an array of its own
+        return False
+
+
 def _nl_prop_pure(A, A_sq, dz, alpha, V, g, Isat):
     return A * _nl_factor(A_sq, dz, alpha, g, Isat, V)
 
 
+def _nl_prop_lossless_pure(A, A_sq, dz, V, g, Isat):
+    return A * _nl_factor_lossless(A_sq, dz, g, Isat, V)
+
+
 def _nl_prop_without_V_pure(A, A_sq, dz, alpha, g, Isat):
     return A * _nl_factor(A_sq, dz, alpha, g, Isat)
+
+
+def _nl_prop_without_V_lossless_pure(A, A_sq, dz, g, Isat):
+    return A * _nl_factor_lossless(A_sq, dz, g, Isat)
 
 
 def _nl_prop_c_pure(A1, A_sq_1, A_sq_2, dz, alpha, V, g11, g12, Isat1, Isat2):
@@ -119,9 +192,19 @@ def _square_mod_nl_prop_pure(A, dz, alpha, g, Isat):
     return A * _nl_factor(A_sq, dz, alpha, g, Isat)
 
 
+def _square_mod_nl_prop_lossless_pure(A, dz, g, Isat):
+    A_sq = (A * mx.conj(A)).real
+    return A * _nl_factor_lossless(A_sq, dz, g, Isat)
+
+
 def _square_mod_nl_prop_v_pure(A, V, dz, alpha, g, Isat):
     A_sq = (A * mx.conj(A)).real
     return A * _nl_factor(A_sq, dz, alpha, g, Isat, V)
+
+
+def _square_mod_nl_prop_v_lossless_pure(A, V, dz, g, Isat):
+    A_sq = (A * mx.conj(A)).real
+    return A * _nl_factor_lossless(A_sq, dz, g, Isat, V)
 
 
 def _apply_propagator_pure(A, propagator):
@@ -137,12 +220,16 @@ def _rabi_coupling_pure(A1, A2, cos_val, sin_val):
 # ── Compiled versions ───────────────────────────────────────────────────────
 
 _c_nl_prop = mx.compile(_nl_prop_pure)
+_c_nl_prop_lossless = mx.compile(_nl_prop_lossless_pure)
 _c_nl_prop_without_V = mx.compile(_nl_prop_without_V_pure)
+_c_nl_prop_without_V_lossless = mx.compile(_nl_prop_without_V_lossless_pure)
 _c_nl_prop_c = mx.compile(_nl_prop_c_pure)
 _c_nl_prop_without_V_c = mx.compile(_nl_prop_without_V_c_pure)
 _c_square_mod = mx.compile(_square_mod_pure)
 _c_square_mod_nl_prop = mx.compile(_square_mod_nl_prop_pure)
+_c_square_mod_nl_prop_lossless = mx.compile(_square_mod_nl_prop_lossless_pure)
 _c_square_mod_nl_prop_v = mx.compile(_square_mod_nl_prop_v_pure)
+_c_square_mod_nl_prop_v_lossless = mx.compile(_square_mod_nl_prop_v_lossless_pure)
 _c_apply_propagator = mx.compile(_apply_propagator_pure)
 _c_rabi_coupling = mx.compile(_rabi_coupling_pure)
 
@@ -183,6 +270,8 @@ def nl_prop(
     mx.array
         The propagated field.
     """
+    if _is_lossless(alpha):
+        return _c_nl_prop_lossless(A, A_sq, _to_mx(dz), V, _to_mx(g), _to_mx(Isat))
     return _c_nl_prop(A, A_sq, _to_mx(dz), _to_mx(alpha), V, _to_mx(g), _to_mx(Isat))
 
 
@@ -216,6 +305,10 @@ def nl_prop_without_V(
     mx.array
         The propagated field.
     """
+    if _is_lossless(alpha):
+        return _c_nl_prop_without_V_lossless(
+            A, A_sq, _to_mx(dz), _to_mx(g), _to_mx(Isat)
+        )
     return _c_nl_prop_without_V(
         A, A_sq, _to_mx(dz), _to_mx(alpha), _to_mx(g), _to_mx(Isat)
     )
@@ -374,6 +467,8 @@ def square_mod_nl_prop(
     mx.array
         The propagated field.
     """
+    if _is_lossless(alpha):
+        return _c_square_mod_nl_prop_lossless(A, _to_mx(dz), _to_mx(g), _to_mx(Isat))
     return _c_square_mod_nl_prop(A, _to_mx(dz), _to_mx(alpha), _to_mx(g), _to_mx(Isat))
 
 
@@ -407,6 +502,10 @@ def square_mod_nl_prop_v(
     mx.array
         The propagated field.
     """
+    if _is_lossless(alpha):
+        return _c_square_mod_nl_prop_v_lossless(
+            A, V, _to_mx(dz), _to_mx(g), _to_mx(Isat)
+        )
     return _c_square_mod_nl_prop_v(
         A, V, _to_mx(dz), _to_mx(alpha), _to_mx(g), _to_mx(Isat)
     )
@@ -508,7 +607,17 @@ def linear_step(
 # ── Fused split step (nl_length == 0 only) ───────────────────────────────────
 
 
-def _make_split_step(splitting, has_V, axes):
+def _make_split_step(splitting, has_V, axes, lossy=True):
+    # The factor is chosen when the graph is compiled, not per element, so a
+    # lossless run never traces the iteration at all. Both arms of an
+    # mx.where are evaluated, which is what made a lossless step cost 1.45x.
+    if lossy:
+        factor = _nl_factor
+    else:
+
+        def factor(A_sq, dz, alpha, g, Isat, V=None):
+            return _nl_factor_lossless(A_sq, dz, g, Isat, V)
+
     if splitting == "lie" and not has_V:
 
         def _pure(A, propagator, dz, alpha, g, Isat):
@@ -516,7 +625,7 @@ def _make_split_step(splitting, has_V, axes):
             A = A * propagator
             A = mx.fft.ifftn(A, axes=axes)
             A_sq = (A * mx.conj(A)).real
-            return A * _nl_factor(A_sq, dz, alpha, g, Isat)
+            return A * factor(A_sq, dz, alpha, g, Isat)
 
     elif splitting == "lie" and has_V:
 
@@ -525,29 +634,29 @@ def _make_split_step(splitting, has_V, axes):
             A = A * propagator
             A = mx.fft.ifftn(A, axes=axes)
             A_sq = (A * mx.conj(A)).real
-            return A * _nl_factor(A_sq, dz, alpha, g, Isat, V_scaled)
+            return A * factor(A_sq, dz, alpha, g, Isat, V_scaled)
 
     elif splitting == "strang" and not has_V:
 
         def _pure(A, propagator, dz_half, alpha, g, Isat):
             A_sq = (A * mx.conj(A)).real
-            A = A * _nl_factor(A_sq, dz_half, alpha, g, Isat)
+            A = A * factor(A_sq, dz_half, alpha, g, Isat)
             A = mx.fft.fftn(A, axes=axes)
             A = A * propagator
             A = mx.fft.ifftn(A, axes=axes)
             A_sq = (A * mx.conj(A)).real
-            return A * _nl_factor(A_sq, dz_half, alpha, g, Isat)
+            return A * factor(A_sq, dz_half, alpha, g, Isat)
 
     else:  # double, has_V
 
         def _pure(A, propagator, V_scaled, dz_half, alpha, g, Isat):
             A_sq = (A * mx.conj(A)).real
-            A = A * _nl_factor(A_sq, dz_half, alpha, g, Isat, V_scaled)
+            A = A * factor(A_sq, dz_half, alpha, g, Isat, V_scaled)
             A = mx.fft.fftn(A, axes=axes)
             A = A * propagator
             A = mx.fft.ifftn(A, axes=axes)
             A_sq = (A * mx.conj(A)).real
-            return A * _nl_factor(A_sq, dz_half, alpha, g, Isat, V_scaled)
+            return A * factor(A_sq, dz_half, alpha, g, Isat, V_scaled)
 
     return mx.compile(_pure)
 
@@ -599,9 +708,13 @@ def split_step_fused(
         The propagated field.
     """
     axes = plan
-    key = (splitting, V_scaled is not None, axes)
+    # Keyed on the loss as well: lossless compiles to a different graph.
+    lossy = not _is_lossless(alpha)
+    key = (splitting, V_scaled is not None, axes, lossy)
     if key not in _SPLIT_STEP_CACHE:
-        _SPLIT_STEP_CACHE[key] = _make_split_step(splitting, V_scaled is not None, axes)
+        _SPLIT_STEP_CACHE[key] = _make_split_step(
+            splitting, V_scaled is not None, axes, lossy
+        )
     fn = _SPLIT_STEP_CACHE[key]
     if V_scaled is not None:
         return fn(
