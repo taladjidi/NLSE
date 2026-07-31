@@ -479,3 +479,51 @@ def test_laser_excitation_of_zero_leaves_the_field_alone(backend) -> None:
             f"component is what an in-place subtract on a slice destroys"
         ),
     )
+
+
+def test_the_total_density_decays_at_the_damping_rate(backend) -> None:
+    """Against the analytic answer, not against another backend.
+
+    With no pump and equal damping on both components, the Rabi coupling
+    exchanges density between them but conserves the sum, so the total has to
+    fall as exp(-gamma t) whatever the coupling does. Neither component alone
+    does -- the exciton here even grows slightly, because the coupling is
+    feeding it -- which is why this is the quantity to check.
+
+    It is also the check that would have caught laser_excitation destroying
+    the cavity component on CL: the total would have collapsed rather than
+    decayed by a tenth of a percent.
+
+    Parameters
+    ----------
+    backend : str
+        Backend to run on.
+    """
+    gamma = 0.07 / h_bar
+    total_time = 1e-2
+    n = 32
+
+    simu = make_solver(backend, n=n, gamma=gamma)
+    simu.gamma2 = gamma
+    field = np.full((2, n, n), 0.9, dtype=PRECISION_COMPLEX)
+    steps = np.arange(0, total_time, 1e-3, dtype=np.float32)
+    flat_r = np.zeros((n, n), dtype=PRECISION_COMPLEX)
+    flat_t = np.zeros(steps.shape, dtype=PRECISION_COMPLEX)
+
+    before = float(np.sum(np.abs(field) ** 2))
+    out = simu.out_field(
+        field.copy(),
+        total_time,
+        simu.laser_excitation,
+        plot=False,
+        verbose=False,
+        delta_z=1e-3,
+        callback=[],
+        callback_args=[[flat_r, flat_t, flat_r, flat_t]],
+    )
+    after = float(np.sum(np.abs(np.asarray(as_numpy(simu, out))) ** 2))
+
+    assert after / before == pytest.approx(np.exp(-gamma * total_time), rel=1e-5), (
+        f"total density fell to {after / before:.8f} of its value where "
+        f"{np.exp(-gamma * total_time):.8f} was due. (Backend {backend})"
+    )
