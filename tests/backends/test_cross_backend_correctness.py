@@ -11,7 +11,7 @@ matplotlib.use("Agg")  # non-interactive backend for plot tests
 import numpy as np
 import pytest
 from helpers import as_numpy, make
-from NLSE import CNLSE, NLSE, CNLSE_1d, NLSE_1d
+from NLSE import CNLSE, GPE, NLSE, CNLSE_1d, NLSE_1d, NLSE_3d
 from NLSE.backends import list_available_backends
 from scipy.constants import c, epsilon_0
 
@@ -1346,11 +1346,59 @@ class TestCNLSEExtended:
         )
 
 
+# Every solver that plots, which is every solver. NLSE_3d and GPE need their
+# own construction -- one takes a window per axis and the other is written in
+# atoms rather than watts -- so they cannot come through `make`, which is why
+# they are easy to leave out of a sweep and were left out of this one.
 PLOTTABLE = {
-    "NLSE": (NLSE, lambda simu: (simu.NY, simu.NX)),
-    "NLSE_1d": (NLSE_1d, lambda simu: (simu.NX,)),
-    "CNLSE": (CNLSE, lambda simu: (2, simu.NY, simu.NX)),
-    "CNLSE_1d": (CNLSE_1d, lambda simu: (2, simu.NX)),
+    "NLSE": (
+        lambda b: make(NLSE, b, n=S),
+        lambda simu: (simu.NY, simu.NX),
+    ),
+    "NLSE_1d": (
+        lambda b: make(NLSE_1d, b, n=S),
+        lambda simu: (simu.NX,),
+    ),
+    "CNLSE": (
+        lambda b: make(CNLSE, b, n=S),
+        lambda simu: (2, simu.NY, simu.NX),
+    ),
+    "CNLSE_1d": (
+        lambda b: make(CNLSE_1d, b, n=S),
+        lambda simu: (2, simu.NX),
+    ),
+    "NLSE_3d": (
+        lambda b: NLSE_3d(
+            alpha=0.0,
+            energy=1e-6,
+            window=np.array([4 * 2.23e-3, 8e-6]),
+            n2=-1.6e-9,
+            D0=1e-27,
+            vg=2e8,
+            V=None,
+            L=L,
+            NX=16,
+            NY=16,
+            NZ=16,
+            Isat=1e5,
+            backend=b,
+        ),
+        lambda simu: (simu.NX, simu.NY, simu.NZ),
+    ),
+    "GPE": (
+        lambda b: GPE(
+            gamma=0.0,
+            N=1e6,
+            window=4 * 2.23e-3,
+            g=1e-3,
+            V=None,
+            m=1e-26,
+            NX=S,
+            NY=S,
+            backend=b,
+        ),
+        lambda simu: (simu.NY, simu.NX),
+    ),
 }
 
 
@@ -1375,8 +1423,8 @@ def test_plot_field_accepts_the_field_the_backend_holds(solver_name, backend_nam
     """
     import matplotlib.pyplot as plt
 
-    cls, shape_of = PLOTTABLE[solver_name]
-    simu = make(cls, backend_name, n=S)
+    build, shape_of = PLOTTABLE[solver_name]
+    simu = build(backend_name)
     field = np.ones(shape_of(simu), dtype=PRECISION_COMPLEX)
     try:
         simu.plot_field(simu._backend.from_numpy(field), L)
