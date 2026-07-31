@@ -11,7 +11,7 @@ matplotlib.use("Agg")  # non-interactive backend for plot tests
 import numpy as np
 import pytest
 from helpers import as_numpy, make
-from NLSE import CNLSE, NLSE
+from NLSE import CNLSE, NLSE, CNLSE_1d, NLSE_1d
 from NLSE.backends import list_available_backends
 from scipy.constants import c, epsilon_0
 
@@ -1344,6 +1344,44 @@ class TestCNLSEExtended:
             rtol=1e-4,
             err_msg="CNLSE norm not conserved (alpha=0)",
         )
+
+
+PLOTTABLE = {
+    "NLSE": (NLSE, lambda simu: (simu.NY, simu.NX)),
+    "NLSE_1d": (NLSE_1d, lambda simu: (simu.NX,)),
+    "CNLSE": (CNLSE, lambda simu: (2, simu.NY, simu.NX)),
+    "CNLSE_1d": (CNLSE_1d, lambda simu: (2, simu.NX)),
+}
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+@pytest.mark.parametrize("solver_name", sorted(PLOTTABLE))
+def test_plot_field_accepts_the_field_the_backend_holds(solver_name, backend_name):
+    """plot_field is handed the running field, not a numpy copy of it.
+
+    The tests above pass a numpy array and run on the CPU, so they never saw
+    what plot_field is actually called with during a run: whatever array type
+    the backend keeps. NLSE_1d was the one solver not routing its argument
+    through _to_plot_array first, and called np.abs and np.angle straight on
+    it -- fine on the CPU and on MLX, "setting an array element with a
+    sequence" on CL.
+
+    Parameters
+    ----------
+    solver_name : str
+        Which solver to plot.
+    backend_name : str
+        Backend to run on.
+    """
+    import matplotlib.pyplot as plt
+
+    cls, shape_of = PLOTTABLE[solver_name]
+    simu = make(cls, backend_name, n=S)
+    field = np.ones(shape_of(simu), dtype=PRECISION_COMPLEX)
+    try:
+        simu.plot_field(simu._backend.from_numpy(field), L)
+    finally:
+        plt.close("all")
 
 
 class TestPlotField:

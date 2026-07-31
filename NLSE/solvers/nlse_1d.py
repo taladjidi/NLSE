@@ -98,6 +98,11 @@ class NLSE_1d(NLSE):
         z : float
             Propagation distance in m.
         """
+        # Every other solver's plot_field starts here, and this one did not:
+        # it called np.abs and np.angle on whatever the backend handed it,
+        # which works on the CPU and on MLX and raises "setting an array
+        # element with a sequence" on CL.
+        A_plot = self._to_plot_array(A_plot, 2)
         fig, ax = plt.subplots(1, 2, layout="constrained", figsize=(10, 5))
         fig.suptitle(rf"Field at $z$ = {z:.2e} m")
         if A_plot.ndim == 2:
