@@ -32,6 +32,27 @@ Never `git stash push <file>` to verify a regression; monkeypatch the old
 implementation from a scratch script instead. Stashing has twice stranded the
 change when a following command timed out.
 
+**Know the floor of each tool before trusting a number against it.** Both
+benchmarks compare across processes, and both drift more than the effects they
+are often asked to resolve:
+
+- `profile_backends.py --baseline` run with *identical code on both sides*
+  reported 3 of 6 cells more than 10% slower, up to 1.19x, and reproduced the
+  bias on a second run — the working tree is measured first and the baseline
+  second, and something favours the later process. This is not JIT: the tool
+  warms both step counts before timing and the slope cancels constant cost. So
+  it can confirm a large regression, but it cannot resolve a few percent, and a
+  single red cell from it means nothing on its own.
+- `profile_kernels.py` reproduces to 2–5% *within* a process. Between
+  processes it is far worse: the same untouched kernel measured 1.695 ms and
+  1.198 ms in two runs an hour apart, a 40% swing.
+
+For anything under ~10%, build both variants in one process and interleave
+them, as `_sincos` above was measured. Where the change is inside a kernel,
+compile a twin that differs *only* in the thing under test — matching the
+fast-math flags too, or the comparison measures the flags rather than the
+change, which cost three misreadings on that one.
+
 ## Where the time goes
 
 `profile_kernels.py --backends CPU`, 2048², complex64. The split-step kernels
@@ -102,6 +123,36 @@ lossless, the exponent is purely imaginary, so the step is a rotation computed
 with `cos`/`sin` on a real angle instead of `exp` on a complex one. Worth
 1.33x on the kernel (`nl_prop` 2.707 ms → `nl_prop_without_V` 1.695 ms at
 2048², though that pair also differs by the `V` read).
+
+**A polynomial sine and cosine, so the lossless kernels vectorize — deployed**
+(2026-07-31). `np.sin`/`np.cos` lower to a call to `___sincos_stret` per
+element, and an opaque call in the loop body stops LLVM vectorizing at all —
+which is the whole reason the nonlinear kernels sat at 15% of bandwidth.
+`_sincos` in `kernels/cpu.py` does Cody-Waite reduction into [-π/4, π/4] and
+fdlibm's minimax polynomials instead, branchlessly.
+
+Interleaved in one process, min-of-15, on the shipped kernel body:
+
+| | complex64 1024²/2048² | complex128 1024²/2048² |
+|---|---|---|
+| libm (before) | 0.531 / 1.716 ms | 0.498 / 1.651 ms |
+| polynomial | 0.399 / 1.188 ms — **1.33x / 1.44x** | 0.380 / 1.231 ms — **1.31x / 1.34x** |
+
+End to end that is ~1.05–1.07x on a 2048² step and within noise at 1024², the
+kernel holding only ~17% of a step. Accuracy: 1.5 ulp against numpy, flat from
+|θ| < π/4 to |θ| < 5e8; against a libm twin with identical arithmetic, 3.5e-16
+in complex128 and bit-identical in complex64. The complex128 work-precision
+table is unchanged to six significant figures except the 6th digit of the two
+finest steps, where the solver's own error is already within 5x of the
+reference's self-consistency floor.
+
+Two things this depends on, both easy to undo by accident. The kernels calling
+`_sincos` carry a fast-math set that omits `reassoc`, because reassociation
+rewrites `(x - k·P1) - k·P2` into `x - k·(P1+P2)` and collapses the split that
+makes the reduction exact — with it on, the error grows with the argument
+(4e-11 by |θ| = 1e6 instead of 3e-16). numba inlines `_sincos` into its caller,
+so it is the *caller's* flags that reach LLVM. Isolating that flag change on
+its own measured 0.97–1.02x, so it costs nothing; the win is all polynomial.
 
 **Grid-stride and blocked loops — rejected** (2026-07-31). The idea was that
 `prange` over a flat range lets a thread start off a vector boundary and leaves
@@ -226,29 +277,15 @@ unconfirmed until run on NVIDIA hardware.
 
 ## Open
 
-**Vectorizable polynomial sincos in the CPU nonlinear kernels.** Measured
-2026-07-31, not built. The nonlinear kernels call `___sincos_stret` once per
-element, which is why they sit at 15% of bandwidth while every other kernel
-reaches 71–100%. Replacing it with a branchless Cody-Waite range reduction plus
-minimax polynomials — pure arithmetic, so LLVM can vectorize it — measured on
-the `alpha == 0` path, interleaved, min-of-9:
+**A vectorizable `exp` for the `alpha != 0` CPU kernels.** `_sincos` (above)
+only helps the lossless path. With losses the exponent is complex and the
+kernels call libm `exp`, so `nl_prop` still sits at 15% of bandwidth against
+`nl_prop_without_V`'s 28%. The same treatment applies — `exp(x)` reduces to
+`2^k · poly(r)` with pure arithmetic — and would also let `_nl_prop` and
+`_square_mod_nl_prop_v` gain the `alpha == 0` branch they lack today, since
+with a real potential their exponent is purely imaginary too.
 
-| | 1024² | 2048² |
-|---|---|---|
-| shipped (`___sincos_stret`) | 0.505 ms | 1.615 ms |
-| polynomial | 0.305 ms — **1.66x** | 0.914 ms — **1.77x** |
-| ceiling (transcendental free, not correct) | 0.195 ms — 2.59x | 0.492 ms — 3.28x |
-
-So it captures about half the available headroom. At 2048² that is ~0.7 ms off
-a ~6.6 ms step, roughly 11%.
-
-Accuracy against numpy in double, 200k samples per range: max absolute error
-1.75e-09 for |θ| < 1e6 and 3.9e-08 for |θ| < 1e9, against a float32 epsilon of
-1.19e-07. Quadrant points are exact, and |sin²+cos²−1| ≤ 2.3e-09 over |θ| < 1e4.
-The field is complex64, so this is at or below the precision of the data.
-
-Before building it: it changes numerical results slightly on every CPU run, so
-it needs a decision on whether that is acceptable, and it touches the whole
-`nl_prop` family plus the `alpha != 0` complex-exp path (which needs `exp`
-vectorized too, not just sincos). The `--baseline` guard and the cross-backend
-agreement tests are the check.
+**Whether alignment matters once the nonlinear loops vectorize.** Grid-stride
+was rejected against loops that could not vectorize at all (see above). Now
+that the lossless ones do, the question is live again, and `backends/cpu.py`
+allocates with plain `np.zeros` since pyFFTW's aligned allocator went away.
