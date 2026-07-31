@@ -265,12 +265,12 @@ def against_baseline(revision, args):
     here = str(Path(__file__).resolve().parent.parent)
     samples = {"now": [], "old": []}
     try:
-        for r in range(ROUNDS):
+        for r in range(args.rounds):
             # Swap which side goes first, so being first is not worth anything
             # over the whole measurement.
             order = ("now", "old") if r % 2 == 0 else ("old", "now")
             for side in order:
-                print(f"  round {r + 1}/{ROUNDS}, {side} ...", flush=True)
+                print(f"  round {r + 1}/{args.rounds}, {side} ...", flush=True)
                 root = here if side == "now" else str(worktree)
                 samples[side].append(measure_tree(root, args))
     finally:
@@ -334,6 +334,12 @@ def compare(now, before, noise, revision):
         f"Worst cell moved {worst * 100:.0f}% between rounds of identical code; "
         f"anything under that is not a result."
     )
+    if worst > 0.20:
+        print(
+            "That floor is high enough to hide most changes. --rounds buys "
+            "precision (the per-side best is taken over more of them); a "
+            "quieter machine or fewer cells at once buys more."
+        )
 
 
 def main(argv=None):
@@ -348,6 +354,12 @@ def main(argv=None):
     parser.add_argument(
         "--repeats", type=int, default=REPEATS, help="timed repeats per cell (internal)"
     )
+    parser.add_argument(
+        "--rounds",
+        type=int,
+        default=ROUNDS,
+        help="alternating rounds per side; raise it on a noisy machine",
+    )
     parser.add_argument("--json", help="write results as JSON ('-' for stdout)")
     args = parser.parse_args(argv)
 
@@ -358,7 +370,7 @@ def main(argv=None):
         # between the revisions.
         print(
             f"{args.solver}: slope of {STEPS_LOW} vs {STEPS_HIGH} steps, "
-            f"best of {REPEATS_PER_ROUND} x {ROUNDS} alternating rounds\n"
+            f"best of {REPEATS_PER_ROUND} x {args.rounds} alternating rounds\n"
         )
         now, before, noise = against_baseline(args.baseline, args)
         if args.json and args.json != "-":
