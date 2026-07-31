@@ -32,8 +32,9 @@ pass, and the two are chosen separately.
 - A half nonlinear step either side of the linear one
 - Error: $\mathcal{O}(\delta z^2)$
 - Cost: still 1 transform pair per step in a run of them, because consecutive
-  steps merge their touching halves. The merge is exact only without loss and
-  without an absorbing potential, and the solver checks
+  steps merge their touching halves. The merge needs the real-space step to be
+  the exact solution over its own step, so that two halves compose into one
+  whole; an absorbing potential breaks that and the solver checks
 
 **`splitting="yoshida"`**:
 
@@ -42,8 +43,39 @@ pass, and the two are chosen separately.
 - Cost: 3 transform pairs per step
 - **Only worth it with a `complex128` field.** In `complex64` round-off
   accumulating over steps sets the error long before the splitting does, so
-  the extra order buys accuracy the arithmetic cannot hold. Not valid with
-  loss either: the backwards sub-step amplifies
+  the extra order buys accuracy the arithmetic cannot hold
+- Valid with loss, and fourth order there, but its middle sub-step runs
+  backwards and so *amplifies* a lossy field on the way through. The answer is
+  right; the intermediate field is not physical and can overflow if the loss
+  per step is large. The solver warns
+
+### Loss and the order of a splitting
+
+A splitting composes exponentials of the two parts of the equation, and its
+order is only what its real-space step deserves. That step applies
+
+$$\exp\left[\left(-\alpha s + i g |A|^2 s\right)\delta z\right], \qquad
+s = \frac{1}{1 + |A|^2/I_\text{sat}}$$
+
+and reading $|A|^2$ once, on entry, is the *exact* solution only while the step
+leaves $|A|^2$ alone. A pure rotation does. Loss does not: the amplitude decays
+inside the step while the interaction goes on turning the phase at the rate the
+step began with.
+
+Frozen like that the step is $\mathcal{O}(\delta z^2)$ locally and
+$\mathcal{O}(\delta z)$ over a run, and that ceiling lands on whatever is
+composed around it — Lie, Strang and Yoshida all came out **first order** with
+loss, so their extra sub-steps bought nothing. The solver now solves that step
+instead, using two exact facts: the phase over a step is
+$\frac{g}{2\alpha}\left(|A|^2_\text{in} - |A|^2_\text{out}\right)$ whatever the
+saturation does in between, and $|A|^2_\text{out}$ follows from
+$\ln y + y/I_\text{sat}$ falling by $2\alpha\,\delta z$. Each composition is
+back at its own order with loss, and to within a few percent of the numbers it
+returns without any.
+
+One ceiling comes with it: a step may take out at most a few percent of the
+intensity ($2\alpha\,\delta z \le 0.05$), and a coarser one is lowered with a
+warning, like every other step limit here.
 
 ```python
 # complex64 field: lie is fast, strang is the better constant
@@ -68,7 +100,13 @@ E_out = simu.out_field(E_in, L, method="RK4")
 
 - When you need a well-understood global error estimate
 - For stiff problems where split-step operator splitting introduces errors
-- When comparing against reference solutions
+- When comparing against reference solutions — it is the only method here that
+  is not a splitting, so it is the independent check on one
+
+RK4 used to be the only method that held fourth order on a lossy problem, and
+on one such problem it beat Strang by 14x at matched accuracy for that reason
+alone. That is no longer why to choose it: see *Loss and the order of a
+splitting* above.
 
 ### Trade-offs
 

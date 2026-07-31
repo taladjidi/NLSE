@@ -634,16 +634,47 @@ class CUDAKernels:
         cp.ndarray
             The propagated field A.
         """
-        plan.fft(A, A)
-        # Goes through apply_propagator rather than launching the kernel here,
-        # so the batched case (a field with an extra axis against a propagator
-        # shared by the whole batch) is handled in one place.
-        self.apply_propagator(A, propagator)
+        self.fft_propagate(plan, A, A, propagator)
         if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
             plan.ifft_unnorm(A, A)
         else:
             plan.ifft(A, A)
         return A
+
+    def fft_propagate(self, plan, A_in, out, propagator):
+        """Transform into ``out`` and multiply it by the propagator.
+
+        The two go together everywhere a linear step appears -- on its own, in
+        an RK4 slope, in either coupled form -- and this is the one place that
+        knows the multiply can be had for free. A plan able to apply the
+        propagator as it writes does so, and a plan that cannot leaves the
+        pass where it was, which is what every backend but this one does.
+
+        Goes through apply_propagator rather than launching the kernel here,
+        so the batched case (a field with an extra axis against a propagator
+        shared by the whole batch) is handled in one place.
+
+        Parameters
+        ----------
+        plan : _CuFFTPlan or VkFFTApp
+            Pre-built FFT plan.
+        A_in : cp.ndarray
+            Field to transform.
+        out : cp.ndarray
+            Where the transform lands, ``A_in`` itself for an in-place step.
+        propagator : cp.ndarray
+            Pre-computed propagator array.
+
+        Returns
+        -------
+        cp.ndarray
+            ``out``, transformed and propagated.
+        """
+        fuse = getattr(plan, "fft_propagate", None)
+        if fuse is not None and fuse(A_in, out, propagator):
+            return out
+        plan.fft(A_in, out)
+        return self.apply_propagator(out, propagator)
 
     def apply_propagator(self, A, propagator):
         """Apply linear propagator (complex multiply A *= propagator).
@@ -1182,8 +1213,7 @@ class CUDAKernels:
         # The transform moves A_in into k, so no copy precedes it. Unlike
         # VkFFT, which the OpenCL backend gives a separate fft_oop, a cuFFT
         # plan is out-of-place already: plan.fft takes its output array.
-        plan.fft(A_in, k)
-        self.apply_propagator(k, propagator)
+        self.fft_propagate(plan, A_in, k, propagator)
         if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
             plan.ifft_unnorm(k, k)
         else:
@@ -1199,8 +1229,7 @@ class CUDAKernels:
         copy precedes it: a cuFFT plan is out-of-place already, unlike the
         VkFFT one the OpenCL backend gives a separate ``fft_oop``.
         """
-        plan.fft(A_in, k)
-        self.apply_propagator(k, propagator)
+        self.fft_propagate(plan, A_in, k, propagator)
         if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
             plan.ifft_unnorm(k, k)
         else:
@@ -1454,8 +1483,7 @@ class CUDAKernels:
         if splitting == "strang":
             nonlinear()
 
-        plan.fft(A, A)
-        self.apply_propagator(A, propagator)
+        self.fft_propagate(plan, A, A, propagator)
         if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
             plan.ifft_unnorm(A, A)
         else:
@@ -1528,8 +1556,7 @@ class CUDAKernels:
         N_sq_i = np.int32(N_sq)
 
         # The transform moves A_in into k, so no copy precedes it.
-        plan.fft(A_in, k)
-        self.apply_propagator(k, propagator)
+        self.fft_propagate(plan, A_in, k, propagator)
         if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
             plan.ifft_unnorm(k, k)
         else:

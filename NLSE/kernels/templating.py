@@ -12,6 +12,11 @@ which is otherwise the half of this code that no local test can reach.
 """
 
 import re
+from pathlib import Path
+
+import numpy as np
+
+CALLBACK_SOURCE = Path(__file__).parent / "cuda_source" / "fft_callbacks.cu"
 
 # Suffixes of the twins that take a potential. The twin that takes none keeps
 # the bare name.
@@ -143,3 +148,56 @@ def kernel_names(source: str, decl: str) -> list:
         The declared kernel names.
     """
     return re.findall(re.escape(decl) + r" (\w+)\(", source)
+
+
+# What the two store callbacks in cuda_source/fft_callbacks.cu are called, by
+# whether the propagator is shared across a batch of fields.
+STORE_CALLBACKS = {
+    False: "nlse_store_propagator",
+    True: "nlse_store_propagator_batched",
+}
+
+# The element type each field width gives a callback. Spelled as CUDA vector
+# types rather than cufftComplex and cufftDoubleComplex, which are the same
+# types under names nvrtc cannot reach: it has no cuFFT headers.
+_FP2_TYPES = {"complex64": "float2", "complex128": "double2"}
+
+
+def propagator_store_callback(dtype: str, batched: bool) -> tuple:
+    """Return the cuFFT store callback that applies the propagator.
+
+    Compiled by cuFFT and not by any backend: the source goes to
+    ``cupy.fft.config.set_cufft_callbacks``, which hands it to nvrtc and links
+    the LTO-IR into an FFT plan. Only the text is built here, and here rather
+    than beside the plan for the reason the rest of this module exists -- it
+    can then be checked on a machine with no CUDA, which is where the CUDA half
+    of this project otherwise has no coverage at all.
+
+    Parameters
+    ----------
+    dtype : npt.DTypeLike
+        Complex type of the field, which fixes the callback's element type.
+    batched : bool
+        Whether the field is a batch of fields sharing one propagator, which
+        decides how the callback indexes it.
+
+    Returns
+    -------
+    tuple
+        ``(source, symbol)`` -- the CUDA C to compile, and the name of the
+        callback within it.
+
+    Raises
+    ------
+    ValueError
+        If the field is of a width no callback is written for.
+
+    """
+    name = np.dtype(dtype).name
+    if name not in _FP2_TYPES:
+        raise ValueError(
+            f"no propagator store callback for a {name} field: cuFFT transforms "
+            f"complex64 and complex128"
+        )
+    source = CALLBACK_SOURCE.read_text().replace("{{FP2_TYPE}}", _FP2_TYPES[name])
+    return source, STORE_CALLBACKS[bool(batched)]

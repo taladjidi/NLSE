@@ -4,6 +4,27 @@ repo_url: https://github.com/taladjidi/NLSE
 
 theme:
   name: "material"
+  # Dark by default, with a toggle for anyone who wants otherwise. The dark
+  # entry carries no media query on purpose: with one, a reader whose system
+  # asks for light gets light, and the point of this is that the default is
+  # dark. The toggle still remembers a choice per reader.
+  palette:
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+  features:
+    - navigation.instant
+    - navigation.top
+    - content.code.copy
 
 plugins:
   - mkdocstrings:
@@ -48,7 +69,18 @@ markdown_extensions:
   - pymdownx.details
   - pymdownx.superfences
 
+# Every entry here is served from this site, and that is the point rather than
+# a detail. A <script> pointed at someone else's host is an agreement to run
+# whatever that host decides to serve, in the browser of everyone who reads
+# these pages -- remote code execution by arrangement. This list used to carry
+# two: polyfill.io, which was sold in 2024 and began serving malware to the
+# sites that loaded it, and MathJax from a CDN, which had no known compromise
+# and the same structure.
+#
+# MathJax is now vendored at docs/javascripts/mathjax; see VENDORED.md there
+# for the version and how to update it. polyfill.io is simply gone -- it
+# backfilled ES6 for browsers MathJax 3 does not support in the first place, so
+# nothing here ever needed it.
 extra_javascript:
   - javascripts/mathjax.js
-  - https://polyfill.io/v3/polyfill.min.js?features=es6
-  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+  - javascripts/mathjax/tex-mml-chtml.js

@@ -125,7 +125,7 @@ def test_ddgpe_interaction_rate_is_its_own_coupling():
     """
     simu = DDGPE(**DDGPE_PARAMS)
     A, _ = simu._prepare_output_array(np.ones((2, N, N), dtype=np.complex64), False)
-    simu._precompute_step_constants(simu.V, "lie")
+    simu._precompute_step_constants(simu.V, np.complex64)
     rates = simu._energy_rates(A)
 
     assert rates["interaction"] == pytest.approx(
@@ -145,7 +145,7 @@ def test_ddgpe_keeps_a_reasonable_step():
     """
     simu = DDGPE(**DDGPE_PARAMS)
     A, _ = simu._prepare_output_array(np.ones((2, N, N), dtype=np.complex64), False)
-    simu._precompute_step_constants(simu.V, "lie")
+    simu._precompute_step_constants(simu.V, np.complex64)
     assert simu._capped_delta_z(1e-3, A, "split_step") == 1e-3, (
         "the limiter reduced a reasonable step, so a DDGPE run would not finish"
     )

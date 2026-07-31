@@ -8,10 +8,11 @@ and the bracketed body is exactly a Lie step. Merging costs one nonlinear
 application for the whole run rather than one per step, and the loop body
 becomes the one ``splitting="lie"`` already runs.
 
-It is exact only where ``N(a) N(b) == N(a + b)``, which needs ``|A|`` to
-survive ``N``: no loss and no absorbing potential. The tests that matter here
-are the ones checking the merge *declines*, because taking it where it does
-not hold changes the answer without failing anything else.
+It is exact only where ``N(a) N(b) == N(a + b)``, which needs ``N`` to be the
+exact solution of the real-space equation over its own step: an absorbing
+potential breaks that, and plain loss used to. The tests that matter here are
+the ones checking the merge *declines*, because taking it where it does not
+hold changes the answer without failing anything else.
 """
 
 import numpy as np
@@ -51,7 +52,7 @@ def propagate(solver, coupled=False, phase=0.1):
     """Run one propagation at a step giving this phase, in Strang splitting."""
     A = beam(coupled)
     prepared, _ = solver._prepare_output_array(A.copy(), normalize=True)
-    solver._precompute_step_constants(solver.V, "strang")
+    solver._precompute_step_constants(solver.V, np.complex64)
     rates = solver._energy_rates(prepared)
     delta_z = phase / (rates["potential"] + rates["interaction"])
     out = solver.out_field(
@@ -147,18 +148,20 @@ def test_the_loop_body_becomes_a_lie_step(backend_name):
 @pytest.mark.parametrize(
     "reason,overrides,cls",
     [
-        ("loss", {"alpha": 20}, NLSE),
         ("a complex potential", {"V": "complex"}, NLSE),
         ("non-locality", {"nl_length": 5 * WINDOW / N}, NLSE),
     ],
 )
 def test_the_merge_declines_where_it_is_not_exact(reason, overrides, cls):
-    """N(a) N(b) is N(a+b) only while |A| survives N.
+    """N(a) N(b) is N(a+b) only while N solves its own step exactly.
 
-    With loss or an absorbing potential the second half step sees an
-    intensity the first one changed, so the two are not one whole step.
+    An absorbing potential's decay is applied frozen, so a second half step
+    sees an intensity the first one changed and the two are not one whole step.
     Non-locality convolves the intensity, which the Lie body does too, but
     the fast loop it needs is not taken there anyway.
+
+    Plain loss used to be on this list. It is not any more -- see
+    ``test_the_merge_is_taken_with_loss``.
     """
     if overrides.get("V") == "complex":
         overrides = dict(overrides)
@@ -166,50 +169,62 @@ def test_the_merge_declines_where_it_is_not_exact(reason, overrides, cls):
             np.complex64
         )
     solver = build("CPU", cls=cls, **overrides)
-    solver._precompute_step_constants(solver.V, "strang")
+    solver._precompute_step_constants(solver.V, np.complex64)
     assert not solver._merges_strang_halves("strang"), (
         f"the merge must decline with {reason}"
     )
 
 
-def test_declining_with_loss_is_worth_doing():
-    """The guard has to earn its place, not merely exist.
+def test_the_merge_is_taken_with_loss():
+    """Loss is no longer a reason to decline, and this is why it was.
 
-    Merging a lossy run is not exact, and the cost is not subtle: the error
-    doubles at every step size, because the second half step sees an
-    intensity the first one has already damped. Asserting only that the guard
-    returns False leaves that a structural claim -- this measures it, so
-    removing the guard fails a test about the answer.
+    A lossy run used to be refused the merge because the second half step saw
+    an intensity the first had damped, which cost real accuracy -- the test
+    that stood here measured it. What removed the reason is that the real-space
+    step is now solved rather than frozen (``_loss_factor`` in
+    kernels/cpu.py): both halves telescope, exactly, so the merged run and the
+    unmerged one are the same answer and the merge saves a kernel per step.
+
+    Measured rather than asserted structurally, in both directions: the merge
+    is taken, and taking it costs nothing against the run that does not.
     """
     solver = build("CPU", alpha=20)
-    guarded = propagate(solver).astype(np.complex128)
+    solver._precompute_step_constants(solver.V, np.complex64)
+    assert solver._merges_strang_halves("strang"), (
+        "a lossy Strang run should merge now that its half steps telescope"
+    )
 
-    forced = build("CPU", alpha=20)
-    forced._merges_strang_halves = lambda splitting: splitting == "strang"
-    merged = propagate(forced).astype(np.complex128)
+    merged = propagate(solver).astype(np.complex128)
+
+    unmerged = build("CPU", alpha=20)
+    unmerged._merges_strang_halves = lambda splitting: False
+    separate = propagate(unmerged).astype(np.complex128)
 
     reference = propagate(build("CPU", alpha=20), phase=2e-3).astype(np.complex128)
 
     def distance(field):
         return float(np.linalg.norm(field - reference) / np.linalg.norm(reference))
 
-    assert distance(guarded) < distance(merged) / 1.5, (
-        f"merging a lossy run should cost real accuracy: guarded "
-        f"{distance(guarded):.3e} against merged {distance(merged):.3e}"
+    # Not bit-for-bit: each solved step carries its own O(u^5) truncation, and
+    # a half plus a half is not the same rounding as a whole. Far below the
+    # step error either way, which is what "costs nothing" has to mean.
+    assert distance(merged) == pytest.approx(distance(separate), rel=0.05), (
+        f"merging a lossy run should cost nothing: merged {distance(merged):.3e} "
+        f"against separate {distance(separate):.3e}"
     )
 
 
 def test_the_merge_declines_for_lie_splitting():
     """Lie splitting has no halves to merge."""
     solver = build("CPU")
-    solver._precompute_step_constants(solver.V, "lie")
+    solver._precompute_step_constants(solver.V, np.complex64)
     assert not solver._merges_strang_halves("lie")
 
 
 def test_the_merge_declines_with_a_rabi_coupling():
     """The Rabi rotation rides on the Lie step, not on the Strang one."""
     solver = build("CPU", cls=CNLSE, omega=1e4)
-    solver._precompute_step_constants(solver.V, "strang")
+    solver._precompute_step_constants(solver.V, np.complex64)
     assert not solver._merges_strang_halves("strang")
     solver.omega = None
     assert solver._merges_strang_halves("strang")

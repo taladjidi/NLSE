@@ -188,15 +188,40 @@ def list_available_backends() -> list[str]:
     return backends
 
 
+# Fastest first, for when there is nothing measured to go on. A prior rather
+# than a measurement, and a coarse one, but not an arbitrary one: a device
+# backend beats the host at any grid worth using a device for, and the vendor's
+# own runtime beats a portable layer over the same device. Putting one step on
+# the GPU costs 0.011 ms through CuPy and 0.05 ms through MLX against 0.44 ms
+# through Apple's OpenCL (docs/optimization-log.md). CUPY and MLX never coexist,
+# so which of those two leads decides nothing.
+#
+# This is the order a *fallback* lands on, which is why it matters. Ranked by
+# availability instead -- which is what this did, and that list opens with CPU
+# -- asking for MLX on a CUDA box was answered with the host, past two device
+# backends that were installed and faster.
+_ASSUMED_SPEED_ORDER = ("CUPY", "MLX", "CL", "CPU")
+
+
+def _assumed_rank(name: str) -> int:
+    """Return where a backend sits in the static order; unknown names last."""
+    if name in _ASSUMED_SPEED_ORDER:
+        return _ASSUMED_SPEED_ORDER.index(name)
+    return len(_ASSUMED_SPEED_ORDER)
+
+
 def backends_by_speed(grid_size: tuple = (2048, 2048)) -> list[str]:
     """Return the available backends, fastest first.
 
-    Read from the benchmark cache when there is one, so asking this question
-    is free in the common case. Without a cache the order is the static one
-    ``list_available_backends`` gives, which is not a measurement and does not
-    pretend to be: benchmarking every backend to answer a fallback would cost
-    more than the fallback saves, and the cache fills the first time anything
-    asks for ``backend="auto"``.
+    Read from the benchmark cache when there is one, so asking this question is
+    free in the common case. Without a cache the order is ``_ASSUMED_SPEED_ORDER``
+    above, which is a prior and does not pretend to be a measurement:
+    benchmarking every backend to answer a fallback would cost more than the
+    fallback saves, and the cache fills the first time anything asks for
+    ``backend="auto"``.
+
+    The prior also breaks ties among backends the cache has no time for, so a
+    half-filled cache cannot strand a device backend behind the host either.
 
     Parameters
     ----------
@@ -213,14 +238,19 @@ def backends_by_speed(grid_size: tuple = (2048, 2048)) -> list[str]:
     available = list_available_backends()
     cache = load_benchmark_cache()
     if cache is None or tuple(cache.get("grid_size", [])) != tuple(grid_size):
-        return available
+        return sorted(available, key=_assumed_rank)
     times = {
         name: entry.get("time_ms")
         for name, entry in (cache.get("results") or {}).items()
         if entry.get("time_ms") is not None
     }
     return sorted(
-        available, key=lambda name: (times.get(name) is None, times.get(name, 0.0))
+        available,
+        key=lambda name: (
+            times.get(name) is None,
+            times.get(name, 0.0),
+            _assumed_rank(name),
+        ),
     )
 
 

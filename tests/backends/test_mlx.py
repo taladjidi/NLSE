@@ -244,3 +244,92 @@ class TestMLXKernels:
         )
         result = backend.to_numpy(A1)
         assert np.isfinite(result).all()
+
+
+class TestMLXLosslessStep:
+    """A lossless step must not pay for the solved lossy one.
+
+    ``_nl_factor`` decides between the solved and the frozen step with
+    ``mx.where``, and MLX evaluates both arms. At ``alpha = 0`` the answer is
+    unchanged, so nothing was wrong -- but a lossless split step measured
+    1.45x slower than before the solved step landed, on every grid tried.
+    The fix picks the factor when the graph is compiled, which only works
+    while ``alpha`` is read on the host.
+    """
+
+    def test_a_host_zero_is_lossless_and_a_device_scalar_is_not(self):
+        """Only a value numpy can read decides the branch."""
+        import mlx.core as mx
+        from NLSE.kernels.mlx_kernels import _is_lossless
+
+        assert _is_lossless(0.0)
+        assert _is_lossless(np.float32(0.0))
+        assert not _is_lossless(20.0)
+        # A device scalar would need a synchronization to read, so it takes
+        # the general kernel, which is correct at any alpha.
+        assert not _is_lossless(mx.array(0.0))
+
+    @pytest.mark.parametrize("splitting", ["lie", "strang"])
+    @pytest.mark.parametrize("with_V", [False, True], ids=["no_V", "V"])
+    def test_the_lossless_graph_answers_exactly_as_the_general_one(
+        self, splitting, with_V
+    ):
+        """Bit-identical, or the fast path is a different solver.
+
+        Not approximately: at ``u = 0`` the iteration returns ``sat`` and the
+        decay is exactly 1, so the two graphs are the same arithmetic.
+        """
+        from NLSE import NLSE
+        from NLSE.kernels import mlx_kernels
+
+        waist = 2.23e-3
+
+        def propagate():
+            simu = NLSE(
+                alpha=0.0,
+                power=1.05,
+                window=4 * waist,
+                n2=-1.6e-9,
+                V=None,
+                L=1e-2,
+                NX=64,
+                NY=64,
+                Isat=1e5,
+                backend="MLX",
+            )
+            if with_V:
+                simu.V = 1e-4 * np.exp(
+                    -(simu.XX**2 + simu.YY**2) / (waist / 2) ** 2
+                ).astype(np.float32)
+            field = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(np.complex64)
+            mlx_kernels._SPLIT_STEP_CACHE.clear()
+            return np.asarray(
+                simu.out_field(
+                    field,
+                    20 * 1e-4,
+                    delta_z=1e-4,
+                    verbose=False,
+                    plot=False,
+                    splitting=splitting,
+                )
+            )
+
+        fast = propagate()
+        keys = list(mlx_kernels._SPLIT_STEP_CACHE)
+        original = mlx_kernels._is_lossless
+        try:  # force the graph that carries the loss arithmetic
+            mlx_kernels._is_lossless = lambda alpha: False
+            general = propagate()
+        finally:
+            mlx_kernels._is_lossless = original
+            mlx_kernels._SPLIT_STEP_CACHE.clear()
+
+        assert np.array_equal(fast, general), (
+            "the lossless graph does not answer as the general one does at "
+            f"alpha=0: max |difference| = {np.max(np.abs(fast - general)):g}"
+        )
+        # And it really was the lossless graph: otherwise the test passes by
+        # comparing the slow path against itself.
+        assert keys and all(key[-1] is False for key in keys), (
+            f"a lossless run compiled the lossy graph: {keys}"
+        )

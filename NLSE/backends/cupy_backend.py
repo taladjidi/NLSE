@@ -1,13 +1,14 @@
 """CUPY backend implementation."""
 
 import contextlib
+import os
 import time
 from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 
-from ..utils import __CUPY_AVAILABLE__
+from ..utils import __CUPY_AVAILABLE__, say
 from .backend import Backend, Timing
 
 if not __CUPY_AVAILABLE__:
@@ -18,24 +19,229 @@ import cupyx.scipy.fft as _cufft
 import cupyx.scipy.signal as _cusignal
 from cupyx.scipy.fftpack import get_fft_plan
 
+# Rewrites the block that the store callback reads the propagator pointer
+# through. A kernel and not a host-to-device copy, because a step that changes
+# propagator part way -- Yoshida's three sub-steps -- would otherwise be
+# copying from pageable host memory during a CUDA graph capture, which is not
+# allowed. A launch is recorded into the graph and replayed with it.
+_WRITE_PROPAGATOR_INFO = cp.RawKernel(
+    r"""
+extern "C" __global__ void nlse_write_propagator_info(
+    unsigned long long* info,
+    const unsigned long long values,
+    const unsigned long long size
+) {
+    info[0] = values;
+    info[1] = size;
+}
+""",
+    "nlse_write_propagator_info",
+)
+
 
 class _CuFFTPlan:
     """cuFFT plan wrapper with .fft()/.ifft() API matching VkFFTApp.
 
     This allows CUDAKernels.linear_step to call plan.fft(A, A) / plan.ifft(A, A)
     without knowing which FFT library is behind it.
+
+    Carries a second plan for the forward transform, one whose store callback
+    applies the propagator as it writes (see ``fft_propagate`` and
+    fft_callbacks.cu). Second rather than only, because a callback fires in
+    both directions: a plan that multiplies on the way out would multiply
+    again on the way back.
+
+    The second plan is built on first use and only if it can be: the callback
+    machinery needs nvrtc and a cuFFT new enough to link LTO-IR, and CuPy
+    reaches it for multi-dimensional plans only. Everything here therefore
+    reports whether it worked rather than assuming it did, and a run that
+    cannot fuse loses the pass and nothing else.
+
+    ``NLSE_FUSE_PROPAGATOR=0`` asks for the unfused path, and is read when the
+    plan is built rather than per step, which is the difference between one
+    dictionary lookup per run and one per transform. Plans are cached on the
+    backend, so a session that changes the variable has to call
+    ``backend.clear_fft_plans()`` for it to mean anything.
     """
 
-    __slots__ = ("_axes", "_plan")
+    __slots__ = (
+        "_axes",
+        "_bound",
+        "_dtype",
+        "_fused",
+        "_info",
+        "_off",
+        "_plan",
+        "_shape",
+    )
 
     def __init__(self, a: Any, axes: tuple) -> None:
         self._plan = get_fft_plan(a, axes=axes, value_type="C2C")
         self._axes = axes
+        self._shape = a.shape
+        self._dtype = a.dtype
+        self._fused: dict = {}  # batched -> plan carrying that callback
+        # Fusion ruled out for this plan, for good: asked against, or tried
+        # once and found wanting.
+        self._off = os.environ.get("NLSE_FUSE_PROPAGATOR", "1") == "0"
+        self._info: Any = None  # block the callback reads the pointer through
+        self._bound: tuple | None = None  # (pointer, size) that block holds
 
     def fft(self, a: Any, out: Any) -> Any:
         """Forward FFT (unnormalized, raw cuFFT). Graph-capture safe."""
         self._plan.fft(a, out, cp.cuda.cufft.CUFFT_FORWARD)
         return out
+
+    def fft_propagate(self, a: Any, out: Any, propagator: Any) -> bool:
+        """Forward FFT with the propagator multiply folded into its store.
+
+        Parameters
+        ----------
+        a : cp.ndarray
+            Field to transform.
+        out : cp.ndarray
+            Where the transform lands, ``a`` itself for an in-place step.
+        propagator : cp.ndarray
+            Propagator to apply, of the field's shape or of the block a batch
+            of fields shares.
+
+        Returns
+        -------
+        bool
+            Whether it happened. ``False`` leaves ``out`` untouched, and the
+            caller owes both the transform and the multiply.
+
+        """
+        batched = self._callback_kind(a, propagator)
+        if batched is None:
+            return False
+        plan = self._fused_plan(batched)
+        if plan is None:
+            return False
+        self._bind(propagator)
+        plan.fft(a, out, cp.cuda.cufft.CUFFT_FORWARD)
+        return True
+
+    def _callback_kind(self, a: Any, propagator: Any):
+        """Return which callback these two arrays need, or None for neither.
+
+        Parameters
+        ----------
+        a : cp.ndarray
+            Field about to be transformed.
+        propagator : cp.ndarray
+            Propagator to apply to it.
+
+        Returns
+        -------
+        bool or None
+            ``False`` for the callback that indexes the propagator directly,
+            ``True`` for the one that wraps it around a batch, ``None`` when
+            no callback describes the pair and the multiply has to stay a
+            kernel.
+
+        """
+        if a.shape != self._shape or a.dtype != self._dtype:
+            return None
+        if propagator.dtype != a.dtype:
+            return None
+        # Both are read by flat offset, which says nothing about either unless
+        # they are contiguous.
+        if not (a.flags.c_contiguous and propagator.flags.c_contiguous):
+            return None
+        if propagator.shape == a.shape:
+            return False
+        # A batch sharing one propagator. It has to be exactly the trailing
+        # block of the field, since a flat offset reduced by its size is only
+        # the index into it if the strides agree.
+        trailing = a.shape[a.ndim - propagator.ndim :]
+        if propagator.ndim and propagator.shape == trailing:
+            return True
+        return None
+
+    def _fused_plan(self, batched: bool):
+        """Return a plan carrying this callback, building it once, or None.
+
+        Parameters
+        ----------
+        batched : bool
+            Which callback the plan should carry.
+
+        Returns
+        -------
+        cupy.cuda.cufft.PlanNd or None
+            The plan, or None if this one cannot fuse.
+
+        """
+        if self._off:
+            return None
+        if batched in self._fused:
+            return self._fused[batched]
+        # A callback reads its output by flat offset, so it describes the
+        # transform only when the transformed axes are the fastest ones.
+        if self._axes != tuple(range(-len(self._axes), 0)):
+            self._off = True
+            return None
+        try:
+            self._fused[batched] = self._build_fused_plan(batched)
+        except Exception as exc:
+            self._off = True
+            say(
+                f"NLSE: cuFFT cannot fold the propagator into the transform "
+                f"here ({type(exc).__name__}: {exc}); leaving it a kernel of "
+                f"its own."
+            )
+            return None
+        return self._fused[batched]
+
+    def _build_fused_plan(self, batched: bool):
+        """Build the plan whose store callback applies the propagator.
+
+        Parameters
+        ----------
+        batched : bool
+            Which callback to compile into it.
+
+        Returns
+        -------
+        cupy.cuda.cufft.PlanNd
+            A plan for this plan's shape, carrying the callback.
+
+        """
+        from ..kernels.templating import propagator_store_callback
+
+        source, symbol = propagator_store_callback(self._dtype, batched)
+        if self._info is None:
+            self._info = cp.zeros(2, dtype=cp.uint64)
+        # get_fft_plan measures a plan against an array; this one is a stand-in
+        # for the fields the plan will see, and is freed on the way out.
+        template = cp.empty(self._shape, dtype=self._dtype)
+        with cp.fft.config.set_cufft_callbacks(
+            cb_store=source,
+            cb_store_name=symbol,
+            cb_store_data=self._info.data,
+            cb_ver="jit",
+        ):
+            return get_fft_plan(template, axes=self._axes, value_type="C2C")
+
+    def _bind(self, propagator: Any) -> None:
+        """Point the callback at this propagator, if it is not already.
+
+        Parameters
+        ----------
+        propagator : cp.ndarray
+            The propagator the next transform should apply.
+
+        """
+        bound = (propagator.data.ptr, propagator.size)
+        if bound == self._bound:
+            return
+        _WRITE_PROPAGATOR_INFO(
+            (1,),
+            (1,),
+            (self._info, np.uint64(bound[0]), np.uint64(bound[1])),
+        )
+        self._bound = bound
 
     def ifft(self, a: Any, out: Any) -> Any:
         """Inverse FFT (normalized by 1/N), in-place when out is a."""

@@ -167,3 +167,105 @@ def test_the_rk4_operator_takes_the_field_dtype(backend_name, cls):
 
     # Both widths are cached, and the cache must not hand back the other one.
     assert np.dtype(solver._build_propagator_rk4(np.complex64).dtype) == np.complex64
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_the_step_constants_take_the_field_width(backend_name):
+    """The same rule again, and it was broken in both directions at once.
+
+    The width used to be chosen from the *splitting* -- float32 for Lie and
+    float64 for everything else -- which is a leftover from when "single" and
+    "double" named the splittings rather than the float width.
+
+    A complex64 Strang or Yoshida run scaled the potential by a float64 scalar,
+    and NEP 50 promotion put the product at float64: a kernel picked for a
+    complex64 field then read it through a ``float*``, half a double per
+    element. That returned NaN from the first step above 128x128 and a field
+    30% wrong below it. A complex128 Lie run had the opposite fault and rounded
+    every physical constant to float32.
+
+    Asserted on every backend, not only the device ones. Numba reads a
+    mismatched array correctly, so CPU never showed the NaN -- but a
+    complex128 CPU run whose potential is float32 is still single precision
+    where it was asked for double.
+    """
+    solver = build(NLSE, backend_name)
+    X, Y = np.meshgrid(solver.X, solver.Y)
+    solver.V = 1e-4 * np.exp(-(X**2 + Y**2) / (window / 8) ** 2)
+    for dtype, real_dtype in (
+        (np.complex64, np.float32),
+        (np.complex128, np.float64),
+    ):
+        if dtype == np.complex128 and not solver._backend.supports_double_precision():
+            continue
+        with solver._arrays_on_device(dtype):
+            solver._precompute_step_constants(solver.V, dtype)
+
+            # Through the host: MLX names its dtypes in its own namespace, and
+            # numpy raises rather than comparing when handed one.
+            def width(value):
+                return np.asarray(solver._as_host_array(value)).dtype
+
+            assert width(solver._V_scaled) == real_dtype, (
+                f"{backend_name}: the scaled potential is "
+                f"{width(solver._V_scaled)} for a {np.dtype(dtype).name} field, "
+                f"and the kernel will read it at {np.dtype(real_dtype).name}"
+            )
+            assert width(solver._g) == real_dtype, (
+                f"{backend_name}: the interaction constant is "
+                f"{width(solver._g)} for a {np.dtype(dtype).name} field"
+            )
+
+
+@pytest.mark.parametrize("splitting", ["lie", "strang", "yoshida"])
+def test_a_single_precision_run_with_a_potential_agrees_across_backends(splitting):
+    """And the answer, since a width mismatch is not always loud.
+
+    Above 128x128 the misread potential returned NaN from the first step; at
+    64x64 the same bug returned a field 30% wrong, which is the outcome worth
+    testing for. Scored against CPU, whose numba kernels are indifferent to
+    the width and were always right.
+    """
+    if "CPU" not in AVAILABLE_BACKENDS or len(AVAILABLE_BACKENDS) < 2:
+        pytest.skip("needs CPU and at least one device backend")
+
+    def propagate(backend_name, n):
+        solver = NLSE(
+            alpha=20,
+            power=1.05,
+            window=window,
+            n2=-1.6e-9,
+            V=None,
+            L=L,
+            NX=n,
+            NY=n,
+            Isat=1e5,
+            backend=backend_name,
+        )
+        X, Y = np.meshgrid(
+            np.linspace(-window / 2, window / 2, n),
+            np.linspace(-window / 2, window / 2, n),
+        )
+        solver.V = 1e-4 * np.exp(-(X**2 + Y**2) / (window / 8) ** 2)
+        field = np.exp(-(X**2 + Y**2) / (window / 4) ** 2).astype(np.complex64)
+        out = solver.out_field(
+            field, L, delta_z=L / 20, verbose=False, plot=False, splitting=splitting
+        )
+        return np.asarray(solver._backend.to_numpy(out)).astype(np.complex128)
+
+    # Both sides of the size where it turned from wrong into NaN.
+    for n in (64, 128):
+        reference = propagate("CPU", n)
+        for backend_name in AVAILABLE_BACKENDS:
+            if backend_name == "CPU":
+                continue
+            got = propagate(backend_name, n)
+            assert np.isfinite(got).all(), (
+                f"{backend_name}/{splitting} at {n}x{n} returned a field with "
+                f"holes in it"
+            )
+            error = float(np.linalg.norm(got - reference) / np.linalg.norm(reference))
+            assert error < 1e-4, (
+                f"{backend_name}/{splitting} at {n}x{n} differs from CPU by "
+                f"{error:.3e}, which is far past single-precision round-off"
+            )
