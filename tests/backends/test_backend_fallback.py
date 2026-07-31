@@ -36,10 +36,77 @@ def test_an_uninstalled_backend_falls_back_and_says_so(name):
 
 @pytest.mark.skipif(not MISSING, reason="every backend is installed here")
 def test_the_fallback_is_the_fastest_available():
-    """Falling back to the slowest would be a poor way to keep a promise."""
+    """Falling back to the slowest would be a poor way to keep a promise.
+
+    Self-consistent on purpose -- it pins the fallback to the ranking. What the
+    ranking itself has to get right is below, because this passes either way:
+    when the ranking opened with CPU, so did the fallback, and this agreed.
+    """
     with pytest.warns(UserWarning):
         backend = get_backend(MISSING[0], grid_size=(64, 64))
     assert backend.name == backends_by_speed((64, 64))[0]
+
+
+DEVICES = [n for n in list_available_backends() if n != "CPU"]
+
+
+@pytest.fixture
+def unmeasured(monkeypatch):
+    """Rank with no benchmark cache, whatever this machine has cached."""
+    monkeypatch.setattr(
+        "NLSE.backends.benchmark.load_benchmark_cache", lambda *args, **kwargs: None
+    )
+
+
+@pytest.mark.skipif(not DEVICES, reason="no device backend installed here")
+def test_the_host_is_ranked_last_when_nothing_is_measured(unmeasured):
+    """A device backend outranks the host, measurement or none.
+
+    The bug this is here for: the ranking used to be the availability list,
+    which opens with CPU, so a fallback with no cache to read landed on the
+    host -- on a CUDA box, asking for MLX ran on the CPU past two device
+    backends that were installed and faster.
+    """
+    ranked = backends_by_speed((64, 64))
+    assert ranked[-1] == "CPU", (
+        f"the host should be the last resort, and this ranking is {ranked}"
+    )
+
+
+@pytest.mark.skipif(not DEVICES, reason="no device backend installed here")
+def test_an_untimed_device_is_not_stranded_behind_a_timed_host(monkeypatch):
+    """A half-filled cache must not rank the host above an untimed device.
+
+    Backends the cache has no time for sort together, and whatever breaks that
+    tie decides the fallback. Left to the availability list it was the host.
+    """
+    monkeypatch.setattr(
+        "NLSE.backends.benchmark.load_benchmark_cache",
+        lambda *args, **kwargs: {
+            "grid_size": [64, 64],
+            "results": {"CPU": {"time_ms": 12.0}},
+        },
+    )
+    ranked = backends_by_speed((64, 64))
+    assert ranked[0] == "CPU", "the only timed backend should lead on its measurement"
+    assert ranked[1:] == sorted(
+        DEVICES, key=lambda n: ("CUPY", "MLX", "CL").index(n)
+    ), (
+        f"untimed devices should fall in the assumed order, not the availability "
+        f"one; got {ranked}"
+    )
+
+
+@pytest.mark.skipif(
+    not MISSING or not DEVICES, reason="needs a missing backend and a device"
+)
+def test_the_fallback_reaches_a_device_and_not_the_host(unmeasured):
+    """The whole point, end to end: the symptom was a run on the CPU."""
+    with pytest.warns(UserWarning, match="fastest one available"):
+        backend = get_backend(MISSING[0], grid_size=(64, 64))
+    assert backend.name != "CPU", (
+        f"asked for {MISSING[0]} with {DEVICES} installed and got the host"
+    )
 
 
 def test_a_name_that_is_not_a_backend_still_raises():
