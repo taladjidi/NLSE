@@ -12,11 +12,19 @@ a step possibly be?
 Three ceilings, each measured rather than taken from a spec sheet, because the
 achievable fraction of a rated figure is what a step actually gets:
 
-- streaming bandwidth, measured at the size the step works at (it is well
-  below the rated figure for arrays this small),
+- streaming bandwidth,
 - fused-multiply-add throughput,
 - sine, cosine and exponential throughput, which is what the nonlinear
   kernels spend themselves on.
+
+Bandwidth is measured in the DRAM regime, on arrays far larger than a grid,
+and one number is used at every size. A grid small enough to sit in cache is
+fed faster than that, so such a step can come out **above 100% of the floor**:
+that is the reading, not an error -- it says the grid fitted in cache and beat
+DRAM, and that bandwidth is no longer what limits it. Making the ceiling
+size-dependent instead was tried and is worse: the probe's working set is a
+third of a step's, so it reports cache rates a step cannot reach, and the
+percentages then swing with the probe rather than with the code.
 
 Ceilings belong to the device, not the framework, so they are probed through
 whatever gets closest to the metal -- numba on the CPU, OpenCL or CUDA C on

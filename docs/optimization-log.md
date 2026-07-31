@@ -114,13 +114,44 @@ ten times what Metal does to put a step on the GPU, and up to 1024² that is the
 whole story of CL against MLX. *Challenge this* by fusing CL's per-step
 launches further, which is the only thing that can help at those sizes.
 
-Cells at or just over 100% are the tool's resolution, not a kernel beating
-physics: the ceiling is one number measured at 128 MiB, and a 1024² working set
-gets more cache help than that. Read anything above ~90% as "at the bound".
+Bandwidth is measured in the DRAM regime and one number is used at every size,
+so a grid small enough to sit in cache can come out **above 100%**. That is the
+reading rather than an error: the grid beat DRAM and bandwidth is no longer
+what limits it. A size-dependent ceiling was tried and is worse — the probe's
+working set is a third of a step's, so it reports cache rates a step cannot
+reach and the percentages move with the probe instead of the code.
 
-The CUDA probe is written and its generated source is syntax-checked, but it
-has never run — there is no CuPy on the Mac this was measured on. Treat the
-first numbers it prints on the NVIDIA box as unverified.
+### The NVIDIA box
+
+Same tool, `CPU CUPY`, run 2026-07-31. **The CUDA and OpenCL probes agree to
+within 1% on all three ceilings** — 208 GB/s against 208, 8.10 TFLOP/s against
+8.11, 83.0 G/s against 84.1. Two independent implementations landing on the
+same numbers is what makes them the hardware rather than the framework.
+
+| ceiling | GPU | CPU |
+|---|---|---|
+| streaming bandwidth | 208 GB/s | 32 GB/s |
+| fp32 fused multiply-add | 8.1 TFLOP/s | 0.46 TFLOP/s |
+| sin + cos + exp | 84 G/s | 1.3 G/s |
+
+| of floor | 1024² | 2048² | 4096² |
+|---|---|---|---|
+| CPU split_step | 42% | 37% | 37% |
+| CUPY split_step single | 94% | 91% | 73% |
+| CUPY split_step double | 108% | 106% | 84% |
+| CUPY RK4 | 114% | 113% | 93% |
+
+**CuPy is at the bandwidth bound and has essentially nothing left**: at or over
+100% up to 2048², and 73–93% at 4096² where the grid no longer fits in cache.
+Dispatch there costs 0.011 ms per step, forty times less than Apple's OpenCL.
+
+The two machines differ in which ceiling binds the CPU, and it is the hardware
+rather than the code. That box streams **32 GB/s against the M3 Max's 240** — a
+desktop's dual-channel DDR against unified memory — so every CPU row there is
+memory-bound, where on the Mac flops and transcendentals bind above 1024². Its
+sin+cos+exp rate is also half the Mac's (1.3 against 2.5 G/s), consistent with
+`USING_SVML` being false on that x86 too while NEON vectorizes the polynomials.
+Conclusions about *which* CPU ceiling to attack do not transfer between them.
 
 ## Where the time goes
 
