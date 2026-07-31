@@ -77,6 +77,21 @@ For optimal speed, this code uses your GPU (graphics card). For this, you need s
 
 **The `cupy` dependency is not a required dependency in order to not break installation on platforms that do not support it !** It ships as the optional `gpu` extra: `uv pip install ".[gpu]"`.
 
+#### Choosing a backend
+
+`backend=` takes `"CPU"`, `"CUPY"`, `"CL"`, `"MLX"` or `"auto"`. It is a
+statement about *how* a run goes, not about what it computes, so naming one
+that this machine cannot provide is answered rather than refused: the solver
+moves to the fastest backend that is installed and tells you which and why.
+The same happens when a backend is installed but cannot serve the run — MLX
+and OpenCL have no convolution, so a non-local interaction lands on CPU or
+CUPY. A name that is not a backend at all is still an error, because that is a
+typo and guessing at it would hide the typo.
+
+This is what lets a script written on one machine run on another. Pass the
+backend explicitly if you would rather choose it yourself, and the warning
+goes away.
+
 ### The CPU transform
 
 If no GPU backend is available the solver falls back to the CPU, where the
@@ -246,8 +261,10 @@ for single precision, `complex128` for double, on a device that supports it.
 The propagator and the potential are built to match, because the GPU kernels
 read their precision from the field and then index those arrays with it.
 
-Note that `out_field`'s `precision` argument is a different thing entirely: it
-selects the *order of the split step*, not the float width. See below.
+The two are chosen separately, and the useful combinations are not the obvious
+ones — `out_field`'s `splitting` argument picks how the linear and nonlinear
+parts are composed, which is a different question from how wide the floats are.
+The solver says so when the pair does not go together. See below.
 
 #### Callbacks
 
@@ -284,13 +301,38 @@ sublibrary derives a step from the nonlinear refractive index change instead.
 
 The `out_field` method is the main function of the code that propagates the field for an arbitrary distance from an initial state `E_in` from z=0 (assumed to be the begining of the non linear medium) up to a specified distance z. This function simply works by iterating the spectral solver scheme i.e :
 
-- (If precision is `'double'` apply real space terms)
+- (If the splitting is `"strang"`, apply the real space terms)
 - Fourier transforming the field
 - Applying the laplacian operator (multiplication by a constant matrix)
 - Inverse Fourier transforming the field
 - Applying all real space terms (potential, losses and interactions)
 
-The `precision` argument allows to switch between applicating the nonlinear terms in a single multiplication (`"single"`), or applying a "half" nonlinear term before and after computing the effect of losses, potential and interactions (`"double"`). The numerical error is $\mathcal{O}(\delta z)$ in the first case and $\mathcal{O}(\delta z^3)$ in the second case at the expense of two additional FFT's and another matrix multiplication (essentially doubling the runtime).
+The `splitting` argument chooses how the two parts are composed. It is named
+for the schemes rather than for a count, because there are three of them and
+because "single" and "double" read as a floating-point width to everyone who
+met them:
+
+| `splitting` | error | transform pairs | use it when |
+|---|---|---|---|
+| `"lie"` (default) | $\mathcal{O}(\delta z)$ | 1 | the field is `complex64` |
+| `"strang"` | $\mathcal{O}(\delta z^2)$ | 1 | the field is `complex64` and you want the better constant |
+| `"yoshida"` | $\mathcal{O}(\delta z^4)$ | 3 | the field is `complex128` |
+
+`"strang"` applies a half nonlinear step either side of the linear one. It
+costs no extra transform in a run of them, because consecutive steps merge
+their touching halves — that merge is exact only without loss and without an
+absorbing potential, and the solver checks.
+
+`"yoshida"` composes three Strang sub-steps with weights summing to one, the
+middle one backwards. **In `complex64` it is a waste**: round-off accumulating
+over steps sets the error there long before the splitting does, so the extra
+order buys accuracy the arithmetic cannot hold. In `complex128` that floor is
+gone and it dominates — on a self-focusing beam at $256^2$ it reached 1.08e-09
+in 31 ms where `"strang"` needed 1202 ms for the same accuracy. The solver
+warns if you ask for it in single precision, or ask for the others in double.
+
+The backwards sub-step also means `"yoshida"` is wrong for a lossy medium,
+where running a step backwards amplifies rather than decays. That warns too.
 
 #### The propagation step
 
@@ -302,7 +344,8 @@ E = simu.out_field(E_in, z, delta_z=1e-5)   # step chosen by hand
 ```
 
 Left to itself, the solver picks a step that imprints a fixed phase per step —
-`DEFAULT_PHASE_PER_STEP`, 0.1 rad — measured against the energy the field
+0.1 rad for split-step, 0.02 for RK4, whose truncation error is still falling
+steeply where split-step's has flattened — measured against the energy the field
 actually carries in each term: $\langle\psi|\hat{O}|\psi\rangle / \langle\psi|\psi\rangle$
 for the kinetic, potential and interaction terms. That is the same quantity the
 stability and accuracy limits are built from, so the default sits a fixed
@@ -312,6 +355,15 @@ A step you pass is used as given, and lowered only if it would leave the
 method's region of convergence: $\pi$ per step before split-step aliases,
 $2\sqrt{2}$ before RK4 leaves its stability region. You get a warning when that
 happens, naming the limit that bound.
+
+Those are ceilings, not guarantees. They are written against the phase the
+potential and the interaction imprint, on the reasoning that split-step applies
+the linear part exactly — but the splitting error goes as the commutator of the
+two parts, and a field carrying strong spatial frequencies of its own has a
+large one at a phase per step that looks modest. If your field is turbulent or
+sharply structured, check convergence against a finer step rather than trusting
+the default; `adapt_delta_z_to_error` in the callbacks sublibrary will do it
+from a measured error.
 
 ### Inheritance
 

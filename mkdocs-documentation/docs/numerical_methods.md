@@ -15,31 +15,46 @@ Each propagation step of size $\delta z$:
 3. **Inverse Fourier transform**
 4. **Apply nonlinear terms** in real space (potential $V$, Kerr effect $n_2|E|^2$, losses $\alpha$, saturation $I_\text{sat}$)
 
-### Single vs Double Precision
+### Choosing a splitting
 
-The `precision` parameter controls the splitting scheme:
+The `splitting` parameter says how the linear and nonlinear parts are composed.
+It is *not* the floating-point width — that follows the dtype of the field you
+pass, and the two are chosen separately.
 
 **`splitting="lie"`** (default):
 
 - Applies the nonlinear operator once per step
 - Error: $\mathcal{O}(\delta z)$
-- Cost: 1 FFT pair per step
-- Best for: fast exploratory runs
+- Cost: 1 transform pair per step
 
 **`splitting="strang"`**:
 
-- Applies a half nonlinear step before and after the linear step (Strang splitting)
-- Error: $\mathcal{O}(\delta z^3)$
-- Cost: 2 FFT pairs per step (roughly doubles runtime)
-- Best for: accurate results, convergence studies
+- A half nonlinear step either side of the linear one
+- Error: $\mathcal{O}(\delta z^2)$
+- Cost: still 1 transform pair per step in a run of them, because consecutive
+  steps merge their touching halves. The merge is exact only without loss and
+  without an absorbing potential, and the solver checks
+
+**`splitting="yoshida"`**:
+
+- Three Strang sub-steps composed, the middle one backwards
+- Error: $\mathcal{O}(\delta z^4)$
+- Cost: 3 transform pairs per step
+- **Only worth it with a `complex128` field.** In `complex64` round-off
+  accumulating over steps sets the error long before the splitting does, so
+  the extra order buys accuracy the arithmetic cannot hold. Not valid with
+  loss either: the backwards sub-step amplifies
 
 ```python
-# Single precision (faster)
-E_out = simu.out_field(E_in, L, splitting="lie")
+# complex64 field: lie is fast, strang is the better constant
+E_out = simu.out_field(E_in.astype(np.complex64), L, splitting="strang")
 
-# Double precision (more accurate)
-E_out = simu.out_field(E_in, L, splitting="strang")
+# complex128 field: yoshida reaches a given accuracy for far less work
+E_out = simu.out_field(E_in.astype(np.complex128), L, splitting="yoshida")
 ```
+
+The solver warns when the pair does not go together — `"yoshida"` on a
+`complex64` field, or `"lie"`/`"strang"` on a `complex128` one.
 
 ## RK4 Method
 
@@ -136,7 +151,8 @@ real number that rarely divides $z$.
 
 ## Tips
 
-- Start with `splitting="lie"` for quick iterations, switch to `"double"` for final results
+- Start with `splitting="lie"` for quick iterations, switch to `"strang"` for
+  final results, and to `"yoshida"` only with a `complex128` field
 - Use powers-of-2 grid sizes for optimal FFT performance
 - If the solver warns about step size reduction, consider using a finer initial grid or reducing the field power
 - For convergence studies, run with decreasing $\delta z$ and check that results stabilize
