@@ -41,7 +41,6 @@ def main() -> None:
         verbose=True,
         plot=False,
         precision="single",
-        delta_z=1e-5,
     )
 
 

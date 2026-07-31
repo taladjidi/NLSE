@@ -38,19 +38,17 @@ cs = np.sqrt(abs(n2) * intensity) / (1 + intensity / Isat)
 delta_n = abs(n2) * intensity / (1 + intensity / Isat) ** 2
 xi = 1 / (simu.k * cs)
 z_nl = 1 / (simu.k * delta_n)
-# Propagation step, passed to out_field and used below.
-DELTA_Z = z_nl / 6
 simu.L = 48 * z_nl
-nsteps = simu.L // DELTA_Z
 save_every = 2
-N_samples = round(nsteps / save_every)
 E_0 = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(np.complex64)
-E_samples = np.zeros((N_samples, N, N), dtype=np.complex64)
+# Collected rather than preallocated: the solver picks the step, so how many
+# samples there will be is not known until the run is over.
+E_samples = []
 
 
 def callback_samples(sim, A, z, i):
     if i % save_every == 0:
-        E_samples[i // save_every] = A.copy()
+        E_samples.append(sim._as_host_array(A).copy())
 
 
 sizes = [128, 256, 512, 1024, 2048, 4096, 8192]
@@ -89,7 +87,6 @@ for i, n in enumerate(sizes):
             verbose=False,
             plot=False,
             precision="single",
-            delta_z=DELTA_Z,
         )
         # # to plot the animation at the end
         # simu.out_field(
@@ -99,7 +96,6 @@ for i, n in enumerate(sizes):
         #     plot=False,
         #     precision="single",
         #     callback=callback_samples,
-        # , delta_z=DELTA_Z )
         ts[i, _] = time.perf_counter() - t0
     timing_string = f"Average time: {np.mean(ts[i]):.2f} s "
     timing_string += f"(min: {np.min(ts[i]):.2f} s, max: {np.max(ts[i]):.2f} s)"
@@ -108,6 +104,7 @@ np.save(output_path(f"python_vortex_precession_{simu.backend}_times.npy"), ts)
 np.save(output_path(f"python_vortex_precession_{simu.backend}_sizes.npy"), sizes)
 # to plot the animation at the end
 # fig, ax = plt.subplots(1, 2, figsize=(10, 5), layout="constrained")
+# E_samples = np.array(E_samples)
 # rho = np.abs(E_samples) ** 2
 # phi = np.angle(E_samples)
 # ext = [simu.X.min() * 1e3, simu.X.max() * 1e3,
@@ -130,5 +127,5 @@ np.save(output_path(f"python_vortex_precession_{simu.backend}_sizes.npy"), sizes
 #     return im0, im1
 
 
-# anim = FuncAnimation(fig, animate, frames=N_samples, interval=60, blit=True)
+# anim = FuncAnimation(fig, animate, frames=len(E_samples), interval=60, blit=True)
 # plt.show()

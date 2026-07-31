@@ -17,4 +17,4 @@ kp = 2 * np.pi * 5e3
 E0 = np.exp(-(np.hypot(simu.XX, simu.YY) ** 2) / waist**2).astype(np.complex64)
 E0[0 : N // 2, :] *= np.exp(1j * kp * simu.XX[0 : N // 2, :])
 E0[N // 2 :, :] *= np.exp(-1j * kp * simu.XX[N // 2 :, :])
-simu.out_field(E0, L, plot=True, delta_z=1e-4)
+simu.out_field(E0, L, plot=True)
