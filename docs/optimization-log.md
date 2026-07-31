@@ -493,6 +493,27 @@ returns a *larger* field than it was given. `LOSS_PER_STEP_LIMIT` caps a
 propagation at `u <= 0.05`, and the kernels fall back to the frozen step above
 `u = 0.1` so that a kernel called directly cannot amplify either.
 
+**Where this has actually been run.** Everything above — this entry, the
+propagator fusion, and the potential-width fix — was written and measured on an
+**RTX 3050 box with CPU, CUPY and OpenCL**, not on the Mac the rest of this file
+is written from. That matters twice over.
+
+The numbers are that machine's. Its OpenCL is NVIDIA's and has fp64; Apple's has
+neither the doubles nor the dispatch cost, so no CL figure here transfers.
+
+The MLX kernels were written by transcription and **could not be run at all**.
+That is not a small caveat: the first Mac run of this work failed 52 tests, 49 of
+them one line of numpy dtype introspection in a shared code path (see *MLX
+(Metal)* above), and the other three tests of mine that assumed a backend has
+double precision. All four are fixed; none of the four is verified on Metal.
+Anyone picking this up on a Mac should run the suite first and treat a green run
+as the first evidence that the MLX side of it works.
+
+Still open there, and cheap to answer with a Mac in hand: whether the solved
+lossy step costs MLX what it costs the others (~16% on Lie, ~25% on Yoshida,
+net-negative on Strang), and whether `mx.compile` folds the extra iteration in
+for free the way it folded the hand-written Metal kernel in.
+
 ## Cross-cutting
 
 **Propagator caching — deployed.** Linear propagators are cached by
@@ -790,6 +811,21 @@ lets another API's queue wait on its own without a CPU round trip.
 transforms are slower than `fftn` at 512/1024/2048 (e.g. 1.396 vs 1.329 ms at
 2048²). Non-power-of-2 costs ~1.3x (1020² 0.361 ms vs 1024² 0.282 ms), which is
 the usual advice to keep grid sizes at low prime factors, not a lever.
+
+**`np.dtype()` cannot read an MLX dtype, and raises rather than comparing.**
+MLX names its dtypes in its own namespace, so `np.dtype(array.dtype)` on an
+`mx.array` is `TypeError: Cannot interpret 'mlx.core.float32' as a data type`.
+Any width check written the obvious way is therefore a landmine that only goes
+off on a Mac: one line of it in `_scale_potential` broke **every MLX run that
+had a potential** — 49 failing tests, and none of them reachable from a machine
+without MLX. Compare through `_as_host_array` where a real comparison is
+needed, and let the device path fall through where it is not.
+
+The same asymmetry bites a test rather than the code: MLX is single precision
+throughout and Apple's OpenCL ships no fp64, so any check that scores a backend
+against a double-precision reference has to skip both, or it scores them against
+a reference of another width. `supports_double_precision()` is the question to
+ask, and both answer no.
 
 ## CUDA (CuPy)
 

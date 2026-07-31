@@ -200,14 +200,20 @@ def test_the_step_constants_take_the_field_width(backend_name):
             continue
         with solver._arrays_on_device(dtype):
             solver._precompute_step_constants(solver.V, dtype)
-            assert np.dtype(solver._V_scaled.dtype) == real_dtype, (
+
+            # Through the host: MLX names its dtypes in its own namespace, and
+            # numpy raises rather than comparing when handed one.
+            def width(value):
+                return np.asarray(solver._as_host_array(value)).dtype
+
+            assert width(solver._V_scaled) == real_dtype, (
                 f"{backend_name}: the scaled potential is "
-                f"{solver._V_scaled.dtype} for a {np.dtype(dtype).name} field, "
+                f"{width(solver._V_scaled)} for a {np.dtype(dtype).name} field, "
                 f"and the kernel will read it at {np.dtype(real_dtype).name}"
             )
-            assert np.dtype(type(solver._g)) == real_dtype, (
+            assert width(solver._g) == real_dtype, (
                 f"{backend_name}: the interaction constant is "
-                f"{np.dtype(type(solver._g))} for a {np.dtype(dtype).name} field"
+                f"{width(solver._g)} for a {np.dtype(dtype).name} field"
             )
 
 

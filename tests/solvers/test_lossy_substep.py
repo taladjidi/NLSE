@@ -129,7 +129,14 @@ def test_every_backend_solves_the_step_the_same_way(backend_name):
     The formula is written out once per dialect -- numba, CUDA C, OpenCL C,
     MLX, and the fused CuPy kernels for broadcasting -- so this is the test
     that stops one of them drifting from the others.
+
+    In double precision, because the agreement worth checking is closer than
+    float32 round-off. That rules the comparison out where there is no double
+    to be had: MLX is single-precision throughout, and Apple's OpenCL ships no
+    fp64, so both would be scored against a reference of another width.
     """
+    if not solver(ALPHA, backend_name)._backend.supports_double_precision():
+        pytest.skip(f"{backend_name} has no double precision to agree in")
     reference = propagate(solver(ALPHA, "CPU"), PHASES[-1], "strang")
     got = propagate(solver(ALPHA, backend_name), PHASES[-1], "strang")
     difference = float(np.linalg.norm(got - reference) / np.linalg.norm(reference))

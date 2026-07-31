@@ -1605,9 +1605,20 @@ class NLSE(StepSize):
 
         """
         scaled = V * k_half
-        if np.dtype(scaled.dtype) != np.dtype(dtype):
-            scaled = scaled.astype(dtype)
-        return scaled
+        # numpy cannot interpret every backend's dtype: MLX names its own in
+        # its own namespace, and handing one to np.dtype raises rather than
+        # comparing -- which broke every MLX run that had a potential.
+        #
+        # Where numpy can read it, the cast stays as an explicit guarantee.
+        # Where it cannot, what holds the width is the scalar: the loop in
+        # _precompute_step_constants has already narrowed k_half to the field's
+        # own width, so the product is at that width and there is nothing to
+        # correct.
+        try:
+            mismatched = np.dtype(scaled.dtype) != np.dtype(dtype)
+        except TypeError:
+            return scaled
+        return scaled.astype(dtype) if mismatched else scaled
 
     # Moving arrays on and off the device.
     #
