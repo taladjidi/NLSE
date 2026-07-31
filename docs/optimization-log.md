@@ -145,8 +145,23 @@ Interleaved in one process, min-of-15, on the shipped kernel body:
 | libm (before) | 0.531 / 1.716 ms | 0.498 / 1.651 ms |
 | polynomial | 0.399 / 1.188 ms — **1.33x / 1.44x** | 0.380 / 1.231 ms — **1.31x / 1.34x** |
 
-End to end that is ~1.05–1.07x on a 2048² step and within noise at 1024², the
-kernel holding only ~17% of a step. Accuracy: 1.5 ulp against numpy, flat from
+End to end that is ~1.05–1.07x on a 2048² step here and within noise at 1024²,
+the kernel holding only ~17% of a step on this machine.
+
+**Confirmed on x86, and it is worth more there** (NVIDIA box, Linux, 2026-07-31,
+`--baseline main --rounds 4`, the fixed guard). `1024/split_step` 9.600 → 7.850 ms,
+**1.22x**, the only cell to clear its own 10.1% noise, and 0.79x on an earlier
+independent run. The reason is that `numba.core.config.USING_SVML` is `False`
+there too, so libm sincos is scalar on that box as well, while its FFT is
+relatively much faster across many cores — for a ~1.4x kernel to give 1.22x
+end to end, the nonlinear kernel must hold roughly three quarters of a step
+rather than the sixth it holds here.
+
+The RK4 cells are an unplanned control and they behave: 1.00–1.07x across both
+runs, never clearing their floor. `split_step` goes through
+`square_mod_nl_prop` and so through `_sincos`; RK4 goes through `rk4_nl_rhs*`,
+which computes the right-hand side with no exponential at all and was not
+touched. Noise does not sort itself by which kernel was edited. Accuracy: 1.5 ulp against numpy, flat from
 |θ| < π/4 to |θ| < 5e8; against a libm twin with identical arithmetic, 3.5e-16
 in complex128 and bit-identical in complex64. The complex128 work-precision
 table is unchanged to six significant figures except the 6th digit of the two
