@@ -214,18 +214,12 @@ def _compile_kernels(context, precision="single"):
     # Compile with aggressive optimizations
     source = _get_kernel_source(precision)
     build_options = [
-        # Deliberately not -cl-fast-relaxed-math. That flag also puts division
-        # and sqrt into the relaxed-precision mode, where an implementation may
-        # answer with a reciprocal good to ~1e-3, and it may make that choice
-        # differently for two kernels that must agree to the bit. The
-        # saturation factor 1 / (1 + |A|^2 / Isat) is a division, so under
-        # saturation the no-V and zero-V twins came apart by 4e-4 on POCL --
-        # 3300 float32 ulps -- while staying bit-identical on Apple, NVIDIA and
-        # the CPU. These three ask for the same optimizations without the
-        # licence to round division badly.
-        "-cl-unsafe-math-optimizations",
-        "-cl-finite-math-only",
-        "-cl-mad-enable",  # Allow fused multiply-add
+        # No unsafe math, and so no -cl-fast-relaxed-math, which implies it:
+        # reassociation is free to round a V-reading kernel and its no-V twin
+        # differently, and on POCL a zero potential then changed the result.
+        # No -cl-finite-math-only either -- Isat defaults to np.inf and
+        # reaches these kernels as one. See docs/optimization-log.md.
+        "-cl-mad-enable",
     ]
 
     program = cl.Program(context, source).build(options=" ".join(build_options))
