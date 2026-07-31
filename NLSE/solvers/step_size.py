@@ -28,22 +28,28 @@ from scipy.constants import c, epsilon_0
 # imaginary axis. Every solver's step limit is derived from it.
 RK4_STABILITY_RADIUS = 2.83
 
-# Phase in radians the default step imprints per step. The limits are
-# ceilings (pi for split-step aliasing, 2.83 for RK4 stability); this is where
-# a default sits under them. Measured: RK4 is at its accuracy floor by 0.15
-# and gains nothing below, and split-step's discretisation error stays under
-# the complex64 round-off floor across three decades of step size.
-DEFAULT_PHASE_PER_STEP = 0.1
+# Phase in radians the default step imprints per step, per method. The limits
+# are ceilings (pi for split-step aliasing, 2.83 for RK4 stability); these are
+# where a default sits under them.
+#
+# Both are the measured optimum rather than a margin under the ceiling, and
+# the two methods want opposite steps. Split-step in complex64 is limited by
+# round-off accumulating over steps, not by the splitting, so its error has a
+# minimum: refining past ~0.4 rad costs time and accuracy together. RK4's
+# truncation error is still falling steeply at 0.02, and at 0.1 it returns
+# 5.6e-4 where 0.02 returns 2.3e-6. Measured with
+# benchmarks/work_precision.py; see docs/optimization-log.md.
+DEFAULT_PHASE_PER_STEP = 0.4
+RK4_PHASE_PER_STEP = 0.02
 
-# Phase per step where a complex64 split-step run is most accurate. Below it,
-# round-off accumulating over steps grows faster than the splitting error
-# falls, so a finer step costs time and accuracy together: at 0.05 rad the same
-# problem is twice the work of 0.4 and six times the error. Measured with
-# benchmarks/work_precision.py, and stable at 0.4-0.8 across a sixteenfold
-# range of propagation distance. It floors the adaptive controller rather than
-# setting the default, because the controller starts from the default and its
-# own error estimate goes blind above ~0.8 rad.
+# The same optimum, used to bound the adaptive controller. It is stable at
+# 0.4-0.8 rad across a sixteenfold range of propagation distance, so in
+# complex64 the controller is held to that band: below it there is only
+# round-off, and above it the controller's own estimate goes blind -- one step
+# and two halves then differ by round-off rather than by splitting error, which
+# reads as "no error" and doubles the step until the answer is unrecognisable.
 COMPLEX64_OPTIMUM_PHASE = 0.4
+COMPLEX64_OPTIMUM_BAND = 2.0
 
 # Fewest steps a default may take over the requested distance, so that a run
 # is something a callback can sample and a plot can show rather than one jump.
@@ -338,11 +344,13 @@ class StepSize:
         rates = self._energy_rates(A) if A is not None else self._estimated_rates()
         if method == "RK4":
             rate = sum(rates.values())
+            phase = RK4_PHASE_PER_STEP
         else:
             rate = rates["potential"] + rates["interaction"]
+            phase = DEFAULT_PHASE_PER_STEP
         # A rate of zero means nothing rotates the phase, so only the bound
         # below decides.
-        dz = DEFAULT_PHASE_PER_STEP / rate if rate > 0 else np.inf
+        dz = phase / rate if rate > 0 else np.inf
 
         span = abs(float(z)) if z is not None else float(self.L)
         if span > 0:

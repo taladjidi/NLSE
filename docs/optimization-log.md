@@ -281,10 +281,10 @@ Worth more than every kernel below put together, and measured with
 `benchmarks/work_precision.py`, which scores wall clock against error rather
 than against a step count.
 
-**The error has a minimum, and the default step is on the wrong side of it —
-open.** In complex64 split-step is not limited by the splitting but by
-round-off accumulating over steps, so refining past the optimum costs time and
-accuracy together. Measured on a self-focusing beam, 256², Strang:
+**The default step is the measured optimum — deployed.** In complex64
+split-step is not limited by the splitting but by round-off accumulating over
+steps, so refining past the optimum costs time and accuracy together. Measured
+on a self-focusing beam, 256², Strang:
 
 | rad/step | 0.05 | 0.1 (default) | 0.2 | **0.4** | 0.8 | 1.5 |
 |---|---|---|---|---|---|---|
@@ -303,16 +303,30 @@ too coarse for RK4. It also means RK4 at its default is worse than split-step
 at *any* step, for six times the cost: split-step at 0.4 matches RK4 at 0.05 to
 within 2% of error and runs 42x faster.
 
-**Why this is not a one-line change**, and why the constant is still 0.1: the
-default is also where `adapt_delta_z_to_error` starts, and that controller's
-error estimate has a floor of ~0.8 rad — below it, one step and two halves
-differ by round-off rather than by splitting error. Started at 0.4 the estimate
-reads as "no error at all", the controller doubles the step until the answer is
-unrecognisable, and the run returns 28% error. Raising the default also lets
-`DEFAULT_MIN_STEPS` bind on shorter problems, at which point the step stops
-tracking the field. Both are caught by the suite. The fix is a design question
-— separate the fixed-step default from the adaptive controller's start, or cap
-the controller by the physics — not a constant.
+`DEFAULT_PHASE_PER_STEP` is now 0.4 and `RK4_PHASE_PER_STEP` 0.02, and the
+consequences had to be handled rather than absorbed:
+
+- **The adaptive controller is held to a band**, `[optimum, 2 × optimum]`, in
+  complex64. Its own error estimate goes blind above ~0.8 rad — one step and
+  two halves then differ by round-off rather than by splitting error, which
+  reads as "no error" and doubles the step until the answer is unrecognisable.
+  Starting it at the optimum without a cap returned 28% error.
+- **A `min_step` below the optimum raises** rather than being honoured or
+  silently ignored. Both of those are worse than saying why.
+- **`DEFAULT_MIN_STEPS` binds more often**, so on short problems the step is
+  set by the sampling floor rather than by the physics. That is the floor
+  doing its job, but it means a test asking whether the step tracks the field
+  has to propagate far enough that the phase target is what binds.
+
+**A step that grows must still land on `z` — fixed, and it was a real bug.**
+The loop divides `z` into steps before it starts, so a callback that *grows*
+the step left it taking one that did not fit. A run whose step doubled
+propagated 1.1e-3 for a requested 1.0e-3 and came back with a phase error to
+match — 0.283 relative, with the amplitude still correct to five figures, which
+is exactly the shape of wrongness nobody notices. Trimming the last step gives
+2.96e-06 on the same run. It predates all of this work; a shrinking step
+overshoots by at most one small step, which is why only raising the default
+exposed it.
 
 **The adaptive controller floored at the optimum — deployed.**
 `adapt_delta_z_to_error` used to shrink toward an absolute `L/1e5`, which in

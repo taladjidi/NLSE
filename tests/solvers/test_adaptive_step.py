@@ -111,12 +111,12 @@ def test_an_unreachable_tolerance_stops_shrinking():
     never returns, and a test that can only time out is not a test.
     """
     simu, prepared = prepared_solver()
-    floor = L / 1e4
+    floor = simu._split_step_max_dz(prepared) * COMPLEX64_OPTIMUM_PHASE / np.pi
     step = L / 100
     for _ in range(80):
         simu._current_delta_z = step
         proposed = adapt_delta_z_to_error(
-            simu, prepared, 0.0, 0, 1e-14, 1, (0.5, 2.0), 0.9, floor
+            simu, prepared, 0.0, 0, 1e-14, 1, (0.5, 2.0), 0.9, None
         )
         assert proposed is not None
         step = proposed
@@ -230,15 +230,53 @@ def test_it_stops_at_the_complex64_optimum():
     )
 
 
-def test_an_explicit_min_step_still_wins():
-    """Naming a floor is deliberate, so the optimum must not override it."""
+def test_a_min_step_under_the_optimum_is_refused():
+    """Silently ignoring the argument would be worse than refusing it."""
     simu, prepared = prepared_solver()
-    finer = simu._split_step_max_dz(prepared) * COMPLEX64_OPTIMUM_PHASE / np.pi / 10
+    optimum = simu._split_step_max_dz(prepared) * COMPLEX64_OPTIMUM_PHASE / np.pi
+    simu._current_delta_z = L / 100
+
+    with pytest.raises(ValueError, match="most accurate"):
+        adapt_delta_z_to_error(
+            simu, prepared, 0.0, 0, 1e-8, 1, (0.5, 2.0), 0.9, optimum / 10
+        )
+
+
+def test_a_min_step_above_the_optimum_is_honoured():
+    """Asking for a coarser floor than the optimum is a real request."""
+    simu, prepared = prepared_solver()
+    optimum = simu._split_step_max_dz(prepared) * COMPLEX64_OPTIMUM_PHASE / np.pi
+    coarser = optimum * 1.5
 
     step = L / 100
     for _ in range(60):
         simu._current_delta_z = step
         step = adapt_delta_z_to_error(
-            simu, prepared, 0.0, 0, 1e-14, 1, (0.5, 2.0), 0.9, finer
+            simu, prepared, 0.0, 0, 1e-14, 1, (0.5, 2.0), 0.9, coarser
         )
-    assert step == pytest.approx(finer, rel=1e-3)
+    assert step == pytest.approx(coarser, rel=1e-3)
+
+
+def test_a_run_whose_step_grows_still_lands_on_z():
+    """The distance asked for is the distance propagated.
+
+    The loop divides z into steps before it starts, so a callback that grows
+    the step used to leave it taking one that does not fit: a run whose step
+    doubled overshot by 10% and came back with a phase error to match, the
+    field otherwise looking entirely reasonable.
+    """
+    simu = solver()
+    taken: list = []
+    simu.out_field(
+        beam(),
+        L,
+        verbose=False,
+        plot=False,
+        splitting="strang",
+        callback=adapt_delta_z_to_error,
+        callback_args=(1e-3, 10, (0.5, 2.0), 0.9, None, taken),
+    )
+    travelled = sum(t for t in taken if t)
+    assert travelled == pytest.approx(L, rel=1e-9), (
+        f"propagated {travelled:.6e} for a requested {L:.6e}"
+    )

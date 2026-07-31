@@ -150,16 +150,20 @@ def test_an_unknown_splitting_is_refused():
         )
 
 
-def test_the_old_spelling_still_works_and_says_so():
-    """precision= is what every existing script passes."""
+@pytest.mark.parametrize("gone", ["single", "double"])
+def test_the_old_spelling_is_gone(gone):
+    """It named a float width to every reader, so it is not kept alive."""
     simu = solver()
-    with pytest.warns(DeprecationWarning, match="splitting"):
-        out = simu.out_field(
-            beam(np.complex64),
-            L,
-            delta_z=L / 8,
-            verbose=False,
-            plot=False,
-            precision="double",
+    with pytest.raises(ValueError, match="splitting must be"):
+        simu.out_field(
+            beam(), L, delta_z=L / 8, verbose=False, plot=False, splitting=gone
         )
-    assert np.all(np.isfinite(np.asarray(simu._backend.to_numpy(out))))
+
+
+def test_the_old_keyword_is_gone():
+    """precision= is not quietly accepted either."""
+    simu = solver()
+    with pytest.raises(TypeError, match="precision"):
+        simu.out_field(
+            beam(), L, delta_z=L / 8, verbose=False, plot=False, precision="double"
+        )

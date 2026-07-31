@@ -338,9 +338,9 @@ class CNLSE(NLSE):
             return
         params = (self.n2, self.n12, self.n22, self.alpha, self.alpha2)
         if self._is_batched(E_in, params):
-            raise NotImplementedError(
-                f"Broadcasting a coupled solver over a batch is not supported "
-                f"with the {self._backend.name} backend. Use CPU or CUPY."
+            self._require_backend(
+                lambda backend: backend.name not in self._no_coupled_batch_backends,
+                "broadcasting a coupled solver over a batch",
             )
 
     def _can_fuse_components(self, A: np.ndarray, params: tuple) -> bool:

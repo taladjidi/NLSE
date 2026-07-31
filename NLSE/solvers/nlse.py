@@ -3,6 +3,7 @@
 """NLSE Main module."""
 
 import contextlib
+import math
 import warnings
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
@@ -14,7 +15,7 @@ import tqdm
 from scipy import special
 from scipy.constants import c, epsilon_0
 
-from ..backends import Backend, get_backend
+from ..backends import Backend, fastest_backend_supporting, get_backend
 from ..utils import (
     __BACKEND__,
     __CUPY_AVAILABLE__,
@@ -52,30 +53,12 @@ YOSHIDA_WEIGHTS = (
 # phase limits are written per real-space application, so they bind on this.
 YOSHIDA_SPAN = max(abs(w) for w in YOSHIDA_WEIGHTS)
 
-# What the splitting used to be called. "single" and "double" named the number
-# of nonlinear applications per step, which readers took for float width --
-# the more so because the field's dtype really does choose that, separately.
-# With a third scheme there is no "triple", so they are named for what they are.
-LEGACY_SPLITTING = {"single": "lie", "double": "strang"}
+# The compositions of the linear and nonlinear parts this solver knows, named
+# for the schemes themselves. They used to be "single" and "double", which
+# counted nonlinear applications and which readers took for float width -- the
+# more so because the field's dtype really does choose that, separately and at
+# the same time.
 SPLITTINGS = ("lie", "strang", "yoshida")
-
-
-def _splitting_from_legacy(splitting: str, precision: str | None) -> str:
-    """Return the splitting, accepting the old spelling and the old keyword."""
-    if precision is not None:
-        warnings.warn(
-            "out_field(precision=...) is now out_field(splitting=...), with "
-            "'single' and 'double' spelled 'lie' and 'strang'. The old keyword "
-            "still works and will be removed in a future release.",
-            DeprecationWarning,
-            stacklevel=3,
-        )
-        splitting = precision
-    if splitting in LEGACY_SPLITTING:
-        return LEGACY_SPLITTING[splitting]
-    if splitting not in SPLITTINGS:
-        raise ValueError(f"splitting must be one of {SPLITTINGS}, got {splitting!r}")
-    return splitting
 
 
 # Backends that render to a file rather than a window. Calling show() on one
@@ -242,10 +225,10 @@ class NLSE(StepSize):
         self.propagator = None
         self.plans = None
         self.nl_length = self._resolved_nl_length(nl_length)
-        if self.nl_length > 0 and self._backend.convolution is None:
-            raise NotImplementedError(
-                f"Non-local interaction (nl_length > 0) is not supported "
-                f"with the {self._backend.name} backend. Use CPU or CUPY instead."
+        if self.nl_length > 0:
+            self._require_backend(
+                lambda backend: backend.convolution is not None,
+                "a non-local interaction (nl_length > 0)",
             )
         if self.nl_length > 0:
             d = self.nl_length // self.delta_X
@@ -298,7 +281,6 @@ class NLSE(StepSize):
         normalize: bool = True,
         callback: list[Callable] | Callable | None = None,
         callback_args: list[tuple] | tuple = (),
-        precision: str | None = None,
     ) -> np.ndarray:
         """Propagate the field at a distance z.
 
@@ -342,9 +324,6 @@ class NLSE(StepSize):
             field for float64 arithmetic, on a device that supports it. The
             propagator is built to match, because the kernels select their
             precision from the field and then read the propagator with it.
-        precision : str, optional
-            Deprecated spelling of ``splitting``, with "single" for "lie" and
-            "double" for "strang".
         method : str, optional
             Integration method: "split_step" or "RK4".
             Defaults to "split_step".
@@ -370,7 +349,10 @@ class NLSE(StepSize):
         if splitting == "RK4":
             method = "RK4"
             splitting = "lie"
-        splitting = _splitting_from_legacy(splitting, precision)
+        if splitting not in SPLITTINGS:
+            raise ValueError(
+                f"splitting must be one of {SPLITTINGS}, got {splitting!r}"
+            )
 
         assert (
             E_in.shape[self._last_axes[0] :] == self.XX.shape[self._last_axes[0] :]
@@ -575,6 +557,38 @@ class NLSE(StepSize):
         if V_scaled is None:
             return kernels.square_mod_nl_prop(A, dz, alpha_half, g, Isat_conv)
         return kernels.square_mod_nl_prop_v(A, V_scaled, dz, alpha_half, g, Isat_conv)
+
+    def _require_backend(self, supports: Callable, what: str) -> None:
+        """Move to the fastest backend that can serve this run, and say so.
+
+        A backend is a performance choice, not a physics one, so asking for
+        one that cannot run the problem is answered by running the problem
+        rather than by refusing it. Only raises when nothing installed can.
+
+        Parameters
+        ----------
+        supports : Callable
+            Called with a backend; True if it can serve the run.
+        what : str
+            What is being asked for, for the message.
+        """
+        if supports(self._backend):
+            return
+        asked = self._backend.name
+        replacement = fastest_backend_supporting(supports, grid_size=(self.NX, self.NY))
+        if replacement is None:
+            raise NotImplementedError(
+                f"No installed backend supports {what}. The {asked} backend "
+                f"does not, and neither does anything else available here."
+            )
+        warnings.warn(
+            f"The {asked} backend does not support {what}, so this solver "
+            f"will use {replacement.name} instead — the fastest one available "
+            f"that does. Pass backend='{replacement.name}' to choose it "
+            f"yourself and silence this.",
+            stacklevel=3,
+        )
+        self._backend = replacement
 
     def _warn_about_splitting(self, splitting: str, field_dtype: np.dtype) -> None:
         """Say so when the splitting and the float width do not go together.
@@ -2034,6 +2048,22 @@ class NLSE(StepSize):
         # at its own size, so the run lands on z rather than past it.
         whole = z - remainder
         while abs(z_prop) < whole - 1e-12 * z:
+            # Trim the last step to land on z rather than past it. `whole` was
+            # divided into steps before the run, so a callback that *grows*
+            # the step leaves the loop taking one that does not fit: a run
+            # whose step doubled overshot by 10% of the distance, which shows
+            # up as a phase error the size of the extra propagation and not as
+            # anything obviously wrong with the field. A shrinking step
+            # overshoots by at most one small step, which is why this stayed
+            # hidden while the controller only ever shrank.
+            left = whole - abs(z_prop)
+            if not isinstance(delta_z, complex) and abs(delta_z) > left + 1e-12 * z:
+                delta_z = math.copysign(left, delta_z)
+                self._current_delta_z = delta_z
+                if method != "RK4":
+                    self.propagator = self._build_propagator(dtype, delta_z)
+                    self._update_propagator_fft()
+                step_fn = step_factory(delta_z)
             if z_switch is not None and not switched and abs(z_prop) >= z_switch:
                 self._disable_nonlinearity(V, splitting)
                 switched = True

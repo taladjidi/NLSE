@@ -2,7 +2,7 @@ import numpy as np
 from scipy.constants import c, epsilon_0
 
 from .solvers.nlse import NLSE
-from .solvers.step_size import COMPLEX64_OPTIMUM_PHASE
+from .solvers.step_size import COMPLEX64_OPTIMUM_BAND, COMPLEX64_OPTIMUM_PHASE
 
 
 def sample(
@@ -324,17 +324,25 @@ def adapt_delta_z_to_error(
     cap = simu._split_step_max_dz(A)
     # Absolute, not relative to the step in force: a floor recomputed as a
     # fraction of the current step shrinks with it and never binds.
-    if min_step is not None:
-        floor = min_step
-    elif np.dtype(simu._field_dtype(A)) == np.dtype(np.complex64):
-        # There is no accuracy below the optimum in complex64, only more
-        # round-off, so the controller stops there rather than buying error
-        # with time. The cap is pi rad per step, so the optimum is that
-        # fraction of it. An explicit min_step still wins: someone who names
-        # one is overriding this deliberately, often to sample more finely.
-        floor = max(float(simu.L) / 1e5, cap * COMPLEX64_OPTIMUM_PHASE / np.pi)
+    if np.dtype(simu._field_dtype(A)) == np.dtype(np.complex64):
+        # In complex64 the step is held to the band around the optimum. Below
+        # it there is only round-off to gain; above it this controller's own
+        # estimate is round-off too, reads as "no error", and doubles the step
+        # until the answer is unrecognisable. The cap is pi rad per step, so
+        # both bounds are fractions of it and follow a self-focusing beam.
+        optimum = cap * COMPLEX64_OPTIMUM_PHASE / np.pi
+        if min_step is not None and min_step < optimum:
+            raise ValueError(
+                f"min_step={min_step:.3e} is below the {optimum:.3e} at which "
+                f"a complex64 run is most accurate. Smaller steps there cost "
+                f"time and accuracy together, because round-off accumulating "
+                f"over steps grows faster than the splitting error falls. "
+                f"Propagate a complex128 field if you need a finer step."
+            )
+        floor = min_step if min_step is not None else optimum
+        cap = min(cap, optimum * COMPLEX64_OPTIMUM_BAND)
     else:
-        floor = float(simu.L) / 1e5
+        floor = min_step if min_step is not None else float(simu.L) / 1e5
     floor = min(floor, cap)
     if error == 0:
         return float(min(step * bounds[1], cap))

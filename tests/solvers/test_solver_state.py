@@ -453,6 +453,11 @@ class TestDefaultStep:
 
         This is what reading the field buys over the constructor's estimate,
         which had only power over the window area to go on.
+
+        Over a long enough distance that the phase target is what sets the
+        step: DEFAULT_MIN_STEPS also bounds it, and where that binds both
+        fields get the same step for a reason that has nothing to do with
+        either of them.
         """
         broad = make_solver()
         narrow = make_solver()
@@ -462,8 +467,9 @@ class TestDefaultStep:
         E_narrow = np.exp(-(narrow.XX**2 + narrow.YY**2) / (waist / 4) ** 2).astype(
             PRECISION_COMPLEX
         )
-        broad.out_field(E_broad, self.Z, verbose=False, plot=False)
-        narrow.out_field(E_narrow, self.Z, verbose=False, plot=False)
+        far = self.Z * 100
+        broad.out_field(E_broad, far, verbose=False, plot=False)
+        narrow.out_field(E_narrow, far, verbose=False, plot=False)
         assert narrow._current_delta_z < broad._current_delta_z, (
             "a tighter beam of the same power concentrates the intensity and "
             "should shorten the step, but the step did not move"

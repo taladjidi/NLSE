@@ -1,6 +1,7 @@
 """Backend implementations for NLSE solvers."""
 
 import os
+from collections.abc import Callable
 
 from ..utils import say
 from .backend import Backend
@@ -9,7 +10,9 @@ from .cpu import CPUBackend
 __all__ = [
     "Backend",
     "CPUBackend",
+    "backends_by_speed",
     "clear_backend_cache",
+    "fastest_backend_supporting",
     "get_backend",
     "get_optimal_backend",
     "list_available_backends",
@@ -170,3 +173,67 @@ def list_available_backends() -> list[str]:
     if _MLX_AVAILABLE:
         backends.append("MLX")
     return backends
+
+
+def backends_by_speed(grid_size: tuple = (2048, 2048)) -> list[str]:
+    """Return the available backends, fastest first.
+
+    Read from the benchmark cache when there is one, so asking this question
+    is free in the common case. Without a cache the order is the static one
+    ``list_available_backends`` gives, which is not a measurement and does not
+    pretend to be: benchmarking every backend to answer a fallback would cost
+    more than the fallback saves, and the cache fills the first time anything
+    asks for ``backend="auto"``.
+
+    Parameters
+    ----------
+    grid_size : tuple
+        Grid the cached measurement must have been taken at to be used.
+
+    Returns
+    -------
+    list[str]
+        Available backend names, fastest first where that is known.
+    """
+    from .benchmark import load_benchmark_cache
+
+    available = list_available_backends()
+    cache = load_benchmark_cache()
+    if cache is None or tuple(cache.get("grid_size", [])) != tuple(grid_size):
+        return available
+    times = {
+        name: entry.get("time_ms")
+        for name, entry in (cache.get("results") or {}).items()
+        if entry.get("time_ms") is not None
+    }
+    return sorted(
+        available, key=lambda name: (times.get(name) is None, times.get(name, 0.0))
+    )
+
+
+def fastest_backend_supporting(
+    supports: Callable[[Backend], bool], grid_size: tuple = (2048, 2048)
+) -> Backend | None:
+    """Return the fastest available backend that can serve a requirement.
+
+    Parameters
+    ----------
+    supports : Callable
+        Called with each candidate backend; True if it can serve the run.
+    grid_size : tuple
+        Grid size, used to pick the right cached ranking and to build the
+        backend.
+
+    Returns
+    -------
+    Backend or None
+        The fastest backend that passes, or None if none does.
+    """
+    for name in backends_by_speed(grid_size):
+        try:
+            candidate = get_backend(name, grid_size=grid_size)
+        except Exception:  # pragma: no cover - a backend that will not build
+            continue
+        if supports(candidate):
+            return candidate
+    return None

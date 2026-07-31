@@ -407,9 +407,10 @@ def test_a_coupled_batch_keeps_the_components_apart(backend_name, cls, grid):
 
 @pytest.mark.parametrize("backend_name", COUPLED_NO_BATCH)
 @pytest.mark.parametrize("cls,grid", COUPLED, ids=COUPLED_IDS)
-def test_backends_without_coupled_batching_refuse_it(backend_name, cls, grid):
-    """Refusing is the requirement; returning a reshaped array silently is not.
+def test_backends_without_coupled_batching_fall_back(backend_name, cls, grid):
+    """The batch is the run; the backend is how it is run, so the batch wins.
 
+    What must not happen is a reshaped array coming back silently.
     ``CNLSE._no_coupled_batch_backends`` is what keeps the tests above off
     these backends, so it has to match what the solvers do.
     """
@@ -418,10 +419,12 @@ def test_backends_without_coupled_batching_refuse_it(backend_name, cls, grid):
     batched = make_coupled(
         cls, backend_name, N2_VALUES.reshape((COUNT, 1, *(1,) * len(grid)))
     )
-    with pytest.raises(NotImplementedError, match=r"[Bb]roadcasting"):
-        propagate(
+    with pytest.warns(UserWarning, match=r"[Bb]roadcasting"):
+        got = propagate(
             batched, np.broadcast_to(field, (COUNT, 2, *grid)).copy(), "split_step"
         )
+    assert got.shape == (COUNT, 2, *grid)
+    assert batched._backend.name not in CNLSE._no_coupled_batch_backends
 
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
