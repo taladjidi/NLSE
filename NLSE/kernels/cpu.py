@@ -24,6 +24,91 @@ if "pyfftw" in sys.modules and not numba.np.ufunc.parallel._is_initialized:
 numba.get_num_threads()
 
 
+# A sine and cosine the vectorizer can get through.
+#
+# The lossless kernels below rotate each element by an angle, and `np.sin` and
+# `np.cos` lower to a call to ___sincos_stret once per element. An opaque call
+# in the loop body stops LLVM vectorizing it at all, which is why the nonlinear
+# kernels sit near 15% of this machine's bandwidth while every other kernel
+# here reaches 70-100%. Written as arithmetic instead -- Cody-Waite range
+# reduction into [-pi/4, pi/4], then fdlibm's minimax polynomials -- the loop
+# vectorizes and the kernel runs ~1.4x faster, at 1.5 ulp.
+#
+# `reassoc` is deliberately absent from the fast-math set. It is algebraically
+# valid and numerically fatal here: it rewrites `(x - k*P1) - k*P2` into
+# `x - k*(P1+P2)`, collapsing the split into a single rounded pi/2 and
+# reintroducing exactly the cancellation the split exists to avoid. With it on,
+# the error grows with the argument -- 4e-11 by |x| = 1e6 instead of staying at
+# 3e-16. Every kernel that calls _sincos must therefore also carry this set
+# rather than fastmath=True, since numba inlines the body into its caller and
+# the caller's flags are what reach LLVM.
+_SINCOS_FASTMATH = {"nnan", "ninf", "nsz", "arcp", "contract", "afn"}
+
+# pi/2 split into pieces of 24 significant bits, so that k * piece is exact
+# while |k| < 2**29 and the subtractions above cancel without error. Four of
+# them carry 96 bits of pi/2, leaving ~60 after the worst cancellation.
+_TWO_OVER_PI = 6.36619772367581382433e-01
+_PIO2_1 = 1.5707963705062866
+_PIO2_2 = -4.371138828673793e-08
+_PIO2_3 = -1.7151245100058819e-15
+_PIO2_4 = 1.056299898220315e-23
+
+# fdlibm __kernel_sin / __kernel_cos, minimax on |r| <= pi/4.
+_S1 = -1.66666666666666324348e-01
+_S2 = 8.33333333332248946124e-03
+_S3 = -1.98412698298579493134e-04
+_S4 = 2.75573137070700676789e-06
+_S5 = -2.50507602534068634195e-08
+_S6 = 1.58969099521155010221e-10
+_C1 = 4.16666666666666019037e-02
+_C2 = -1.38888888888741095749e-03
+_C3 = 2.48015872894767294178e-05
+_C4 = -2.75573143513906633035e-07
+_C5 = 2.08757232129817482790e-09
+_C6 = -1.13596475577881948265e-11
+
+
+@numba.njit(inline="always", fastmath=_SINCOS_FASTMATH, cache=True)
+def _sincos(x):
+    """Return ``(sin x, cos x)`` without a call the vectorizer cannot cross.
+
+    Accurate to 1.5 ulp for ``|x| < 2**29``, which is far past the point where
+    the argument's own last bit is worth more than the result: by then a 1 ulp
+    change in ``x`` moves the answer by more than 1e-7.
+
+    Parameters
+    ----------
+    x : float
+        Angle in radians.
+
+    Returns
+    -------
+    tuple of float
+        The sine and cosine of ``x``.
+    """
+    k = np.rint(x * _TWO_OVER_PI)
+    r = (((x - k * _PIO2_1) - k * _PIO2_2) - k * _PIO2_3) - k * _PIO2_4
+    j = np.int64(k) & 3
+    z = r * r
+    sin_r = r + (z * r) * (
+        _S1 + z * (_S2 + z * (_S3 + z * (_S4 + z * (_S5 + z * _S6))))
+    )
+    cos_r = (
+        1.0
+        - 0.5 * z
+        + (z * z) * (_C1 + z * (_C2 + z * (_C3 + z * (_C4 + z * (_C5 + z * _C6)))))
+    )
+    # Quadrant: sin and cos swap on odd j, and each changes sign on its own
+    # half of the circle. Written as arithmetic so the loop stays branch-free.
+    swap = np.float64(j & 1)
+    sin_x = sin_r + swap * (cos_r - sin_r)
+    cos_x = cos_r + swap * (sin_r - cos_r)
+    return (
+        sin_x * (1.0 - 2.0 * np.float64((j >> 1) & 1)),
+        cos_x * (1.0 - 2.0 * np.float64(((j + 1) >> 1) & 1)),
+    )
+
+
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
 def _nl_prop(
     A: np.ndarray,
@@ -65,7 +150,7 @@ def _nl_prop(
     return A
 
 
-@numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
+@numba.njit(parallel=True, fastmath=_SINCOS_FASTMATH, cache=True, boundscheck=False)
 def _nl_prop_without_V(
     A: np.ndarray,
     A_sq: np.ndarray,
@@ -96,12 +181,12 @@ def _nl_prop_without_V(
     if alpha == 0:
         # Lossless: the exponent is purely imaginary, so the step is a
         # rotation. exp(0) is exactly 1, so this is the same result computed
-        # with cos and sin instead of a complex exponential.
+        # with sin and cos instead of a complex exponential -- and _sincos
+        # keeps the loop free of the libm call that would stop it vectorizing.
         for i in numba.prange(A_flat.size):
             sat = 1 / (1 + A_sq_flat[i] / Isat)
             theta = dz * g * A_sq_flat[i] * sat
-            c = np.cos(theta)
-            s = np.sin(theta)
+            s, c = _sincos(theta)
             a = A_flat[i]
             A_flat[i] = complex(a.real * c - a.imag * s, a.real * s + a.imag * c)
         return A
@@ -169,7 +254,7 @@ def _nl_prop_c(
     return A1
 
 
-@numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
+@numba.njit(parallel=True, fastmath=_SINCOS_FASTMATH, cache=True, boundscheck=False)
 def _nl_prop_without_V_c(
     A1: np.ndarray,
     A_sq_1: np.ndarray,
@@ -212,8 +297,7 @@ def _nl_prop_without_V_c(
         for i in numba.prange(A1_flat.size):
             sat = 1 / (1 + A_sq_1_flat[i] / Isat1 + A_sq_2_flat[i] / Isat2)
             theta = dz * (g11 * A_sq_1_flat[i] * sat + g12 * A_sq_2_flat[i] * sat)
-            c = np.cos(theta)
-            s = np.sin(theta)
+            s, c = _sincos(theta)
             a = A1_flat[i]
             A1_flat[i] = complex(a.real * c - a.imag * s, a.real * s + a.imag * c)
         return A1
@@ -305,7 +389,7 @@ def square_mod(A: np.ndarray, A_sq: np.ndarray) -> np.ndarray:
     return A_sq
 
 
-@numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
+@numba.njit(parallel=True, fastmath=_SINCOS_FASTMATH, cache=True, boundscheck=False)
 def _square_mod_nl_prop(
     A: np.ndarray,
     dz: float,
@@ -336,8 +420,7 @@ def _square_mod_nl_prop(
             A_sq_val = a.real * a.real + a.imag * a.imag
             sat = 1 / (1 + A_sq_val / Isat)
             theta = dz * g * A_sq_val * sat
-            c = np.cos(theta)
-            s = np.sin(theta)
+            s, c = _sincos(theta)
             A_flat[i] = complex(a.real * c - a.imag * s, a.real * s + a.imag * c)
         return A
     for i in numba.prange(A_flat.size):
