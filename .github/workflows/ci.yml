@@ -175,11 +175,25 @@ jobs:
               run: |
                   pytest tests/ -m benchmark --benchmark-json=benchmark.json || true
 
+            # The key must be unique per run, and the prefix must not be one
+            # another cache in this job also matches.
+            #
+            # actions/cache skips its save step when the primary key hits
+            # exactly, so a fixed key stores once and then never again: every
+            # later run restored the *first* run's numbers, compared against
+            # them, and threw the result away. The baseline was frozen at
+            # whichever run happened to go first, so a cell slower than that
+            # one run alerted on every commit afterwards and could not recover.
+            # A unique key always misses and so always saves; restore-keys
+            # brings back the most recent one, which makes the baseline the
+            # previous commit on main -- what the alert is meant to be about.
             - name: Download previous benchmark data
               uses: actions/cache@v4
               with:
                   path: ./cache
-                  key: ${{ runner.os }}-benchmark
+                  key: ${{ runner.os }}-benchmark-history-${{ github.run_id }}
+                  restore-keys: |
+                      ${{ runner.os }}-benchmark-history-
 
             - name: Store benchmark results
               if: hashFiles('benchmark.json') != ''
