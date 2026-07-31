@@ -121,6 +121,37 @@ what limits it. A size-dependent ceiling was tried and is worse — the probe's
 working set is a third of a step's, so it reports cache rates a step cannot
 reach and the percentages move with the probe instead of the code.
 
+### What is left on macOS
+
+Per-kernel attribution at 2048², against the ceilings above.
+
+| | time | share of step | of its own floor |
+|---|---|---|---|
+| CPU transform pair | 4.04 ms | 60% | 39% |
+| CPU `square_mod_nl_prop` | 1.31 ms | 19% | **at the sincos ceiling** |
+| CPU `apply_propagator` | 0.53 ms | 8% | 77% |
+| MLX transform pair | 1.31 ms | 68% | 58% |
+| MLX elementwise kernels | — | — | 85–94% |
+
+**The nonlinear kernels are finished on both.** The CPU one runs at
+3.2 Gelem/s against a machine ceiling of 3.0 — the polynomial `_sincos` and
+`_exp` took it to the bound, and no further arithmetic trick can help. MLX's
+elementwise kernels sit at 85–94% of bandwidth.
+
+**What is left on both is the transform, and it is not ours.** Two substitutes
+were measured and both are worse: MLX's own CPU device is **11x slower** than
+scipy (57.6 ms against 5.3 ms at 2048²), and pyFFTW was rejected earlier for
+being unvectorized on arm64. Thread count is not it either — `workers=-1` is
+already the best of every setting from 1 to 16 (7.3x scaling on 12P+4E cores).
+The only untried candidate is binding Apple's Accelerate/vDSP, and vDSP wants
+split-complex layout, so the conversion may eat the win. *Challenge this* if
+someone benchmarks vDSP against pocketfft on a 2048² complex64 2D transform
+first — that measurement, not the binding, is the piece of work.
+
+So: **CPU and MLX are both done unless the transform is replaced.** The CPU
+step reads 22–39% of floor only because 60% of it is an FFT we do not control;
+everything we do control is at its ceiling.
+
 ### The NVIDIA box
 
 Same tool, `CPU CUPY`, run 2026-07-31. **The CUDA and OpenCL probes agree to
@@ -422,6 +453,14 @@ entirely gains only ~1.3x on this backend, so the branch the CPU kernels carry
 is not worth adding here.
 
 ## MLX (Metal)
+
+**Rabi scalars computed on the host — deployed.** `cos_val =
+_to_mx(float(mx.cos(...)))` evaluated a single number on the GPU and dragged it
+back, stalling the queue twice per call. `math.cos` instead: **1.60x** on
+`rabi_coupling` at 2048² (1.200 → 0.752 ms, 112 → 178 GB/s) against 12.9%
+noise, at three sites including both fused coupled steps. Only reaches CNLSE
+and DDGPE with `omega` set, so the NLSE guard shows nothing — 0 of 18 cells
+moved.
 
 **One traced closure per physics case, not per signature — deployed**
 (`1ba3adf`). `_make_split_step_coupled` wrote six full bodies for
