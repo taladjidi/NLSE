@@ -158,8 +158,16 @@ def adapt_delta_z(
     delta_z.append(simu._current_delta_z)
     if i % update_every != 0:
         return None
-    A_sq = (A.real * A.real + A.imag * A.imag) * c * epsilon_0 / 2
-    delta_n = np.abs(simu.n2) * A_sq / (1 + A_sq / simu.I_sat)
+    # On the host, for the same reason as the callbacks above: pyopencl's
+    # array has no .max(), and n2 and I_sat are scalars for an ordinary run
+    # but device arrays for a batched one that has already been sent. This is
+    # the last of the built-ins to still take the field as though it were
+    # numpy -- it was the one with tests, and they all run on the CPU.
+    A_host = simu._as_host_array(A)
+    A_sq = (A_host.real * A_host.real + A_host.imag * A_host.imag) * c * epsilon_0 / 2
+    n2 = simu._as_host_array(simu.n2)
+    I_sat = simu._as_host_array(simu.I_sat)
+    delta_n = np.abs(n2) * A_sq / (1 + A_sq / I_sat)
     z_nl = float(1 / (simu.k * delta_n.max()))
     return np.abs(z_nl) / 12
 

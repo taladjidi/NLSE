@@ -18,10 +18,13 @@ the CPU across backends -- a callback that ran but recorded the wrong thing
 would be worse than one that raised.
 """
 
+import warnings
+
 import numpy as np
 import pytest
-from NLSE import NLSE, evaluate_delta_n, norm, sample
+from NLSE import NLSE, adapt_delta_z, evaluate_delta_n, norm, sample
 from NLSE.backends import list_available_backends
+from NLSE.callbacks import adapt_delta_z_to_error
 
 AVAILABLE_BACKENDS = list_available_backends()
 
@@ -129,4 +132,52 @@ def test_a_builtin_callback_records_what_the_cpu_records(backend_name, which):
         rtol=2e-2,
         atol=1e-6,
         err_msg=f"{which} disagrees with the CPU on {backend_name}",
+    )
+
+
+ADAPTIVE = {
+    "adapt_delta_z": (adapt_delta_z, (5, [])),
+    "adapt_delta_z_to_error": (adapt_delta_z_to_error, ()),
+}
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+@pytest.mark.parametrize("which", sorted(ADAPTIVE))
+def test_an_adaptive_callback_drives_a_run_on_this_backend(which, backend_name):
+    """The callbacks that choose the step must also survive a device array.
+
+    These two were left out when the other three were fixed, because unlike
+    them they had tests -- which build the solver with its default backend and
+    so only ever ran on the CPU. ``adapt_delta_z`` reads the peak nonlinear
+    index with ``delta_n.max()``, and pyopencl's array has no ``max``, so it
+    raised AttributeError there and nowhere else.
+
+    Parameters
+    ----------
+    which : str
+        Which adaptive callback to drive the run with.
+    backend_name : str
+        Backend to run on.
+    """
+    simu = NLSE(backend=backend_name, **BASE)
+    field = np.exp(-(simu.XX**2 + simu.YY**2) / WAIST**2).astype(np.complex64)
+    callback, args = ADAPTIVE[which]
+    with warnings.catch_warnings():
+        # The step limiter says so when it lowers the step; that is not what
+        # is under test here.
+        warnings.simplefilter("ignore")
+        out = simu.out_field(
+            field,
+            L,
+            verbose=False,
+            plot=False,
+            delta_z=DELTA_Z,
+            callback=callback,
+            callback_args=args,
+        )
+    recorded = np.asarray(
+        out if isinstance(out, np.ndarray) else simu._backend.to_numpy(out)
+    )
+    assert np.all(np.isfinite(np.abs(recorded))), (
+        f"{which} drove {backend_name} to a non-finite field"
     )
