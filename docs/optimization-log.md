@@ -33,25 +33,32 @@ implementation from a scratch script instead. Stashing has twice stranded the
 change when a following command timed out.
 
 **Know the floor of each tool before trusting a number against it.** Both
-benchmarks compare across processes, and both drift more than the effects they
-are often asked to resolve:
+benchmarks compare across processes, and on a laptop they scatter more than
+many of the effects they are asked about.
 
-- `profile_backends.py --baseline` run with *identical code on both sides*
-  reported 3 of 6 cells more than 10% slower, up to 1.19x, and reproduced the
-  bias on a second run — the working tree is measured first and the baseline
-  second, and something favours the later process. This is not JIT: the tool
-  warms both step counts before timing and the slope cancels constant cost. So
-  it can confirm a large regression, but it cannot resolve a few percent, and a
-  single red cell from it means nothing on its own.
-- `profile_kernels.py` reproduces to 2–5% *within* a process. Between
-  processes it is far worse: the same untouched kernel measured 1.695 ms and
-  1.198 ms in two runs an hour apart, a 40% swing.
+- `profile_backends.py --baseline` used to measure the working tree in its own
+  process and the baseline in a subprocess, each side through to the end before
+  the other began, so process state and drift both landed on one side. With
+  *identical code* on both sides it reported 3 of 6 cells more than 10% slower,
+  up to 1.19x, reproducibly. Fixed: both sides now run in the same kind of
+  subprocess, alternating a round at a time and swapping which goes first, and
+  the table reports per cell how much that cell moved between rounds of the
+  same code. Identical code now gives 0.96-1.02x with nothing flagged, and an
+  injected slowdown is still caught at 1.51x against 11.5% scatter.
+- What the fix removes is the *bias*, not the scatter. Cells still move 3-13%
+  between rounds on this machine, and the table says so on every line. Nothing
+  under a cell's own noise figure is a result, however many times it is rerun.
+- `profile_kernels.py` reproduces to 2-5% *within* a process. Between processes
+  it is far worse: the same untouched kernel measured 1.695 ms and 1.198 ms in
+  two runs an hour apart, a 40% swing.
 
-For anything under ~10%, build both variants in one process and interleave
-them, as `_sincos` above was measured. Where the change is inside a kernel,
-compile a twin that differs *only* in the thing under test — matching the
-fast-math flags too, or the comparison measures the flags rather than the
-change, which cost three misreadings on that one.
+So for anything smaller than the reported noise -- which is most kernel-level
+work -- build both variants in one process and interleave them, as `_sincos`
+above was measured. When the change is inside a kernel, compile a twin that
+differs in *only* the thing under test, **matching the fast-math flags too**.
+Comparing a restricted-fastmath kernel against a `fastmath=True` twin measures
+the flags, not the change: it made an exact polynomial look like it had error
+growing to 3e-8, when against a matched twin it was 3.5e-16 flat.
 
 ## Where the time goes
 
