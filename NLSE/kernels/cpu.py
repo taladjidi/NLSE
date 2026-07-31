@@ -776,6 +776,40 @@ def _pick_field(value, b, batched_ndim):
     return value
 
 
+def _require_contiguous(name, arrays):
+    """Refuse an array these kernels would write to and then discard.
+
+    Every kernel here starts by flattening its arguments, and ``ravel`` views
+    a contiguous array but *copies* a strided one. The loop then writes into
+    that copy, the kernel returns the argument it was handed, and the work is
+    gone -- no error, and an answer that looks like the physics with a term
+    left out. A batched coupled component is exactly that shape, (B, NX) out
+    of (B, 2, NX), and it cost every batched coupled CPU run its whole
+    real-space step until the solver was made to hand over contiguous
+    components.
+
+    Only the arrays written through are checked. The read-only ones may be
+    strided freely: ravel copying them changes nothing.
+
+    Parameters
+    ----------
+    name : str
+        Kernel name, for the message.
+    arrays : sequence
+        The arguments the kernel writes into.
+    """
+    for i, array in enumerate(arrays):
+        if isinstance(array, np.ndarray) and not array.flags.c_contiguous:
+            raise ValueError(
+                f"{name} would write to a non-contiguous array (argument "
+                f"{i}, shape {array.shape}, strides {array.strides}) and the "
+                f"write would be silently dropped: these kernels flatten with "
+                f"ravel, which copies rather than views when the input is "
+                f"strided. Pass np.ascontiguousarray(...) and write the "
+                f"result back."
+            )
+
+
 def _broadcast_batch(*scalar_positions, n_outputs=1):
     """Wrap an njit kernel so broadcast scalar parameters are looped over."""
     positions = frozenset(scalar_positions)
@@ -783,6 +817,7 @@ def _broadcast_batch(*scalar_positions, n_outputs=1):
     def decorator(kernel):
         @functools.wraps(kernel)
         def wrapper(*args):
+            _require_contiguous(kernel.__name__, args[:n_outputs])
             n = _batch_len(args, positions)
             if n == 0:
                 n = _shared_grid_batch_len(args, positions)
@@ -849,6 +884,7 @@ def apply_propagator(A: np.ndarray, propagator: np.ndarray) -> np.ndarray:
             f"field is {A.dtype} and propagator is {propagator.dtype}; "
             f"the kernel reads both as the same width"
         )
+    _require_contiguous("apply_propagator", (A,))
     return _apply_propagator(A, propagator)
 
 
