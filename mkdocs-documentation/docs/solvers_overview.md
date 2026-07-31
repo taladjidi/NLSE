@@ -30,6 +30,112 @@ NLSE (2D base class)
 | `GPE` | 2D | 1 | Atomic (SI) | Yes | No |
 | `DDGPE` | 2D | 2 | Polariton | No | No |
 
+## The equation each solver integrates
+
+`NLSE` itself is the 2D paraxial equation set out in
+[Physics Background](physics_problem.md); the rest specialise or extend it.
+
+### The `NLSE_1d` class
+
+`NLSE_1d` is a 1D specialization of `NLSE` for performance.
+It supports all of the features of the main `NLSE` class.
+
+The propagation equation is:
+
+$$
+i\partial_{z}E = -\frac{1}{2k_0}\partial^2_x E +
+-\frac{k_0}{2}\delta n(r) E - n_2 \frac{k_0}{2n}c\epsilon_0|E|^2E
+$$
+
+### The `NLSE_3d` class
+
+`NLSE_3d` solves the full paraxial propagation equation.
+
+**WARNING:** Since this solves a 3D+1 equation, this is computationally very intensive ! The space complexity scales as $N^3$ if $N$ is the field array size.
+
+The propagation equation is:
+
+$$
+i\partial_{z}E = -\frac{1}{2k_0}\nabla_{\perp}^2 E +
+\frac{D_0}{2}\partial^2_t E
+-\frac{k_0}{2}\delta n(r) E - n_2 \frac{k_0}{2n}c\epsilon_0|E|^2E
+$$
+
+### The `CNLSE` class
+
+The `CNLSE` class is a coupled non-linear Schrödinger equation allowing to solve the following equation:
+
+$$
+\begin{split}
+i\frac{\partial\psi_f}{\partial z} &= -\frac{1}{2k_f}\nabla^2\psi_f -\frac{1}{2}n_2^f k_f c\epsilon_0|\psi_f|^2\psi_f + k_f n_2^{fd}c\epsilon_0|\psi_d|^2\psi_f-\frac{i\alpha_f}{2}\psi_f + \frac{\Omega}{2} \psi_d  \\
+i\frac{\partial\psi_d}{\partial z} &= -\frac{1}{2k_d}\nabla^2\psi_d -\frac{1}{2}n_2^d k_d c\epsilon_0|\psi_d|^2\psi_d + k_d n_2^{fd}c\epsilon_0|\psi_f|^2\psi_d-\frac{i\alpha_d}{2}\psi_d + \frac{\Omega}{2} \psi_f
+\end{split}
+$$
+
+This allows to describe the back reaction of the fluid onto the defect as well as two components scenarii.
+In order to "turn on" different terms, it suffices to set the parameters value to something other than `None`.
+When `None`, the solver does not apply the corresponding evolution term for optimal performance.
+
+### The `CNLSE_1d` class
+
+Similarly to `NLSE_1d`, the `CNLSE_1d` is a 1D specialization of `CNLSE` class.
+
+The propagation equation is:
+
+$$
+\begin{split}
+i\frac{\partial\psi_f}{\partial z} &= -\frac{1}{2k_f}\partial^2_x\psi_f -\frac{1}{2}n_2^f k_f c\epsilon_0|\psi_f|^2\psi_f + k_f n_2^{fd}c\epsilon_0|\psi_d|^2\psi_f-\frac{i\alpha_f}{2}\psi_f + \frac{\Omega}{2} \psi_d  \\
+i\frac{\partial\psi_d}{\partial z} &= -\frac{1}{2k_d}\partial^2_x\psi_d -\frac{1}{2}n_2^d k_d c\epsilon_0|\psi_d|^2\psi_d + k_d n_2^{fd}c\epsilon_0|\psi_f|^2\psi_d-\frac{i\alpha_d}{2}\psi_d + \frac{\Omega}{2} \psi_f
+\end{split}
+$$
+
+### The `GPE` class
+
+The `GPE` class allows to solve the 2D Gross-Pitaevskii equation describing the temporal evolution of a Bosonic field:
+
+$$
+i\partial_{t}\psi = -\frac{1}{2}\nabla^2\psi+V\psi+g|\psi|^2\psi.
+$$
+
+It follows exactly the same conventions as the other classes a part from the fact that since it describes atoms, the units are the "atomic" units (masses in kg, times in s).
+
+### The `DDGPE` class
+
+The DDGPE class allows to solve the temporal evolution of two coupled fields in a driven-dissipative context.
+
+It was designed to study problems like the evolution of exciton polaritons in microcavities.
+
+The equation solved in this context is the following:
+
+$$
+\begin{split}
+i\hbar \partial_t\psi_X(\textbf{r}, t)&=
+(\frac{\hbar^2}{2m_X}\nabla^2 +
+V_X(\textbf{r}) +
+\hbar g_X|\psi_X(\textbf{r}, t)|^2 -
+i\hbar\frac{\Gamma_X}{2})\psi_X(\textbf{r}, t)+
+\hbar\Omega_R\psi_C(\textbf{r}, t) \\
+i\hbar \partial_t \psi_C(\textbf{r}, t)&=
+(\frac{\hbar^2}{2m_C}\nabla^2 +
+V_C(\textbf{r})  -
+i\hbar\frac{\Gamma_C}{2})\psi_C(\textbf{r}, t) +
+\hbar\Omega_R\psi_X(\textbf{r}, t) +
+\hbar F_p(\textbf{r},t)
+\end{split}
+$$
+
+where
+
+- $\psi_X$ is the exciton field
+- $\psi_C$ is the cavity field
+- $V_X$ is the exciton potential
+- $V_C$ is the cavity potential
+- $g_X$ is the exciton interaction energy
+- $\Gamma_X$ is the exciton losses coefficient
+- $\Gamma_C$ is the cavity losses coefficient
+- $\Omega_R$ is the Rabi coupling between excitons and photons
+- $F_p$ is the pumping field impinging on the cavity
+
 ## Common Interface
 
 All solvers are imported from the top-level package:
@@ -125,8 +231,11 @@ has to resolve the length you ask for: below one cell the kernel is a single
 point, which is the identity. The solver warns and propagates locally in that
 case rather than charging you for a convolution that does nothing.
 
-Only CPU and CUPY have the convolution; OpenCL and MLX raise
-`NotImplementedError` for a non-locality they cannot compute.
+Only CPU and CUPY have the convolution. Asking for a non-locality on OpenCL or
+MLX moves the solver to the fastest backend that has one, with a warning saying
+which and why — the backend is how a run goes, the non-locality is what it
+computes, and the physics is not the part to give up. See
+[Backends](backends.md).
 
 #### Complex potentials
 

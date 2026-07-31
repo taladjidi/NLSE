@@ -104,18 +104,27 @@ You can also switch backend after creation:
 simu.backend = "CL"
 ```
 
-## Choosing Precision and Method
+## Choosing a splitting and a method
+
+`splitting` says how the linear and nonlinear parts are composed. It is not the
+floating-point width — that follows the dtype of the field you pass.
 
 ```python
-# Single precision: O(dz) error, 1 FFT pair per step (default)
+# O(dz) error, one transform pair per step (default)
 E_out = simu.out_field(E_in, L, splitting="lie")
 
-# Double precision: O(dz^3) error, 2 FFT pairs per step
+# O(dz^2) error, and still one transform pair: consecutive steps merge
+# their touching half-steps
 E_out = simu.out_field(E_in, L, splitting="strang")
 
-# RK4 method instead of split-step
+# O(dz^4), three transform pairs. Worth it only with a complex128 field
+E_out = simu.out_field(E_in.astype(np.complex128), L, splitting="yoshida")
+
+# RK4 instead of split-step
 E_out = simu.out_field(E_in, L, method="RK4")
 ```
+
+See [Numerical Methods](numerical_methods.md) for which to use when.
 
 ## Adding a Potential
 

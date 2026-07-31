@@ -6,7 +6,7 @@ NLSE supports multiple compute backends to run on different hardware. Each backe
 
 | Backend | Name | Library | Hardware | FFT |
 |---------|------|---------|----------|-----|
-| CPU | `"CPU"` | NumPy + Numba | Any CPU | PyFFTW |
+| CPU | `"CPU"` | NumPy + Numba | Any CPU | `scipy.fft` (pocketfft) |
 | CUPY | `"CUPY"` | CuPy | NVIDIA GPU (CUDA) | cuFFT |
 | OpenCL | `"CL"` | PyOpenCL | Any GPU/CPU with OpenCL | VkFFT |
 | MLX | `"MLX"` | Apple MLX | Apple Silicon | MLX FFT |
@@ -90,9 +90,12 @@ python my_simulation.py
 
 Use grid sizes that are powers of 2 (e.g., 256, 512, 1024, 2048) or have low prime factors. FFT performance drops significantly with large prime factors.
 
-### PyFFTW wisdom caching
+### The CPU transform
 
-The CPU backend uses `FFTW_MEASURE` planning. The first run with a new grid size is slower while FFTW measures optimal FFT plans. Plans are cached in `fft.wisdom` for reuse.
+`scipy.fft` (pocketfft), multithreaded over every core with `workers=-1`. It
+plans per call from a cache of its own, so there is no wisdom file, no warm-up
+run and nothing to invalidate. It replaced PyFFTW, which is faster only where
+FFTW is vectorized and on arm64 no prebuilt build is.
 
 ### CUPY
 
@@ -100,7 +103,10 @@ CuPy achieves best performance through kernel fusion (`cupy.fuse`) which reduces
 
 ### OpenCL
 
-The OpenCL backend uses native C kernels (in `NLSE/kernels/cl_source/kernels.cl`) for maximum performance. These replace PyOpenCL array expressions to avoid implicit kernel launches and temporary buffer allocations. Build options include `-cl-fast-relaxed-math` and `-cl-mad-enable`.
+The OpenCL backend uses native C kernels (in `NLSE/kernels/cl_source/kernels.cl`) for maximum performance. These replace PyOpenCL array expressions to avoid implicit kernel launches and temporary buffer allocations. Built with `-cl-mad-enable` and nothing else: relaxed math lets the compiler
+reassociate, and a kernel that reads a potential and its generated no-V twin
+are not the same expression to reassociate, so a *zero* potential changed the
+result on POCL.
 
 ### MLX
 

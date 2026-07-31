@@ -4,10 +4,11 @@
 
 ## Key Features
 
-- **Multi-backend**: CPU (NumPy/PyFFTW), CUDA (CuPy), OpenCL (PyOpenCL), Apple Silicon (MLX)
+- **Multi-backend**: CPU (NumPy/scipy.fft), CUDA (CuPy), OpenCL (PyOpenCL), Apple Silicon (MLX)
 - **Multiple solvers**: NLSE in 1D/2D/3D, Coupled NLSE, Gross-Pitaevskii, Driven-Dissipative GPE
-- **Two numerical methods**: Split-step Fourier (single/double precision) and RK4
-- **GPU-accelerated**: automatic backend selection and benchmarking
+- **Four integrators**: split-step Fourier with Lie, Strang or Yoshida splitting, and RK4
+- **GPU-accelerated**: automatic backend selection, benchmarking, and a fallback
+  to the fastest backend that can serve a run when the one asked for cannot
 - **Extensible**: callbacks for runtime monitoring and adaptive step sizing
 
 ## Solvers

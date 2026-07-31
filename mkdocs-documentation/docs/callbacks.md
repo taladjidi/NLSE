@@ -158,6 +158,44 @@ def refine_past_halfway(simu, A, z, i, dz_fine):
 `simu._current_delta_z` holds the step in force, for a callback that needs to
 see it.
 
+### `adapt_delta_z_to_error` -- step sizing from a measured error
+
+`adapt_delta_z` reads the step off the peak nonlinear index and divides by
+twelve. That is a *rate*: it says how fast the phase turns and nothing about
+how much of the answer the splitting is losing. This one measures instead —
+every `update_every` steps it takes the same distance once whole and once in
+two halves and compares, then solves for the step that would have hit the
+tolerance.
+
+```python
+from NLSE.callbacks import adapt_delta_z_to_error
+
+steps = []
+E_out = simu.out_field(
+    E_in, L,
+    callback=adapt_delta_z_to_error,
+    callback_args=(1e-6, 20, (0.5, 2.0), 0.9, None, steps),
+)
+```
+
+The arguments are `(tolerance, update_every, bounds, safety, min_step,
+delta_z)`. It costs three extra steps each time it fires, so `update_every`
+trades that overhead against how quickly the step follows the physics.
+
+Two things worth knowing before trusting a tolerance:
+
+- **The step that minimises the error is not the smallest one.** In `complex64`
+  the round-off accumulating over steps eventually grows faster than the
+  splitting error falls, so past some step size a finer one costs time and
+  accuracy together.
+- **The estimate has a floor of its own.** Below that same scale, one step and
+  two halves differ by round-off rather than by splitting error, so a tolerance
+  under the floor reads as "no error at all" and asks for a *bigger* step. The
+  controller is capped by the physics ($\pi$ per step) so this cannot run away,
+  but a tolerance it cannot meet will simply sit at the cap.
+
+Pass `min_step` to stop it shrinking past a step you know is enough.
+
 ## Writing Custom Callbacks
 
 Since the solver instance is passed to the callback, you have access to all solver attributes:

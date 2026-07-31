@@ -21,11 +21,11 @@ pip install -e ".[dev]"
 - **Python**: 3.10 or later
 - **Platforms**: Linux, macOS, Windows
 
-Core dependencies (`numpy`, `scipy`, `matplotlib`, `numba`, `pyfftw`, `tqdm`) are installed automatically.
+Core dependencies (`numpy`, `scipy`, `matplotlib`, `numba`, `tqdm`) are installed automatically.
 
 ## GPU Backends
 
-By default, NLSE uses the CPU backend (NumPy + PyFFTW). For GPU acceleration, install one or more of the following:
+By default, NLSE uses the CPU backend (NumPy + Numba, with `scipy.fft` for the transform). For GPU acceleration, install one or more of the following:
 
 ### CUPY (NVIDIA CUDA)
 
@@ -75,15 +75,17 @@ export NLSE_BACKEND=CPU   # force CPU backend
 
 See the [Backends](backends.md) page for more details.
 
-## PyFFTW Notes
+## The CPU transform
 
-The CPU backend uses [PyFFTW](https://pyfftw.readthedocs.io/en/latest/) for Fast Fourier Transforms. FFT planning uses the `FFTW_MEASURE` flag, which means the first run may be slower while FFTW measures optimal plans. These plans are cached (in `fft.wisdom`) so subsequent runs are faster.
-
-PyFFTW uses all available CPU threads by default. To limit this:
+The CPU backend transforms with `scipy.fft` (pocketfft), which needs no
+planning, no wisdom file and no configuration. It uses every core by default.
+To limit that, cap the thread pool scipy draws on:
 
 ```python
-import pyfftw
-pyfftw.config.NUM_THREADS = 4  # use 4 threads
+import scipy.fft
+
+with scipy.fft.set_workers(4):
+    E_out = simu.out_field(E_in, L)
 ```
 
 ## Running Tests
