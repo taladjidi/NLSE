@@ -507,13 +507,14 @@ branch at runtime:
 | CUPY | **nothing measurable** (0.106 → 0.106 ms at 512²) | 0.7–2.7% |
 | CL | nothing measurable | 1.4–4.7% |
 | CPU | ~9% at 512² | 2.3% |
-| MLX | **~1.5x** | 5–7% |
+| MLX | ~1.5x, **since fixed to ~1.05x** | 5–7% |
 
 The CPU figure is the only one near the original estimate, and it is under the
-10% floor the guard reports against. MLX is the outlier and the reason is in
-*MLX (Metal)*: it cannot branch per element, so it pays for the iteration on
-every step. Anywhere else the solved step is free, which makes the accuracy it
-buys unpriced rather than cheap.
+10% floor the guard reports against. MLX was the outlier for the reason in
+*MLX (Metal)* — it cannot branch per element, and `mx.compile` would not fuse
+the iteration — and a hand-written Metal kernel has since brought it back in
+line with the rest. So the solved step is now free on every backend, which
+makes the accuracy it buys unpriced rather than cheap.
 
 **Where it does not reach.** The identity holds for one decay channel and a real
 potential. An absorbing (complex) potential is a second channel and is still
@@ -824,8 +825,33 @@ synchronization, and the general kernel is correct at any `alpha`.
 be emitted alone, dropping two selects and the frozen arm's exponential. It
 measured **1.54x against 1.51x** on 5-7% noise: nothing. What the solved step
 costs MLX is the iteration itself, not the arm it carries alongside it.
-*Challenge this* with a hand-written Metal kernel, where the iteration would
-not be a chain of graph nodes.
+
+**The solved step as a Metal kernel — deployed** (2026-08-01), which is what
+that rejection said to try next, and it was right. `mx.compile` does **not**
+fuse the iteration: at 512², chained so the queue pipelines, the nonlinear
+kernel costs 10.3 µs lossless, 19.2 µs frozen and **66.8 µs** solved. Cost
+tracks the *number of elementwise ops* rather than the flops in them — one
+pass already costs 2.25x and each further pass adds ~45 µs, which is what ~9
+materialized 1 MB intermediates cost at this machine's bandwidth. Horner form
+and folding the leading multiply recover 11% and 20% of it, so the arithmetic
+is not free either, but neither is the fix.
+
+`mx.fast.metal_kernel` is. The same iteration in registers, with `sincos` as
+one instruction instead of two passes over memory, is **25.1 µs** — and a
+whole split step goes from 1.62x lossless to **1.18x**. End to end against the
+graph version, `--alpha 20`: **0.73x at 512² and 0.68x at 256²**, with the
+lossless guard unmoved (0.92-1.07x, nothing flagged). So the lossy penalty on
+MLX is now within noise of a lossless step, where it was 1.5x.
+
+Three things bound it, all decided on the host, all falling back to the graph:
+a batched or device `alpha`, an absorbing potential (the kernel writes a real
+phase), and `|u|` outside the iteration's range, where the frozen arm applies
+and only the graph has one. `_loss_mode` is where that is decided and the
+compile cache is keyed on it.
+
+It is a sixth copy of one formula, and the test that keeps the other five
+together skips MLX for want of fp64, so `tests/backends/test_mlx.py` scores it
+against the MLX graph in float32 instead.
 
 **What the solved lossy step costs on the M3 Max** (2026-08-01), the question
 left open below. Against `main` at `alpha = 20`, `--alpha 20` on the guard:
