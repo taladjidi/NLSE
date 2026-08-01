@@ -69,7 +69,7 @@ def solver(backend, **kwargs):
         "Isat": 1e30,
         "backend": backend,
     }
-    return NLSE(**{**base, **kwargs}, **{})
+    return NLSE(**{**base, **kwargs})
 
 
 def to_host(simu, array):
