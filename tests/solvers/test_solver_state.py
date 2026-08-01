@@ -12,6 +12,7 @@ from NLSE import CNLSE, DDGPE, GPE, NLSE
 from NLSE.backends import get_backend, list_available_backends
 from NLSE.callbacks import adapt_delta_z
 from NLSE.solvers.nlse import DEFAULT_MIN_STEPS, DEFAULT_PHASE_PER_STEP
+from NLSE.solvers.step_size import RK4_PHASE_PER_STEP
 from scipy.constants import atomic_mass
 
 PRECISION_COMPLEX = np.complex64
@@ -397,6 +398,35 @@ class TestDefaultStep:
         assert used == pytest.approx(expected, rel=1e-6), (
             f"the derived step is {used:.3e} m, but a phase of "
             f"{DEFAULT_PHASE_PER_STEP} rad per step wants {expected:.3e} m"
+        )
+
+    def test_the_rk4_step_hits_its_own_target_phase_per_step(self):
+        """RK4 aims at a tighter phase, and against every rate rather than two.
+
+        The split-step version of this above pinned ``DEFAULT_PHASE_PER_STEP``
+        and left ``RK4_PHASE_PER_STEP`` to a documentation test, which checks
+        that the docs quote the constant rather than that the solver uses it.
+        Loosening it ten-fold changed no numerical test.
+        """
+        simu = make_solver(n2=-1.6e-8)
+        used = self.propagate(simu, method="RK4")
+        rates = simu._energy_rates(
+            simu._prepare_output_array(gaussian_input(), True)[0]
+        )
+        expected = RK4_PHASE_PER_STEP / sum(rates.values())
+        assert used == pytest.approx(expected, rel=1e-6), (
+            f"the derived RK4 step is {used:.3e} m, but a phase of "
+            f"{RK4_PHASE_PER_STEP} rad per step wants {expected:.3e} m"
+        )
+
+    def test_rk4_takes_a_shorter_step_than_the_split_step(self):
+        """The two no longer share a number, and RK4's is the tighter one."""
+        rk4 = self.propagate(make_solver(n2=-1.6e-8), method="RK4")
+        split = self.propagate(make_solver(n2=-1.6e-8))
+        assert rk4 < split, (
+            f"RK4 derived {rk4:.3e} m against the split step's {split:.3e} m, "
+            f"though it aims at {RK4_PHASE_PER_STEP} rad per step against "
+            f"{DEFAULT_PHASE_PER_STEP}"
         )
 
     def test_a_stronger_nonlinearity_gives_a_shorter_step(self):

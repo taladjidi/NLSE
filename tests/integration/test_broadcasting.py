@@ -25,6 +25,10 @@ from NLSE.backends import get_backend, list_available_backends
 PRECISION_COMPLEX = np.complex64
 
 AVAILABLE_BACKENDS = list_available_backends()
+# Non-locality is a convolution, and a backend without one refuses it outright.
+NONLOCAL_BACKENDS = [
+    b for b in AVAILABLE_BACKENDS if get_backend(b).convolution is not None
+]
 
 N = 32
 COUNT = 3
@@ -194,6 +198,58 @@ def test_a_shared_grid_is_not_indexed_past_its_end(backend_name):
             err_msg=(
                 f"{backend_name}: slice {index} differs from slice 0 although "
                 f"every simulation in the batch is identical"
+            ),
+        )
+
+
+@pytest.mark.parametrize("backend_name", NONLOCAL_BACKENDS)
+def test_a_batch_convolves_against_the_shared_kernel(backend_name):
+    """A batched run must reach the non-local kernels too.
+
+    Every case above runs local, and every non-local test fixes a single
+    alpha, so the pair was never run together -- which matters because a
+    non-local step takes a different route: it computes the intensity into an
+    array of its own and calls ``nl_prop``, where a local step calls the fused
+    ``square_mod_nl_prop``. The two bind their batched parameters separately.
+
+    It did not merely go untested. Both convolutions require their arguments
+    to have equal rank even with ``axes`` given, so a batched intensity
+    against a two-dimensional profile raised out of scipy.
+    """
+    _, field = grids(backend_name)
+    nl_length = 4 * WINDOW / N  # a few cells, so the grid resolves it
+    alpha_batched = np.asarray(ALPHA_VALUES).reshape(COUNT, 1, 1)
+
+    batched = NLSE(
+        alpha=alpha_batched,
+        n2=N2_VALUES[0],
+        V=None,
+        backend=backend_name,
+        nl_length=nl_length,
+        **BASE,
+    )
+    got = propagate(batched, np.broadcast_to(field, (COUNT, N, N)), "split_step")
+    assert got.shape == (COUNT, N, N)
+
+    for index in range(COUNT):
+        alone = NLSE(
+            alpha=float(ALPHA_VALUES[index]),
+            n2=N2_VALUES[0],
+            V=None,
+            backend=backend_name,
+            nl_length=nl_length,
+            **BASE,
+        )
+        expected = propagate(alone, field, "split_step")
+        np.testing.assert_allclose(
+            got[index],
+            expected,
+            rtol=1e-4,
+            atol=1e-5 * float(np.max(np.abs(expected))),
+            err_msg=(
+                f"{backend_name}: non-local batch slice {index} "
+                f"(alpha={ALPHA_VALUES[index]:g}) differs from the same "
+                f"simulation run on its own"
             ),
         )
 

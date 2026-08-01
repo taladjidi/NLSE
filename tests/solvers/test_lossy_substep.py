@@ -21,6 +21,7 @@ import pytest
 from helpers import make
 from NLSE import NLSE
 from NLSE.backends import list_available_backends
+from NLSE.kernels.cpu import _LOSS_SOLVED_LIMIT
 
 AVAILABLE_BACKENDS = list_available_backends()
 
@@ -173,3 +174,50 @@ def test_a_step_too_lossy_to_solve_still_decays():
             f"a lossy step with u = {2 * alpha * dz:.3g} returned an amplitude "
             f"of {amplitude}, so the iteration is being used outside its range"
         )
+
+
+@pytest.mark.parametrize("requested", [1e-3, 1e-2, 1.0])
+def test_the_solver_caps_a_step_that_would_leave_the_solved_range(requested):
+    """The caller's step is lowered until ``u = 2*alpha*dz`` is inside it.
+
+    The test above pins the *kernel* fallback, which is the last line of
+    defence and returns a frozen step rather than a wrong one. This pins the
+    ceiling that stops a propagation reaching it at all.
+
+    Scored against the kernel's limit and not against ``LOSS_PER_STEP_LIMIT``
+    itself. Reading the constant under test out of the module makes the
+    assertion move with it -- written that way first, it passed with the
+    ceiling raised ten-fold, which is the whole failure it exists to catch.
+    The kernel's threshold is an independent number and the one that means
+    something: past it the solver is handing the kernel steps it will refuse
+    to solve and silently freeze instead.
+
+    The nonlinearity is made negligible so that the loss ceiling is the one
+    that binds. At the ``n2`` the rest of this file uses, the phase ceiling
+    comes out just below it and sets the step on its own -- so the cap can be
+    raised ten-fold without changing the step, and the test sees nothing.
+    """
+    simu = make(NLSE, "CPU", n=N, alpha=ALPHA, **{**PHYSICS, "n2": -1e-15})
+    simu.out_field(
+        beam().astype(np.complex64),
+        PHYSICS["L"],
+        delta_z=requested,
+        verbose=False,
+        plot=False,
+    )
+    used = simu._current_delta_z
+    u = 2 * ALPHA * used
+    assert u <= _LOSS_SOLVED_LIMIT, (
+        f"asked for delta_z={requested:g} m with alpha={ALPHA}, the solver used "
+        f"{used:.3e} m, which takes out u = {u:.3g} of the intensity per step "
+        f"-- past {_LOSS_SOLVED_LIMIT}, where the kernel stops solving the step"
+    )
+
+
+def test_a_lossless_run_is_not_capped_by_the_loss_ceiling():
+    """The ceiling is infinite without loss, or every run pays for it."""
+    simu = solver(0.0)
+    assert np.isinf(simu._loss_max_dz()), (
+        "a lossless medium reported a finite loss ceiling, which would shorten "
+        "the step of every run that has no loss at all"
+    )

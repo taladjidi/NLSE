@@ -514,6 +514,28 @@ class NLSE(StepSize):
         dz_step = delta_z / 2 if splitting == "strang" else delta_z
         return self._nonlinear_step(A, A_sq, V_scaled, dz_step)
 
+    def _nl_kernel(self, A_sq):
+        """Return the non-local kernel with the rank the intensity has.
+
+        Both convolutions require equal rank of their two arguments even when
+        ``axes`` says which to transform, and a batched run carries leading
+        axes the profile does not. Broadcasting the profile over them is what
+        a shared kernel means: every simulation in the batch convolves with
+        the same one.
+
+        Parameters
+        ----------
+        A_sq : np.ndarray
+            The intensity about to be convolved.
+
+        Returns
+        -------
+        np.ndarray
+            The profile, with leading axes added if the intensity has any.
+        """
+        extra = A_sq.ndim - len(self._last_axes)
+        return self.nl_profile if extra <= 0 else self.nl_profile[(None,) * extra]
+
     def _nonlinear_step(self, A, A_sq, V_scaled, dz):
         """Apply the real-space part of the step: interaction, potential, loss.
 
@@ -549,7 +571,7 @@ class NLSE(StepSize):
             # the kernel that computes it inline cannot be used.
             A_sq = kernels.square_mod(A, A_sq)
             A_sq[:] = self._backend.convolution(
-                A_sq, self.nl_profile, mode="same", axes=self._last_axes
+                A_sq, self._nl_kernel(A_sq), mode="same", axes=self._last_axes
             )
             if V_scaled is None:
                 return kernels.nl_prop_without_V(A, A_sq, dz, alpha_half, g, Isat_conv)
@@ -1834,7 +1856,7 @@ class NLSE(StepSize):
         if self.nl_length > 0:
             A_sq = (A_in * A_in.conj()).real
             A_sq[:] = self._backend.convolution(
-                A_sq, self.nl_profile, mode="same", axes=self._last_axes
+                A_sq, self._nl_kernel(A_sq), mode="same", axes=self._last_axes
             )
             if V is None:
                 k = kernels.rk4_nl_rhs(k, A_in, A_sq, alpha_half, g, Isat_conv)
