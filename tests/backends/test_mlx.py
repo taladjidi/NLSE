@@ -260,7 +260,7 @@ class TestMLXLosslessStep:
     def test_a_host_zero_is_lossless_and_a_device_scalar_is_not(self):
         """Only a value numpy can read decides the branch."""
         import mlx.core as mx
-        from NLSE.kernels.mlx_kernels import _is_lossless
+        from NLSE.kernels.mlx_kernels import _is_lossless, _loss_mode
 
         assert _is_lossless(0.0)
         assert _is_lossless(np.float32(0.0))
@@ -268,6 +268,16 @@ class TestMLXLosslessStep:
         # A device scalar would need a synchronization to read, so it takes
         # the general kernel, which is correct at any alpha.
         assert not _is_lossless(mx.array(0.0))
+
+        # The step length decides the mode as much as alpha does: past the
+        # iteration's range the frozen arm applies and only the graph has it.
+        assert _loss_mode(0.0, 1e-4, -3.2, 1e5) == "lossless"
+        assert _loss_mode(20.0, 1e-4, -3.2, 1e5) == "solved"
+        assert _loss_mode(20.0, 1e-2, -3.2, 1e5) == "general"
+        assert _loss_mode(mx.array(20.0), 1e-4, -3.2, 1e5) == "general"
+        # A batched n2 makes g an array, which reaches a Metal kernel as a
+        # pointer rather than a number.
+        assert _loss_mode(20.0, 1e-4, mx.array([1.0, 2.0]), 1e5) == "general"
 
     @pytest.mark.parametrize("splitting", ["lie", "strang"])
     @pytest.mark.parametrize("with_V", [False, True], ids=["no_V", "V"])
@@ -316,12 +326,12 @@ class TestMLXLosslessStep:
 
         fast = propagate()
         keys = list(mlx_kernels._SPLIT_STEP_CACHE)
-        original = mlx_kernels._is_lossless
+        original = mlx_kernels._loss_mode
         try:  # force the graph that carries the loss arithmetic
-            mlx_kernels._is_lossless = lambda alpha: False
+            mlx_kernels._loss_mode = lambda *a, **k: "general"
             general = propagate()
         finally:
-            mlx_kernels._is_lossless = original
+            mlx_kernels._loss_mode = original
             mlx_kernels._SPLIT_STEP_CACHE.clear()
 
         assert np.array_equal(fast, general), (
@@ -330,6 +340,96 @@ class TestMLXLosslessStep:
         )
         # And it really was the lossless graph: otherwise the test passes by
         # comparing the slow path against itself.
-        assert keys and all(key[-1] is False for key in keys), (
+        assert keys and all(key[-1] == "lossless" for key in keys), (
             f"a lossless run compiled the lossy graph: {keys}"
+        )
+
+
+class TestMLXSolvedStepKernel:
+    """The solved lossy step is a Metal kernel, and a sixth copy of one formula.
+
+    ``test_every_backend_solves_the_step_the_same_way`` is what stops the
+    other five drifting apart, and it skips MLX -- it scores in double
+    precision and MLX has none. So the agreement has to be checked here
+    instead, against the MLX graph that expresses the same iteration, in the
+    only width either of them has.
+    """
+
+    @pytest.mark.parametrize("with_V", [False, True], ids=["no_V", "V"])
+    def test_the_kernel_agrees_with_the_graph_it_replaces(self, with_V):
+        """Written twice, in Metal and in MLX ops, so they must agree.
+
+        To float32 round-off, not to the bit: the kernel evaluates the
+        polynomial in Horner form and keeps everything in registers, so the
+        rounding differs even though the arithmetic does not.
+        """
+        import mlx.core as mx
+        from NLSE.kernels import mlx_kernels
+
+        rng = np.random.default_rng(0)
+        shape = (64, 64)
+        A = mx.array(
+            (rng.normal(size=shape) + 1j * rng.normal(size=shape)).astype(np.complex64)
+        )
+        V = mx.array(rng.normal(size=shape).astype(np.float32)) if with_V else None
+        dz, alpha, g, Isat = (
+            mx.array(x, dtype=mx.float32) for x in (1e-4, 20.0, -3.2, 1e5)
+        )
+
+        kernel = np.asarray(mlx_kernels._apply_lossy(A, dz, alpha, g, Isat, V))
+        A_sq = (A * mx.conj(A)).real
+        graph = np.asarray(A * mlx_kernels._nl_factor(A_sq, dz, alpha, g, Isat, V))
+        relative = np.max(np.abs(kernel - graph)) / np.max(np.abs(graph))
+        assert relative < 1e-6, (
+            f"the Metal kernel and the graph disagree by {relative:.3e}, which "
+            f"is past float32 round-off: they are not the same iteration"
+        )
+
+    def test_a_lossy_run_takes_the_kernel_and_still_decays(self):
+        """The mode has to be reached by a real run, not only by a unit call.
+
+        And loss has to remain loss: the iteration is a contraction only
+        inside its range, and outside it returns a larger field than it was
+        given, so a lossy run whose peak grows is the failure to catch.
+        """
+        from NLSE import NLSE
+        from NLSE.kernels import mlx_kernels
+
+        waist = 2.23e-3
+        simu = NLSE(
+            alpha=20.0,
+            power=1.05,
+            window=4 * waist,
+            n2=-1.6e-9,
+            V=None,
+            L=1e-2,
+            NX=64,
+            NY=64,
+            Isat=1e5,
+            backend="MLX",
+        )
+        field = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(np.complex64)
+        mlx_kernels._SPLIT_STEP_CACHE.clear()
+        out = np.asarray(
+            simu.out_field(
+                field.copy(),
+                20 * 1e-4,
+                delta_z=1e-4,
+                verbose=False,
+                plot=False,
+                normalize=False,
+            )
+        )
+        modes = [key[-1] for key in mlx_kernels._SPLIT_STEP_CACHE]
+        mlx_kernels._SPLIT_STEP_CACHE.clear()
+
+        assert modes == ["solved"], (
+            f"a lossy run at u = {2 * 20.0 * 1e-4:g} compiled {modes}, not the "
+            f"solved kernel it is inside the range for"
+        )
+        assert np.all(np.isfinite(out))
+        # normalize=False, so the output is comparable to the input directly.
+        assert np.max(np.abs(out)) < np.max(np.abs(field)), (
+            f"a lossy run came back with a peak of {np.max(np.abs(out)):.4f} "
+            f"against the {np.max(np.abs(field)):.4f} it started from"
         )

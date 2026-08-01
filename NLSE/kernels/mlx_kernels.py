@@ -125,6 +125,175 @@ def _nl_factor_lossless(A_sq, dz, g, Isat, V=None):
     return mx.exp(dz * arg)
 
 
+# The solved step as one Metal kernel, which is where its cost went. Written
+# out of registers rather than out of MLX ops: mx.compile does not fuse the
+# iteration, so each of its ~9 elementwise ops materialized a full array and
+# went to memory. Measured at 512x512, chained, against the frozen step this
+# replaces: 3.9x for the graph form, 1.4x for this one; over a whole split
+# step, 1.62x against 1.18x. The `sincos` is one instruction here and two
+# passes over memory there.
+_LOSSY_BODY = """
+    uint i = thread_position_in_grid.x;
+    float ar = A[i].real;
+    float ai = A[i].imag;
+    float A_sq = ar * ar + ai * ai;
+    float sat = 1.0f / (1.0f + A_sq / Isat);
+    float u = 2.0f * alpha * dz;
+
+    // The fixed point of _loss_factor in kernels/cpu.py, three passes, in
+    // Horner form. The caller has already checked |u| is inside its range.
+    float P = sat;
+    for (int k = 0; k < 3; ++k) {
+        float Pu = P * u;
+        P = sat * (1.0f - Pu * P * (0.5f + Pu * (1.0f / 3.0f + Pu * 0.25f)));
+    }
+    float decay = sqrt(fmax(1.0f - P * u, 0.0f));
+    float phase = dz * (g * A_sq * P%s);
+    float c;
+    float s = sincos(phase, c);
+    out[i].real = decay * (ar * c - ai * s);
+    out[i].imag = decay * (ar * s + ai * c);
+"""
+
+_LOSSY_KERNELS: dict[bool, object] = {}
+
+
+def _lossy_kernel(has_V):
+    """Return the Metal kernel for the solved step, with or without ``V``.
+
+    Parameters
+    ----------
+    has_V : bool
+        Whether a real potential is added to the phase.
+
+    Returns
+    -------
+    object
+        The compiled ``mx.fast.metal_kernel``.
+    """
+    if has_V not in _LOSSY_KERNELS:
+        _LOSSY_KERNELS[has_V] = mx.fast.metal_kernel(
+            name=f"nlse_lossy_{'V' if has_V else 'noV'}",
+            input_names=["A", "dz", "alpha", "g", "Isat"] + (["V"] if has_V else []),
+            output_names=["out"],
+            source=_LOSSY_BODY % (" + V[i]" if has_V else ""),
+        )
+    return _LOSSY_KERNELS[has_V]
+
+
+def _apply_lossy(A, dz, alpha, g, Isat, V=None):
+    """Apply the solved real-space step to ``A`` in one kernel.
+
+    Returns ``A`` times what ``_nl_factor`` returns, computed without
+    materializing any of the intermediates.
+
+    Parameters
+    ----------
+    A : mx.array
+        The field, contiguous and complex64.
+    dz : mx.array
+        Step length.
+    alpha : mx.array
+        Loss coefficient.
+    g : mx.array
+        Interaction strength.
+    Isat : mx.array
+        Saturation intensity.
+    V : mx.array or None
+        Real scaled potential, if there is one.
+
+    Returns
+    -------
+    mx.array
+        The propagated field.
+    """
+    inputs = [A, dz, alpha, g, Isat] + ([V] if V is not None else [])
+    return _lossy_kernel(V is not None)(
+        inputs=inputs,
+        grid=(A.size, 1, 1),
+        threadgroup=(256, 1, 1),
+        output_shapes=[A.shape],
+        output_dtypes=[A.dtype],
+    )[0]
+
+
+def _host_scalar(value):
+    """Return ``value`` as a float, or None if it is not a host number.
+
+    A device scalar cannot be read without synchronizing, and a batched
+    parameter is an array of its own; either way the decision this feeds
+    cannot be made on the host.
+
+    Parameters
+    ----------
+    value : Any
+        The scalar as the caller passed it.
+
+    Returns
+    -------
+    float or None
+        The value, or None if it has to stay on the device.
+    """
+    if isinstance(value, mx.array):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _loss_mode(alpha, dz, g, Isat, A=None, V=None):
+    """Say which of the three real-space graphs this call should take.
+
+    Only ``"solved"`` is restrictive: it is a Metal kernel, so every scalar
+    has to be a real scalar and every array has to be indexable by one flat
+    id. Everything it turns down falls back to the graph, which is correct
+    for all of it -- just slower.
+
+    Parameters
+    ----------
+    alpha : float or mx.array
+        Loss coefficient.
+    dz : float or mx.array
+        Step length, which sets ``u`` with it.
+    g : float or mx.array
+        Interaction strength; an array where ``n2`` carries a batch axis.
+    Isat : float or mx.array
+        Saturation intensity, batched on the same terms.
+    A : mx.array or None
+        The field, needed only to compare shapes with ``V``.
+    V : mx.array or None
+        Scaled potential, if there is one.
+
+    Returns
+    -------
+    str
+        ``"lossless"``, ``"solved"`` or ``"general"``.
+    """
+    a, d = _host_scalar(alpha), _host_scalar(dz)
+    if a is None or d is None:
+        return "general"
+    if a == 0.0:
+        return "lossless"
+    # A batched parameter reaches a kernel as a pointer, not a number, and
+    # the Metal source multiplies by it. The graph broadcasts it instead.
+    if _host_scalar(g) is None or _host_scalar(Isat) is None:
+        return "general"
+    if V is not None:
+        # The kernel writes a real phase, so an absorbing potential -- whose
+        # imaginary part is a second decay channel -- goes back to the graph.
+        if mx.issubdtype(V.dtype, mx.complexfloating):
+            return "general"
+        # One flat id indexes both, so a potential shared across a batch
+        # would be read past its end. That is the bug the broadcasting tests
+        # exist for; the graph broadcasts it correctly.
+        if A is not None and V.shape != A.shape:
+            return "general"
+    # Outside the iteration's range the frozen step applies, and only the
+    # graph has it. LOSS_PER_STEP_LIMIT keeps a propagation well inside.
+    return "solved" if abs(2 * a * d) <= _LOSS_SOLVED_LIMIT else "general"
+
+
 def _is_lossless(alpha):
     """Say whether ``alpha`` is a host zero, which needs no device read.
 
@@ -467,8 +636,11 @@ def square_mod_nl_prop(
     mx.array
         The propagated field.
     """
-    if _is_lossless(alpha):
+    mode = _loss_mode(alpha, dz, g, Isat, A)
+    if mode == "lossless":
         return _c_square_mod_nl_prop_lossless(A, _to_mx(dz), _to_mx(g), _to_mx(Isat))
+    if mode == "solved":
+        return _apply_lossy(A, _to_mx(dz), _to_mx(alpha), _to_mx(g), _to_mx(Isat))
     return _c_square_mod_nl_prop(A, _to_mx(dz), _to_mx(alpha), _to_mx(g), _to_mx(Isat))
 
 
@@ -502,10 +674,13 @@ def square_mod_nl_prop_v(
     mx.array
         The propagated field.
     """
-    if _is_lossless(alpha):
+    mode = _loss_mode(alpha, dz, g, Isat, A, V)
+    if mode == "lossless":
         return _c_square_mod_nl_prop_v_lossless(
             A, V, _to_mx(dz), _to_mx(g), _to_mx(Isat)
         )
+    if mode == "solved":
+        return _apply_lossy(A, _to_mx(dz), _to_mx(alpha), _to_mx(g), _to_mx(Isat), V)
     return _c_square_mod_nl_prop_v(
         A, V, _to_mx(dz), _to_mx(alpha), _to_mx(g), _to_mx(Isat)
     )
@@ -607,16 +782,26 @@ def linear_step(
 # ── Fused split step (nl_length == 0 only) ───────────────────────────────────
 
 
-def _make_split_step(splitting, has_V, axes, lossy=True):
-    # The factor is chosen when the graph is compiled, not per element, so a
-    # lossless run never traces the iteration at all. Both arms of an
-    # mx.where are evaluated, which is what made a lossless step cost 1.45x.
-    if lossy:
-        factor = _nl_factor
+def _make_split_step(splitting, has_V, axes, mode="general"):
+    # The real-space step is chosen when the graph is compiled, not per
+    # element, because alpha and dz are read on the host. A lossless run never
+    # traces the iteration at all -- both arms of an mx.where are evaluated,
+    # which is what made a lossless step cost 1.45x -- and a solved one goes
+    # to a Metal kernel rather than to ops MLX will not fuse.
+    if mode == "solved":
+
+        def apply_nl(A, dz, alpha, g, Isat, V=None):
+            return _apply_lossy(A, dz, alpha, g, Isat, V)
+    elif mode == "lossless":
+
+        def apply_nl(A, dz, alpha, g, Isat, V=None):
+            A_sq = (A * mx.conj(A)).real
+            return A * _nl_factor_lossless(A_sq, dz, g, Isat, V)
     else:
 
-        def factor(A_sq, dz, alpha, g, Isat, V=None):
-            return _nl_factor_lossless(A_sq, dz, g, Isat, V)
+        def apply_nl(A, dz, alpha, g, Isat, V=None):
+            A_sq = (A * mx.conj(A)).real
+            return A * _nl_factor(A_sq, dz, alpha, g, Isat, V)
 
     if splitting == "lie" and not has_V:
 
@@ -624,8 +809,7 @@ def _make_split_step(splitting, has_V, axes, lossy=True):
             A = mx.fft.fftn(A, axes=axes)
             A = A * propagator
             A = mx.fft.ifftn(A, axes=axes)
-            A_sq = (A * mx.conj(A)).real
-            return A * factor(A_sq, dz, alpha, g, Isat)
+            return apply_nl(A, dz, alpha, g, Isat)
 
     elif splitting == "lie" and has_V:
 
@@ -633,30 +817,25 @@ def _make_split_step(splitting, has_V, axes, lossy=True):
             A = mx.fft.fftn(A, axes=axes)
             A = A * propagator
             A = mx.fft.ifftn(A, axes=axes)
-            A_sq = (A * mx.conj(A)).real
-            return A * factor(A_sq, dz, alpha, g, Isat, V_scaled)
+            return apply_nl(A, dz, alpha, g, Isat, V_scaled)
 
     elif splitting == "strang" and not has_V:
 
         def _pure(A, propagator, dz_half, alpha, g, Isat):
-            A_sq = (A * mx.conj(A)).real
-            A = A * factor(A_sq, dz_half, alpha, g, Isat)
+            A = apply_nl(A, dz_half, alpha, g, Isat)
             A = mx.fft.fftn(A, axes=axes)
             A = A * propagator
             A = mx.fft.ifftn(A, axes=axes)
-            A_sq = (A * mx.conj(A)).real
-            return A * factor(A_sq, dz_half, alpha, g, Isat)
+            return apply_nl(A, dz_half, alpha, g, Isat)
 
-    else:  # double, has_V
+    else:  # strang, has_V
 
         def _pure(A, propagator, V_scaled, dz_half, alpha, g, Isat):
-            A_sq = (A * mx.conj(A)).real
-            A = A * factor(A_sq, dz_half, alpha, g, Isat, V_scaled)
+            A = apply_nl(A, dz_half, alpha, g, Isat, V_scaled)
             A = mx.fft.fftn(A, axes=axes)
             A = A * propagator
             A = mx.fft.ifftn(A, axes=axes)
-            A_sq = (A * mx.conj(A)).real
-            return A * factor(A_sq, dz_half, alpha, g, Isat, V_scaled)
+            return apply_nl(A, dz_half, alpha, g, Isat, V_scaled)
 
     return mx.compile(_pure)
 
@@ -708,12 +887,13 @@ def split_step_fused(
         The propagated field.
     """
     axes = plan
-    # Keyed on the loss as well: lossless compiles to a different graph.
-    lossy = not _is_lossless(alpha)
-    key = (splitting, V_scaled is not None, axes, lossy)
+    # Keyed on the mode as well: each of the three compiles to its own graph,
+    # and the step length decides it as much as alpha does.
+    mode = _loss_mode(alpha, dz, g, Isat, A, V_scaled)
+    key = (splitting, V_scaled is not None, axes, mode)
     if key not in _SPLIT_STEP_CACHE:
         _SPLIT_STEP_CACHE[key] = _make_split_step(
-            splitting, V_scaled is not None, axes, lossy
+            splitting, V_scaled is not None, axes, mode
         )
     fn = _SPLIT_STEP_CACHE[key]
     if V_scaled is not None:
