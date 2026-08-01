@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from NLSE import CNLSE, GPE, NLSE, CNLSE_1d, NLSE_1d
+from NLSE import CNLSE, GPE, NLSE, CNLSE_1d, NLSE_1d, NLSE_3d
 from NLSE.backends import get_backend, list_available_backends
 from scipy.constants import c, epsilon_0
 
@@ -340,3 +340,60 @@ def test_nonlocality():
         assert np.allclose(norm, simu_gpe.N, rtol=1e-3), (
             f"CNLSE : Norm is not conserved ! (Backend {backend})"
         )
+
+
+@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
+def test_a_three_dimensional_run_can_be_non_local(backend):
+    """NLSE_3d has taken an nl_length since it existed and never used one.
+
+    The base builds a transverse kernel and ``NLSE_1d`` narrows it to its own
+    rank; the three-dimensional solver convolves over three axes and inherited
+    the two-dimensional kernel unchanged, so every non-local run raised out of
+    the convolution -- ``in1 and in2 should have the same dimensionality`` --
+    batched or not. Nothing here covered it: this file's cases are all 2D or
+    1D.
+
+    The non-locality is transverse, so the time axis convolves with a delta.
+    That is the modelling choice the fix makes: the index diffuses across the
+    beam, not along the pulse.
+    """
+    simu = NLSE_3d(
+        alpha=0,
+        energy=1e-6,
+        window=(4 * 2.23e-3, 4 * 2.23e-3, 1e-9),
+        n2=-1e-9,
+        D0=1e-27,
+        vg=3e8 / 1.5,
+        V=None,
+        L=2e-4,
+        NX=32,
+        NY=32,
+        NZ=16,
+        Isat=10e4,
+        nl_length=1e-3,
+        backend=backend,
+    )
+    assert simu.nl_length > 0, "the grid dropped the length before anything ran"
+    assert simu.nl_profile.ndim == len(simu._last_axes), (
+        f"the kernel is rank {simu.nl_profile.ndim} against {len(simu._last_axes)} "
+        f"convolved axes, which is what the convolution refuses"
+    )
+    assert simu.nl_profile.shape[-1] == 1, (
+        "the kernel spans more than one sample in time, so the non-locality is "
+        "not the transverse one it is documented to be"
+    )
+    assert float(np.asarray(simu.nl_profile).sum()) == pytest.approx(1.0, rel=1e-5), (
+        "the kernel stopped being normalized, so it changes the intensity it "
+        "is only meant to redistribute"
+    )
+
+    field = np.exp(
+        -(simu.XX**2 + simu.YY**2) / (2.23e-3) ** 2 - simu.TT**2 / (1e-9 / 4) ** 2
+    ).astype(PRECISION_COMPLEX)
+    out = np.asarray(
+        get_backend(backend).to_numpy(
+            simu.out_field(field, 2e-4, verbose=False, plot=False, delta_z=1e-5)
+        )
+    )
+    assert out.shape == field.shape
+    assert np.all(np.isfinite(out)), "the non-local 3D run returned non-finite values"

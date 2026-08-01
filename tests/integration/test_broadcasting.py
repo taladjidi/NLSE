@@ -542,3 +542,52 @@ def test_a_parameter_varying_over_components_is_refused(cls, grid):
     )
     with pytest.raises(ValueError, match="component axis"):
         simu._precompute_step_constants(None, np.complex64)
+
+
+@pytest.mark.parametrize(
+    "backend_name", [b for b in NONLOCAL_BACKENDS if b in COUPLED_BATCH_BACKENDS]
+)
+@pytest.mark.parametrize("cls,grid", COUPLED, ids=COUPLED_IDS)
+def test_a_coupled_batch_convolves_against_the_shared_kernel(backend_name, cls, grid):
+    """The coupled solvers convolve twice a step, once per component.
+
+    Both call sites take the shared kernel, so both need the batch's rank.
+    Covered separately from the scalar case because the coupled intensities
+    are taken out of a field that carries a component axis as well.
+    """
+    nl_length = 4 * WINDOW / N
+    probe = make_coupled(cls, backend_name, N2_VALUES[0])
+    field = coupled_field(probe, cls)
+
+    def build(n2):
+        kwargs = dict(
+            COUPLED_BASE,
+            alpha=0.0,
+            n2=n2,
+            V=None,
+            NX=N,
+            backend=backend_name,
+            nl_length=nl_length,
+        )
+        if cls is CNLSE:
+            kwargs["NY"] = N
+        return cls(**kwargs)
+
+    values = N2_VALUES.reshape((COUNT,) + (1,) * (len(grid) + 1))
+    got = propagate(
+        build(values), np.broadcast_to(field, (COUNT, 2, *grid)), "split_step"
+    )
+    assert got.shape == (COUNT, 2, *grid)
+
+    for index in range(COUNT):
+        expected = propagate(build(float(N2_VALUES[index])), field, "split_step")
+        np.testing.assert_allclose(
+            got[index],
+            expected,
+            rtol=1e-4,
+            atol=1e-5 * float(np.max(np.abs(expected))),
+            err_msg=(
+                f"{backend_name}/{cls.__name__}: non-local coupled batch slice "
+                f"{index} differs from the same simulation run on its own"
+            ),
+        )

@@ -107,6 +107,13 @@ class NLSE_3d(NLSE):
         self.XX, self.YY, self.TT = np.meshgrid(self.X, self.Y, self.T)
         self.Kxx, self.Kyy, self.Omega = np.meshgrid(self.Kx, self.Ky, self.omega)
         self._last_axes = (-3, -2, -1)  # Axes are x, y, t
+        # The base builds a transverse kernel, and 1D narrows it to its own
+        # rank the same way. Here it has to gain an axis rather than lose one:
+        # the non-locality is transverse -- the index diffuses across the beam,
+        # not along the pulse -- so time convolves with a delta. Without this a
+        # non-local 3D run never reached a step: both convolutions require
+        # equal rank, and a 2D kernel against a 3D intensity raised.
+        self.nl_profile = self.nl_profile[..., np.newaxis]
 
         # Override normalization factor for 3D (includes delta_T)
         self._norm_grid_factor = np.float32(self.delta_X * self.delta_Y * self.delta_T)
