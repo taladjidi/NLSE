@@ -57,6 +57,12 @@ many of the effects they are asked about.
 - `profile_kernels.py` reproduces to 2-5% *within* a process. Between processes
   it is far worse: the same untouched kernel measured 1.695 ms and 1.198 ms in
   two runs an hour apart, a 40% swing.
+- **The floor is per cell, not per machine, and the two boxes differ by an
+  order of magnitude.** On the NVIDIA box the CUPY cells scatter 0.2-3.2%
+  between rounds of identical code while its CPU cells scatter 20-36% in the
+  same run — so a CUPY result there resolves a few percent and a CPU result
+  resolves almost nothing. Read the noise column per line before reading the
+  ratio; a 1.21x CPU cell on 32% scatter is not a slower cell.
 
 So for anything smaller than the reported noise -- which is most kernel-level
 work -- build both variants in one process and interleave them, as `_sincos`
@@ -491,6 +497,24 @@ Yoshida (the extra flops in a kernel that is already transcendental-bound), and
 with loss and saves a nonlinear application per step. Against 69x and 7000x in
 accuracy, none of that is a trade.
 
+**Measured again with the interleaved guard** (2026-08-01), `--alpha 20`
+against `--alpha 0` on the same revision, which is what `--alpha` was added to
+`profile_backends.py` for. The +16% does not survive it on the backends that
+branch at runtime:
+
+| backend | cost of the solved step | scatter |
+|---|---|---|
+| CUPY | **nothing measurable** (0.106 → 0.106 ms at 512²) | 0.7–2.7% |
+| CL | nothing measurable | 1.4–4.7% |
+| CPU | ~9% at 512² | 2.3% |
+| MLX | **~1.5x** | 5–7% |
+
+The CPU figure is the only one near the original estimate, and it is under the
+10% floor the guard reports against. MLX is the outlier and the reason is in
+*MLX (Metal)*: it cannot branch per element, so it pays for the iteration on
+every step. Anywhere else the solved step is free, which makes the accuracy it
+buys unpriced rather than cheap.
+
 **Where it does not reach.** The identity holds for one decay channel and a real
 potential. An absorbing (complex) potential is a second channel and is still
 applied frozen, so it still costs the order — and still blocks the Strang merge.
@@ -818,6 +842,12 @@ in the rejection above. Against 69x and 7000x in accuracy it is still not a
 trade, but it is the one backend where the choice is worth making
 deliberately.
 
+The NVIDIA box has since answered the same question for CUPY, and the answer
+is the same as CL's: nothing measurable, 0.106 ms at 512² with and without
+loss, on 0.7% scatter. So MLX is not merely the most expensive backend for the
+solved step — it is the only one that pays at all. See *Solving the lossy
+real-space step* for the four backends side by side.
+
 **Rabi scalars computed on the host — deployed.** `cos_val =
 _to_mx(float(mx.cos(...)))` evaluated a single number on the GPU and dragged it
 back, stalling the queue twice per call. `math.cos` instead: **1.60x** on
@@ -915,6 +945,15 @@ its own noise and claims nothing: at that size the step is launch-bound, which
 is what the CUDA graph already fixed. The isolated linear step — transform,
 multiply, transform — moves 1.19–1.21x at 512²–2048², so the step-level number
 is most of the kernel-level one rather than a fraction of it.
+
+**Confirmed by the other tool** (2026-08-01), by accident: a
+`profile_backends.py --baseline main` run against a *stale* local `main` —
+one that predated the merge — measured the whole merge rather than the branch
+it was pointed at, and returned 0.85x at 512² split_step and 0.89x for RK4
+against 0.9–1.2% scatter. That is 1.18x and 1.12x, which is the table above
+reproduced end to end by an independent tool, and 1.00x at 256², which is the
+launch-bound cell claiming nothing again. Re-run against a current `main` the
+same comparison is 1.00x on every CUPY cell to within 0.7%.
 
 **Four things had to be true, and the fourth is the design.** (1) The callback
 machinery has to be reachable: CuPy's *legacy* callbacks are not, on this

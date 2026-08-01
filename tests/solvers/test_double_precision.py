@@ -217,6 +217,34 @@ def test_the_step_constants_take_the_field_width(backend_name):
             )
 
 
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_a_wider_potential_is_narrowed_to_the_field(backend_name):
+    """A float64 potential on a complex64 field must be cast down.
+
+    The test above builds its potential from ``solver.X``, which is float32,
+    so the product is float32 already and the cast in ``_scale_potential``
+    can be deleted without failing it -- what it pins is the narrowing of the
+    scalar, not the cast. A user computing V from their own ``np.meshgrid``
+    gets float64, and then the cast is the only thing standing between the
+    kernel and half a double per element: NEP 50 keeps the product at float64,
+    and a kernel picked for a complex64 field reads it through a ``float*``.
+    """
+    solver = build(NLSE, backend_name)
+    X, Y = np.meshgrid(
+        np.asarray(solver.X, dtype=np.float64), np.asarray(solver.Y, dtype=np.float64)
+    )
+    V = 1e-4 * np.exp(-(X**2 + Y**2) / (window / 8) ** 2)
+    assert V.dtype == np.float64, "the fixture stopped being the case under test"
+
+    with solver._arrays_on_device(np.complex64):
+        solver._precompute_step_constants(V, np.complex64)
+        got = np.asarray(solver._as_host_array(solver._V_scaled)).dtype
+        assert got == np.float32, (
+            f"{backend_name}: a float64 potential stayed {got} on a complex64 "
+            f"field, so the kernel reads it at the wrong width"
+        )
+
+
 @pytest.mark.parametrize("splitting", ["lie", "strang", "yoshida"])
 def test_a_single_precision_run_with_a_potential_agrees_across_backends(splitting):
     """And the answer, since a width mismatch is not always loud.

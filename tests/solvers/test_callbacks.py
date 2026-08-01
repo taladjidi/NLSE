@@ -181,3 +181,42 @@ def test_an_adaptive_callback_drives_a_run_on_this_backend(which, backend_name):
     assert np.all(np.isfinite(np.abs(recorded))), (
         f"{which} drove {backend_name} to a non-finite field"
     )
+
+
+def test_sample_writes_each_step_to_its_own_slot():
+    """Which slot a sample lands in is the thing ``sample`` is for.
+
+    The tests above pin that it runs and that every backend records the same
+    physics. Neither reads the slot: shifting the destination by one leaves
+    both passing, because every slot is still written and every backend is
+    still shifted the same way. What pins it is the field itself -- a lossy
+    run decays monotonically, so slot k must hold the field at step
+    ``k * save_every`` and nothing else.
+    """
+    simu = NLSE(backend="CPU", **{**BASE, "alpha": 20.0})
+    field = np.exp(-(simu.XX**2 + simu.YY**2) / WAIST**2).astype(np.complex64)
+    buffer = np.zeros((SLOTS, N, N), dtype=np.complex64)
+    simu.out_field(
+        field.copy(),
+        L,
+        verbose=False,
+        plot=False,
+        delta_z=DELTA_Z,
+        callback=sample,
+        callback_args=(SAVE_EVERY, buffer),
+    )
+
+    # The buffer holds a couple of slots more than the run fills, so the
+    # samples must occupy a prefix of it. A shifted destination wraps the
+    # first sample onto the end and leaves a hole at the front.
+    filled = [k for k in range(SLOTS) if np.any(buffer[k])]
+    assert filled == list(range(len(filled))), (
+        f"slots {filled} were written out of a buffer of {SLOTS}, which is not "
+        f"a prefix: the samples do not start where the run does"
+    )
+    # Order, not values: every slot is written whatever the arithmetic does.
+    peaks = [float(np.max(np.abs(buffer[k]))) for k in filled]
+    assert all(np.diff(peaks) < 0), (
+        f"the sampled peaks are {peaks}, which is not the monotonic decay a "
+        f"lossy run makes -- the samples are out of order or off by a slot"
+    )

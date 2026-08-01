@@ -484,10 +484,10 @@ class CNLSE(NLSE):
 
         if self.nl_length > 0:
             A_sq_1 = self._backend.convolution(
-                A_sq_1, self.nl_profile, mode="same", axes=self._last_axes
+                A_sq_1, self._nl_kernel(A_sq_1), mode="same", axes=self._last_axes
             )
             A_sq_2 = self._backend.convolution(
-                A_sq_2, self.nl_profile, mode="same", axes=self._last_axes
+                A_sq_2, self._nl_kernel(A_sq_2), mode="same", axes=self._last_axes
             )
 
         if V is None:
@@ -672,10 +672,10 @@ class CNLSE(NLSE):
         A_sq_1, A_sq_2 = self._take_components(A_sq)
         if self.nl_length > 0:
             A_sq_1 = self._backend.convolution(
-                A_sq_1, self.nl_profile, mode="same", axes=self._last_axes
+                A_sq_1, self._nl_kernel(A_sq_1), mode="same", axes=self._last_axes
             )
             A_sq_2 = self._backend.convolution(
-                A_sq_2, self.nl_profile, mode="same", axes=self._last_axes
+                A_sq_2, self._nl_kernel(A_sq_2), mode="same", axes=self._last_axes
             )
         return A_sq, A_sq_1, A_sq_2
 
