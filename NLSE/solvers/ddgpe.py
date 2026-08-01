@@ -48,7 +48,7 @@ class DDGPE(CNLSE):
     #
     # split_step passes n2 and n12 rather than g and g12: the kernels want the
     # NLSE sign convention, which is what the storage holds.
-    _nonlinearity_attrs = (*CNLSE._nonlinearity_attrs, "g2")
+    _medium_attrs = (*CNLSE._medium_attrs, "g2")
 
     def __init__(
         self,

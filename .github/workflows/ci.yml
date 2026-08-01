@@ -203,22 +203,39 @@ jobs:
                   output-file-path: benchmark.json
                   github-token: ${{ secrets.GITHUB_TOKEN }}
                   auto-push: false
-                  # Alert when a benchmark is 1.4x slower than its baseline.
-                  #
-                  # It was 200%, which is a benchmark taking twice as long --
-                  # loose enough that nothing short of an accident would fire
-                  # it. That was the right threshold for the measurement it
-                  # had: every solver benchmark took ten steps whatever the
-                  # backend, so on MLX 91% of the timing was the once-per-run
-                  # setup rather than the solver. The step counts are
-                  # calibrated per backend now (see BENCH_STEPS), and the
-                  # run-to-run spread measured locally is 2.9% median, 8.5%
-                  # worst. 1.4x leaves room for a shared CI runner being
-                  # noisier than a quiet laptop while still catching anything
-                  # that matters.
+                  # 1.4x, and it is the threshold rather than the number that
+                  # matters here: see comment-on-alert below for why nothing
+                  # is sent when it trips.
                   alert-threshold: "140%"
-                  # Comment on PRs with benchmark comparison
-                  comment-on-alert: true
+                  # No commit comment, and so no mail.
+                  #
+                  # Every alert this has ever raised was runner noise. The
+                  # proof is 22c239d1, which changed mlx_kernels.py, one doc
+                  # and one MLX test -- and MLX is not installed on this
+                  # runner, which builds ".[dev,opencl]". It cannot have moved
+                  # a CPU or CL timing by any amount. It alerted on 38
+                  # benchmarks, ratios 1.41 to 2.31, across both backends: the
+                  # whole run was slow. b600d117 added only test files and
+                  # alerted on one CL micro-kernel at 2.58x, whose standard
+                  # deviation was 33x the previous run's.
+                  #
+                  # That is not a threshold that wants raising. Comparing
+                  # absolute rates between two runs on two different shared
+                  # machines cannot resolve the effects this is asked about,
+                  # and the alerts arrive often enough to be filtered out --
+                  # which is how a real one would be missed too.
+                  #
+                  # What decides whether a change ships is
+                  # benchmarks/profile_backends.py --baseline <rev>, which
+                  # interleaves both revisions in one session and reports, per
+                  # cell, how far that cell moved between rounds of identical
+                  # code. See docs/optimization-log.md, "How to measure".
+                  #
+                  # The numbers are still collected and still charted, and
+                  # summary-always puts each run's table in the job summary,
+                  # where it can be read on purpose rather than pushed.
+                  comment-on-alert: false
+                  summary-always: true
                   # Left false deliberately: a run that fails on runner noise
                   # gets ignored, and then so do the real alerts.
                   fail-on-alert: false

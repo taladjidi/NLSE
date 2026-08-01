@@ -21,7 +21,7 @@ class CNLSE(NLSE):
     # The second component's potential; None until a run scales it.
     _V2_scaled: Any = None
     # Both intra- and inter-component couplings switch off past the medium.
-    _nonlinearity_attrs = (*NLSE._nonlinearity_attrs, "n12", "n22")
+    _medium_attrs = (*NLSE._medium_attrs, "n12", "n22", "alpha2")
 
     def __init__(
         self,

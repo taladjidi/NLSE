@@ -284,3 +284,24 @@ def test_cache_dir_is_outside_the_installed_package(tmp_path, monkeypatch):
 
     monkeypatch.setenv("NLSE_CACHE_DIR", str(tmp_path / "custom"))
     assert get_cache_dir().resolve() == (tmp_path / "custom").resolve()
+
+
+def test_the_package_version_matches_the_project_metadata():
+    """``__version__`` and the build's version have to be the same string.
+
+    They are written in two places and nothing joined them up, so they drifted:
+    release 3.0.0 was tagged and published from a tree whose ``pyproject.toml``
+    and ``__init__.py`` both said ``2.3.0``, and every install from it reported
+    2.3.0. Whichever is bumped, this fails until the other is.
+    """
+    import tomllib
+    from NLSE import __version__
+
+    with open(PROJECT_ROOT / "pyproject.toml", "rb") as handle:
+        declared = tomllib.load(handle)["project"]["version"]
+
+    assert __version__ == declared, (
+        f"NLSE.__version__ is {__version__} and pyproject.toml declares "
+        f"{declared}; an install built from this tree would report the latter "
+        f"while the package says the former"
+    )
