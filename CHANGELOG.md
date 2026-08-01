@@ -48,6 +48,11 @@ test fails if they ever disagree again.
 - **Batched runs work with `nl_length > 0`.** Both convolutions require equal
   rank of their arguments, and a batch carries axes the shared kernel does
   not, so any such run raised out of the convolution.
+- **Absorption stops at the end of the medium.** Leaving `L` used to zero the
+  nonlinear coupling alone, so a beam past the medium stopped self-phase
+  modulating and went on being absorbed by something it was no longer in.
+  `alpha` (and `alpha2`) now stop with `n2`. GPE passes `L=0` and DDGPE sets
+  `L=T`, so neither reaches the cutoff.
 - DDGPE on OpenCL: the laser no longer destroys the cavity field, and
   `add_noise` adds noise.
 - The built-in callbacks (`sample`, `norm`, `evaluate_delta_n`) work on every
