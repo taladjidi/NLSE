@@ -560,6 +560,40 @@ class TestNonlinearityCutoff:
             err_msg="Past-L propagation does not match nonlinear-then-linear",
         )
 
+    @pytest.mark.parametrize("beyond", [1, 2, 5])
+    def test_the_absorption_stops_at_the_medium_as_well(self, beyond):
+        """A beam that has left the medium is not in anything that absorbs.
+
+        The cutoff used to zero the nonlinear coupling alone, so a run past L
+        stopped accruing nonlinear phase and went on losing intensity to a
+        medium it was no longer in -- which also broke the identity relating
+        the two (see tests/physics/test_closed_forms.py).
+
+        Asserted as Beer's law over the medium and nothing after it: a uniform
+        field has no transverse structure, so the linear step past L is the
+        identity and whatever is left has to be exactly exp(-alpha L).
+        """
+        absorbing = make_solver(alpha=20.0, n2=0.0, L=L)
+        field = np.ones((N, N), dtype=PRECISION_COMPLEX)
+        out = as_numpy(
+            absorbing,
+            absorbing.out_field(
+                field.copy(),
+                beyond * L,
+                delta_z=L / 100,
+                verbose=False,
+                plot=False,
+                normalize=False,
+            ),
+        )
+        got = float(np.abs(out[N // 2, N // 2]) ** 2)
+        assert got == pytest.approx(np.exp(-20.0 * L), rel=1e-4), (
+            f"after {beyond}L the intensity is {got:.6f}; the medium is {L} m "
+            f"long, so Beer's law over it leaves {np.exp(-20.0 * L):.6f} and "
+            f"absorbing all the way to {beyond}L would leave "
+            f"{np.exp(-20.0 * beyond * L):.6f}"
+        )
+
     def test_up_to_L_is_unaffected(self):
         """Propagating only up to L must be untouched by the cutoff."""
         E = gaussian_input()

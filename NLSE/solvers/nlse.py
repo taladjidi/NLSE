@@ -1911,10 +1911,15 @@ class NLSE(StepSize):
 
     # The propagation loop, and what it switches off along the way.
     #
-    # _nonlinearity_attrs holds the nonlinear coupling: zeroed once the
-    # propagation leaves the medium, then re-derived by
-    # _precompute_step_constants. Subclasses extend it with their own.
-    _nonlinearity_attrs = ("n2",)
+    # _medium_attrs holds everything the medium provides: zeroed once the
+    # propagation leaves it, then re-derived by _precompute_step_constants.
+    # Subclasses extend it with their own.
+    #
+    # alpha is in it because a beam that has left the medium is not in
+    # anything that absorbs. It used to hold the nonlinear coupling alone, so
+    # a run past L stopped accruing nonlinear phase and went on losing
+    # intensity to a medium it had already left.
+    _medium_attrs = ("n2", "alpha")
 
     # Whether this solver's Lie step is exactly the inside of its Strang step.
     # DDGPE's is not: it drives and it adds noise, so its steps are not a
@@ -2071,7 +2076,7 @@ class NLSE(StepSize):
             and not isinstance(delta_z, complex)
         )
         # Zeroing the nonlinearity mutates self, so restore it afterwards.
-        saved = {attr: getattr(self, attr) for attr in self._nonlinearity_attrs}
+        saved = {attr: getattr(self, attr) for attr in self._medium_attrs}
         try:
             if can_use_fast_loop:
                 # Two segments rather than a mid-loop switch: the constants are
@@ -2084,7 +2089,7 @@ class NLSE(StepSize):
                 self._backend.execute_loop(step, n_steps_nl)
                 state[0] = self._close_strang_bracket(merged, state[0], A_sq, delta_z)
                 if n_steps > n_steps_nl:
-                    self._disable_nonlinearity(V, self._field_dtype(state[0]))
+                    self._leave_medium(V, self._field_dtype(state[0]))
                     state[0] = self._open_strang_bracket(
                         merged, state[0], A_sq, delta_z
                     )
@@ -2168,7 +2173,7 @@ class NLSE(StepSize):
                     self._update_propagator_fft()
                 step_fn = step_factory(delta_z)
             if z_switch is not None and not switched and abs(z_prop) >= z_switch:
-                self._disable_nonlinearity(V, dtype)
+                self._leave_medium(V, dtype)
                 switched = True
             step_fn()
             # Advance before the callbacks, so the position they get is the one
@@ -2250,10 +2255,8 @@ class NLSE(StepSize):
             return n_steps
         return min(n_steps, int(np.ceil(self.L / abs(delta_z))))
 
-    def _disable_nonlinearity(
-        self, V: np.ndarray | None, field_dtype: np.dtype
-    ) -> None:
-        """Zero the nonlinear coupling and re-derive the step constants.
+    def _leave_medium(self, V: np.ndarray | None, field_dtype: np.dtype) -> None:
+        """Zero what the medium provides and re-derive the step constants.
 
         Parameters
         ----------
@@ -2263,7 +2266,7 @@ class NLSE(StepSize):
             Complex dtype of the field, which fixes the width of the constants
             being re-derived.
         """
-        for attr in self._nonlinearity_attrs:
+        for attr in self._medium_attrs:
             setattr(self, attr, 0)
         self._precompute_step_constants(V, field_dtype)
 

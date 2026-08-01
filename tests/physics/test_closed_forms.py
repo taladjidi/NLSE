@@ -215,11 +215,16 @@ def test_the_intensity_follows_beer_law(backend, alpha):
     A uniform field has no transverse structure, so the propagator is the
     identity and this is the loss term alone. It also pins the convention,
     which a factor of two in either direction would otherwise leave open.
+
+    ``L`` covers the whole distance, as everywhere in this file: absorption
+    is a property of the medium and stops at the end of it, so a run that
+    leaves the medium follows Beer's law only as far as ``L``.
     """
-    simu = solver(backend, alpha=alpha, Isat=1e30, NX=64, NY=64)
+    distances = (1e-2, 5e-2)
+    simu = solver(backend, alpha=alpha, Isat=1e30, NX=64, NY=64, L=max(distances))
     field = np.ones((64, 64), dtype=np.complex64)
 
-    for z in (1e-2, 5e-2):
+    for z in distances:
         out = to_host(
             simu,
             simu.out_field(
