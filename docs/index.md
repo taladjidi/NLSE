@@ -108,4 +108,5 @@ contributing
 :caption: Development
 
 optimization-log
+literature-examples
 ```
