@@ -189,17 +189,19 @@ MATHJAX_JS = ROOT / "mkdocs-documentation" / "docs" / "javascripts" / "mathjax.j
 
 
 def mathjax_config() -> tuple[str, str, str]:
-    """Return (processHtmlClass, inlineMath source, displayMath source)."""
+    """Return (ignoreHtmlClass, inlineMath source, displayMath source)."""
     text = MATHJAX_JS.read_text(encoding="utf-8")
-    process = re.search(r'processHtmlClass:\s*"([^"]*)"', text)
+    options = re.search(r"options:\s*\{(.*?)\}", text, re.S)
     inline = re.search(r"inlineMath:\s*\[(.*?)\],\s*\n\s*displayMath", text, re.S)
     display = re.search(r"displayMath:\s*\[(.*?)\],\s*\n\s*processEscapes", text, re.S)
-    assert process and inline and display, (
+    assert options and inline and display, (
         f"could not read the MathJax configuration out of {MATHJAX_JS.name}; "
         f"if its shape changed, this test has to change with it rather than "
         f"quietly stop checking"
     )
-    return process.group(1), inline.group(1), display.group(1)
+    ignore = re.search(r'ignoreHtmlClass:\s*"([^"]*)"', options.group(1))
+    assert ignore, f"no ignoreHtmlClass in {MATHJAX_JS.name}"
+    return ignore.group(1), inline.group(1), display.group(1)
 
 
 def notebook_math(path: Path) -> tuple[int, int]:
@@ -214,22 +216,42 @@ def notebook_math(path: Path) -> tuple[int, int]:
     return display, inline
 
 
+def test_the_ignore_pattern_is_not_a_catch_all():
+    """``ignoreHtmlClass`` must not match every element, or nesting kills it.
+
+    MathJax re-evaluates the flag at each element::
+
+        ignore = (ignore || ignoreHtmlClass.test(class)) && !processHtmlClass.test(class)
+
+    so a pattern matching everything -- ``".*|"``, the recipe for a site whose
+    maths is only ever arithmatex spans -- revokes any exemption one level
+    below where it was granted. Only an element whose *own* text is the maths
+    can then be processed, and nbconvert nests the tutorial's four divs deep.
+
+    This is the assertion the first fix needed and did not have: naming the
+    notebook's class in processHtmlClass passed a test while the page stayed
+    exactly as broken.
+    """
+    ignore, _, _ = mathjax_config()
+    pattern = re.compile(r"(?:^| )(?:" + ignore + r")(?: |$)")
+    assert not pattern.search(""), (
+        f"ignoreHtmlClass={ignore!r} matches an element with no class at all, "
+        f"so it matches every element, so nothing nested inside a processed "
+        f"container is ever reached. The built site is checked properly by "
+        f"mkdocs-documentation/checks/check_rendered_maths.py"
+    )
+
+
 @pytest.mark.parametrize(
     "path", NOTEBOOKS, ids=lambda p: p.name if hasattr(p, "name") else str(p)
 )
 def test_notebook_maths_is_configured_to_render(path):
-    """Notebook maths is $...$ in jp-MarkdownCell; both have to be accepted."""
+    """Notebook maths stays as $...$, so those delimiters must be live."""
     display, inline = notebook_math(path)
     if not (display or inline):
         pytest.skip("no maths in this notebook's markdown cells")
 
-    process, inline_delims, display_delims = mathjax_config()
-    assert "jp-MarkdownCell" in process, (
-        f"{path.name} has {display} display and {inline} inline formulas, and "
-        f'mkdocs-jupyter renders them inside class="jp-MarkdownCell", which '
-        f"processHtmlClass ({process!r}) does not cover: MathJax will walk "
-        f"straight past them and the page will show the LaTeX source"
-    )
+    _, inline_delims, display_delims = mathjax_config()
     if display:
         assert '"$$", "$$"' in display_delims.replace("'", '"'), (
             f"{path.name} has {display} $$...$$ formulas and displayMath does "
@@ -243,13 +265,31 @@ def test_notebook_maths_is_configured_to_render(path):
 
 
 def test_markdown_maths_is_configured_to_render():
-    """Arithmatex rewrites .md maths and tags it; both have to be accepted."""
-    process, inline_delims, _ = mathjax_config()
-    assert "arithmatex" in process, (
-        f"processHtmlClass ({process!r}) does not cover arithmatex, which is "
-        f"the class pymdownx.arithmatex wraps every .md formula in"
-    )
+    r"""Arithmatex rewrites .md maths to \(...\), which must be accepted."""
+    _, inline_delims, _ = mathjax_config()
     assert "\\\\(" in inline_delims, (
         f"inlineMath ({inline_delims.strip()!r}) does not list the \\(...\\) "
         f"delimiters arithmatex rewrites $...$ into"
     )
+
+
+@pytest.mark.parametrize(
+    "path", NOTEBOOKS, ids=lambda p: p.name if hasattr(p, "name") else str(p)
+)
+def test_notebook_images_exist(path):
+    """A notebook's images have to be files, or the page shows a broken icon.
+
+    ``mkdocs build --strict`` fails on a broken *link* and says nothing about
+    an ``<img>`` inside rendered notebook HTML, so the tutorial asked for
+    assets/equations.png and assets/tur.png -- neither of which has ever
+    existed in this repository -- and every build passed. The 404s only showed
+    up in the server log of someone who happened to be looking.
+    """
+    referenced = [
+        target
+        for source in notebook_sources(path)
+        for target in re.findall(r"!\[[^\]]*\]\(([^)]+)\)", source)
+        if not target.startswith(("http://", "https://", "data:"))
+    ]
+    missing = [t for t in referenced if not (path.parent / t).exists()]
+    assert not missing, f"{path.name} references images that do not exist: {missing}"

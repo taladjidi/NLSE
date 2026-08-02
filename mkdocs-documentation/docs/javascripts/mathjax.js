@@ -1,23 +1,37 @@
-// Two kinds of page reach MathJax here, and they arrive in different shapes.
+// Two renderers feed this site and they hand MathJax different things.
 //
-// The .md pages go through pymdownx.arithmatex, which rewrites $...$ into
-// \(...\) and wraps the result in class="arithmatex". That is what the
-// ignore/process pair below is for: ignore the whole document, process that
-// class, and nothing in a code block is ever mistaken for maths.
+// A .md page goes through pymdownx.arithmatex, which rewrites $...$ into
+// \(...\) and wraps the result in <span class="arithmatex">, with the maths
+// as that span's own text. nlse_tutorial.ipynb does not: mkdocs-jupyter
+// renders it with nbconvert, outside the mkdocs markdown pipeline, so the
+// maths arrives as literal $...$ nested several divs deep:
 //
-// nlse_tutorial.ipynb does not. mkdocs-jupyter renders it with nbconvert,
-// which is not the mkdocs markdown pipeline, so arithmatex never sees it: the
-// maths lands in the page as literal $...$ and $$...$$ inside
-// class="jp-MarkdownCell". Against the old configuration that failed twice
-// over -- the class was not processed and the delimiters were not recognised
-// -- so every formula in the tutorial was served as its own source, 6 display
-// and 22 inline.
+//     div.jp-Cell.jp-MarkdownCell
+//       div.jp-Cell-inputWrapper
+//         div.jp-InputArea
+//           div.jp-RenderedMarkdown
+//             p        <- the maths is here
 //
-// So: process that class as well, and accept the dollar delimiters. The
-// delimiters are safe to add because they are only ever looked for inside the
-// two processed classes. Notebook *code* cells are jp-CodeCell, a sibling
-// rather than a child, so a shell prompt or a format string in the tutorial
-// is still left alone.
+// That nesting is why `ignoreHtmlClass: ".*|"` cannot be used, and it is a
+// sharper trap than it looks. MathJax re-evaluates the flag at every element:
+//
+//     ignore = (ignore || ignoreHtmlClass.test(class)) && !processHtmlClass.test(class)
+//
+// With ".*|" the ignore pattern matches every element including classless
+// ones, so an exemption granted on an ancestor is revoked by the very next
+// div below it. Naming jp-MarkdownCell in processHtmlClass therefore changed
+// nothing: the exemption died one level down, four levels above the <p>.
+// Only an element whose *own* text is the maths can be exempted that way,
+// which is exactly what an arithmatex span is and what nbconvert never emits.
+//
+// So the catch-all goes. What actually keeps $ in code from being read as
+// maths is skipHtmlTags, which already covers pre, code, script, style and
+// textarea by default and needs no help. That leaves notebook code cells,
+// whose outputs are not always inside those tags -- hence jp-CodeCell.
+//
+// tests/test_docs.py pins the delimiters and refuses a catch-all ignore
+// pattern; the docs CI job walks the built HTML the same way MathJax does and
+// checks that every formula comes out processed.
 window.MathJax = {
   tex: {
     inlineMath: [
@@ -32,8 +46,8 @@ window.MathJax = {
     processEnvironments: true,
   },
   options: {
-    ignoreHtmlClass: ".*|",
-    processHtmlClass: "arithmatex|jp-MarkdownCell",
+    ignoreHtmlClass: "jp-CodeCell",
+    processHtmlClass: "arithmatex",
   },
 };
 
