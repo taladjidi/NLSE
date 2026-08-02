@@ -21,6 +21,9 @@ build/*
 NLSE.egg-info/*
 img/inheritance_graph.svg
 mkdocs-documentation/site/
+# mkdocs-jupyter caches the rendered notebook under a content hash, so a
+# tracked copy is renamed on every docs build and shows up in every diff.
+mkdocs-documentation/.cache/
 examples/output/
 
 
