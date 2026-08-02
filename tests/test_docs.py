@@ -62,7 +62,7 @@ SMALLER = [
 
 def blocks(path):
     """Return the python code blocks in a markdown file."""
-    return re.findall(r"```python\n(.*?)```", path.read_text(), re.S)
+    return re.findall(r"```python\n(.*?)```", path.read_text(encoding="utf-8"), re.S)
 
 
 def notebook_sources(path):
@@ -72,7 +72,7 @@ def notebook_sources(path):
     signature that no longer exists misleads exactly as much as a code cell
     that no longer runs.
     """
-    cells = json.loads(path.read_text()).get("cells", [])
+    cells = json.loads(path.read_text(encoding="utf-8")).get("cells", [])
     out = []
     for cell in cells:
         src = cell.get("source")
@@ -143,7 +143,7 @@ def test_the_migration_guide_shows_the_api_it_migrates_from():
     defensible while it actually shows them, so this asserts the same patterns
     the other pages are forbidden.
     """
-    text = MIGRATION_GUIDE.read_text()
+    text = MIGRATION_GUIDE.read_text(encoding="utf-8")
     unmentioned = [
         why for pattern, why in REMOVED_API.items() if re.search(pattern, text) is None
     ]

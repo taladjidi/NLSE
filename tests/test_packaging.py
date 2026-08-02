@@ -39,7 +39,7 @@ def _cause_hint() -> str:
     return "\n\nNo stale build directory found; check the packaging config."
 
 
-# Kernel templates read at runtime via Path(__file__).parent / ... .read_text().
+# Kernel templates read at runtime via Path(__file__).parent / ... .read_text(encoding="utf-8").
 # Every one of these must survive packaging or the matching backend dies with
 # FileNotFoundError on a non-editable install.
 REQUIRED_DATA_FILES = [

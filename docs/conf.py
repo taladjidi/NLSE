@@ -25,7 +25,8 @@ copyright = "2026, Tangui Aladjidi"
 # Read from the package rather than repeating it. tests/test_packaging.py
 # holds __init__.py and pyproject.toml to the same string.
 _version = re.search(
-    r'__version__\s*=\s*"([^"]+)"', (ROOT / "NLSE" / "__init__.py").read_text()
+    r'__version__\s*=\s*"([^"]+)"',
+    (ROOT / "NLSE" / "__init__.py").read_text(encoding="utf-8"),
 )
 release = version = _version.group(1) if _version else "unknown"
 

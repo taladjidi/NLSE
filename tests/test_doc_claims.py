@@ -51,7 +51,7 @@ def test_imported_symbols_exist(page):
     """`from NLSE import X` in a doc must be an X that exists."""
     import NLSE as package
 
-    text = page.read_text()
+    text = page.read_text(encoding="utf-8")
     missing = []
     for group in re.findall(r"from NLSE import ([\w, ]+)", text):
         for symbol in (s.strip() for s in group.split(",")):
@@ -70,7 +70,7 @@ def test_out_field_keywords_exist(page):
     if page.name == "migration.md":
         pytest.skip("shows removed keywords on purpose; see the test below")
     allowed = set(inspect.signature(NLSE.out_field).parameters)
-    text = page.read_text()
+    text = page.read_text(encoding="utf-8")
     bad = {
         kw
         for call in re.findall(r"out_field\((.*?)\)", text, re.S)
@@ -83,7 +83,7 @@ def test_out_field_keywords_exist(page):
 @pytest.mark.parametrize("page", PAGES, ids=IDS)
 def test_named_splittings_and_methods_are_real(page):
     """The names that select a scheme are the ones the solver accepts."""
-    text = page.read_text()
+    text = page.read_text(encoding="utf-8")
     bad_split = set(re.findall(r'splitting="(\w+)"', text)) - set(SPLITTINGS)
     bad_method = set(re.findall(r'method="(\w+)"', text)) - METHODS
     assert not bad_split, (
@@ -102,14 +102,14 @@ def test_named_backends_are_real(page):
     """
     if page.name == "migration.md":
         pytest.skip("names dead backends on purpose; see the test below")
-    text = page.read_text()
+    text = page.read_text(encoding="utf-8")
     bad = set(re.findall(r'backend="(\w+)"', text)) - BACKEND_NAMES - {"auto"}
     assert not bad, f"{page.name} names backends {sorted(bad)}"
 
 
 def test_the_migration_guide_shows_a_removed_out_field_keyword():
     """And shows what to write instead, or it is a list of complaints."""
-    text = (ROOT / "docs" / "migration.md").read_text()
+    text = (ROOT / "docs" / "migration.md").read_text(encoding="utf-8")
     allowed = set(inspect.signature(NLSE.out_field).parameters)
     shown = {
         kw
@@ -128,7 +128,7 @@ def test_the_migration_guide_shows_a_removed_out_field_keyword():
 
 def test_the_migration_guide_maps_dead_backends_to_live_ones():
     """Every dead backend it names must appear beside a real one."""
-    text = (ROOT / "docs" / "migration.md").read_text()
+    text = (ROOT / "docs" / "migration.md").read_text(encoding="utf-8")
     named = set(re.findall(r'backend="(\w+)"', text))
     dead = named - BACKEND_NAMES - {"auto"}
     assert dead, (
@@ -149,7 +149,7 @@ def test_quoted_constants_match_the_code(page):
         "RK4_PHASE_PER_STEP": RK4_PHASE_PER_STEP,
         "DEFAULT_MIN_STEPS": DEFAULT_MIN_STEPS,
     }
-    text = page.read_text()
+    text = page.read_text(encoding="utf-8")
     wrong = []
     for name, value in facts.items():
         # The number on the same line as the name, if there is one.
@@ -162,7 +162,7 @@ def test_quoted_constants_match_the_code(page):
 
 def test_the_capability_table_matches_the_backends():
     """backends.md's table is the thing readers plan around."""
-    table = (ROOT / "docs" / "backends.md").read_text()
+    table = (ROOT / "docs" / "backends.md").read_text(encoding="utf-8")
     rows = {
         m.group(1).strip(): [c.strip() for c in m.group(2).split("|")]
         for m in re.finditer(r"^\| ([^|]+?) \|([^\n]+)\|$", table, re.M)
@@ -190,7 +190,7 @@ def test_the_capability_table_matches_the_backends():
 
 def test_every_backend_is_claimed_to_broadcast():
     """It does, on all four, and the table said otherwise for three of them."""
-    table = (ROOT / "docs" / "backends.md").read_text()
+    table = (ROOT / "docs" / "backends.md").read_text(encoding="utf-8")
     row = re.search(r"^\| Broadcasting \|([^\n]+)\|$", table, re.M)
     assert row, "no Broadcasting row in the capability table"
     cells = [c.strip().lower() for c in row.group(1).split("|") if c.strip()]
@@ -215,7 +215,7 @@ def test_the_documented_version_is_the_real_one():
     }
     wrong = []
     for name, path in pages.items():
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         # Any x.y.z in the prose that is not the current version and not the
         # previous release being migrated from.
         for quoted in set(re.findall(r"\b(\d+\.\d+\.\d+)\b", text)):

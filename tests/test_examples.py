@@ -38,7 +38,7 @@ def test_there_are_scripts_to_check():
 @pytest.mark.parametrize("script", SCRIPTS, ids=lambda p: p.name)
 def test_output_goes_through_output_path(script):
     """A literal filename is written to the caller's working directory."""
-    tree = ast.parse(script.read_text(), filename=str(script))
+    tree = ast.parse(script.read_text(encoding="utf-8"), filename=str(script))
     offenders = [
         f"{script.name}:{line} {func}({ast.unparse(arg)})"
         for line, func, arg in writes_in_module(tree)
@@ -52,7 +52,7 @@ def test_output_goes_through_output_path(script):
 @pytest.mark.parametrize("script", SCRIPTS, ids=lambda p: p.name)
 def test_a_script_that_writes_imports_the_helper(script):
     """And it must be that helper, not a local of the same name."""
-    source = script.read_text()
+    source = script.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(script))
     if not writes_in_module(tree):
         pytest.skip("writes nothing")
@@ -86,7 +86,7 @@ def gallery_links() -> list[str]:
         set(
             re.findall(
                 r"/tree/main/((?:examples|docs)/\S+?\.(?:py|ipynb))",
-                GALLERY.read_text(),
+                GALLERY.read_text(encoding="utf-8"),
             )
         )
     )
