@@ -5,9 +5,16 @@ The gallery shows what the solvers *do*. It does not yet show what they are
 fluids of light. This is the plan for closing that, one example per result,
 each one a page in the gallery with the figure the script drew.
 
-Nothing here is implemented. It is written down because the parameter regimes
-are the hard part and they are not guessable — see *What went wrong on the
-first attempt* at the end, which is a worked example of exactly that.
+Nothing here is implemented, and none of it should be written from scratch.
+There are already scripts for several of these outside the repository, and the
+parameters are in the papers; both are better starting points than anything
+reconstructed from the physics. *What went wrong on the first attempt*, at the
+end, is what reconstructing it costs.
+
+The **dimensionless form of the equation** — which is how these problems are
+posed in the group, and the natural way to write an example that is about a
+regime rather than about one vapour cell — is set out in the Jones-Roberts
+soliton paper below.
 
 The framework these all sit in is the review, [Paraxial fluids of
 light](https://arxiv.org/abs/2504.06262) (Glorieux, Piekarski, Schibler,
@@ -20,10 +27,12 @@ A gallery example is executed when the documentation builds, so it has to be
 worth seconds rather than minutes. Two relations make that predictable rather
 than a matter of trying:
 
-- **Steps ≈ healing times × 10.** The solver aims at 0.1 rad of nonlinear
-  phase per step, and one healing time $\xi/c_s$ *is* one radian of it, because
-  $\xi/c_s \cdot k\Delta n = \Delta n/c_s^2 = 1$. So a run of 20 healing times
-  is about 200 steps whatever the medium — the two scales are the same number.
+- **Steps ≈ 10 × $L/z_{nl}$.** The nonlinear length $z_{nl} = 1/(k\Delta n)$ is
+  by definition one radian of nonlinear phase, and it is the same quantity as
+  $\xi/c_s$, since $\xi = 1/(kc_s)$ and $c_s^2 = \Delta n$. The solver aims at
+  0.1 rad per step, so a run of 20 $z_{nl}$ is about 200 steps whatever the
+  medium — the two scales are the same number, which is what makes the cost of
+  one of these examples answerable before it is written.
 - **The window has to hold the wake.** These are periodic grids. A wake that
   wraps round and re-enters the obstacle is not the physics being modelled,
   and it is what turned a first attempt into noise.
@@ -116,10 +125,11 @@ mistakes are not specific to that example.
    which seeds vortices along the whole seam: 85 000 phase singularities on a
    512² grid, none of them physical. $k_x$ has to be $2\pi m / W$.
 3. **The propagation was ~30× too long**, from sizing $z$ against the window
-   rather than against $\xi/c_s$. See the budget above.
+   rather than against $z_{nl}$. See the budget above.
 
 With 1 and 2 fixed the obstacle behaves — the density at its centre falls to
 0.006 of the mean at Mach 0.3 and fills back to 0.52 at Mach 2.0 — but no
 clean shedding appeared: too short and nothing sheds, longer and the whole box
-goes turbulent. That is where a dedicated session starts, and with the real
-experimental parameters rather than reverse-engineered ones.
+goes turbulent. That is where a dedicated session starts: from the existing
+scripts and the published parameters, in the dimensionless variables, rather
+than from reverse-engineered ones.
