@@ -1,3 +1,10 @@
+"""
+A Gaussian beam in a Kerr medium
+================================
+
+The 2D solver on its own: a beam propagating through a saturable, lossy nonlinear medium.
+"""
+
 import numpy as np
 from NLSE import NLSE
 

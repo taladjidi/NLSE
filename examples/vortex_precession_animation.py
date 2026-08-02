@@ -1,4 +1,8 @@
-"""Animate a vortex pair precessing around each other.
+"""
+A precessing vortex pair, animated
+==================================
+
+Animate a vortex pair precessing around each other.
 
 One grid, sampled as it propagates. See vortex_precession_benchmark.py for
 the timings across grid sizes.

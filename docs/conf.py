@@ -43,7 +43,34 @@ extensions = [
     # with no stylesheet, no MathJax and no figures.
     "sphinx.ext.githubpages",
     "sphinx_copybutton",
+    "sphinx_gallery.gen_gallery",
 ]
+
+# The gallery runs every example when the docs are built and keeps the figures
+# it produced, so the picture on the page is the one that script makes today
+# rather than one committed months ago. Two are left out of the *execution* by
+# filename_pattern: they are benchmark sweeps that take minutes, and timing
+# them on a shared runner would mean nothing anyway. They still appear, with
+# their source, under a default thumbnail.
+sphinx_gallery_conf = {
+    "examples_dirs": "../examples",
+    "gallery_dirs": "auto_examples",
+    # Executed unless named here. Two are benchmark sweeps that take minutes,
+    # and two call sys.exit() when what they need is absent -- CuPy for one,
+    # data from a run of the benchmark for the other. sphinx-gallery lets
+    # SystemExit propagate, so an example that exits takes the whole build
+    # down with it, silently and with a zero status.
+    "filename_pattern": (
+        r"^(?!.*(benchmarks|vortex_precession_benchmark|juliaGPE_vs_NLSE"
+        r"|profile_cupy)).*$"
+    ),
+    "ignore_pattern": r"_output\.py",
+    "within_subsection_order": "FileNameSortKey",
+    "download_all_examples": False,
+    "remove_config_comments": True,
+    "matplotlib_animations": True,
+    "thumbnail_size": (400, 280),
+}
 
 # dollarmath is what makes $...$ and $$...$$ work in markdown *and* in the
 # notebook, through one renderer. amsmath covers align/gather environments.
@@ -84,7 +111,17 @@ intersphinx_mapping = {
 }
 
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "README.md"]
+# myst-nb registers .ipynb as a source suffix, and sphinx-gallery writes one
+# next to every .rst it generates, so Sphinx sees two candidate documents
+# per example. The notebooks are downloads, not pages.
+exclude_patterns = [
+    "_build",
+    "Thumbs.db",
+    ".DS_Store",
+    "README.md",
+    "auto_examples/**/*.ipynb",
+    "auto_examples/*.ipynb",
+]
 
 html_theme = "furo"
 html_title = f"NLSE {version}"

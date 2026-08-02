@@ -22,6 +22,8 @@ NLSE.egg-info/*
 img/inheritance_graph.svg
 docs/_build/
 docs/api/
+docs/auto_examples/
+docs/sg_execution_times.rst
 docs/jupyter_execute/
 examples/output/
 

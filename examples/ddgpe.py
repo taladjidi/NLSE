@@ -1,3 +1,10 @@
+"""
+Driven-dissipative polaritons
+=============================
+
+``DDGPE`` adds a drive and a decay, which is what an exciton-polariton fluid needs.
+"""
+
 import matplotlib.pyplot as plt
 import numpy as np
 from NLSE import DDGPE

@@ -11,7 +11,8 @@ from pathlib import Path
 
 import pytest
 
-EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
+ROOT_DIR = Path(__file__).resolve().parent.parent
+EXAMPLES = ROOT_DIR / "examples"
 SCRIPTS = sorted(EXAMPLES.glob("*.py"))
 
 # Calls that put a file on disk at a caller-chosen path.
@@ -77,42 +78,34 @@ def test_the_helper_stays_out_of_the_working_directory(tmp_path, monkeypatch):
             (EXAMPLES / "output").rmdir()
 
 
-GALLERY = Path(__file__).resolve().parent.parent / "docs" / "examples.md"
+# sphinx-gallery builds the gallery from examples/ itself, so a script cannot
+# be missing from it and a link cannot rot: both were real faults under the
+# hand-written page this replaced, which listed a script that had been renamed
+# and left four others out. What it can still get wrong is the header, because
+# an example with no reStructuredText title renders in the grid unnamed.
+
+TITLE_RULE = re.compile(r'^(?:#![^\n]*\n)?"""\n(.+)\n(=+)\n', re.M)
 
 
-def gallery_links() -> list[str]:
-    """Return the repository paths the gallery links to."""
-    return sorted(
-        set(
-            re.findall(
-                r"/tree/main/((?:examples|docs)/\S+?\.(?:py|ipynb))",
-                GALLERY.read_text(encoding="utf-8"),
-            )
-        )
+@pytest.mark.parametrize("script", SCRIPTS, ids=lambda p: p.name)
+def test_every_example_has_a_gallery_title(script):
+    """A title and its underline, or the thumbnail comes out unlabelled."""
+    if script.name == "_output.py":
+        pytest.skip("a helper, excluded from the gallery")
+    found = TITLE_RULE.match(script.read_text(encoding="utf-8"))
+    assert found, (
+        f"{script.name} does not open with a docstring whose first line is a "
+        f"title underlined by ===, which is what sphinx-gallery reads as the "
+        f"name of the page"
+    )
+    title, underline = found.group(1), found.group(2)
+    assert len(underline) == len(title), (
+        f"{script.name}: the underline is {len(underline)} characters against "
+        f"a {len(title)}-character title, which reStructuredText rejects"
     )
 
 
-def test_the_gallery_links_files_that_exist():
-    """A dead link in the gallery is a reader following it to a 404.
-
-    It listed ``examples/vortex_precession.py`` after the script was split in
-    two and renamed, and pointed at the tutorial notebook in ``examples/``
-    after it moved in with the docs. Nothing noticed either.
-    """
-    root = Path(__file__).resolve().parent.parent
-    links = gallery_links()
-    assert len(links) > 5, f"only found {links}; the gallery format changed"
-    missing = [link for link in links if not (root / link).exists()]
-    assert not missing, f"{GALLERY.name} links files that do not exist: {missing}"
-
-
-def test_every_example_is_in_the_gallery():
-    """A script nobody links is a script nobody runs."""
-    listed = {Path(link).name for link in gallery_links()}
-    unlisted = sorted(
-        p.name for p in SCRIPTS if p.name != "_output.py" and p.name not in listed
-    )
-    assert not unlisted, (
-        f"{unlisted} are in examples/ and not in {GALLERY.name}, so the gallery "
-        f"is no longer a map of what is there"
-    )
+def test_the_gallery_header_exists():
+    """sphinx-gallery needs it, and it introduces the grid."""
+    readme = ROOT_DIR / "examples" / "README.rst"
+    assert readme.exists(), f"{readme} is missing; the gallery will not build"

@@ -19,10 +19,22 @@ DOC_FILES = [
     ROOT / "README.md",
 ]
 # Notebooks are documentation too, and the tutorial is a page in the nav.
+# Everything under these is written by a build, not by a person: sphinx-gallery
+# emits a notebook beside every example it renders, and myst-nb and autoapi
+# leave their own trees. Checking a generated copy reports the same finding
+# twice, against a file nobody can edit.
+GENERATED = (
+    ".ipynb_checkpoints",
+    ".cache",
+    "auto_examples",
+    "_build",
+    "jupyter_execute",
+)
+
 NOTEBOOKS = [
     p
     for p in sorted(ROOT.rglob("*.ipynb"))
-    if ".ipynb_checkpoints" not in str(p) and ".cache" not in str(p)
+    if not any(part in GENERATED for part in p.parts)
 ]
 
 SOLVER_CALLS = (

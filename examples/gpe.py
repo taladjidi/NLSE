@@ -1,3 +1,10 @@
+"""
+A Bose-Einstein condensate
+==========================
+
+``GPE`` solves the Gross-Pitaevskii equation in atomic units rather than optical ones.
+"""
+
 import numpy as np
 from NLSE import GPE
 from scipy.constants import atomic_mass

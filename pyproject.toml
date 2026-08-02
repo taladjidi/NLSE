@@ -49,6 +49,7 @@ docs = [
   "myst-nb",
   "sphinx-autoapi",
   "sphinx-copybutton",
+  "sphinx-gallery",
 ]
 dev = [
   "pytest>=7.0",
@@ -98,6 +99,10 @@ markers = [
 [tool.ruff]
 src = ["NLSE"]
 line-length = 88  # Enforce the default value
+# Build artefacts. sphinx-gallery copies every example into the gallery
+# directory and autoapi writes .rst next to it; linting a copy reports the
+# same finding twice and against a file nobody edits.
+extend-exclude = ["docs/auto_examples", "docs/api", "docs/_build"]
 
 [tool.ruff.lint]
 select = [
@@ -137,6 +142,10 @@ ignore_missing_imports = true
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # Allow unused imports in __init__.py
 "NLSE/utils.py" = ["F401"]  # Imports used for availability checking
+# A gallery example opens with an reStructuredText document -- a title and
+# its underline -- which sphinx-gallery reads as the page heading. That is
+# not a numpy summary line, so the two rules that police one do not apply.
+"examples/*.py" = ["D205", "D400"]
 
 # Skip type checking for solvers (multi-backend complexity)
 [[tool.mypy.overrides]]

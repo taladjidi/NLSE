@@ -1,3 +1,10 @@
+"""
+Benchmarking every backend
+==========================
+
+A sweep across backends and grid sizes. Not executed when the docs build: it takes minutes.
+"""
+
 import time
 
 import matplotlib.pyplot as plt

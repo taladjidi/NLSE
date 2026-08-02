@@ -1,3 +1,10 @@
+"""
+Against FourierGPE.jl
+=====================
+
+The same condensate solved here and in Julia, for comparison.
+"""
+
 import pathlib
 import sys
 

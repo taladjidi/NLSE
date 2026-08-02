@@ -1,3 +1,10 @@
+"""
+Propagation in one dimension
+============================
+
+The same physics on a line, which is where the splitting order is easiest to read.
+"""
+
 import numpy as np
 from NLSE import NLSE_1d
 

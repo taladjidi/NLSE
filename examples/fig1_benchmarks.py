@@ -1,3 +1,10 @@
+"""
+Backends compared
+=================
+
+The backend comparison figure, drawn from a fresh run.
+"""
+
 import time
 
 import matplotlib.pyplot as plt

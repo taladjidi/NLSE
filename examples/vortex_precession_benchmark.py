@@ -1,4 +1,8 @@
-"""Time a vortex-pair propagation across grid sizes.
+"""
+Vortex precession, timed across grid sizes
+==========================================
+
+Time a vortex-pair propagation across grid sizes.
 
 The timings are saved so they can be put next to the Julia implementation's,
 so this measures propagation and nothing else -- no sampling, no plotting.

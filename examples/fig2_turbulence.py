@@ -1,3 +1,10 @@
+"""
+Counter-streaming beams go turbulent
+====================================
+
+The lossy problem the solved real-space step was measured on: two components collide and the flow breaks up.
+"""
+
 import numpy as np
 from NLSE import NLSE
 

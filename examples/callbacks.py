@@ -1,3 +1,10 @@
+"""
+Sampling a run, and adapting its step
+=====================================
+
+A callback that stores the field as it goes, and one that moves the step to track the physics.
+"""
+
 import numpy as np
 from NLSE import NLSE, callbacks
 

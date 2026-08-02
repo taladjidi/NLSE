@@ -1,3 +1,10 @@
+"""
+Many simulations at once
+========================
+
+A batched parameter turns one run into a sweep, without a Python loop over simulations.
+"""
+
 import numpy as np
 from NLSE import NLSE
 

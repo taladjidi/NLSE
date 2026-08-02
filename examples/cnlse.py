@@ -1,3 +1,10 @@
+"""
+Two coupled components
+======================
+
+``CNLSE`` propagates a two-component field with cross-phase modulation between them.
+"""
+
 import numpy as np
 from NLSE import CNLSE
 

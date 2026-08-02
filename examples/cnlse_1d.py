@@ -1,3 +1,10 @@
+"""
+Two coupled components in one dimension
+=======================================
+
+The coupled solver on a line.
+"""
+
 import numpy as np
 from NLSE import CNLSE_1d
 

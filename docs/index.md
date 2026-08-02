@@ -84,7 +84,7 @@ backends
 callbacks
 numerical_methods
 physical_validation
-examples
+auto_examples/index
 ```
 
 ```{toctree}

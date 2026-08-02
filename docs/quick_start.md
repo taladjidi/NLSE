@@ -166,4 +166,4 @@ See the [Callbacks](callbacks.md) guide for all built-in callbacks and how to wr
 - [Solvers Overview](solvers_overview.md) -- detailed guide to each solver
 - [Backends](backends.md) -- backend system and performance tuning
 - [Numerical Methods](numerical_methods.md) -- algorithm details and step size control
-- [Examples Gallery](examples.md) -- full example scripts
+- [Examples Gallery](auto_examples/index) -- full example scripts

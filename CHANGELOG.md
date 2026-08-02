@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Changed
+
+- **The documentation is built with Sphinx**, not MkDocs. MkDocs 2.0 removes
+  the plugin system that every plugin this site used depends on. The pages
+  stayed markdown (MyST), the API reference is generated from the source by
+  sphinx-autoapi, and maths now goes through one renderer for markdown and
+  notebooks alike -- which is the bug below deleted rather than fixed.
+- **The examples are a gallery.** Every script runs when the docs are built
+  and the figure on its page is the one it produced, so a broken example fails
+  the build instead of rotting quietly. Two benchmark sweeps are listed
+  without being executed.
+
 ### Fixed
 
 - **The tutorial's equations render.** `nlse_tutorial.ipynb` is rendered by
@@ -17,6 +29,10 @@
   configuration processes the class that renderer emits and accepts the
   delimiters it leaves behind; the docs CI job checks the built HTML as well,
   because a source-level test cannot see a renderer changing its markup.
+- **The tutorial's stored outputs were from an old version.** They still
+  carried `No FFT wisdom found, starting over ...`, a message pyFFTW printed
+  and which no longer exists in the package, and the pre-4.0.0 wording of the
+  backend fallback. The notebook has been re-run against 4.0.0.
 
 ## 4.0.0 — 2026-08-01
 

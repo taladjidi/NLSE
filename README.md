@@ -23,7 +23,7 @@ this repository whether or not you have the site open.
 | choose a step | [The propagation step](#the-propagation-step) | [Numerical Methods](docs/numerical_methods.md) |
 | choose a backend, or debug one | [GPU computing](#gpu-computing) | [Backends](docs/backends.md) |
 | watch or steer a run | [Callbacks](#callbacks) | [Callbacks](docs/callbacks.md) |
-| copy a working script | [`examples/`](examples/) | [Examples Gallery](docs/examples.md) |
+| copy a working script | [`examples/`](examples/) | [Examples Gallery](https://taladjidi.github.io/NLSE/auto_examples/) |
 | look up a class or method | — | [API Reference](docs/reference/) |
 | know why the code is shaped this way | — | [Optimization log](docs/optimization-log.md) |
 | contribute | [Contributing](#contributing-and-issues) | [Contributing](docs/contributing.md) |

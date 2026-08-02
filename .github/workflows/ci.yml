@@ -242,48 +242,6 @@ jobs:
                   # Save cache between runs
                   external-data-json-path: ./cache/benchmark-data.json
 
-    examples:
-        name: Examples
-        # The gallery points readers at these and nothing ran them, so they
-        # could rot silently -- and they exercise paths the unit tests reach
-        # differently, if at all. Two are omitted by name: they are benchmark
-        # sweeps that take minutes rather than seconds, and timing them on a
-        # shared runner would mean nothing anyway.
-        runs-on: ubuntu-latest
-        steps:
-            - uses: actions/checkout@v5
-
-            - name: Set up uv
-              uses: astral-sh/setup-uv@v9.0.0
-              with:
-                  enable-cache: true
-                  cache-dependency-glob: "pyproject.toml"
-
-            - name: Set up Python
-              uses: actions/setup-python@v6
-              with:
-                  python-version: "3.13"
-
-            - name: Install dependencies
-              run: uv pip install --system -e "."
-
-            - name: Run every example
-              env:
-                  MPLBACKEND: Agg
-                  NLSE_QUIET: "1"
-              run: |
-                  set -e
-                  slow="benchmarks.py vortex_precession_benchmark.py"
-                  for script in examples/*.py; do
-                      name=$(basename "$script")
-                      case " $slow $(echo _output.py) " in
-                          *" $name "*) echo "skipping $name"; continue ;;
-                      esac
-                      echo "::group::$name"
-                      (cd examples && python "$name")
-                      echo "::endgroup::"
-                  done
-
     docs:
         name: Documentation
         runs-on: ubuntu-latest
@@ -307,6 +265,11 @@ jobs:
             # -W turns warnings into errors, which is what --strict was doing
             # before: a broken cross-reference or a page missing from a
             # toctree fails the build rather than shipping.
+            # The gallery runs every example while it builds, so this job is
+            # also what checks they still work -- sphinx-gallery fails the
+            # build on an example that raises. Four are not executed: two are
+            # benchmark sweeps taking minutes, and two exit early without a
+            # GPU or without data a benchmark run produces.
             - name: Build the site
               run: python -m sphinx -b html docs docs/_build/html -W --keep-going
 

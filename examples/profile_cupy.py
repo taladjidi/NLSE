@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""NVIDIA profiling script for the CuPy backend.
+"""
+Profiling the CUDA backend
+==========================
+
+Runs under CuPy's profiler to attribute time inside a step.
+
+NVIDIA profiling script for the CuPy backend.
 
 Exercises the GPU hot path (split_step and RK4 propagation) under realistic
 conditions with NVTX annotations and CUDA profiler API markers so that

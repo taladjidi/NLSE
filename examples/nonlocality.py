@@ -1,3 +1,10 @@
+"""
+A non-local interaction
+=======================
+
+``nl_length`` convolves the intensity with a kernel before it reaches the phase.
+"""
+
 import numpy as np
 from NLSE import NLSE
 

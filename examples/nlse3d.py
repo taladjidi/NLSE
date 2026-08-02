@@ -1,3 +1,10 @@
+"""
+Three dimensions, with dispersion
+=================================
+
+``NLSE_3d`` adds group velocity dispersion, so a pulse spreads in time as well as space.
+"""
+
 import numpy as np
 from NLSE import NLSE_3d
 from scipy.constants import c
