@@ -5,6 +5,7 @@ editable install (which is what CI uses) resolves every path against the
 repository and therefore cannot catch a file that fails to ship.
 """
 
+import re
 import shutil
 import subprocess
 import sys
@@ -293,12 +294,22 @@ def test_the_package_version_matches_the_project_metadata():
     release 3.0.0 was tagged and published from a tree whose ``pyproject.toml``
     and ``__init__.py`` both said ``2.3.0``, and every install from it reported
     2.3.0. Whichever is bumped, this fails until the other is.
+
+    Read with a regular expression rather than ``tomllib``, which arrived in
+    3.11 while this package supports 3.10 -- written the obvious way first, it
+    passed on the development machine and took out all three 3.10 jobs. One
+    field of one table does not need a parser, and a dependency for a
+    single-line read is worse than the regex.
     """
-    import tomllib
     from NLSE import __version__
 
-    with open(PROJECT_ROOT / "pyproject.toml", "rb") as handle:
-        declared = tomllib.load(handle)["project"]["version"]
+    text = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    found = re.findall(r'^version *= *"([^"]+)"', text, re.MULTILINE)
+    assert len(found) == 1, (
+        f"expected exactly one top-level version in pyproject.toml, found "
+        f"{found}; this test can no longer tell which one ships"
+    )
+    declared = found[0]
 
     assert __version__ == declared, (
         f"NLSE.__version__ is {__version__} and pyproject.toml declares "
