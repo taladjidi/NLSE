@@ -31,7 +31,8 @@ Example scripts are available in the [`examples/`](https://github.com/taladjidi/
 | [`callbacks.py`](https://github.com/taladjidi/NLSE/tree/main/examples/callbacks.py) | Using callbacks for field sampling and adaptive step sizing |
 | [`broadcasting.py`](https://github.com/taladjidi/NLSE/tree/main/examples/broadcasting.py) | Running parallel simulations via broadcasting |
 | [`nonlocality.py`](https://github.com/taladjidi/NLSE/tree/main/examples/nonlocality.py) | Non-local interactions with a diffusive kernel |
-| [`vortex_precession.py`](https://github.com/taladjidi/NLSE/tree/main/examples/vortex_precession.py) | Vortex dynamics in a GPE simulation |
+| [`vortex_precession_animation.py`](https://github.com/taladjidi/NLSE/tree/main/examples/vortex_precession_animation.py) | Vortex dynamics in a GPE simulation, written out as an animation |
+| [`fig2_turbulence.py`](https://github.com/taladjidi/NLSE/tree/main/examples/fig2_turbulence.py) | Counter-streaming beams going turbulent; the lossy problem the solved real-space step was measured on |
 
 ## Benchmarks and Comparisons
 
@@ -40,11 +41,13 @@ Example scripts are available in the [`examples/`](https://github.com/taladjidi/
 | [`benchmarks.py`](https://github.com/taladjidi/NLSE/tree/main/examples/benchmarks.py) | Performance benchmarking across backends |
 | [`juliaGPE_vs_NLSE.py`](https://github.com/taladjidi/NLSE/tree/main/examples/juliaGPE_vs_NLSE.py) | Comparison with FourierGPE.jl |
 | [`profile_cupy.py`](https://github.com/taladjidi/NLSE/tree/main/examples/profile_cupy.py) | CuPy profiling for GPU performance analysis |
+| [`fig1_benchmarks.py`](https://github.com/taladjidi/NLSE/tree/main/examples/fig1_benchmarks.py) | The backend comparison figure, drawn from a fresh run |
+| [`vortex_precession_benchmark.py`](https://github.com/taladjidi/NLSE/tree/main/examples/vortex_precession_benchmark.py) | Vortex precession timed across backends |
 
 ## Interactive Tutorial
 
 An interactive Jupyter notebook tutorial is available:
 
-- [`nlse_tutorial.ipynb`](https://github.com/taladjidi/NLSE/tree/main/examples/nlse_tutorial.ipynb) -- step-by-step NLSE tutorial
+- [`nlse_tutorial.ipynb`](https://github.com/taladjidi/NLSE/tree/main/mkdocs-documentation/docs/nlse_tutorial.ipynb) -- step-by-step NLSE tutorial
 
 This notebook is also rendered in the [Tutorial](nlse_tutorial.ipynb) section of this documentation.

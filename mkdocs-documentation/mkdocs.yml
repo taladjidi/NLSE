@@ -48,6 +48,9 @@ nav:
       - Numerical Methods: numerical_methods.md
       - Physical Validation: physical_validation.md
       - Examples Gallery: examples.md
+  - Reference:
+      - Migrating to 4.0.0: migration.md
+      - Changelog: changelog.md
   - Tutorial:
       - NLSE Tutorial: nlse_tutorial.ipynb
   - API Reference:
@@ -66,6 +69,15 @@ nav:
 markdown_extensions:
   - pymdownx.arithmatex:
       generic: true
+  # The changelog lives at the repository root, where a contributor expects it
+  # and where GitHub renders it. changelog.md pulls it in from there rather
+  # than holding a second copy to drift.
+  - pymdownx.snippets:
+      # Both, because the path is resolved against the working
+      # directory: "." when built from the repository root as CI does,
+      # ".." when built from inside mkdocs-documentation/.
+      base_path: [".", ".."]
+      check_paths: true
   - admonition
   - pymdownx.details
   - pymdownx.superfences

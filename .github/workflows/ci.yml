@@ -242,6 +242,48 @@ jobs:
                   # Save cache between runs
                   external-data-json-path: ./cache/benchmark-data.json
 
+    examples:
+        name: Examples
+        # The gallery points readers at these and nothing ran them, so they
+        # could rot silently -- and they exercise paths the unit tests reach
+        # differently, if at all. Two are omitted by name: they are benchmark
+        # sweeps that take minutes rather than seconds, and timing them on a
+        # shared runner would mean nothing anyway.
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v5
+
+            - name: Set up uv
+              uses: astral-sh/setup-uv@v9.0.0
+              with:
+                  enable-cache: true
+                  cache-dependency-glob: "pyproject.toml"
+
+            - name: Set up Python
+              uses: actions/setup-python@v6
+              with:
+                  python-version: "3.13"
+
+            - name: Install dependencies
+              run: uv pip install --system -e "."
+
+            - name: Run every example
+              env:
+                  MPLBACKEND: Agg
+                  NLSE_QUIET: "1"
+              run: |
+                  set -e
+                  slow="benchmarks.py vortex_precession_benchmark.py"
+                  for script in examples/*.py; do
+                      name=$(basename "$script")
+                      case " $slow $(echo _output.py) " in
+                          *" $name "*) echo "skipping $name"; continue ;;
+                      esac
+                      echo "::group::$name"
+                      (cd examples && python "$name")
+                      echo "::endgroup::"
+                  done
+
     docs:
         name: Documentation
         runs-on: ubuntu-latest

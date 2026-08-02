@@ -1,5 +1,12 @@
 # NLSE
 
+!!! info "This site documents NLSE 4.0.0"
+
+    It is built from `main`, so it describes the current code rather than the
+    version you have installed. Check with `python -c "import NLSE;
+    print(NLSE.__version__)"`. Upgrading from 3.0.0 changes four things — see
+    [Migrating to 4.0.0](migration.md).
+
 **NLSE** is a Python package for solving the Nonlinear Schrödinger Equation and related equations using the Split-Step Fourier method. It is designed for simulating light propagation in nonlinear media and Bose-Einstein condensate dynamics.
 
 ## Key Features
@@ -10,6 +17,9 @@
 - **GPU-accelerated**: automatic backend selection, benchmarking, and a fallback
   to the fastest backend that can serve a run when the one asked for cannot
 - **Extensible**: callbacks for runtime monitoring and adaptive step sizing
+- **Checked against physics**: the solvers are tested against closed-form
+  solutions — diffraction, Beer's law, a bright soliton — and not only
+  against each other. See [Physical Validation](physical_validation.md)
 
 ## Solvers
 

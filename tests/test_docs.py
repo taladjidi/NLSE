@@ -85,9 +85,16 @@ def self_contained(block):
     return "out_field" in block and any(s in block for s in SOLVER_CALLS)
 
 
-def _cases(predicate):
+# The one page whose job is to show the API that was removed. Every other
+# page mentioning it is out of date; this one is out of date the day it stops.
+MIGRATION_GUIDE = ROOT / "mkdocs-documentation" / "docs" / "migration.md"
+
+
+def _cases(predicate, skip=()):
     out = []
     for path in DOC_FILES:
+        if path in skip:
+            continue
         for i, block in enumerate(blocks(path)):
             if predicate(block):
                 out.append(pytest.param(block, id=f"{path.name}:{i}"))
@@ -120,12 +127,30 @@ def test_blocks_parse(block):
     ast.parse(block)
 
 
-@pytest.mark.parametrize("block", _cases(lambda b: True))
+@pytest.mark.parametrize("block", _cases(lambda b: True, skip=(MIGRATION_GUIDE,)))
 def test_blocks_use_current_api(block):
     """No block may reference API that has been removed."""
     for pattern, why in REMOVED_API.items():
         found = re.search(pattern, block)
         assert found is None, f"{found.group(0).strip()!r}: {why}"
+
+
+def test_the_migration_guide_shows_the_api_it_migrates_from():
+    """The exemption above has to be earned, or it is just a hole.
+
+    migration.md is skipped by the check because showing the removed call
+    beside its replacement is the whole point of the page. That is only
+    defensible while it actually shows them, so this asserts the same patterns
+    the other pages are forbidden.
+    """
+    text = MIGRATION_GUIDE.read_text()
+    unmentioned = [
+        why for pattern, why in REMOVED_API.items() if re.search(pattern, text) is None
+    ]
+    assert not unmentioned, (
+        f"{MIGRATION_GUIDE.name} does not show, and so does not help anyone "
+        f"past: {unmentioned}"
+    )
 
 
 @pytest.mark.parametrize("block", _cases(self_contained))
