@@ -114,6 +114,20 @@ ax.set_xticklabels([str(size) for size in sizes])
 ax.set_yscale("log")
 ax.set_xlabel("grid size")
 ax.set_ylabel("time for the propagation (s)")
-ax.set_title(f"Vortex precession, best of {navg}")
+ax.set_title(f"Vortex precession, best of {navg} -- {', '.join(BACKENDS)}")
+# A backend comparison is only a comparison if there is more than one backend.
+# The documentation runner has no GPU and no OpenCL, so the figure published
+# with these docs has a single bar; say so on it rather than let a reader take
+# CPU-only for the whole story.
+if len(BACKENDS) == 1:
+    ax.text(
+        0.5,
+        0.94,
+        f"only {BACKENDS[0]} available here -- run this on a machine with a GPU",
+        transform=ax.transAxes,
+        ha="center",
+        fontsize=9,
+        style="italic",
+    )
 ax.legend()
 plt.show()

@@ -113,7 +113,21 @@ ax.legend()
 ax.set_xticks(np.log2(sizes).astype(int))
 ax.set_xlabel(r"Size of the system $2^N$")
 ax.set_ylabel("Execution time in s")
-ax.set_title("Execution time (lower is better)")
+ax.set_title(f"Execution time, lower is better -- {', '.join(BACKENDS)}")
+# A backend comparison is only a comparison if there is more than one backend.
+# The documentation runner has no GPU and no OpenCL, so the figure published
+# with these docs has a single bar; say so on it rather than let a reader take
+# CPU-only for the whole story.
+if len(BACKENDS) == 1:
+    ax.text(
+        0.5,
+        0.94,
+        f"only {BACKENDS[0]} available here -- run this on a machine with a GPU",
+        transform=ax.transAxes,
+        ha="center",
+        fontsize=9,
+        style="italic",
+    )
 ax.set_yscale("log")
 fig.savefig(output_path("benchmarks.pdf"), dpi=300)
 plt.show()

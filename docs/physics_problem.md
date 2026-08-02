@@ -51,15 +51,17 @@ The `CNLSE` class solves a system of two coupled nonlinear Schrödinger equation
 
 $$
 \begin{split}
-i\frac{\partial\psi_f}{\partial z} &= -\frac{1}{2k_f}\nabla^2\psi_f -\frac{1}{2}n_2^f k_f c\epsilon_0|\psi_f|^2\psi_f + k_f n_2^{fd}c\epsilon_0|\psi_d|^2\psi_f-\frac{i\alpha_f}{2}\psi_f + \frac{\Omega}{2} \psi_d  \\
-i\frac{\partial\psi_d}{\partial z} &= -\frac{1}{2k_d}\nabla^2\psi_d -\frac{1}{2}n_2^d k_d c\epsilon_0|\psi_d|^2\psi_d + k_d n_2^{fd}c\epsilon_0|\psi_f|^2\psi_d-\frac{i\alpha_d}{2}\psi_d + \frac{\Omega}{2} \psi_f
+i\frac{\partial\psi_1}{\partial z} &= -\frac{1}{2k_1}\nabla^2\psi_1 -\frac{1}{2}n_2^{11} k_1 c\epsilon_0|\psi_1|^2\psi_1 + k_1 n_2^{12}c\epsilon_0|\psi_2|^2\psi_1-\frac{i\alpha_1}{2}\psi_1 + \frac{\Omega}{2} \psi_2  \\
+i\frac{\partial\psi_2}{\partial z} &= -\frac{1}{2k_2}\nabla^2\psi_2 -\frac{1}{2}n_2^{22} k_2 c\epsilon_0|\psi_2|^2\psi_2 + k_2 n_2^{12}c\epsilon_0|\psi_1|^2\psi_2-\frac{i\alpha_2}{2}\psi_2 + \frac{\Omega}{2} \psi_1
 \end{split}
 $$
 
-This describes the coupling between two field components (e.g., forward and backward, or two polarizations) with:
+This describes the coupling between two field components -- two polarizations,
+two frequencies, or a fluid and a defect beam -- with:
 
-- Self-interaction ($n_2^f$, $n_2^d$) and cross-interaction ($n_2^{fd}$) terms
-- Independent loss coefficients ($\alpha_f$, $\alpha_d$)
+- Self-interaction ($n_2^{11}$, $n_2^{22}$) and cross-interaction
+  ($n_2^{12}$) terms, which are `n2`, `n22` and `n12` in the constructor
+- Independent loss coefficients ($\alpha_1$, $\alpha_2$)
 - Rabi coupling ($\Omega$)
 
 Setting parameters to `None` disables the corresponding term for optimal performance. The `CNLSE_1d` class is the 1D specialization.
