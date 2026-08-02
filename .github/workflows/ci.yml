@@ -259,6 +259,13 @@ jobs:
               with:
                   python-version: "3.13"
 
+            # The vortex precession example is an animation, and the gallery
+            # writes it as an mp4 through ffmpeg -- a hundredth the size of the
+            # base64 frame-by-frame alternative. Installed rather than assumed:
+            # without it the build fails under -W.
+            - name: Install ffmpeg
+              run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
             - name: Install dependencies
               run: uv pip install --system -e ".[docs]"
 

@@ -114,5 +114,8 @@ def main():
     return anim
 
 
+# Bound at module level rather than dropped: sphinx-gallery looks through the
+# example's namespace for an Animation and embeds what it finds there, so an
+# animation that only exists inside a function is a still picture on the page.
 if __name__ == "__main__":
-    main()
+    anim = main()

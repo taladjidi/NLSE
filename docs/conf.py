@@ -69,7 +69,10 @@ sphinx_gallery_conf = {
     "within_subsection_order": "FileNameSortKey",
     "download_all_examples": False,
     "remove_config_comments": True,
-    "matplotlib_animations": True,
+    # (True, "html5") writes an mp4 through ffmpeg. The alternative, jshtml,
+    # embeds every frame as base64 inside the page: the tutorial notebook
+    # produced 78 MB that way, against a 20 MB limit, for one animation.
+    "matplotlib_animations": (True, "html5"),
     "thumbnail_size": (400, 280),
 }
 
