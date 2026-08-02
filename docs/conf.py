@@ -36,6 +36,11 @@ extensions = [
     "sphinx.ext.napoleon",  # the numpy docstrings this package enforces
     "sphinx.ext.intersphinx",
     "sphinx.ext.viewcode",
+    # Writes .nojekyll into the build. GitHub Pages otherwise runs the
+    # output through Jekyll, which drops every directory beginning with
+    # an underscore -- _static and _images, so the site would deploy
+    # with no stylesheet, no MathJax and no figures.
+    "sphinx.ext.githubpages",
     "sphinx_copybutton",
 ]
 
