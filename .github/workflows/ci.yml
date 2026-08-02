@@ -269,6 +269,40 @@ jobs:
             - name: Build the site
               run: mkdocs build --strict -f mkdocs-documentation/mkdocs.yml
 
+            # tests/test_docs.py pins that the MathJax configuration processes
+            # the class mkdocs-jupyter renders notebook maths into. It reads
+            # the sources, so it cannot see whether that class name is still
+            # the one nbconvert emits -- which is the assumption the whole
+            # check rests on, and the only place it can be verified is a built
+            # site. 4.0.0 shipped with every tutorial formula displayed as its
+            # own LaTeX source, and nothing here noticed.
+            - name: Check the notebook maths reaches MathJax
+              run: |
+                  python - <<'EOF'
+                  import pathlib, re, sys
+
+                  page = pathlib.Path(
+                      "mkdocs-documentation/site/nlse_tutorial/index.html"
+                  )
+                  html = page.read_text(encoding="utf-8")
+                  cells = re.findall(
+                      r'<div class="[^"]*jp-MarkdownCell[^"]*">(.*?)(?=<div class="jp-Cell )',
+                      html,
+                      re.S,
+                  )
+                  found = sum(c.count("$$") for c in cells)
+                  if not cells or not found:
+                      sys.exit(
+                          f"{page}: found {len(cells)} jp-MarkdownCell blocks "
+                          f"holding {found} '$$' delimiters. The renderer's "
+                          f"markup has changed, so processHtmlClass in "
+                          f"javascripts/mathjax.js no longer names the element "
+                          f"the maths lands in and the tutorial will show "
+                          f"LaTeX source."
+                      )
+                  print(f"{len(cells)} markdown cells, {found} display delimiters")
+                  EOF
+
             - name: Upload the site
               if: github.ref == 'refs/heads/main' && github.event_name == 'push'
               uses: actions/upload-pages-artifact@v3

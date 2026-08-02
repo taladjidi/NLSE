@@ -137,3 +137,94 @@ def test_self_contained_examples_run(block):
     for old, new in SMALLER:
         block = block.replace(old, new)
     exec(compile(block, "<doc example>", "exec"), {})
+
+
+# ── Maths has to reach MathJax, not just reach the page ──────────────────────
+#
+# Two renderers feed this site and they hand MathJax different things.
+#
+# A .md page goes through pymdownx.arithmatex, which rewrites $...$ into
+# \(...\) and wraps it in class="arithmatex". The notebook does not: it is
+# rendered by mkdocs-jupyter through nbconvert, which is not the mkdocs
+# markdown pipeline, so its maths arrives as literal $...$ inside
+# class="jp-MarkdownCell".
+#
+# The configuration served only the first of those, in both respects at once
+# -- it processed the arithmatex class alone, and declared only the \(...\)
+# delimiters -- so every formula in the tutorial was published as its own
+# source: six display and twenty-two inline, for as long as the page existed.
+# Nothing failed, nothing warned, and the release went out with it.
+#
+# So this pins the join: for each renderer the docs actually use, the config
+# has to process the class that renderer emits and accept the delimiters it
+# leaves behind. It reads the sources rather than the built site, so it runs
+# without mkdocs installed; the docs CI job checks the built HTML as well.
+
+MATHJAX_JS = ROOT / "mkdocs-documentation" / "docs" / "javascripts" / "mathjax.js"
+
+
+def mathjax_config() -> tuple[str, str, str]:
+    """Return (processHtmlClass, inlineMath source, displayMath source)."""
+    text = MATHJAX_JS.read_text(encoding="utf-8")
+    process = re.search(r'processHtmlClass:\s*"([^"]*)"', text)
+    inline = re.search(r"inlineMath:\s*\[(.*?)\],\s*\n\s*displayMath", text, re.S)
+    display = re.search(r"displayMath:\s*\[(.*?)\],\s*\n\s*processEscapes", text, re.S)
+    assert process and inline and display, (
+        f"could not read the MathJax configuration out of {MATHJAX_JS.name}; "
+        f"if its shape changed, this test has to change with it rather than "
+        f"quietly stop checking"
+    )
+    return process.group(1), inline.group(1), display.group(1)
+
+
+def notebook_math(path: Path) -> tuple[int, int]:
+    """Return (display, inline) maths counts in a notebook's markdown cells."""
+    cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
+    markdown = ["".join(c["source"]) for c in cells if c["cell_type"] == "markdown"]
+    display = sum(len(re.findall(r"\$\$.+?\$\$", text, re.S)) for text in markdown)
+    inline = sum(
+        len(re.findall(r"\$[^$\n]+?\$", re.sub(r"\$\$.+?\$\$", " ", text, flags=re.S)))
+        for text in markdown
+    )
+    return display, inline
+
+
+@pytest.mark.parametrize(
+    "path", NOTEBOOKS, ids=lambda p: p.name if hasattr(p, "name") else str(p)
+)
+def test_notebook_maths_is_configured_to_render(path):
+    """Notebook maths is $...$ in jp-MarkdownCell; both have to be accepted."""
+    display, inline = notebook_math(path)
+    if not (display or inline):
+        pytest.skip("no maths in this notebook's markdown cells")
+
+    process, inline_delims, display_delims = mathjax_config()
+    assert "jp-MarkdownCell" in process, (
+        f"{path.name} has {display} display and {inline} inline formulas, and "
+        f'mkdocs-jupyter renders them inside class="jp-MarkdownCell", which '
+        f"processHtmlClass ({process!r}) does not cover: MathJax will walk "
+        f"straight past them and the page will show the LaTeX source"
+    )
+    if display:
+        assert '"$$", "$$"' in display_delims.replace("'", '"'), (
+            f"{path.name} has {display} $$...$$ formulas and displayMath does "
+            f"not list that delimiter, so they stay as written"
+        )
+    if inline:
+        assert '"$", "$"' in inline_delims.replace("'", '"'), (
+            f"{path.name} has {inline} $...$ formulas and inlineMath does not "
+            f"list that delimiter, so they stay as written"
+        )
+
+
+def test_markdown_maths_is_configured_to_render():
+    """Arithmatex rewrites .md maths and tags it; both have to be accepted."""
+    process, inline_delims, _ = mathjax_config()
+    assert "arithmatex" in process, (
+        f"processHtmlClass ({process!r}) does not cover arithmatex, which is "
+        f"the class pymdownx.arithmatex wraps every .md formula in"
+    )
+    assert "\\\\(" in inline_delims, (
+        f"inlineMath ({inline_delims.strip()!r}) does not list the \\(...\\) "
+        f"delimiters arithmatex rewrites $...$ into"
+    )
