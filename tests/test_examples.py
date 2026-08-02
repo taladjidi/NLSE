@@ -77,12 +77,7 @@ def test_the_helper_stays_out_of_the_working_directory(tmp_path, monkeypatch):
             (EXAMPLES / "output").rmdir()
 
 
-GALLERY = (
-    Path(__file__).resolve().parent.parent
-    / "mkdocs-documentation"
-    / "docs"
-    / "examples.md"
-)
+GALLERY = Path(__file__).resolve().parent.parent / "docs" / "examples.md"
 
 
 def gallery_links() -> list[str]:
@@ -90,7 +85,7 @@ def gallery_links() -> list[str]:
     return sorted(
         set(
             re.findall(
-                r"/tree/main/((?:examples|mkdocs-documentation)/\S+?\.(?:py|ipynb))",
+                r"/tree/main/((?:examples|docs)/\S+?\.(?:py|ipynb))",
                 GALLERY.read_text(),
             )
         )

@@ -27,7 +27,7 @@ from NLSE.solvers.step_size import (
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PAGES = [
-    *sorted((ROOT / "mkdocs-documentation" / "docs").rglob("*.md")),
+    *sorted((ROOT / "docs").rglob("*.md")),
     ROOT / "README.md",
 ]
 IDS = [str(p.relative_to(ROOT)) for p in PAGES]
@@ -109,7 +109,7 @@ def test_named_backends_are_real(page):
 
 def test_the_migration_guide_shows_a_removed_out_field_keyword():
     """And shows what to write instead, or it is a list of complaints."""
-    text = (ROOT / "mkdocs-documentation" / "docs" / "migration.md").read_text()
+    text = (ROOT / "docs" / "migration.md").read_text()
     allowed = set(inspect.signature(NLSE.out_field).parameters)
     shown = {
         kw
@@ -128,7 +128,7 @@ def test_the_migration_guide_shows_a_removed_out_field_keyword():
 
 def test_the_migration_guide_maps_dead_backends_to_live_ones():
     """Every dead backend it names must appear beside a real one."""
-    text = (ROOT / "mkdocs-documentation" / "docs" / "migration.md").read_text()
+    text = (ROOT / "docs" / "migration.md").read_text()
     named = set(re.findall(r'backend="(\w+)"', text))
     dead = named - BACKEND_NAMES - {"auto"}
     assert dead, (
@@ -162,7 +162,7 @@ def test_quoted_constants_match_the_code(page):
 
 def test_the_capability_table_matches_the_backends():
     """backends.md's table is the thing readers plan around."""
-    table = (ROOT / "mkdocs-documentation" / "docs" / "backends.md").read_text()
+    table = (ROOT / "docs" / "backends.md").read_text()
     rows = {
         m.group(1).strip(): [c.strip() for c in m.group(2).split("|")]
         for m in re.finditer(r"^\| ([^|]+?) \|([^\n]+)\|$", table, re.M)
@@ -190,7 +190,7 @@ def test_the_capability_table_matches_the_backends():
 
 def test_every_backend_is_claimed_to_broadcast():
     """It does, on all four, and the table said otherwise for three of them."""
-    table = (ROOT / "mkdocs-documentation" / "docs" / "backends.md").read_text()
+    table = (ROOT / "docs" / "backends.md").read_text()
     row = re.search(r"^\| Broadcasting \|([^\n]+)\|$", table, re.M)
     assert row, "no Broadcasting row in the capability table"
     cells = [c.strip().lower() for c in row.group(1).split("|") if c.strip()]
@@ -210,8 +210,8 @@ def test_the_documented_version_is_the_real_one():
     from NLSE import __version__
 
     pages = {
-        "index.md": ROOT / "mkdocs-documentation" / "docs" / "index.md",
-        "migration.md": ROOT / "mkdocs-documentation" / "docs" / "migration.md",
+        "index.md": ROOT / "docs" / "index.md",
+        "migration.md": ROOT / "docs" / "migration.md",
     }
     wrong = []
     for name, path in pages.items():

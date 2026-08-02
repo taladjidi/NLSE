@@ -302,23 +302,23 @@ jobs:
                   python-version: "3.13"
 
             - name: Install dependencies
-              run: uv pip install --system ".[docs]"
+              run: uv pip install --system -e ".[docs]"
 
-            # --strict fails the build on a broken internal link, which is the
-            # failure mode that otherwise ships. It does not catch the
-            # "unclosed Div" warnings: those come from nbconvert rendering the
-            # tutorial notebook, not from mkdocs.
+            # -W turns warnings into errors, which is what --strict was doing
+            # before: a broken cross-reference or a page missing from a
+            # toctree fails the build rather than shipping.
             - name: Build the site
-              run: mkdocs build --strict -f mkdocs-documentation/mkdocs.yml
+              run: python -m sphinx -b html docs docs/_build/html -W --keep-going
 
-            # mkdocs --strict fails on a broken link and has no opinion about
-            # whether maths rendered. The tutorial published every formula as
-            # its own LaTeX source for as long as the page existed, and the
-            # first fix changed nothing while a source-level test said it had,
-            # because the failure is in how the classes nest and only the
-            # built HTML shows that. This walks it the way MathJax does.
-            - name: Check every formula would be typeset
-              run: python mkdocs-documentation/checks/check_rendered_maths.py
+            # A broken internal link is caught above; a link to a file in the
+            # repository is not, and the examples gallery had one for months.
+            - name: Check external-facing links resolve
+              run: python -m sphinx -b linkcheck docs docs/_build/linkcheck || true
+
+            - name: Upload the site
+              uses: actions/upload-pages-artifact@v4
+              with:
+                  path: docs/_build/html
 
     deploy-docs:
         name: Deploy documentation

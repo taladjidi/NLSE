@@ -15,7 +15,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 DOC_FILES = [
-    *sorted((ROOT / "mkdocs-documentation" / "docs").glob("*.md")),
+    *sorted((ROOT / "docs").glob("*.md")),
     ROOT / "README.md",
 ]
 # Notebooks are documentation too, and the tutorial is a page in the nav.
@@ -87,7 +87,7 @@ def self_contained(block):
 
 # The one page whose job is to show the API that was removed. Every other
 # page mentioning it is out of date; this one is out of date the day it stops.
-MIGRATION_GUIDE = ROOT / "mkdocs-documentation" / "docs" / "migration.md"
+MIGRATION_GUIDE = ROOT / "docs" / "migration.md"
 
 
 def _cases(predicate, skip=()):
@@ -164,113 +164,46 @@ def test_self_contained_examples_run(block):
     exec(compile(block, "<doc example>", "exec"), {})
 
 
-# ── Maths has to reach MathJax, not just reach the page ──────────────────────
+# ── Maths, and where MathJax comes from ─────────────────────────────────────
 #
-# Two renderers feed this site and they hand MathJax different things.
+# Under mkdocs this needed real machinery. Two renderers fed the site and
+# handed MathJax different things: .md went through pymdownx.arithmatex, the
+# tutorial through nbconvert, and the configuration served only the first, so
+# every formula in the tutorial was published as its own LaTeX source for as
+# long as the page existed. A first fix changed nothing while a test said it
+# had, because the failure was in how the classes nested.
 #
-# A .md page goes through pymdownx.arithmatex, which rewrites $...$ into
-# \(...\) and wraps it in class="arithmatex". The notebook does not: it is
-# rendered by mkdocs-jupyter through nbconvert, which is not the mkdocs
-# markdown pipeline, so its maths arrives as literal $...$ inside
-# class="jp-MarkdownCell".
-#
-# The configuration served only the first of those, in both respects at once
-# -- it processed the arithmatex class alone, and declared only the \(...\)
-# delimiters -- so every formula in the tutorial was published as its own
-# source: six display and twenty-two inline, for as long as the page existed.
-# Nothing failed, nothing warned, and the release went out with it.
-#
-# So this pins the join: for each renderer the docs actually use, the config
-# has to process the class that renderer emits and accept the delimiters it
-# leaves behind. It reads the sources rather than the built site, so it runs
-# without mkdocs installed; the docs CI job checks the built HTML as well.
+# Sphinx renders both through MyST, so the delimiters and the markup are the
+# same on every page and there is no class to get wrong. What is left to hold
+# is the pair of settings that keeps it that way.
 
-MATHJAX_JS = ROOT / "mkdocs-documentation" / "docs" / "javascripts" / "mathjax.js"
+CONF = ROOT / "docs" / "conf.py"
 
 
-def mathjax_config() -> tuple[str, str, str]:
-    """Return (ignoreHtmlClass, inlineMath source, displayMath source)."""
-    text = MATHJAX_JS.read_text(encoding="utf-8")
-    options = re.search(r"options:\s*\{(.*?)\}", text, re.S)
-    inline = re.search(r"inlineMath:\s*\[(.*?)\],\s*\n\s*displayMath", text, re.S)
-    display = re.search(r"displayMath:\s*\[(.*?)\],\s*\n\s*processEscapes", text, re.S)
-    assert options and inline and display, (
-        f"could not read the MathJax configuration out of {MATHJAX_JS.name}; "
-        f"if its shape changed, this test has to change with it rather than "
-        f"quietly stop checking"
+def test_dollar_maths_is_enabled():
+    """``dollarmath`` is what makes $...$ work in .md *and* in the notebook."""
+    text = CONF.read_text(encoding="utf-8")
+    assert '"dollarmath"' in text, (
+        "myst_enable_extensions does not list dollarmath, so $...$ is plain "
+        "text again -- on the tutorial and on every markdown page at once"
     )
-    ignore = re.search(r'ignoreHtmlClass:\s*"([^"]*)"', options.group(1))
-    assert ignore, f"no ignoreHtmlClass in {MATHJAX_JS.name}"
-    return ignore.group(1), inline.group(1), display.group(1)
 
 
-def notebook_math(path: Path) -> tuple[int, int]:
-    """Return (display, inline) maths counts in a notebook's markdown cells."""
-    cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
-    markdown = ["".join(c["source"]) for c in cells if c["cell_type"] == "markdown"]
-    display = sum(len(re.findall(r"\$\$.+?\$\$", text, re.S)) for text in markdown)
-    inline = sum(
-        len(re.findall(r"\$[^$\n]+?\$", re.sub(r"\$\$.+?\$\$", " ", text, flags=re.S)))
-        for text in markdown
-    )
-    return display, inline
+def test_mathjax_is_served_from_here():
+    """Not from a CDN, which is the whole reason it is vendored.
 
-
-def test_the_ignore_pattern_is_not_a_catch_all():
-    """``ignoreHtmlClass`` must not match every element, or nesting kills it.
-
-    MathJax re-evaluates the flag at each element::
-
-        ignore = (ignore || ignoreHtmlClass.test(class)) && !processHtmlClass.test(class)
-
-    so a pattern matching everything -- ``".*|"``, the recipe for a site whose
-    maths is only ever arithmatex spans -- revokes any exemption one level
-    below where it was granted. Only an element whose *own* text is the maths
-    can then be processed, and nbconvert nests the tutorial's four divs deep.
-
-    This is the assertion the first fix needed and did not have: naming the
-    notebook's class in processHtmlClass passed a test while the page stayed
-    exactly as broken.
+    Sphinx loads MathJax from jsdelivr unless told otherwise. A script tag
+    pointed at someone else's host runs whatever that host serves in the
+    browser of every reader; the entry this replaced was polyfill.io, which
+    was sold in 2024 and began serving malware.
     """
-    ignore, _, _ = mathjax_config()
-    pattern = re.compile(r"(?:^| )(?:" + ignore + r")(?: |$)")
-    assert not pattern.search(""), (
-        f"ignoreHtmlClass={ignore!r} matches an element with no class at all, "
-        f"so it matches every element, so nothing nested inside a processed "
-        f"container is ever reached. The built site is checked properly by "
-        f"mkdocs-documentation/checks/check_rendered_maths.py"
+    text = CONF.read_text(encoding="utf-8")
+    assert 'mathjax_path = "mathjax/' in text, (
+        "mathjax_path does not point at the vendored copy, so Sphinx will "
+        "fetch MathJax from a CDN"
     )
-
-
-@pytest.mark.parametrize(
-    "path", NOTEBOOKS, ids=lambda p: p.name if hasattr(p, "name") else str(p)
-)
-def test_notebook_maths_is_configured_to_render(path):
-    """Notebook maths stays as $...$, so those delimiters must be live."""
-    display, inline = notebook_math(path)
-    if not (display or inline):
-        pytest.skip("no maths in this notebook's markdown cells")
-
-    _, inline_delims, display_delims = mathjax_config()
-    if display:
-        assert '"$$", "$$"' in display_delims.replace("'", '"'), (
-            f"{path.name} has {display} $$...$$ formulas and displayMath does "
-            f"not list that delimiter, so they stay as written"
-        )
-    if inline:
-        assert '"$", "$"' in inline_delims.replace("'", '"'), (
-            f"{path.name} has {inline} $...$ formulas and inlineMath does not "
-            f"list that delimiter, so they stay as written"
-        )
-
-
-def test_markdown_maths_is_configured_to_render():
-    r"""Arithmatex rewrites .md maths to \(...\), which must be accepted."""
-    _, inline_delims, _ = mathjax_config()
-    assert "\\\\(" in inline_delims, (
-        f"inlineMath ({inline_delims.strip()!r}) does not list the \\(...\\) "
-        f"delimiters arithmatex rewrites $...$ into"
-    )
+    bundle = ROOT / "docs" / "_static" / "mathjax" / "tex-mml-chtml.js"
+    assert bundle.exists(), f"{bundle} is missing, so that path 404s"
 
 
 @pytest.mark.parametrize(
