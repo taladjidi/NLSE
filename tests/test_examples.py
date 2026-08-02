@@ -1,10 +1,12 @@
 """Example scripts must write through ``examples/_output.output_path``.
 
-A bare filename lands in whatever directory the script was run from. Nothing
-else runs these files, so this is the only check on them.
+A bare filename lands in whatever directory the script was run from, which
+is what these check. Whether the scripts still *run* is the Examples job in
+CI, which executes every one of them bar the two benchmark sweeps.
 """
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -73,3 +75,44 @@ def test_the_helper_stays_out_of_the_working_directory(tmp_path, monkeypatch):
     finally:
         if not any((EXAMPLES / "output").iterdir()):
             (EXAMPLES / "output").rmdir()
+
+
+GALLERY = Path(__file__).resolve().parent.parent / "docs" / "examples.md"
+
+
+def gallery_links() -> list[str]:
+    """Return the repository paths the gallery links to."""
+    return sorted(
+        set(
+            re.findall(
+                r"/tree/main/((?:examples|docs)/\S+?\.(?:py|ipynb))",
+                GALLERY.read_text(),
+            )
+        )
+    )
+
+
+def test_the_gallery_links_files_that_exist():
+    """A dead link in the gallery is a reader following it to a 404.
+
+    It listed ``examples/vortex_precession.py`` after the script was split in
+    two and renamed, and pointed at the tutorial notebook in ``examples/``
+    after it moved in with the docs. Nothing noticed either.
+    """
+    root = Path(__file__).resolve().parent.parent
+    links = gallery_links()
+    assert len(links) > 5, f"only found {links}; the gallery format changed"
+    missing = [link for link in links if not (root / link).exists()]
+    assert not missing, f"{GALLERY.name} links files that do not exist: {missing}"
+
+
+def test_every_example_is_in_the_gallery():
+    """A script nobody links is a script nobody runs."""
+    listed = {Path(link).name for link in gallery_links()}
+    unlisted = sorted(
+        p.name for p in SCRIPTS if p.name != "_output.py" and p.name not in listed
+    )
+    assert not unlisted, (
+        f"{unlisted} are in examples/ and not in {GALLERY.name}, so the gallery "
+        f"is no longer a map of what is there"
+    )

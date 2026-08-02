@@ -8,25 +8,25 @@ A package to easily simulate all sorts of non linear Schrödinger equations. It 
 
 This file gets you running and explains the choices you have to make on the way
 in. Everything below the halfway mark is a summary; the full treatment lives in
-[`mkdocs-documentation/docs/`](mkdocs-documentation/docs/) and is published at
+[`docs/`](docs/) and is published at
 **<https://taladjidi.github.io/NLSE/>**. Each section here links to its
 page rather than repeating it — the links point at the files, so they work in
 this repository whether or not you have the site open.
 
 | I want to… | Here | In the docs |
 |---|---|---|
-| install it | [Installation](#installation) | [Installation](mkdocs-documentation/docs/installation.md) |
-| run something | [Basic usage](#basic-usage) | [Quick Start](mkdocs-documentation/docs/quick_start.md) |
-| know what equation it solves | [Physical situation](#physical-situation) | [Physics Background](mkdocs-documentation/docs/physics_problem.md) |
-| pick a solver class | [Inheritance](#inheritance) | [Solvers Overview](mkdocs-documentation/docs/solvers_overview.md) |
-| pick a splitting, or RK4 | [Propagation](#propagation) | [Numerical Methods](mkdocs-documentation/docs/numerical_methods.md) |
-| choose a step | [The propagation step](#the-propagation-step) | [Numerical Methods](mkdocs-documentation/docs/numerical_methods.md) |
-| choose a backend, or debug one | [GPU computing](#gpu-computing) | [Backends](mkdocs-documentation/docs/backends.md) |
-| watch or steer a run | [Callbacks](#callbacks) | [Callbacks](mkdocs-documentation/docs/callbacks.md) |
-| copy a working script | [`examples/`](examples/) | [Examples Gallery](mkdocs-documentation/docs/examples.md) |
-| look up a class or method | — | [API Reference](mkdocs-documentation/docs/reference/) |
+| install it | [Installation](#installation) | [Installation](docs/installation.md) |
+| run something | [Basic usage](#basic-usage) | [Quick Start](docs/quick_start.md) |
+| know what equation it solves | [Physical situation](#physical-situation) | [Physics Background](docs/physics_problem.md) |
+| pick a solver class | [Inheritance](#inheritance) | [Solvers Overview](docs/solvers_overview.md) |
+| pick a splitting, or RK4 | [Propagation](#propagation) | [Numerical Methods](docs/numerical_methods.md) |
+| choose a step | [The propagation step](#the-propagation-step) | [Numerical Methods](docs/numerical_methods.md) |
+| choose a backend, or debug one | [GPU computing](#gpu-computing) | [Backends](docs/backends.md) |
+| watch or steer a run | [Callbacks](#callbacks) | [Callbacks](docs/callbacks.md) |
+| copy a working script | [`examples/`](examples/) | [Examples Gallery](docs/examples.md) |
+| look up a class or method | — | [API Reference](docs/reference/) |
 | know why the code is shaped this way | — | [Optimization log](docs/optimization-log.md) |
-| contribute | [Contributing](#contributing-and-issues) | [Contributing](mkdocs-documentation/docs/contributing.md) |
+| contribute | [Contributing](#contributing-and-issues) | [Contributing](docs/contributing.md) |
 
 To read the docs as a site rather than as files:
 
@@ -407,18 +407,18 @@ In order to minimize duplication, all classes inherit from the main `NLSE` class
 ![inheritance](img/inheritance_graph.png)
 
 Each solver's propagation equation is written out in
-[Solvers Overview](mkdocs-documentation/docs/solvers_overview.md#the-equation-each-solver-integrates),
+[Solvers Overview](docs/solvers_overview.md#the-equation-each-solver-integrates),
 alongside what it costs and what it supports:
 
 | Class | Solves | Notes |
 |---|---|---|
-| [`NLSE`](mkdocs-documentation/docs/reference/nlse.md) | 2D paraxial propagation | the base every other class specialises |
-| [`NLSE_1d`](mkdocs-documentation/docs/reference/nlse_1d.md) | the same in 1D | a specialization for speed, same features |
-| [`NLSE_3d`](mkdocs-documentation/docs/reference/nlse_3d.md) | full 3D+1 with dispersion | space complexity goes as $N^3$; be careful |
-| [`CNLSE`](mkdocs-documentation/docs/reference/cnlse.md) | two coupled fields | back-reaction of a fluid on a defect, two-component problems |
-| [`CNLSE_1d`](mkdocs-documentation/docs/reference/cnlse_1d.md) | the same in 1D | |
-| [`GPE`](mkdocs-documentation/docs/reference/gpe.md) | 2D Gross–Pitaevskii | atomic units: masses in kg, times in s |
-| [`DDGPE`](mkdocs-documentation/docs/reference/ddgpe.md) | driven-dissipative coupled fields | built for exciton polaritons in microcavities |
+| [`NLSE`](docs/reference/nlse.md) | 2D paraxial propagation | the base every other class specialises |
+| [`NLSE_1d`](docs/reference/nlse_1d.md) | the same in 1D | a specialization for speed, same features |
+| [`NLSE_3d`](docs/reference/nlse_3d.md) | full 3D+1 with dispersion | space complexity goes as $N^3$; be careful |
+| [`CNLSE`](docs/reference/cnlse.md) | two coupled fields | back-reaction of a fluid on a defect, two-component problems |
+| [`CNLSE_1d`](docs/reference/cnlse_1d.md) | the same in 1D | |
+| [`GPE`](docs/reference/gpe.md) | 2D Gross–Pitaevskii | atomic units: masses in kg, times in s |
+| [`DDGPE`](docs/reference/ddgpe.md) | driven-dissipative coupled fields | built for exciton polaritons in microcavities |
 
 Terms are turned off by leaving their parameter `None`, and the solver then
 skips the corresponding evolution term rather than multiplying by zero.

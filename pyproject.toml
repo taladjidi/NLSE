@@ -38,8 +38,18 @@ dependencies = [
 opencl = ["pyopencl", "pyvkfft", "mako"]
 gpu = ["cupy"]
 mlx = ["mlx"]
-# Building mkdocs-documentation/ needs these four; there was no way to say so.
-docs = ["mkdocs", "mkdocs-material", "mkdocstrings[python]", "mkdocs-jupyter"]
+# Sphinx, because the maths, the notebook and the API reference all go
+# through one renderer. sphinx-autoapi parses the source rather than
+# importing it, which matters here: importing NLSE pulls in whichever
+# backend is installed, and none of cupy, pyopencl or mlx is on a docs
+# runner.
+docs = [
+  "sphinx",
+  "furo",
+  "myst-nb",
+  "sphinx-autoapi",
+  "sphinx-copybutton",
+]
 dev = [
   "pytest>=7.0",
   "pytest-cov",

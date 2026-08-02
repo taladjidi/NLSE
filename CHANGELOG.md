@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **The tutorial's equations render.** `nlse_tutorial.ipynb` is rendered by
+  mkdocs-jupyter through nbconvert, not through the mkdocs markdown pipeline,
+  so its maths never reached `pymdownx.arithmatex`: it arrived in the page as
+  literal `$...$` inside `class="jp-MarkdownCell"`. The MathJax configuration
+  processed the `arithmatex` class alone and declared only the `\(...\)`
+  delimiters, so it walked straight past all of it — six display and
+  twenty-two inline formulas were published as their own LaTeX source, for as
+  long as the page has existed and including in 4.0.0.
+
+  `tests/test_docs.py` now pins, for each renderer the docs use, that the
+  configuration processes the class that renderer emits and accepts the
+  delimiters it leaves behind; the docs CI job checks the built HTML as well,
+  because a source-level test cannot see a renderer changing its markup.
+
 ## 4.0.0 — 2026-08-01
 
 174 commits since 3.0.0. The major number is not optional: `out_field` no

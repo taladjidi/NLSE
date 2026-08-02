@@ -20,7 +20,9 @@ tex/paperNotes.bib
 build/*
 NLSE.egg-info/*
 img/inheritance_graph.svg
-mkdocs-documentation/site/
+docs/_build/
+docs/api/
+docs/jupyter_execute/
 examples/output/
 
 
