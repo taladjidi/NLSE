@@ -2,7 +2,8 @@
 Benchmarking every backend
 ==========================
 
-A sweep across backends and grid sizes. Not executed when the docs build: it takes minutes.
+Every backend available here against a hand-rolled numpy split step, over a
+range of grid sizes.
 """
 
 import os
@@ -14,6 +15,7 @@ import tqdm
 from _output import output_path
 from cycler import cycler
 from NLSE import NLSE
+from NLSE.backends import list_available_backends
 
 # Propagation step, passed to out_field and used by the plots below.
 DELTA_Z = 1e-4
@@ -82,10 +84,15 @@ sizes = (
     if os.environ.get("NLSE_DOCS_BUILD")
     else np.logspace(6, 14, 9, base=2, dtype=int)
 )
-times = np.zeros((len(sizes), 3, N_avg))
+# One column per backend that exists here, plus the hand-rolled numpy
+# split step as the thing they are all being compared against. It used
+# to ask for "CUPY" by name, which on a machine without it falls back to
+# the CPU and draws two CPU curves under different labels.
+BACKENDS = list_available_backends()
+times = np.zeros((len(sizes), len(BACKENDS) + 1, N_avg))
 pbar = tqdm.tqdm(total=np.prod(times.shape), desc="Benchmarks")
 for i, size in enumerate(sizes):
-    for j, backend in enumerate(["CUPY", "CPU"]):
+    for j, backend in enumerate(BACKENDS):
         simu0 = NLSE(
             alpha,
             puiss,
@@ -125,48 +132,26 @@ for i, size in enumerate(sizes):
                 / (1 + np.abs(E1) ** 2 / Isat)
             )
             E1 *= np.exp(-simu0.alpha * DELTA_Z)
-        times[i, 2, k] = time.perf_counter() - t0
+        times[i, len(BACKENDS), k] = time.perf_counter() - t0
         pbar.update(1)
 pbar.close()
 np.save(output_path("benchmarks_times.npy"), times)
 np.save(output_path("benchmarks_sizes.npy"), sizes)
-err_gpu = [
-    np.mean(times[:, 0, :], axis=-1) - np.min(times[:, 0, :], axis=-1),
-    np.max(times[:, 0, :], axis=-1) - np.mean(times[:, 0, :], axis=-1),
-]
-err_cpu = [
-    np.mean(times[:, 1, :], axis=-1) - np.min(times[:, 1, :], axis=-1),
-    np.max(times[:, 1, :], axis=-1) - np.mean(times[:, 1, :], axis=-1),
-]
-err_np = [
-    np.mean(times[:, 2, :], axis=-1) - np.min(times[:, 2, :], axis=-1),
-    np.max(times[:, 2, :], axis=-1) - np.mean(times[:, 2, :], axis=-1),
-]
 fig, ax = plt.subplots()
-ax.errorbar(
-    np.log2(sizes).astype(int),
-    np.mean(times[:, 0, :], axis=-1),
-    yerr=err_gpu,
-    label="CUPY",
-    marker="o",
-    capsize=4,
-)
-ax.errorbar(
-    np.log2(sizes).astype(int),
-    np.mean(times[:, 1, :], axis=-1),
-    yerr=err_cpu,
-    label="CPU",
-    marker="s",
-    capsize=4,
-)
-ax.errorbar(
-    np.log2(sizes).astype(int),
-    np.mean(times[:, 2, :], axis=-1),
-    yerr=err_cpu,
-    label="Numpy",
-    marker="^",
-    capsize=4,
-)
+MARKERS = ["o", "s", "^", "v", "D"]
+for j, label in enumerate([*BACKENDS, "Numpy"]):
+    mean = np.mean(times[:, j, :], axis=-1)
+    ax.errorbar(
+        np.log2(sizes).astype(int),
+        mean,
+        yerr=[
+            mean - np.min(times[:, j, :], axis=-1),
+            np.max(times[:, j, :], axis=-1) - mean,
+        ],
+        label=label,
+        marker=MARKERS[j % len(MARKERS)],
+        capsize=4,
+    )
 ax.legend()
 ax.set_xticks(np.log2(sizes).astype(int))
 ax.set_xlabel(r"Size of the system $2^N$")

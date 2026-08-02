@@ -20,6 +20,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from _output import output_path
 from NLSE import NLSE
+from NLSE.backends import list_available_backends
 
 
 def vortex(x, y, xi=10e-6, ell=1):
@@ -38,12 +39,12 @@ intensity = power / (np.pi * waist**2)
 Isat = np.inf  # saturation intensity in W/m^2
 L = 5e-2
 alpha = 0
-BACKEND = "MLX"
+BACKENDS = list_available_backends()
 
 # A solver at the reference size, only to get the healing length and the
 # nonlinear length the step and the vortex separation are written against.
 reference = NLSE(
-    alpha, power, window, n2, None, L, NX=N, NY=N, Isat=Isat, backend=BACKEND
+    alpha, power, window, n2, None, L, NX=N, NY=N, Isat=Isat, backend=BACKENDS[0]
 )
 cs = np.sqrt(abs(n2) * intensity) / (1 + intensity / Isat)
 delta_n = abs(n2) * intensity / (1 + intensity / Isat) ** 2
@@ -60,49 +61,59 @@ sizes = (
     else [128, 256, 512, 1024, 2048, 4096, 8192]
 )
 navg = 10
-ts = np.zeros((len(sizes), navg))
-for i, n in enumerate(sizes):
-    print(n)
-    simu = NLSE(
-        alpha, power, window, n2, None, L, NX=n, NY=n, Isat=Isat, backend=BACKEND
-    )
-    # A vortex pair, separated by four healing lengths.
-    d = 4 * xi
-    E_0 = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(np.complex64)
-    E_0 *= vortex(simu.XX + d / 2, simu.YY + d / 2, xi=xi, ell=1)
-    E_0 *= vortex(simu.XX - d / 2, simu.YY - d / 2, xi=xi, ell=1)
-    # Hand tuned potential for Thomas-Fermi
-    simu.V = 4.31e-4 * np.exp(-2 * (simu.XX**2 + simu.YY**2) / waist**2).astype(
-        np.float32
-    )
-    for rep in range(navg):
-        t0 = time.perf_counter()
-        simu.out_field(
-            E_0,
-            simu.L,
-            verbose=False,
-            plot=False,
-            splitting="lie",
-            delta_z=DELTA_Z,
+# Every backend on the same grids, because a timing against nothing is not a
+# benchmark: the comparison between them is what the figure is for.
+ts = np.zeros((len(BACKENDS), len(sizes), navg))
+for b, backend in enumerate(BACKENDS):
+    for i, n in enumerate(sizes):
+        print(f"{backend} {n}")
+        simu = NLSE(
+            alpha, power, window, n2, None, L, NX=n, NY=n, Isat=Isat, backend=backend
         )
-        ts[i, rep] = time.perf_counter() - t0
-    timing_string = f"Average time: {np.mean(ts[i]):.2f} s "
-    timing_string += f"(min: {np.min(ts[i]):.2f} s, max: {np.max(ts[i]):.2f} s)"
-    print(timing_string)
+        # A vortex pair, separated by four healing lengths.
+        d = 4 * xi
+        E_0 = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(np.complex64)
+        E_0 *= vortex(simu.XX + d / 2, simu.YY + d / 2, xi=xi, ell=1)
+        E_0 *= vortex(simu.XX - d / 2, simu.YY - d / 2, xi=xi, ell=1)
+        # Hand tuned potential for Thomas-Fermi
+        simu.V = 4.31e-4 * np.exp(-2 * (simu.XX**2 + simu.YY**2) / waist**2).astype(
+            np.float32
+        )
+        for rep in range(navg):
+            t0 = time.perf_counter()
+            simu.out_field(
+                E_0,
+                simu.L,
+                verbose=False,
+                plot=False,
+                splitting="lie",
+                delta_z=DELTA_Z,
+            )
+            ts[b, i, rep] = time.perf_counter() - t0
+        timing_string = f"Average time: {np.mean(ts[b, i]):.2f} s "
+        timing_string += (
+            f"(min: {np.min(ts[b, i]):.2f} s, max: {np.max(ts[b, i]):.2f} s)"
+        )
+        print(timing_string)
 
-np.save(output_path(f"python_vortex_precession_{BACKEND}_times.npy"), ts)
-np.save(output_path(f"python_vortex_precession_{BACKEND}_sizes.npy"), sizes)
+for b, backend in enumerate(BACKENDS):
+    np.save(output_path(f"python_vortex_precession_{backend}_times.npy"), ts[b])
+    np.save(output_path(f"python_vortex_precession_{backend}_sizes.npy"), sizes)
 
 # The timings are the point of the script, so draw them rather than leaving
 # the reader to open a .npy. Best of the repeats, which is the figure least
 # disturbed by whatever else the machine was doing.
-best = ts.min(axis=1)
-fig, ax = plt.subplots(figsize=(6, 3.6), constrained_layout=True)
-ax.bar([str(size) for size in sizes], best, color="tab:blue")
-for x, value in enumerate(best):
-    ax.text(x, value, f"{value:.2f}s", ha="center", va="bottom", fontsize=9)
+best = ts.min(axis=2)
+fig, ax = plt.subplots(figsize=(7, 4), constrained_layout=True)
+width = 0.8 / len(BACKENDS)
+offsets = np.arange(len(sizes))
+for b, backend in enumerate(BACKENDS):
+    ax.bar(offsets + b * width, best[b], width, label=backend)
+ax.set_xticks(offsets + width * (len(BACKENDS) - 1) / 2)
+ax.set_xticklabels([str(size) for size in sizes])
+ax.set_yscale("log")
 ax.set_xlabel("grid size")
 ax.set_ylabel("time for the propagation (s)")
-ax.set_title(f"Vortex precession on {BACKEND}, best of {navg}")
-ax.margins(y=0.15)
+ax.set_title(f"Vortex precession, best of {navg}")
+ax.legend()
 plt.show()
