@@ -5,6 +5,9 @@ Every script here is run when the documentation is built, and the figures
 below are the ones it produced. Each page carries the source, so the code you
 read is the code that made the plot.
 
-Two of them are benchmark sweeps that take minutes rather than seconds, so
-they are listed with their source but not executed: ``benchmarks.py`` and
-``vortex_precession_benchmark.py``.
+The benchmark sweeps run over a short range of grid sizes here, so the graph
+below is one this build drew; run them yourself and they cover the full range.
+
+Two are listed with their source but not executed, because both exit early
+without what they need: ``profile_cupy.py`` wants a CUDA device, and
+``juliaGPE_vs_NLSE.py`` wants timings from a benchmark run.

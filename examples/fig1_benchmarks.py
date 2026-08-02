@@ -5,6 +5,7 @@ Backends compared
 The backend comparison figure, drawn from a fresh run.
 """
 
+import os
 import time
 
 import matplotlib.pyplot as plt
@@ -42,7 +43,14 @@ METHODS = ["split_step", "RK4"]
 METHOD_MARKERS = {"split_step": "o", "RK4": "s"}
 METHOD_LINESTYLES = {"split_step": "-", "RK4": "--"}
 
-sizes = np.logspace(6, 13, 8, base=2, dtype=int)
+# A documentation build sets NLSE_DOCS_BUILD and gets the small sweep, so the
+# gallery shows a real graph made by this script rather than a placeholder.
+# Run it yourself and you get the full range.
+sizes = (
+    np.logspace(6, 9, 4, base=2, dtype=int)
+    if os.environ.get("NLSE_DOCS_BUILD")
+    else np.logspace(6, 13, 8, base=2, dtype=int)
+)
 times = np.zeros((len(sizes), len(BACKENDS), len(METHODS), N_avg))
 
 COLORS = plt.cm.tab10.colors

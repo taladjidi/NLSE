@@ -28,7 +28,7 @@ def main() -> None:
     simu.k2 = 2 * np.pi / 795e-9
     E_0 = np.exp(-(simu.X**2) / waist**2).astype(PRECISION_COMPLEX)
     simu.V = -1e-4 * np.exp(-(simu.X**2) / waist2**2).astype(PRECISION_COMPLEX)
-    simu.out_field(E_0, L, verbose=True, plot=False, splitting="lie")
+    simu.out_field(E_0, L, verbose=True, plot=True, splitting="lie")
 
 
 if __name__ == "__main__":

@@ -46,7 +46,7 @@ def main() -> None:
         np.array([E_0, V]),
         L,
         verbose=True,
-        plot=False,
+        plot=True,
         splitting="lie",
     )
 

@@ -35,7 +35,7 @@ def main():
     psi_0 = np.exp(-(simu_gpe.XX**2 + simu_gpe.YY**2) / waist**2).astype(
         PRECISION_COMPLEX
     )
-    simu_gpe.out_field(psi_0, 1e-6, verbose=True, plot=False, splitting="lie")
+    simu_gpe.out_field(psi_0, 1e-6, verbose=True, plot=True, splitting="lie")
 
 
 if __name__ == "__main__":

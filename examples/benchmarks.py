@@ -5,6 +5,7 @@ Benchmarking every backend
 A sweep across backends and grid sizes. Not executed when the docs build: it takes minutes.
 """
 
+import os
 import time
 
 import matplotlib.pyplot as plt
@@ -73,7 +74,14 @@ L = 2e-3
 alpha = 22
 dn = None
 N_avg = 2
-sizes = np.logspace(6, 14, 9, base=2, dtype=int)
+# A documentation build sets NLSE_DOCS_BUILD and gets the small sweep, so the
+# gallery shows a real graph made by this script rather than a placeholder.
+# Run it yourself and you get the full range.
+sizes = (
+    np.logspace(6, 9, 4, base=2, dtype=int)
+    if os.environ.get("NLSE_DOCS_BUILD")
+    else np.logspace(6, 14, 9, base=2, dtype=int)
+)
 times = np.zeros((len(sizes), 3, N_avg))
 pbar = tqdm.tqdm(total=np.prod(times.shape), desc="Benchmarks")
 for i, size in enumerate(sizes):

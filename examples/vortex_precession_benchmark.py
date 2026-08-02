@@ -13,8 +13,10 @@ per unit of work, and letting each grid size choose its own step would change
 the work between the cells being compared.
 """
 
+import os
 import time
 
+import matplotlib.pyplot as plt
 import numpy as np
 from _output import output_path
 from NLSE import NLSE
@@ -49,7 +51,14 @@ xi = 1 / (reference.k * cs)
 z_nl = 1 / (reference.k * delta_n)
 DELTA_Z = z_nl / 6
 
-sizes = [128, 256, 512, 1024, 2048, 4096, 8192]
+# A documentation build sets NLSE_DOCS_BUILD and gets the small sweep, so the
+# gallery shows a real graph made by this script rather than a placeholder.
+# Run it yourself and you get the full range.
+sizes = (
+    [128, 256, 512]
+    if os.environ.get("NLSE_DOCS_BUILD")
+    else [128, 256, 512, 1024, 2048, 4096, 8192]
+)
 navg = 10
 ts = np.zeros((len(sizes), navg))
 for i, n in enumerate(sizes):
@@ -83,3 +92,17 @@ for i, n in enumerate(sizes):
 
 np.save(output_path(f"python_vortex_precession_{BACKEND}_times.npy"), ts)
 np.save(output_path(f"python_vortex_precession_{BACKEND}_sizes.npy"), sizes)
+
+# The timings are the point of the script, so draw them rather than leaving
+# the reader to open a .npy. Best of the repeats, which is the figure least
+# disturbed by whatever else the machine was doing.
+best = ts.min(axis=1)
+fig, ax = plt.subplots(figsize=(6, 3.6), constrained_layout=True)
+ax.bar([str(size) for size in sizes], best, color="tab:blue")
+for x, value in enumerate(best):
+    ax.text(x, value, f"{value:.2f}s", ha="center", va="bottom", fontsize=9)
+ax.set_xlabel("grid size")
+ax.set_ylabel("time for the propagation (s)")
+ax.set_title(f"Vortex precession on {BACKEND}, best of {navg}")
+ax.margins(y=0.15)
+plt.show()

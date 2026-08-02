@@ -13,10 +13,15 @@ renderers with different delimiters, and the tutorial published every one of
 its formulas as LaTeX source for as long as the page existed.
 """
 
+import os
 import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# The benchmark examples read this and take a short sweep, so the gallery
+# can show the graph they draw without the build taking minutes on it.
+os.environ.setdefault("NLSE_DOCS_BUILD", "1")
 
 project = "NLSE"
 author = "Tangui Aladjidi"
@@ -48,22 +53,18 @@ extensions = [
 
 # The gallery runs every example when the docs are built and keeps the figures
 # it produced, so the picture on the page is the one that script makes today
-# rather than one committed months ago. Two are left out of the *execution* by
-# filename_pattern: they are benchmark sweeps that take minutes, and timing
-# them on a shared runner would mean nothing anyway. They still appear, with
-# their source, under a default thumbnail.
+# rather than one committed months ago.
 sphinx_gallery_conf = {
     "examples_dirs": "../examples",
     "gallery_dirs": "auto_examples",
-    # Executed unless named here. Two are benchmark sweeps that take minutes,
-    # and two call sys.exit() when what they need is absent -- CuPy for one,
-    # data from a run of the benchmark for the other. sphinx-gallery lets
-    # SystemExit propagate, so an example that exits takes the whole build
-    # down with it, silently and with a zero status.
-    "filename_pattern": (
-        r"^(?!.*(benchmarks|vortex_precession_benchmark|juliaGPE_vs_NLSE"
-        r"|profile_cupy)).*$"
-    ),
+    # Executed unless named here, and only two are. Both call sys.exit() when
+    # what they need is absent -- CuPy for one, data from a benchmark run for
+    # the other -- and sphinx-gallery lets SystemExit propagate, so an example
+    # that exits takes the whole build down with it, silently and with a zero
+    # status. The benchmark sweeps *do* run: they read NLSE_DOCS_BUILD and
+    # take a short range, so the gallery shows a real graph rather than a
+    # placeholder.
+    "filename_pattern": r"^(?!.*(juliaGPE_vs_NLSE|profile_cupy)).*$",
     "ignore_pattern": r"_output\.py",
     "within_subsection_order": "FileNameSortKey",
     "download_all_examples": False,
