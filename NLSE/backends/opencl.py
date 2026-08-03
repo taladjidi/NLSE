@@ -75,6 +75,95 @@ class _VkFFTPlan:
         return self._app_unnorm.ifft(a, out)
 
 
+_VKFFT_RADICES = (2, 3, 5, 7, 11, 13)
+
+
+def _good_size(n: int) -> int:
+    """Return the smallest size >= n that VkFFT transforms efficiently.
+
+    A linear convolution needs at least ``n1 + n2 - 1`` points, but that is
+    usually an awkward number -- for a 1024 grid convolved with a 1024 kernel
+    it is 2047, which is 23 x 89 -- and VkFFT is fastest on products of small
+    radices. Rounding up costs a few points and buys the good transform.
+    """
+    while True:
+        rest = n
+        for radix in _VKFFT_RADICES:
+            while rest % radix == 0:
+                rest //= radix
+        if rest == 1:
+            return n
+        n += 1
+
+
+def _rect_copy(queue, dst, src, shape, itemsize) -> None:
+    """Copy a contiguous block into the corner of a larger array.
+
+    PyOpenCL refuses both to copy and to assign into a non-contiguous slice,
+    which is what zero-padding an array into a bigger one needs. OpenCL has a
+    rectangular buffer copy for exactly this, so the padding goes through
+    ``clEnqueueCopyBufferRect`` rather than through a kernel of our own.
+
+    Parameters
+    ----------
+    queue : pyopencl.CommandQueue
+        Queue to enqueue the copy on.
+    dst, src : pyopencl.array.Array
+        Destination and source, both contiguous and of the same dtype.
+    shape : tuple of int
+        Extent of the block to copy, at most three-dimensional.
+    itemsize : int
+        Bytes per element.
+    """
+    shape = (1,) * (3 - len(shape)) + tuple(shape)
+    d0, d1, d2 = shape
+    ds = (1,) * (3 - dst.ndim) + tuple(dst.shape)
+    ss = (1,) * (3 - src.ndim) + tuple(src.shape)
+    cl.enqueue_copy(
+        queue,
+        dst.base_data,
+        src.base_data,
+        src_origin=(0, 0, 0),
+        dst_origin=(0, 0, 0),
+        region=(d2 * itemsize, d1, d0),
+        src_pitches=(ss[2] * itemsize, ss[2] * ss[1] * itemsize),
+        dst_pitches=(ds[2] * itemsize, ds[2] * ds[1] * itemsize),
+    )
+
+
+def _rect_crop(queue, dst, src, offset, itemsize) -> None:
+    """Copy a sub-block out of a larger array into a contiguous one.
+
+    The mirror of :func:`_rect_copy`, used to take the "same" region out of
+    the full convolution support.
+
+    Parameters
+    ----------
+    queue : pyopencl.CommandQueue
+        Queue to enqueue the copy on.
+    dst, src : pyopencl.array.Array
+        Destination (the block) and source (the larger array).
+    offset : tuple of int
+        Index of the block's first element in ``src``.
+    itemsize : int
+        Bytes per element.
+    """
+    shape = (1,) * (3 - dst.ndim) + tuple(dst.shape)
+    ds = shape
+    ss = (1,) * (3 - src.ndim) + tuple(src.shape)
+    off = (0,) * (3 - len(offset)) + tuple(offset)
+    cl.enqueue_copy(
+        queue,
+        dst.base_data,
+        src.base_data,
+        src_origin=(off[2] * itemsize, off[1], off[0]),
+        dst_origin=(0, 0, 0),
+        region=(ds[2] * itemsize, ds[1], ds[0]),
+        src_pitches=(ss[2] * itemsize, ss[2] * ss[1] * itemsize),
+        dst_pitches=(ds[2] * itemsize, ds[2] * ds[1] * itemsize),
+    )
+
+
 class OpenCLBackend(Backend):
     """OpenCL backend using PyOpenCL and VkFFT.
 
@@ -134,6 +223,93 @@ class OpenCLBackend(Backend):
     def from_numpy(self, array: np.ndarray) -> Any:
         """Transfer from CPU to OpenCL device."""
         return cla.to_device(self._queue, array)
+
+    @property
+    def convolution(self):
+        """Return an FFT convolution with scipy's ``oaconvolve`` signature.
+
+        PyOpenCL has no convolution, which is what kept the non-local
+        interaction off this backend: ``nl_length > 0`` is gated on this
+        property being non-None. VkFFT is already here for the propagation, so
+        the convolution is a padded transform pair rather than anything new --
+        the work is in the padding, since PyOpenCL will not write into a
+        non-contiguous slice and OpenCL's rectangular buffer copy has to do it.
+        """
+        return self._fft_convolve
+
+    def _fft_convolve(self, in1, in2, mode: str = "full", axes=None):
+        """Convolve two device arrays over ``axes`` by transform.
+
+        Matches ``scipy.signal.oaconvolve`` closely enough for the solvers,
+        which call it as ``convolution(A_sq, kernel, mode="same",
+        axes=last_axes)``. Both arguments carry the same rank; any axes
+        outside ``axes`` are looped over rather than broadcast, since
+        PyOpenCL arrays do not broadcast in arithmetic.
+
+        Parameters
+        ----------
+        in1, in2 : pyopencl.array.Array
+            Arrays of equal rank; only ``axes`` are convolved.
+        mode : str
+            "full" or "same". "same" returns ``in1``'s shape, centred.
+        axes : tuple of int, optional
+            Axes to convolve. Defaults to all of them.
+
+        Returns
+        -------
+        pyopencl.array.Array
+            The convolution, real where both inputs were real.
+        """
+        if mode not in ("full", "same"):
+            raise ValueError(f"unsupported convolution mode {mode!r}")
+        ndim = in1.ndim
+        axes = tuple(range(ndim)) if axes is None else tuple(a % ndim for a in axes)
+        if tuple(sorted(axes)) != tuple(range(ndim - len(axes), ndim)):
+            raise ValueError("only trailing axes can be convolved on OpenCL")
+        real = in1.dtype.kind == "f" and in2.dtype.kind == "f"
+        lead1, lead2 = in1.shape[: ndim - len(axes)], in2.shape[: ndim - len(axes)]
+        batch = int(np.prod(lead1)) if lead1 else 1
+        conv1, conv2 = in1.shape[len(lead1) :], in2.shape[len(lead2) :]
+        out_shape = (
+            conv1 if mode == "same" else tuple(a + b - 1 for a, b in zip(conv1, conv2))
+        )
+        flat1 = in1.reshape((batch, *conv1))
+        flat2 = in2.reshape((int(np.prod(lead2)) if lead2 else 1, *conv2))
+        pieces = [
+            self._convolve_one(
+                flat1[b], flat2[b if flat2.shape[0] > 1 else 0], out_shape, mode
+            )
+            for b in range(batch)
+        ]
+        stacked = (
+            pieces[0]
+            if batch == 1
+            else cla.concatenate([p.reshape((1, *out_shape)) for p in pieces])
+        )
+        out = stacked.reshape(lead1 + out_shape)
+        return out.real if real else out
+
+    def _convolve_one(self, a, b, out_shape: tuple, mode: str):
+        """Convolve two arrays whose whole rank is transformed."""
+        conv_a, conv_b = a.shape, b.shape
+        full = [x + y - 1 for x, y in zip(conv_a, conv_b)]
+        padded = tuple(_good_size(f) for f in full)
+        itemsize = np.dtype(np.complex64).itemsize
+        buf_a = cla.zeros(self._queue, padded, np.complex64)
+        buf_b = cla.zeros(self._queue, padded, np.complex64)
+        _rect_copy(self._queue, buf_a, a.astype(np.complex64), conv_a, itemsize)
+        _rect_copy(self._queue, buf_b, b.astype(np.complex64), conv_b, itemsize)
+        plan = _VkFFTPlan(
+            padded, np.complex64, self._queue, tuple(range(len(padded))), len(padded)
+        )
+        plan.fft(buf_a, buf_a)
+        plan.fft(buf_b, buf_b)
+        buf_a *= buf_b
+        plan.ifft(buf_a, buf_a)
+        offset = tuple((y - 1) // 2 if mode == "same" else 0 for y in conv_b)
+        out = cla.zeros(self._queue, out_shape, np.complex64)
+        _rect_crop(self._queue, out, buf_a, offset, itemsize)
+        return out
 
     def _build_fft(
         self,
