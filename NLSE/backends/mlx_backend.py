@@ -22,6 +22,53 @@ _NUMPY_TO_MLX_DTYPE = {
 }
 
 
+def _fft_convolve(in1: Any, in2: Any, mode: str = "full", axes=None) -> Any:
+    """Convolve two MLX arrays over ``axes`` by transform.
+
+    Mirrors ``scipy.signal.oaconvolve`` closely enough for the solvers, which
+    call it as ``convolution(A_sq, kernel, mode="same", axes=last_axes)``.
+    Both arguments carry the same rank -- a batched run broadcasts the kernel
+    over its leading axes -- so only ``axes`` are transformed and the rest ride
+    along.
+
+    Parameters
+    ----------
+    in1, in2 : mx.array
+        Arrays of equal rank; only ``axes`` are convolved.
+    mode : str
+        "full" or "same". "same" returns ``in1``'s shape, centred.
+    axes : tuple of int, optional
+        Axes to convolve. Defaults to all of them.
+
+    Returns
+    -------
+    mx.array
+        The convolution, real where both inputs were real.
+    """
+    if mode not in ("full", "same"):
+        raise ValueError(f"unsupported convolution mode {mode!r}")
+    ndim = in1.ndim
+    axes = tuple(range(ndim)) if axes is None else tuple(a % ndim for a in axes)
+    s1 = [in1.shape[a] for a in axes]
+    s2 = [in2.shape[a] for a in axes]
+    full = [a + b - 1 for a, b in zip(s1, s2)]
+
+    spectrum = mx.fft.fftn(in1, s=full, axes=axes) * mx.fft.fftn(in2, s=full, axes=axes)
+    out = mx.fft.ifftn(spectrum, s=full, axes=axes)
+    # A real convolution comes back with rounding-level imaginary parts.
+    if in1.dtype != mx.complex64 and in2.dtype != mx.complex64:
+        out = out.real
+
+    if mode == "full":
+        return out
+    # "same": take in1's extent from the centre of the full support.
+    index: list[Any] = [slice(None)] * ndim
+    for axis, n1, n2 in zip(axes, s1, s2):
+        start = (n2 - 1) // 2
+        index[axis] = slice(start, start + n1)
+    return out[tuple(index)]
+
+
 class MLXBackend(Backend):
     """MLX backend for Apple Silicon GPU acceleration.
 
@@ -51,6 +98,18 @@ class MLXBackend(Backend):
         """Allocate real array on MLX device."""
         mx_dtype = _NUMPY_TO_MLX_DTYPE.get(np.dtype(dtype), mx.float32)
         return mx.zeros(shape, dtype=mx_dtype)
+
+    @property
+    def convolution(self):
+        """Return an FFT convolution with scipy's ``oaconvolve`` signature.
+
+        MLX has no convolution of its own, which is what previously kept the
+        non-local interaction off this backend: ``nl_length > 0`` is gated on
+        this property being non-None. The kernel is a Bessel profile of a few
+        hundred cells at most, so an overlap-add scheme buys nothing over a
+        single padded transform.
+        """
+        return _fft_convolve
 
     def synchronize(self, array=None) -> None:
         """Force the lazy graph for ``array``.

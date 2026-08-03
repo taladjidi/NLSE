@@ -87,9 +87,9 @@ python my_simulation.py
 |---------|-----|------|----|-----|
 | Single precision | Yes | Yes | Yes | Yes |
 | Double precision | Yes | Yes | Device-dependent | No |
-| Non-local interactions | Yes | Yes | Falls back | Falls back |
+| Non-local interactions | Yes | Yes | Falls back | Yes |
 | Broadcasting | Yes | Yes | Yes | Yes |
-| Convolution | Yes | Yes | No | No |
+| Convolution | Yes | Yes | No | Yes |
 
 Every backend broadcasts, but not in the same way: CUPY and MLX hand the
 batched parameters to their kernels, while CPU and OpenCL take one
