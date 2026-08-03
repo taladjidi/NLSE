@@ -260,7 +260,10 @@ class DDGPE(CNLSE):
             "_gamma_half": self.gamma / 2,
             "_gamma2_half": self.gamma2 / 2,
             "_g11": self.n2,
+            # Both components are the same field at the same energy scale here,
+            # so the two cross constants CNLSE splits by k coincide.
             "_g12": self.n12,
+            "_g21": self.n12,
             "_g22": self.g2,
         }
 

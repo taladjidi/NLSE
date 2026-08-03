@@ -1386,13 +1386,13 @@ def _make_split_step_coupled(splitting, has_V, has_omega, axes):
     which is resolved while tracing rather than per step.
     """
 
-    def nonlinear(A1, A2, dz, alpha1, alpha2, g11, g12, g22, Isat1, Isat2, V1, V2):
+    def nonlinear(A1, A2, dz, alpha1, alpha2, g11, g12, g21, g22, Isat1, Isat2, V1, V2):
         """Apply the real-space terms to both components."""
         sq1 = (A1 * mx.conj(A1)).real
         sq2 = (A2 * mx.conj(A2)).real
         sat = 1 / (1 + sq1 / Isat1 + sq2 / Isat2)
         arg1 = 1j * (g11 * sq1 + g12 * sq2) * sat - alpha1 * sat
-        arg2 = 1j * (g22 * sq2 + g12 * sq1) * sat - alpha2 * sat
+        arg2 = 1j * (g22 * sq2 + g21 * sq1) * sat - alpha2 * sat
         if V1 is not None:
             arg1 = arg1 + 1j * V1
             arg2 = arg2 + 1j * V2
@@ -1408,10 +1408,22 @@ def _make_split_step_coupled(splitting, has_V, has_omega, axes):
 
     if splitting == "lie" and not has_V and not has_omega:
 
-        def _pure(A, propagator, dz, alpha1, alpha2, g11, g12, g22, Isat1, Isat2):
+        def _pure(A, propagator, dz, alpha1, alpha2, g11, g12, g21, g22, Isat1, Isat2):
             A = linear(A, propagator)
             A1, A2 = nonlinear(
-                A[0], A[1], dz, alpha1, alpha2, g11, g12, g22, Isat1, Isat2, None, None
+                A[0],
+                A[1],
+                dz,
+                alpha1,
+                alpha2,
+                g11,
+                g12,
+                g21,
+                g22,
+                Isat1,
+                Isat2,
+                None,
+                None,
             )
             return mx.stack([A1, A2])
 
@@ -1425,6 +1437,7 @@ def _make_split_step_coupled(splitting, has_V, has_omega, axes):
             alpha2,
             g11,
             g12,
+            g21,
             g22,
             Isat1,
             Isat2,
@@ -1433,7 +1446,19 @@ def _make_split_step_coupled(splitting, has_V, has_omega, axes):
         ):
             A = linear(A, propagator)
             A1, A2 = nonlinear(
-                A[0], A[1], dz, alpha1, alpha2, g11, g12, g22, Isat1, Isat2, None, None
+                A[0],
+                A[1],
+                dz,
+                alpha1,
+                alpha2,
+                g11,
+                g12,
+                g21,
+                g22,
+                Isat1,
+                Isat2,
+                None,
+                None,
             )
             return mx.stack(list(rabi(A1, A2, cos_val, sin_val)))
 
@@ -1449,6 +1474,7 @@ def _make_split_step_coupled(splitting, has_V, has_omega, axes):
             alpha2,
             g11,
             g12,
+            g21,
             g22,
             Isat1,
             Isat2,
@@ -1462,6 +1488,7 @@ def _make_split_step_coupled(splitting, has_V, has_omega, axes):
                 alpha2,
                 g11,
                 g12,
+                g21,
                 g22,
                 Isat1,
                 Isat2,
@@ -1482,6 +1509,7 @@ def _make_split_step_coupled(splitting, has_V, has_omega, axes):
             alpha2,
             g11,
             g12,
+            g21,
             g22,
             Isat1,
             Isat2,
@@ -1497,6 +1525,7 @@ def _make_split_step_coupled(splitting, has_V, has_omega, axes):
                 alpha2,
                 g11,
                 g12,
+                g21,
                 g22,
                 Isat1,
                 Isat2,
@@ -1507,8 +1536,10 @@ def _make_split_step_coupled(splitting, has_V, has_omega, axes):
 
     elif splitting == "strang" and not has_V:
 
-        def _pure(A, propagator, dz_half, alpha1, alpha2, g11, g12, g22, Isat1, Isat2):
-            args = (alpha1, alpha2, g11, g12, g22, Isat1, Isat2, None, None)
+        def _pure(
+            A, propagator, dz_half, alpha1, alpha2, g11, g12, g21, g22, Isat1, Isat2
+        ):
+            args = (alpha1, alpha2, g11, g12, g21, g22, Isat1, Isat2, None, None)
             A1, A2 = nonlinear(A[0], A[1], dz_half, *args)
             A = linear(mx.stack([A1, A2]), propagator)
             A1, A2 = nonlinear(A[0], A[1], dz_half, *args)
@@ -1526,11 +1557,23 @@ def _make_split_step_coupled(splitting, has_V, has_omega, axes):
             alpha2,
             g11,
             g12,
+            g21,
             g22,
             Isat1,
             Isat2,
         ):
-            args = (alpha1, alpha2, g11, g12, g22, Isat1, Isat2, V1_scaled, V2_scaled)
+            args = (
+                alpha1,
+                alpha2,
+                g11,
+                g12,
+                g21,
+                g22,
+                Isat1,
+                Isat2,
+                V1_scaled,
+                V2_scaled,
+            )
             A1, A2 = nonlinear(A[0], A[1], dz_half, *args)
             A = linear(mx.stack([A1, A2]), propagator)
             A1, A2 = nonlinear(A[0], A[1], dz_half, *args)
@@ -1552,6 +1595,7 @@ def split_step_coupled_fused(
     alpha2: float,
     g11: float,
     g12: float,
+    g21: float,
     g22: float,
     Isat1: float,
     Isat2: float,
@@ -1581,7 +1625,9 @@ def split_step_coupled_fused(
     g11 : float
         Intra-component 1 interaction.
     g12 : float
-        Cross-component interaction.
+        Cross-component interaction in component 1's equation.
+    g21 : float
+        Cross-component interaction in component 2's equation.
     g22 : float
         Intra-component 2 interaction.
     Isat1 : float
@@ -1617,6 +1663,7 @@ def split_step_coupled_fused(
     a2_mx = _to_mx(alpha2)
     g11_mx = _to_mx(g11)
     g12_mx = _to_mx(g12)
+    g21_mx = _to_mx(g21)
     g22_mx = _to_mx(g22)
     Isat1_mx = _to_mx(Isat1)
     Isat2_mx = _to_mx(Isat2)
@@ -1634,6 +1681,7 @@ def split_step_coupled_fused(
             a2_mx,
             g11_mx,
             g12_mx,
+            g21_mx,
             g22_mx,
             Isat1_mx,
             Isat2_mx,
@@ -1651,6 +1699,7 @@ def split_step_coupled_fused(
             a2_mx,
             g11_mx,
             g12_mx,
+            g21_mx,
             g22_mx,
             Isat1_mx,
             Isat2_mx,
@@ -1666,6 +1715,7 @@ def split_step_coupled_fused(
             a2_mx,
             g11_mx,
             g12_mx,
+            g21_mx,
             g22_mx,
             Isat1_mx,
             Isat2_mx,
@@ -1680,6 +1730,7 @@ def split_step_coupled_fused(
         a2_mx,
         g11_mx,
         g12_mx,
+        g21_mx,
         g22_mx,
         Isat1_mx,
         Isat2_mx,
@@ -1699,6 +1750,7 @@ def _make_rk4_rhs_coupled(has_V, axes):
             alpha2,
             g11,
             g12,
+            g21,
             g22,
             Isat1,
             Isat2,
@@ -1712,7 +1764,7 @@ def _make_rk4_rhs_coupled(has_V, axes):
             sq2 = (a2 * mx.conj(a2)).real
             sat = 1 / (1 + sq1 / Isat1 + sq2 / Isat2)
             interact1 = 1j * (g11 * sq1 + g12 * sq2) * sat
-            interact2 = 1j * (g22 * sq2 + g12 * sq1) * sat
+            interact2 = 1j * (g22 * sq2 + g21 * sq1) * sat
             k1 = k[0] + (interact1 - alpha1 * sat) * a1
             k2 = k[1] + (interact2 - alpha2 * sat) * a2
             return mx.stack([k1, k2])
@@ -1728,6 +1780,7 @@ def _make_rk4_rhs_coupled(has_V, axes):
             alpha2,
             g11,
             g12,
+            g21,
             g22,
             Isat1,
             Isat2,
@@ -1741,7 +1794,7 @@ def _make_rk4_rhs_coupled(has_V, axes):
             sq2 = (a2 * mx.conj(a2)).real
             sat = 1 / (1 + sq1 / Isat1 + sq2 / Isat2)
             interact1 = 1j * (g11 * sq1 + g12 * sq2) * sat
-            interact2 = 1j * (g22 * sq2 + g12 * sq1) * sat
+            interact2 = 1j * (g22 * sq2 + g21 * sq1) * sat
             k1 = k[0] + (interact1 - alpha1 * sat + 1j * V1) * a1
             k2 = k[1] + (interact2 - alpha2 * sat + 1j * V2) * a2
             return mx.stack([k1, k2])
@@ -1763,6 +1816,7 @@ def rk4_rhs_coupled_fused(
     alpha2: float,
     g11: float,
     g12: float,
+    g21: float,
     g22: float,
     Isat1: float,
     Isat2: float,
@@ -1793,7 +1847,9 @@ def rk4_rhs_coupled_fused(
     g11 : float
         Intra-component 1 interaction.
     g12 : float
-        Cross-component interaction.
+        Cross-component interaction in component 1's equation.
+    g21 : float
+        Cross-component interaction in component 2's equation.
     g22 : float
         Intra-component 2 interaction.
     Isat1 : float
@@ -1819,6 +1875,7 @@ def rk4_rhs_coupled_fused(
     a2_mx = _to_mx(alpha2)
     g11_mx = _to_mx(g11)
     g12_mx = _to_mx(g12)
+    g21_mx = _to_mx(g21)
     g22_mx = _to_mx(g22)
     Isat1_mx = _to_mx(Isat1)
     Isat2_mx = _to_mx(Isat2)
@@ -1832,6 +1889,7 @@ def rk4_rhs_coupled_fused(
             a2_mx,
             g11_mx,
             g12_mx,
+            g21_mx,
             g22_mx,
             Isat1_mx,
             Isat2_mx,
@@ -1843,6 +1901,7 @@ def rk4_rhs_coupled_fused(
         a2_mx,
         g11_mx,
         g12_mx,
+        g21_mx,
         g22_mx,
         Isat1_mx,
         Isat2_mx,

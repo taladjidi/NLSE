@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from helpers import as_numpy, assert_c_contiguous, make
 from NLSE import CNLSE
 from scipy.constants import c, epsilon_0
@@ -309,3 +310,50 @@ def test_each_component_propagates_at_its_own_wavenumber(backend) -> None:
     assert np.allclose(rk4[1], -1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k2), (
         f"the RK4 dispersion operator ignores k2. (Backend {backend})"
     )
+
+
+@pytest.mark.parametrize("method", ["split_step", "RK4"])
+def test_each_component_cross_phases_at_its_own_wavenumber(backend, method) -> None:
+    """The index one component writes must phase the other at that other's k.
+
+    ``n12`` is one index coefficient, but it enters two equations, and each
+    turns an index into a phase rate at its own wavenumber: ``k * n12 * I2``
+    for the first component, ``k2 * n12 * I1`` for the second. The solver
+    built one constant from ``k`` and handed it to both, so the second
+    component cross-phased at the first's wavenumber.
+
+    Nothing else in the suite could see it. ``k2 = k`` by construction, the
+    asymmetry helper varies ``n22``, ``alpha2`` and ``I_sat2`` but not the
+    cross coupling, and every backend carried the same wrong constant, so the
+    cross-backend comparisons agreed with each other.
+
+    Two uniform components with the self-interactions and the losses switched
+    off leave only the cross terms, and a uniform field neither diffracts nor
+    saturates unevenly, so each component's phase is the closed form above.
+    """
+    simu = make_solver(backend, n2=0.0, alpha=0.0, Isat=np.inf)
+    simu.n22 = 0.0
+    simu.alpha2 = 0.0
+    simu.I_sat2 = np.inf
+    simu.power2 = simu.power
+    simu.k2 = 2 * np.pi / 390e-9
+    assert simu.k2 != simu.k, "the components must differ for this to test anything"
+
+    E = np.ones((2, N, N), dtype=PRECISION_COMPLEX)
+    out = as_numpy(
+        simu,
+        simu.out_field(E, L, delta_z=DZ_TEST, method=method, verbose=False, plot=False),
+    )
+
+    # Losses are off and the terms left are pure phase, so the amplitudes are
+    # the ones propagation started from and the intensity can be read off the
+    # output rather than re-deriving what normalization did.
+    intensity = 0.5 * c * epsilon_0 * np.abs(out) ** 2
+    for i, k in ((0, simu.k), (1, simu.k2)):
+        other = 1 - i
+        expected = k * n12 * intensity[other].mean() * L
+        assert np.allclose(np.angle(out[i]), expected, rtol=1e-3), (
+            f"component {i + 1} cross-phases at the wrong wavenumber: got "
+            f"{np.angle(out[i]).mean():.6e}, expected {expected:.6e} from "
+            f"component {other + 1}. (Backend {backend}, {method})"
+        )

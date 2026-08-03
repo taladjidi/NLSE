@@ -1453,6 +1453,7 @@ class OpenCLKernels:
         alpha2: float,
         g11: float,
         g12: float,
+        g21: float,
         g22: float,
         Isat1: float,
         Isat2: float,
@@ -1482,7 +1483,9 @@ class OpenCLKernels:
         g11 : float
             Intra-component 1 interaction.
         g12 : float
-            Cross-component interaction.
+            Cross-component interaction in component 1's equation.
+        g21 : float
+            Cross-component interaction in component 2's equation.
         g22 : float
             Intra-component 2 interaction.
         Isat1 : float
@@ -1510,7 +1513,7 @@ class OpenCLKernels:
         ls = self._local_size(N_sq)
         N_sq_i = np.int32(N_sq)
         params = self._cast_params(
-            A.dtype, dz, alpha1, alpha2, g11, g12, g22, Isat1, Isat2
+            A.dtype, dz, alpha1, alpha2, g11, g12, g21, g22, Isat1, Isat2
         )
 
         # Strang: NL half-step before the linear step
@@ -1579,6 +1582,7 @@ class OpenCLKernels:
         alpha2: float,
         g11: float,
         g12: float,
+        g21: float,
         g22: float,
         Isat1: float,
         Isat2: float,
@@ -1607,7 +1611,9 @@ class OpenCLKernels:
         g11 : float
             Intra-component 1 interaction.
         g12 : float
-            Cross-component interaction.
+            Cross-component interaction in component 1's equation.
+        g21 : float
+            Cross-component interaction in component 2's equation.
         g22 : float
             Intra-component 2 interaction.
         Isat1 : float
@@ -1645,7 +1651,7 @@ class OpenCLKernels:
 
         # Coupled NL RHS
         params = self._cast_params(
-            A_in.dtype, alpha1, alpha2, g11, g12, g22, Isat1, Isat2
+            A_in.dtype, alpha1, alpha2, g11, g12, g21, g22, Isat1, Isat2
         )
         self._launch_coupled(
             kerns,

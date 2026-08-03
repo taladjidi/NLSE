@@ -110,13 +110,13 @@ class Backend(ABC):
 
     # kernels.split_step_coupled_fused(
     #     A, propagator, V1_scaled, V2_scaled, dz, alpha1, alpha2,
-    #     g11, g12, g22, Isat1, Isat2, splitting, plan, omega=None,
+    #     g11, g12, g21, g22, Isat1, Isat2, splitting, plan, omega=None,
     #     unnorm_ifft=False)
     has_fused_coupled_split_step = False
 
     # kernels.rk4_rhs_coupled_fused(
     #     A_in, k, V1_scaled, V2_scaled, propagator, plan, alpha1, alpha2,
-    #     g11, g12, g22, Isat1, Isat2, unnorm_ifft=False)
+    #     g11, g12, g21, g22, Isat1, Isat2, unnorm_ifft=False)
     has_fused_coupled_rk4_rhs = False
 
     # A batched physical parameter can be handed to the kernels as a device

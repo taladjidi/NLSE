@@ -1332,6 +1332,7 @@ class CUDAKernels:
         alpha2,
         g11,
         g12,
+        g21,
         g22,
         Isat1,
         Isat2,
@@ -1364,8 +1365,9 @@ class CUDAKernels:
             Half-loss coefficients.
         g11, g22 : float
             Intra-component interactions.
-        g12 : float
-            Cross-component interaction.
+        g12, g21 : float
+            Cross-component interaction, in component 1's and in
+            component 2's equation respectively.
         Isat1, Isat2 : float
             Saturation intensities (converted units).
         w : float
@@ -1385,7 +1387,9 @@ class CUDAKernels:
         self._linear_into(A_in, k, propagator, plan, unnorm_ifft)
         kernels = self._get_kernels(A.dtype)
         N_sq = int(A.size) // 2
-        params = self._cast(A.dtype, alpha1, alpha2, g11, g12, g22, Isat1, Isat2, w, c)
+        params = self._cast(
+            A.dtype, alpha1, alpha2, g11, g12, g21, g22, Isat1, Isat2, w, c
+        )
         args = (k, A_in) + ((V1_scaled, V2_scaled) if V1_scaled is not None else ())
         self._launch(
             self._v_kernel(kernels, "coupled_rk4_stage_c", V1_scaled),
@@ -1411,6 +1415,7 @@ class CUDAKernels:
         alpha2,
         g11,
         g12,
+        g21,
         g22,
         Isat1,
         Isat2,
@@ -1441,8 +1446,9 @@ class CUDAKernels:
             Half-loss coefficients.
         g11, g22 : float
             Intra-component interactions.
-        g12 : float
-            Cross-component interaction.
+        g12, g21 : float
+            Cross-component interaction, in component 1's and in
+            component 2's equation respectively.
         Isat1, Isat2 : float
             Saturation intensities (converted units).
         splitting : str
@@ -1463,7 +1469,9 @@ class CUDAKernels:
         # One thread per element of a component, which is half the field.
         N_sq = int(A.size) // 2
         N_sq_i = np.int32(N_sq)
-        params = self._cast(A.dtype, dz, alpha1, alpha2, g11, g12, g22, Isat1, Isat2)
+        params = self._cast(
+            A.dtype, dz, alpha1, alpha2, g11, g12, g21, g22, Isat1, Isat2
+        )
 
         def nonlinear():
             if V1_scaled is not None:
@@ -1516,6 +1524,7 @@ class CUDAKernels:
         alpha2,
         g11,
         g12,
+        g21,
         g22,
         Isat1,
         Isat2,
@@ -1539,8 +1548,9 @@ class CUDAKernels:
             Half-loss coefficients.
         g11, g22 : float
             Intra-component interactions.
-        g12 : float
-            Cross-component interaction.
+        g12, g21 : float
+            Cross-component interaction, in component 1's and in
+            component 2's equation respectively.
         Isat1, Isat2 : float
             Saturation intensities (converted units).
         unnorm_ifft : bool
@@ -1562,7 +1572,9 @@ class CUDAKernels:
         else:
             plan.ifft(k, k)
 
-        params = self._cast(A_in.dtype, alpha1, alpha2, g11, g12, g22, Isat1, Isat2)
+        params = self._cast(
+            A_in.dtype, alpha1, alpha2, g11, g12, g21, g22, Isat1, Isat2
+        )
         if V1_scaled is not None:
             self._launch(
                 self._v_kernel(kernels, "coupled_rk4_nl_rhs_c", V1_scaled),

@@ -350,6 +350,7 @@ __kernel void coupled_nl_prop_c(
     const {{FP_TYPE}} alpha2,
     const {{FP_TYPE}} g11,
     const {{FP_TYPE}} g12,
+    const {{FP_TYPE}} g21,
     const {{FP_TYPE}} g22,
     const {{FP_TYPE}} Isat1,
     const {{FP_TYPE}} Isat2
@@ -374,7 +375,7 @@ __kernel void coupled_nl_prop_c(
 
     // Component 2
     {{FP_TYPE}} r2 = -(alpha2 * sat V_LOSS(V2, idx)) * dz;
-    {{FP_TYPE}} i2 = (g22 * sq2 * sat + g12 * sq1 * sat V_PHASE(V2, idx)) * dz;
+    {{FP_TYPE}} i2 = (g22 * sq2 * sat + g21 * sq1 * sat V_PHASE(V2, idx)) * dz;
     {{FP_TYPE}} e2r = exp(r2);
     {{FP_TYPE}} c2, s2;
     s2 = sincos(i2, &c2);
@@ -398,6 +399,7 @@ __kernel void coupled_rk4_nl_rhs_c(
     const {{FP_TYPE}} alpha2,
     const {{FP_TYPE}} g11,
     const {{FP_TYPE}} g12,
+    const {{FP_TYPE}} g21,
     const {{FP_TYPE}} g22,
     const {{FP_TYPE}} Isat1,
     const {{FP_TYPE}} Isat2
@@ -419,7 +421,7 @@ __kernel void coupled_rk4_nl_rhs_c(
     k[idx] = ({{FP2_TYPE}})(k1_val.x + nl1_r, k1_val.y + nl1_i);
 
     // Component 2: same structure with swapped params
-    {{FP_TYPE}} interact2_i = (g22 * sq2 + g12 * sq1) * sat;
+    {{FP_TYPE}} interact2_i = (g22 * sq2 + g21 * sq1) * sat;
     {{FP_TYPE}} coeff2_r = -(alpha2 * sat V_LOSS(V2, idx));
     {{FP_TYPE}} coeff2_i = interact2_i V_PHASE(V2, idx);
     {{FP_TYPE}} nl2_r = coeff2_r * a2.x - coeff2_i * a2.y;

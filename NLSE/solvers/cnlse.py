@@ -160,6 +160,7 @@ class CNLSE(NLSE):
 
         g11 = np.abs(self._as_host_array(self._constant("_g11")))
         g12 = np.abs(self._as_host_array(self._constant("_g12")))
+        g21 = np.abs(self._as_host_array(self._constant("_g21")))
         g22 = np.abs(self._as_host_array(self._constant("_g22")))
         Isat1 = self._as_host_array(self._constant("_Isat_conv"))
         Isat2 = self._as_host_array(self._constant("_Isat_conv2"))
@@ -169,7 +170,7 @@ class CNLSE(NLSE):
         # Batched runs carry one value per simulation; reduce with max so the
         # step satisfies the fastest component of the fastest simulation.
         rates["interaction"] = float(
-            np.max(np.maximum((g11 * I1 + g12 * I2) * sat, (g22 * I2 + g12 * I1) * sat))
+            np.max(np.maximum((g11 * I1 + g12 * I2) * sat, (g22 * I2 + g21 * I1) * sat))
         )
         return rates
 
@@ -191,7 +192,11 @@ class CNLSE(NLSE):
             # The intra-component coupling is the base class's, under the name
             # the coupled kernels take it by.
             "_g11": base["_g"],
+            # One n12, two constants: each component's equation carries its own
+            # k, so the index the other component writes turns into a phase
+            # rate at that component's own wavenumber.
             "_g12": self.k / 2 * self.n12 * c * epsilon_0,
+            "_g21": self.k2 / 2 * self.n12 * c * epsilon_0,
             "_g22": self.k2 / 2 * self.n22 * c * epsilon_0,
             "_alpha2_half": self.alpha2 / 2,
             "_Isat_conv2": 2 * self.I_sat2 / (epsilon_0 * c),
@@ -439,6 +444,7 @@ class CNLSE(NLSE):
         alpha2_half = self._constant("_alpha2_half")
         g11 = self._constant("_g11")
         g12 = self._constant("_g12")
+        g21 = self._constant("_g21")
         g22 = self._constant("_g22")
         Isat1 = self._constant("_Isat_conv")
         Isat2 = self._constant("_Isat_conv2")
@@ -453,7 +459,7 @@ class CNLSE(NLSE):
         # Fused fast path: zero component copies, and the transform writes
         # straight into k rather than the stage starting with a copy.
         if self._backend.has_fused_coupled_rk4_rhs and self._can_fuse_components(
-            A_in, (alpha_half, alpha2_half, g11, g12, g22, Isat1, Isat2)
+            A_in, (alpha_half, alpha2_half, g11, g12, g21, g22, Isat1, Isat2)
         ):
             prop, unnorm = self._fused_propagator(propagator)
             return kernels.rk4_rhs_coupled_fused(
@@ -467,6 +473,7 @@ class CNLSE(NLSE):
                 alpha2_half,
                 g11,
                 g12,
+                g21,
                 g22,
                 Isat1,
                 Isat2,
@@ -509,7 +516,7 @@ class CNLSE(NLSE):
                 A_sq_1,
                 alpha2_half,
                 g22,
-                g12,
+                g21,
                 Isat2,
                 Isat1,
             )
@@ -534,7 +541,7 @@ class CNLSE(NLSE):
                 V2_scaled,
                 alpha2_half,
                 g22,
-                g12,
+                g21,
                 Isat2,
                 Isat1,
             )
@@ -550,6 +557,7 @@ class CNLSE(NLSE):
             self._constant("_alpha2_half"),
             self._constant("_g11"),
             self._constant("_g12"),
+            self._constant("_g21"),
             self._constant("_g22"),
             self._constant("_Isat_conv"),
             self._constant("_Isat_conv2"),
@@ -588,6 +596,7 @@ class CNLSE(NLSE):
             self._constant("_alpha2_half"),
             self._constant("_g11"),
             self._constant("_g12"),
+            self._constant("_g21"),
             self._constant("_g22"),
             self._constant("_Isat_conv"),
             self._constant("_Isat_conv2"),
@@ -610,6 +619,7 @@ class CNLSE(NLSE):
         alpha2_half,
         g11,
         g12,
+        g21,
         g22,
         Isat_conv,
         Isat_conv2,
@@ -635,7 +645,7 @@ class CNLSE(NLSE):
                 dz,
                 alpha2_half,
                 g22,
-                g12,
+                g21,
                 Isat_conv2,
                 Isat_conv,
             )
@@ -660,7 +670,7 @@ class CNLSE(NLSE):
                 alpha2_half,
                 V2_scaled,
                 g22,
-                g12,
+                g21,
                 Isat_conv2,
                 Isat_conv,
             )
@@ -722,6 +732,7 @@ class CNLSE(NLSE):
         alpha2_half = self._constant("_alpha2_half")
         g11 = self._constant("_g11")
         g12 = self._constant("_g12")
+        g21 = self._constant("_g21")
         g22 = self._constant("_g22")
         Isat_conv = self._constant("_Isat_conv")
         Isat_conv2 = self._constant("_Isat_conv2")
@@ -737,6 +748,7 @@ class CNLSE(NLSE):
             alpha2_half,
             g11,
             g12,
+            g21,
             g22,
             Isat_conv,
             Isat_conv2,
@@ -748,7 +760,7 @@ class CNLSE(NLSE):
         # exactly the coupled rank and scalar parameters.
         if self._backend.has_fused_coupled_split_step and self._can_fuse_components(
             A,
-            (alpha_half, alpha2_half, g11, g12, g22, Isat_conv, Isat_conv2),
+            (alpha_half, alpha2_half, g11, g12, g21, g22, Isat_conv, Isat_conv2),
         ):
             dz = delta_z / 2 if splitting == "strang" else delta_z
             prop, unnorm = self._fused_propagator(propagator)
@@ -767,6 +779,7 @@ class CNLSE(NLSE):
                 alpha2_half,
                 g11,
                 g12,
+                g21,
                 g22,
                 Isat_conv,
                 Isat_conv2,
