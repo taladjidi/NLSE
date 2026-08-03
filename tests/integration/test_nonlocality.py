@@ -397,3 +397,47 @@ def test_a_three_dimensional_run_can_be_non_local(backend):
     )
     assert out.shape == field.shape
     assert np.all(np.isfinite(out)), "the non-local 3D run returned non-finite values"
+
+
+@pytest.mark.parametrize("backend", [b for b in AVAILABLE_BACKENDS if b != "CPU"])
+def test_a_non_local_run_agrees_with_the_cpu(backend):
+    """Each backend's convolution has to be the same convolution.
+
+    The capability test only asks that a box kernel over ones comes back as
+    the box's sum, which a circular convolution would also pass. This runs the
+    physics and compares the field, so a backend that wrapped at the edges
+    instead of zero-padding, or that dropped the centring offset, is caught.
+    """
+    # About a radian of nonlinear phase over the cell. Enough that the
+    # convolution changes the answer, little enough that the run is not
+    # chaotic: at the couple of hundred radians these parameters reach if the
+    # power is left at 1 W, two backends disagree by 100% on a LOCAL run and
+    # the comparison says nothing about either convolution.
+    window, n, nl = 1e-3, 64, 5 * 1e-3 / 64
+    kwargs = {
+        "alpha": 0,
+        "power": 1e-3,
+        "window": window,
+        "n2": -5e-9,
+        "V": None,
+        "L": 1e-3,
+        "NX": n,
+        "NY": n,
+        "Isat": 1e10,
+        "nl_length": nl,
+    }
+    fields = []
+    for name in ("CPU", backend):
+        simu = NLSE(backend=name, **kwargs)
+        E = np.exp(-(simu.XX**2 + simu.YY**2) / (window / 6) ** 2).astype(
+            PRECISION_COMPLEX
+        )
+        fields.append(
+            np.asarray(simu._backend.to_numpy(simu.out_field(E, 1e-3, verbose=False)))
+        )
+    cpu, other = fields
+    difference = np.max(np.abs(other - cpu)) / np.max(np.abs(cpu))
+    assert difference < 2e-4, (
+        f"{backend} non-local run differs from the CPU by {difference:.2e}, "
+        f"which is more than single precision explains"
+    )
