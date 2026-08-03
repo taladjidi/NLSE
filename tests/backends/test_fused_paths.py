@@ -160,7 +160,7 @@ def test_each_rk4_level_matches_the_generic_one(
     fused levels do not re-associate anything is the next test.
     """
     if not getattr(get_backend(backend_name), "has_fused_rk4_stage", False):
-        pytest.skip(f"{backend_name} has no fused RK4 path")
+        pytest.skip(f"{backend_name} has no fused RK4 stage")
     V = potential(kind, cls)
     fused = propagate(cls, backend_name, level, monkeypatch, V=V)
     generic = propagate(cls, backend_name, "generic", monkeypatch, V=V)
@@ -187,7 +187,7 @@ def test_the_fused_levels_agree_bitwise(backend_name, cls, kind, monkeypatch):
     a tolerance here would hide the one mistake these kernels invite.
     """
     if not getattr(get_backend(backend_name), "has_fused_rk4_stage", False):
-        pytest.skip(f"{backend_name} has no fused RK4 path")
+        pytest.skip(f"{backend_name} has no fused RK4 stage")
     V = potential(kind, cls)
     stage = propagate(cls, backend_name, "stage", monkeypatch, V=V)
     rhs = propagate(cls, backend_name, "rhs", monkeypatch, V=V)
@@ -205,7 +205,7 @@ def test_each_rk4_level_matches_in_double(backend_name, cls, level, monkeypatch)
     """The same, at the other splitting."""
     backend = get_backend(backend_name)
     if not getattr(backend, "has_fused_rk4_stage", False):
-        pytest.skip(f"{backend_name} has no fused RK4 path")
+        pytest.skip(f"{backend_name} has no fused RK4 stage")
     if not backend.supports_double_precision():
         pytest.skip(f"{backend_name} has no double precision")
     fused = propagate(cls, backend_name, level, monkeypatch, dtype=np.complex128)
@@ -274,7 +274,7 @@ def test_the_top_level_is_the_one_taken(backend_name, cls, monkeypatch):
     that stops matching costs only speed, silently, and the copies come back.
     """
     if not getattr(get_backend(backend_name), "has_fused_rk4_stage", False):
-        pytest.skip(f"{backend_name} has no fused RK4 path")
+        pytest.skip(f"{backend_name} has no fused RK4 stage")
     solver = make(cls, backend_name)
     kernels = type(solver._backend.kernels)
     top = "rk4_stage_coupled_fused" if coupled(cls) else "rk4_stage_fused"
