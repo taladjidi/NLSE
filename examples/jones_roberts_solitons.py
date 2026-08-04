@@ -312,7 +312,7 @@ ax.set_title("The circulation dies, and comes back", pad=26)
 ax.legend(fontsize=9, loc="lower right")
 
 
-def crop_phase(frame, half=14):
+def crop_phase(frame, half=7):
     """Return the phase around the soliton, ``half`` healing lengths either side.
 
     Centred on the position recorded during the propagation, where the
@@ -329,14 +329,21 @@ def crop_phase(frame, half=14):
     Returns
     -------
     ndarray
-        The cropped phase.
+        The cropped phase, measured from the surrounding fluid.
     """
     field = frames[frame]
     row, col = (round(v) for v in centres[frame])
     span = round(half * XI / simu.delta_X)
     rows = slice(max(row - span, 0), row + span)
     cols = slice(max(col - span, 0), col + span)
-    return np.angle(field[rows, cols])
+    crop = field[rows, cols]
+    # Referenced to the fluid around the soliton rather than to zero. Each
+    # plane carries its own accumulated nonlinear phase, tens of radians by
+    # the end, so without this the three insets sit on unrelated parts of a
+    # cyclic colormap and look like three different physical situations.
+    border = np.concatenate([crop[0, :], crop[-1, :], crop[:, 0], crop[:, -1]])
+    reference = np.angle(np.mean(border / np.abs(border)))
+    return np.angle(crop * np.exp(-1j * reference))
 
 
 # One inset per regime, so the plot says what each stretch of it looks like
