@@ -84,7 +84,8 @@ def test_the_helper_stays_out_of_the_working_directory(tmp_path, monkeypatch):
 # and left four others out. What it can still get wrong is the header, because
 # an example with no reStructuredText title renders in the grid unnamed.
 
-TITLE_RULE = re.compile(r'^(?:#![^\n]*\n)?"""\n(.+)\n(=+)\n', re.M)
+# The docstring may be raw: a page whose text carries LaTeX needs it.
+TITLE_RULE = re.compile(r'^(?:#![^\n]*\n)?r?"""\n(.+)\n(=+)\n', re.M)
 
 
 @pytest.mark.parametrize("script", SCRIPTS, ids=lambda p: p.name)
