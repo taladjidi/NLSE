@@ -131,17 +131,19 @@ N12 = N2
 # The comparison run, below the crossover derived below, where the impurity
 # stops being an obstacle at all.
 N12_WEAK = N2 / 6
-# Where the two regimes divide, exactly. Setting the Thomas-Fermi density
-# equal to the ambient and substituting mu = |n2| I_env/(1 + I_env/Isat)
-# collapses to |n12| I2 = mu I2/Isat, so the crossover is
+# Where the two regimes divide, exactly. Ask what density profile would leave
+# the fluid seeing a flat index -- its Thomas-Fermi state, quantum pressure
+# dropped -- and require it to equal the ambient. With mu = |n2| I_env/(1 +
+# I_env/Isat) that collapses to |n12| I2 = mu I2/Isat, so the crossover is
 #
 #     |n12| = mu / Isat
 #
 # whatever the impurity's intensity. Above it the impurity digs a hole and is
-# a repulsive obstacle with an equilibrium to sit in; below it the bleaching
-# wins, the impurity becomes an attractive well, and the Thomas-Fermi state
-# asks for more density than a beam can supply -- there is nothing to launch,
-# so that regime is out of equilibrium by construction and rings.
+# a repulsive obstacle; below it the shared saturation denominator wins --
+# a bright impurity bleaches the medium under itself, which lowers a negative
+# index depression and so reads as an index BUMP -- and the impurity becomes
+# an attractive well instead. Nothing here is imposed on the launch; the
+# beams enter as bare Gaussians and find their own state.
 #
 # Note what the crossover is NOT: it is the fluid's response to the impurity,
 # not the impurity's response to the fluid. Running exactly at it, the
@@ -158,7 +160,7 @@ N22 = 5e-11
 # it implies is printed below. It is constrained less by a power meter than
 # by the impurity's width at the exit, which is set by how long the fluid
 # stays strong enough to dig the hole the impurity sits in.
-ALPHA = ALPHA2 = 22.0
+ALPHA = ALPHA2 = 11.0
 
 K0, K2 = 2 * np.pi / WVL, 2 * np.pi / WVL2
 I0 = 2 * POWER / (np.pi * WAIST**2)  # peak input intensity of the fluid
@@ -263,6 +265,22 @@ WINDOW = 4.5 * WAIST
 # vortex core is unresolved, and the winding count becomes noise -- 36 pairs
 # where the converged run finds 2.
 N_PTS = 1024
+# The cell is not uniform. Its windows run colder than the body -- heated as
+# they are, they still collect rubidium -- and the vapour is saturated, so the
+# local density follows the local temperature through the Antoine law,
+# log10 Pv = 2.881 + 4.312 - 4040/T with n = Pv/(kB T). That is about 6% per
+# kelvin at 120 C, so cold windows mean exponentially less density at the ends
+# and the nonlinearity ramps in rather than switching on at the glass.
+#
+# It is not a detail. Launched into a uniform cell the impurity's dip is
+# quenched and rings at 0.097 of the local density; with the windows 5 K colder
+# that falls to 0.018 and by 20 K it is 0.016 -- saturating, so the suppression
+# does not depend on knowing the profile precisely. The measured images ring
+# far less than a uniform simulation does, and this is why.
+T_BODY = 393.15  # cell body, 120 C
+DT_WINDOW = 20.0  # how much colder the windows run
+Z_RAMP = 2e-2  # length over which the ends come up to the body value
+
 # The transverse walk-off of a beam tilted to beta = 1. Everything below is
 # read against this, and it is not a small correction.
 WALKOFF = L_CELL * CS
@@ -327,6 +345,25 @@ print(
 print(
     f"walk-off: {WALKOFF * 1e3:.2f} mm at beta = 1, against a {WAIST * 1e3:.2f} mm waist"
 )
+
+
+def density_ratio(z):
+    """Return the vapour density at z, relative to the cell body.
+
+    Parameters
+    ----------
+    z : float or ndarray
+        Distance into the cell in m.
+
+    Returns
+    -------
+    float or ndarray
+        Local density over the body's, from the saturated vapour pressure at
+        the local temperature.
+    """
+    ends = np.exp(-z / Z_RAMP) + np.exp(-(L_CELL - z) / Z_RAMP)
+    temperature = T_BODY - DT_WINDOW * np.clip(ends, 0, 1)
+    return 10 ** (4040 * (1 / T_BODY - 1 / temperature)) * (T_BODY / temperature)
 
 
 def vortices(field, mask):
@@ -452,36 +489,19 @@ def run(beta_target, n12):
             + 1j * RNG.normal(0, sigma, field.shape)
         )
 
-    # Pre-dug to the potential the impurity actually writes, rather than to
-    # a Gaussian of guessed depth. The kernel saturates on the TOTAL
-    # intensity -- one denominator shared by the self and cross terms -- so
-    # the Thomas-Fermi condition that the fluid sees a flat index is
-    #
-    #     (|n2| I1 + |n12| I2) / (1 + (I1 + I2)/Isat) = mu
-    #
-    # which inverts in closed form for I1. It digs full depletion where the
-    # obstacle outweighs the local chemical potential and a shallow dip where
-    # it does not, so the same expression is right for either coupling and
-    # there is no depth left to get wrong. Both saturate, so the dip is
-    # flat-topped and wider than the impurity beam, which a Gaussian dip is
-    # not.
+    # Two bare Gaussians, as the beams enter the cell, with nothing
+    # pre-relaxed and nothing tuned to the model being run. Pre-digging the
+    # impurity's dip -- a Thomas-Fermi hole, rounded over a healing length --
+    # was worth six times on the ringing when the cell was uniform, and only
+    # 2.7 once the density ramp is in place. The ramp is physics the cell has;
+    # the dug hole is a numerical convenience whose shape depends on which
+    # model it was derived for, and it biases anything it is compared against:
+    # switching nonlocality on with a locally-derived hole in place makes the
+    # launch disagree with the medium and the ringing rise for reasons that
+    # have nothing to do with nonlocality.
     r2 = (simu.XX - X0) ** 2 + simu.YY**2
     beam = np.exp(-(simu.XX**2 + simu.YY**2) / WAIST**2)
-    i_env = I0 * beam**2
-    i_imp = ID0 * np.exp(-2 * r2 / WAIST2**2)
-    mu = abs(N2) * i_env / (1 + i_env / I_SAT)
-    i_tf = (mu * (1 + i_imp / I_SAT) - abs(n12) * i_imp) / (abs(N2) - mu / I_SAT)
-    # Clipped to the ambient, because Thomas-Fermi does not always ask for a
-    # hole. The saturation denominator is shared, so a bright impurity
-    # bleaches the medium under itself; that lowers the index depression
-    # there, and since the depression is negative it reads as an index BUMP.
-    # At n12 = n2 the direct repulsion wins and the solution is full
-    # depletion, but at n2/6 the bleaching wins and it asks for thirteen
-    # times the ambient density -- the impurity has stopped being an obstacle
-    # and become an attractive well. Piling that up is not something a beam
-    # can be launched with, so the weak case simply starts undug.
-    fluid0 = beam * np.sqrt(np.clip(i_tf, 0, i_env) / np.maximum(i_env, 1e-30))
-    fluid0 = with_noise(fluid0, NOISE) * np.exp(1j * kx * simu.XX)
+    fluid0 = with_noise(beam, NOISE) * np.exp(1j * kx * simu.XX)
     E = np.array([fluid0, with_noise(np.exp(-r2 / WAIST2**2), NOISE / 10)])
     E = E.astype(np.complex64)
 
@@ -522,13 +542,52 @@ def run(beta_target, n12):
         zs.append(z)
         force.append((rho1 * grad).sum() * dx * dx / XI)
 
+    # The nonlinearity has to vary along z, which the solver has no public
+    # way to express, so the callback rewrites the per-step constants the
+    # kernels read. n2, n12, n22 and both absorptions are all proportional to
+    # the vapour density; Isat is not, being a per-atom property. Reading the
+    # nominal values needs one preparatory call, since out_field computes them
+    # itself at the start of a run.
+    simu._precompute_step_constants(None, np.complex64)
+    nominal = {
+        name: getattr(simu, name)
+        for name in (
+            "_g",
+            "_g11",
+            "_g12",
+            "_g21",
+            "_g22",
+            "_alpha_half",
+            "_alpha2_half",
+        )
+    }
+
+    def thermal(sim, A, z, i):
+        """Scale every density-proportional constant to the local density.
+
+        Parameters
+        ----------
+        sim : CNLSE
+            The running solver.
+        A : ndarray
+            Device field, unused.
+        z : float
+            Current propagation distance in m.
+        i : int
+            Step counter, unused.
+        """
+        factor = np.float32(density_ratio(min(z, L_CELL)))
+        for name, value in nominal.items():
+            setattr(sim, name, value * factor)
+
     t0 = time.perf_counter()
     out = simu.out_field(
         E,
         L_CELL,
         delta_z=DELTA_Z,
         verbose=False,
-        callback=track,
+        callback=[thermal, track],
+        callback_args=[(), ()],
         splitting="lie",
         plot=False,
     )
