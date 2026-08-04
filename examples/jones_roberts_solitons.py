@@ -196,14 +196,14 @@ def singularities(field):
     Returns
     -------
     tuple of ndarray
-        Column and row indices.
+        Column indices, row indices, and the sign of each circulation.
     """
     phase = np.angle(field)
     dx = np.angle(np.exp(1j * (np.roll(phase, -1, axis=1) - phase)))
     dy = np.angle(np.exp(1j * (np.roll(phase, -1, axis=0) - phase)))
     curl = dx + np.roll(dy, -1, axis=1) - np.roll(dx, -1, axis=0) - dy
     rows, cols = np.where(np.abs(curl) > np.pi)
-    return cols, rows
+    return cols, rows, np.sign(curl[rows, cols])
 
 
 # %%
@@ -227,7 +227,7 @@ E_in = (
     * vortex(simu, -0.25 * WAIST, -SEPARATION / 2, -1)
 ).astype(np.complex64)
 
-frames, taus, gaps, counts = [], [], [], []
+frames, taus, gaps, counts, centres = [], [], [], [], []
 
 
 def follow(sim, A, z, i):
@@ -235,7 +235,7 @@ def follow(sim, A, z, i):
     if i % 120:
         return
     field = np.asarray(sim._backend.to_numpy(A))
-    cols, rows = singularities(field)
+    cols, rows, _ = singularities(field)
     frames.append(field.copy())
     taus.append(z / Z_NL)
     counts.append(len(cols))
@@ -243,6 +243,26 @@ def follow(sim, A, z, i):
     if len(cols) == 2:
         gap = float(np.hypot(np.diff(cols)[0], np.diff(rows)[0])) * sim.delta_X / XI
     gaps.append(gap)
+    # Where the soliton is, recorded here rather than hunted for later. With
+    # two cores it is between them; with none it is the deepest point, but
+    # searched only near where the soliton was last seen -- looking over the
+    # beam instead finds whatever else happens to be dark and puts the inset
+    # on the wrong object.
+    if len(cols) == 2:
+        centres.append((float(np.mean(rows)), float(np.mean(cols))))
+    else:
+        density = np.abs(field) ** 2
+        near = np.full(density.shape, np.inf)
+        if centres:
+            row0, col0 = (round(v) for v in centres[-1])
+            span = round(12 * XI / sim.delta_X)
+            rows_ = slice(max(row0 - span, 0), row0 + span)
+            cols_ = slice(max(col0 - span, 0), col0 + span)
+            near[rows_, cols_] = density[rows_, cols_]
+        else:
+            near = density
+        row, col = np.unravel_index(np.argmin(near), near.shape)
+        centres.append((float(row), float(col)))
 
 
 simu.out_field(
@@ -287,8 +307,53 @@ ax.annotate(
 )
 ax.set_xlabel(r"$\tau = z / z_{NL}$")
 ax.set_ylabel(r"separation $\Delta r / \xi$")
-ax.set_title("The circulation dies, and comes back")
-ax.legend(fontsize=9)
+ax.set_ylim(0, 5.4)  # headroom for the insets
+ax.set_title("The circulation dies, and comes back", pad=26)
+ax.legend(fontsize=9, loc="lower right")
+
+
+def crop_phase(frame, half=14):
+    """Return the phase around the soliton, ``half`` healing lengths either side.
+
+    Centred on the position recorded during the propagation, where the
+    circulations were still in hand, rather than on anything re-derived from
+    the saved plane.
+
+    Parameters
+    ----------
+    frame : int
+        Index into the sampled planes.
+    half : float
+        Half-width of the crop in healing lengths.
+
+    Returns
+    -------
+    ndarray
+        The cropped phase.
+    """
+    field = frames[frame]
+    row, col = (round(v) for v in centres[frame])
+    span = round(half * XI / simu.delta_X)
+    rows = slice(max(row - span, 0), row + span)
+    cols = slice(max(col - span, 0), col + span)
+    return np.angle(field[rows, cols])
+
+
+# One inset per regime, so the plot says what each stretch of it looks like
+# without having to be read against the animation. The phase is the telling
+# one: two singularities, none, then two again.
+before = int(np.argmax(~paired)) // 2
+during = int(np.argmax(~paired) + np.argmin(~paired[np.argmax(~paired) :]) // 2)
+after = len(frames) - 4
+for position, frame, label in (
+    (0.02, before, "pair"),
+    (0.36, during, "rarefaction pulse"),
+    (0.70, after, "pair again"),
+):
+    inset = ax.inset_axes([position, 0.60, 0.17, 0.28])
+    inset.imshow(crop_phase(frame), cmap="twilight_shifted", vmin=-np.pi, vmax=np.pi)
+    inset.set_xticks([]), inset.set_yticks([])
+    inset.set_title(rf"$\tau={taus[frame]:.0f}$, {label}", fontsize=7.5)
 plt.show()
 
 # %%
@@ -340,7 +405,15 @@ phase = axs[1].imshow(
     vmin=-np.pi,
     vmax=np.pi,
 )
-marks = [ax.plot([], [], "o", mfc="none", mec="red", ms=11, mew=1.6)[0] for ax in axs]
+# One colour per sign of the circulation, so that the pair reads as two
+# opposite objects rather than two dots -- which is the whole reason they
+# advect each other, and the whole reason they can annihilate.
+marks = {
+    sign: [
+        ax.plot([], [], "o", mfc="none", mec=colour, ms=11, mew=1.8)[0] for ax in axs
+    ]
+    for sign, colour in ((+1, "tab:red"), (-1, "tab:blue"))
+}
 for ax, label in zip(axs, ("density", "phase")):
     ax.set_xlim(-45, 45), ax.set_ylim(-30, 30)
     ax.set_xlabel(r"$x/\xi$"), ax.set_ylabel(r"$y/\xi$")
@@ -352,12 +425,14 @@ def show(frame):
     field = frames[frame]
     density.set_data(normalised(field))
     phase.set_data(np.angle(field))
-    cols, rows = singularities(field)
-    for mark in marks:
-        mark.set_data(simu.X[cols] / XI, simu.Y[rows] / XI)
+    cols, rows, charge = singularities(field)
+    for sign, artists in marks.items():
+        here = charge == sign
+        for artist in artists:
+            artist.set_data(simu.X[cols[here]] / XI, simu.Y[rows[here]] / XI)
     state = "vortex pair" if len(cols) == 2 else "rarefaction pulse"
     fig.suptitle(rf"$\tau = {taus[frame]:.0f}$   --   {state}")
-    return (density, phase, *marks)
+    return (density, phase, *(a for pair in marks.values() for a in pair))
 
 
 # Bound at module level rather than dropped: sphinx-gallery looks through the
