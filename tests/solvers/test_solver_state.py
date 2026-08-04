@@ -12,7 +12,10 @@ from NLSE import CNLSE, DDGPE, GPE, NLSE
 from NLSE.backends import get_backend, list_available_backends
 from NLSE.callbacks import adapt_delta_z
 from NLSE.solvers.nlse import DEFAULT_MIN_STEPS, DEFAULT_PHASE_PER_STEP
-from NLSE.solvers.step_size import RK4_PHASE_PER_STEP
+from NLSE.solvers.step_size import (
+    RK4_PHASE_PER_STEP,
+    SPLIT_STEP_DISPERSION_PHASE_LIMIT,
+)
 from scipy.constants import atomic_mass
 
 PRECISION_COMPLEX = np.complex64
@@ -988,20 +991,39 @@ class TestStepLimitEnergies:
             "on top of it, so the rate is a grid maximum rather than an energy"
         )
 
-    def test_split_step_ignores_dispersion_but_rk4_does_not(self):
-        """Only RK4 is limited by the kinetic term.
+    def test_dispersion_limits_split_step_too_but_for_stability(self):
+        """Both methods are limited by the kinetic term, for opposite reasons.
 
         Split-step applies the linear part exactly in Fourier space, so a
-        purely linear problem is solved exactly at any step. RK4 approximates
-        it, so dispersion binds.
+        purely linear problem is solved exactly at any step and dispersion
+        cannot limit its *accuracy* -- this test once asserted that it
+        therefore imposed no limit at all. It does. On a finite-amplitude
+        background the real-space step couples modes and the linear phase at
+        the shortest resolved wave resonates with that coupling, so the
+        kinetic term binds split-step as a *stability* condition, at about a
+        radian per step rather than RK4's 2.83.
+
+        The two limits are read off different quantities and the test pins
+        that: split-step needs the grid maximum, since the resonant mode grows
+        out of round-off whether or not the field has weight there, while
+        RK4's is a field-weighted eigenvalue.
         """
         linear, A = self.prepared(None)
         linear.n2 = 0.0
         linear._precompute_step_constants(None, np.complex64)
         rates = linear._energy_rates(A)
         assert rates["kinetic"] > 0, "precondition: dispersion is present"
-        assert linear._split_step_max_dz(A) == np.inf, (
-            "split-step must not be limited by dispersion alone"
+        split = linear._split_step_max_dz(A)
+        assert np.isfinite(split), (
+            "split-step must be limited by dispersion, for stability"
+        )
+        peak = float(np.max(np.abs(linear._dispersion_operator())))
+        assert split * peak == pytest.approx(
+            SPLIT_STEP_DISPERSION_PHASE_LIMIT, rel=1e-6
+        ), "the split-step bound is a phase per step at the grid maximum"
+        assert rates["kinetic"] < peak, (
+            "precondition: the weighted rate is below the grid maximum, so "
+            "the two limits cannot agree by accident"
         )
         assert np.isfinite(linear._rk4_max_dz(A)), (
             "RK4 must still be limited by dispersion"

@@ -28,6 +28,26 @@ from scipy.constants import c, epsilon_0
 # imaginary axis. Every solver's step limit is derived from it.
 RK4_STABILITY_RADIUS = 2.83
 
+# Phase the linear step may imprint per step on the SHORTEST wave the grid
+# resolves, before split-step goes numerically unstable on a finite-amplitude
+# background -- the conditional instability of Weideman and Herbst, SIAM J.
+# Numer. Anal. 23, 485 (1986).
+#
+# Measured rather than assumed, on a vortex dipole in a uniform defocusing
+# background, which is the worst case: sharp cores put energy at every
+# resolved wavenumber and a plane-wave background has nowhere to lose it.
+# Density fluctuation relative to the mean after 40 nonlinear lengths, against
+# the phase per step:
+#
+#     3.95 rad -> 0.99      1.97 rad -> 0.93      1.32 rad -> 0.044
+#     3.16 rad -> 1.00      1.58 rad -> 0.87      0.99 rad -> 0.044
+#     2.63 rad -> 0.97                            0.66 rad -> 0.044
+#
+# so the threshold sits between 1.3 and 1.6, and below it the answer stops
+# moving. Unity leaves a little margin. Note this is well under pi: the first
+# resonance is not where the naive aliasing argument puts it.
+SPLIT_STEP_DISPERSION_PHASE_LIMIT = 1.0
+
 # Phase in radians the default step imprints per step, per method. The limits
 # are ceilings (pi for split-step aliasing, 2.83 for RK4 stability); these are
 # where a default sits under them.
@@ -434,12 +454,54 @@ class StepSize:
         Returns
         -------
         float
-            Largest step keeping the real-space phase per step below pi.
+            Largest step keeping the real-space phase per step below pi, and
+            the linear phase on the shortest resolved wave below a radian.
         """
         rates = self._energy_rates(A)
         phase_rate = rates["potential"] + rates["interaction"]
         limit = np.inf if phase_rate == 0 else np.pi / phase_rate
-        return min(limit, self._loss_max_dz())
+        return min(limit, self._dispersion_max_dz(), self._loss_max_dz())
+
+    def _dispersion_max_dz(self) -> float:
+        """Return the largest step split-step stays stable at.
+
+        This is a stability bound, not an accuracy one, and it is the reason
+        the kinetic term appears here at all. Split-step applies the linear
+        part exactly in Fourier space, so a *linear* problem is solved exactly
+        at any step and dispersion cannot limit accuracy on its own -- that
+        argument is right, and it is why this limit was once left out. It does
+        not survive a nonlinear term. On a finite-amplitude background the
+        real-space step couples modes, and the linear phase carried by the
+        shortest resolved wave resonates with that coupling: past about a
+        radian per step the resonant modes grow exponentially out of
+        round-off.
+
+        What makes it worth catching automatically is that it does not look
+        numerical. The background fills with density fluctuations of order the
+        density itself and with thousands of phase singularities, which reads
+        as the fluid going turbulent -- a plausible answer to a question
+        nobody asked. It was found by a gallery example destroying its own
+        background twice.
+
+        The rate is the grid's **maximum**, not the field-weighted mean that
+        ``_energy_rates`` reports as "kinetic". A smooth field has almost no
+        weight at the resonant wavenumber and still destabilises, because the
+        nonlinearity seeds it: measured on a single smooth Fourier mode, a 1%
+        perturbation reaches 100% in twenty nonlinear lengths.
+
+        Because the rate goes as ``k_max^2 ~ 1/dx^2``, refining the grid
+        demands a quadratically shorter step. That is a real cost and not an
+        artefact of this bound.
+
+        Returns
+        -------
+        float
+            Largest step, or infinity if the problem has no dispersion.
+        """
+        rate = float(np.max(np.abs(self._dispersion_operator())))
+        if rate == 0:
+            return np.inf
+        return SPLIT_STEP_DISPERSION_PHASE_LIMIT / rate
 
     def _loss_max_dz(self) -> float:
         """Return the largest step the lossy real-space step is solved at.
