@@ -5,7 +5,7 @@ A package for solving the Nonlinear Schrödinger Equation (NLSE) using the
 Split-Step Fourier method.
 """
 
-__version__ = "4.0.0"
+__version__ = "4.1.0"
 __author__ = "Tangui Aladjidi"
 __license__ = "GPLv3"
 __credits__ = "Laboratoire Kastler Brossel, Paris, France"

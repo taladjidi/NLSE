@@ -38,7 +38,12 @@ METHODS = {"split_step", "RK4"}
 
 # The release the migration guide migrates *from*, which stays quoted in
 # the prose after the current version moves on.
-PREVIOUS_RELEASE = "3.0.0"
+PREVIOUS_RELEASE = "4.0.0"
+
+# The migration guide describes one historical transition and keeps naming it
+# forever. Those two numbers are not staleness, unlike a version quoted as if
+# it were the current one.
+MIGRATION_FROM, MIGRATION_TO = "3.0.0", "4.0.0"
 
 
 def test_there_are_pages_to_check():
@@ -203,26 +208,27 @@ def test_the_documented_version_is_the_real_one():
     """A version quoted on a page goes stale the moment one is released.
 
     index.md tells the reader which version the site documents, because the
-    site is built from main and describes code they may not have installed,
-    and migration.md is named for the release it migrates to. Both are prose,
-    so nothing but this stops them naming 4.0.0 forever.
+    site is built from main and describes code they may not have installed.
+    It is prose, so nothing but this stops it naming an old release forever.
+
+    migration.md is held to a weaker rule on purpose. It documents one
+    transition, and the pair of versions it names is a property of that
+    transition rather than of the current release: a minor version with
+    nothing to migrate does not earn a section there, and demanding it name
+    the current version would force a fictional one.
     """
     from NLSE import __version__
 
-    pages = {
-        "index.md": ROOT / "docs" / "index.md",
-        "migration.md": ROOT / "docs" / "migration.md",
-    }
+    allowed = {__version__, PREVIOUS_RELEASE, MIGRATION_FROM, MIGRATION_TO}
     wrong = []
-    for name, path in pages.items():
-        text = path.read_text(encoding="utf-8")
-        # Any x.y.z in the prose that is not the current version and not the
-        # previous release being migrated from.
+    for name in ("index.md", "migration.md"):
+        text = (ROOT / "docs" / name).read_text(encoding="utf-8")
         for quoted in set(re.findall(r"\b(\d+\.\d+\.\d+)\b", text)):
-            if quoted not in {__version__, PREVIOUS_RELEASE}:
-                wrong.append(f"{name} names {quoted}")
-        if __version__ not in text:
-            wrong.append(f"{name} never names the current version {__version__}")
+            if quoted not in allowed:
+                wrong.append(f"{name} names {quoted}, which is no release we know")
+    index = (ROOT / "docs" / "index.md").read_text(encoding="utf-8")
+    if __version__ not in index:
+        wrong.append(f"index.md never names the current version {__version__}")
     assert not wrong, (
         f"the docs and the package disagree about the version: "
         f"{'; '.join(wrong)}. NLSE.__version__ is {__version__}"

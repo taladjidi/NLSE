@@ -1,8 +1,72 @@
 # Changelog
 
-## Unreleased
+## 4.1.0 — 2026-08-05
+
+30 commits since 4.0.0. Nothing in the API moved, but two things change the
+number a run comes back with: the step is now bounded for stability as well as
+accuracy, and a coupled run whose two components have different wavelengths
+was using the wrong constant for one of them.
+
+### Fixed
+
+- **Each coupled component now carries its own wavenumber in the cross term.**
+  `CNLSE` scaled both components' cross-coupling by `k`, when the index one
+  component writes becomes a phase rate for the *other* at that other's
+  wavenumber. Right only while the two beams share a wavelength, which is the
+  case `k2 = k` the constructor defaults to — so the suite never saw it, and
+  neither did cross-backend comparison, all four backends sharing the same
+  wrong constant. A two-line experiment, 780 and 795 nm say, was off by 1.9%
+  in that term. Small, and not always: it moved a quench-ring amplitude by
+  38%.
+- **The split-step step is bounded by dispersion, for stability.** This is the
+  change most likely to be noticed, because **existing runs on fine grids will
+  get slower** — the bound goes as `1/dx^2`, and a run that now emits
+  `exceeds split-step accuracy limit ... Reducing to` was previously at or
+  near the unstable regime.
+
+  The limit used to leave the kinetic term out, reasoning that split-step
+  applies the linear part exactly in Fourier space so a purely linear problem
+  is solved exactly at any step. True, and not enough: on a finite-amplitude
+  background the real-space step couples modes, and the linear phase at the
+  shortest resolved wave resonates with that coupling — the conditional
+  instability of Weideman and Herbst, SIAM J. Numer. Anal. **23**, 485 (1986).
+
+  It does not present as a numerical fault. The background fills with density
+  fluctuations of order the density itself and thousands of phase
+  singularities, which reads as the fluid going turbulent. It was found by a
+  gallery example destroying its own background twice.
+
+  The bound is 1 rad of linear phase per step at the grid's maximum, measured
+  rather than assumed: on a vortex dipole in a uniform defocusing background,
+  the density fluctuation after 40 nonlinear lengths runs 0.99, 0.97, 0.93,
+  0.87 at 3.95, 2.63, 1.97, 1.58 rad and then 0.044 at 1.32 and below, where
+  it stops moving. Note the threshold is well under pi — raising the existing
+  pi ceiling would not have helped.
+
+### Added
+
+- **Every backend can do non-local interactions.** MLX and OpenCL had no
+  convolution, and `nl_length > 0` is gated on one, so both handed those runs
+  to another backend. Both now have an FFT convolution matching
+  `scipy.signal.oaconvolve`'s signature, agreeing with it to 2e-5 and 3.7e-7
+  respectively over 1D, 2D and 3D, full and same, square grids and not. The
+  capability table reads Yes across the row.
+
+  OpenCL needed more than the transform: PyOpenCL will neither copy nor assign
+  into a non-contiguous slice, which is what zero-padding a grid into a larger
+  one is, so the padding and the crop go through `clEnqueueCopyBufferRect`.
+  Transform sizes are rounded to products of small radices — a 1024 grid's
+  exact support is 2047, which is 23 x 89.
+- **Three examples from the literature**, each reproducing published numbers
+  rather than illustrating an API: Jones-Roberts solitons, where a vortex pair
+  annihilates into a rarefaction pulse and recovers; spin and density modes in
+  a binary fluid, where the two Bogoliubov branches are measured to 0.2% and
+  cross because saturation gives them different powers of its denominator; and
+  a mobile impurity shedding vortices, read in the fluid's frame rather than
+  the lab's.
 
 ### Changed
+
 
 - **The documentation is built with Sphinx**, not MkDocs. MkDocs 2.0 removes
   the plugin system that every plugin this site used depends on. The pages

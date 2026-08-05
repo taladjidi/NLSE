@@ -1,7 +1,7 @@
 # NLSE
 
 :::{note}
-This site documents NLSE 4.0.0
+This site documents NLSE 4.1.0
 
 It is built from `main`, so it describes the current code rather than the
 version you have installed. Check with `python -c "import NLSE;
