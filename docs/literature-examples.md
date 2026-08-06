@@ -91,16 +91,20 @@ the most *quantitative* of the four — the two speeds have closed forms, so it
 belongs in `tests/physics/` as well as in the gallery, next to the checks that
 are already there.
 
-## 4. Rayleigh-Taylor fingers — `CNLSE`
-
-Clara Piekarski's thesis, chapter 6 §2, *Towards hydrodynamical instabilities*.
+## 4. Rayleigh-Taylor fingers — `CNLSE` — **done**
 
 Two immiscible components — $g_{12}^2 > g_{11}g_{22}$ — with the heavier
 pushed into the lighter. The interface is unstable and breaks into fingers.
 
-What the figure should show: the fingers growing along $z$, which needs the
-interface seeded with noise and a window wide enough for several wavelengths
-of the fastest-growing mode.
+Built as `examples/rayleigh_taylor.py`, though not in the geometry planned
+here. A flat interface driven by an index ramp cannot be made to finger in an
+affordable window: keeping the density positive caps the drive at $g<\mu/X$,
+and a free beam dilutes as it expands, which together leave under two
+e-foldings however large the beam. The example instead lets a harmonic trap
+supply the gravity — the dense component in an outer shell falling inward
+through a light core — which makes the acceleration $Cr_0$ and hands the mode
+number to the circumference. Seven fingers against a predicted 8.2, growing at
+11 m⁻¹ against 16.
 
 ## 5. Jones-Roberts solitons — `NLSE`
 
