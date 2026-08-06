@@ -1,7 +1,6 @@
 """Tests for FFT auto-benchmarking system."""
 
 import json
-import time
 from pathlib import Path
 
 import pytest
@@ -144,23 +143,34 @@ class TestCachePersistence:
         assert cache["fastest"] == fastest
         assert cache["grid_size"] == [256, 256]
 
-    def test_cache_reuse(self):
-        """Test that cached results are reused."""
-        # First call (benchmarks and caches)
-        t0 = time.perf_counter()
+    def test_cache_reuse(self, monkeypatch):
+        """A cached call answers without benchmarking again.
+
+        Asserted by watching for the benchmark rather than by timing it. The
+        timed version wanted the cached call to be ten times faster than the
+        benchmarked one, which on a runner with only the CPU backend meant
+        clearing 0.27 ms -- under what the clock there can resolve, so it
+        failed intermittently on a claim its own name does not make.
+        """
         fastest1 = benchmark.get_fastest_backend((256, 256), force_benchmark=True)
-        time1 = time.perf_counter() - t0
 
-        # Second call (uses cache)
-        t0 = time.perf_counter()
+        ran = []
+        measure = benchmark.benchmark_all_backends
+
+        def spy(*args, **kwargs):
+            ran.append(args)
+            return measure(*args, **kwargs)
+
+        monkeypatch.setattr(benchmark, "benchmark_all_backends", spy)
+
         fastest2 = benchmark.get_fastest_backend((256, 256), force_benchmark=False)
-        time2 = time.perf_counter() - t0
+        assert fastest2 == fastest1
+        assert not ran, "the cached call re-benchmarked instead of reading the cache"
 
-        # Should return same result
-        assert fastest1 == fastest2
-
-        # Cached call should be much faster (at least 10x)
-        assert time2 < time1 / 10
+        # And the spy does fire when a benchmark is genuinely asked for, so
+        # the assertion above cannot pass by having patched the wrong name.
+        benchmark.get_fastest_backend((256, 256), force_benchmark=True)
+        assert ran, "patched a name get_fastest_backend does not call"
 
     def test_cache_invalidation(self):
         """Test cache invalidation."""
