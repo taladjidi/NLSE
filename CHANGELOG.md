@@ -42,6 +42,23 @@ was using the wrong constant for one of them.
   0.87 at 3.95, 2.63, 1.97, 1.58 rad and then 0.044 at 1.32 and below, where
   it stops moving. Note the threshold is well under pi — raising the existing
   pi ceiling would not have helped.
+- **The tutorial's equations render.** `nlse_tutorial.ipynb` is rendered by
+  mkdocs-jupyter through nbconvert, not through the mkdocs markdown pipeline,
+  so its maths never reached `pymdownx.arithmatex`: it arrived in the page as
+  literal `$...$` inside `class="jp-MarkdownCell"`. The MathJax configuration
+  processed the `arithmatex` class alone and declared only the `\(...\)`
+  delimiters, so it walked straight past all of it — six display and
+  twenty-two inline formulas were published as their own LaTeX source, for as
+  long as the page has existed and including in 4.0.0.
+
+  `tests/test_docs.py` now pins, for each renderer the docs use, that the
+  configuration processes the class that renderer emits and accepts the
+  delimiters it leaves behind; the docs CI job checks the built HTML as well,
+  because a source-level test cannot see a renderer changing its markup.
+- **The tutorial's stored outputs were from an old version.** They still
+  carried `No FFT wisdom found, starting over ...`, a message pyFFTW printed
+  and which no longer exists in the package, and the pre-4.0.0 wording of the
+  backend fallback. The notebook has been re-run against 4.0.0.
 
 ### Added
 
@@ -67,36 +84,15 @@ was using the wrong constant for one of them.
 
 ### Changed
 
-
 - **The documentation is built with Sphinx**, not MkDocs. MkDocs 2.0 removes
   the plugin system that every plugin this site used depends on. The pages
   stayed markdown (MyST), the API reference is generated from the source by
   sphinx-autoapi, and maths now goes through one renderer for markdown and
-  notebooks alike -- which is the bug below deleted rather than fixed.
+  notebooks alike -- which is the bug above deleted rather than fixed.
 - **The examples are a gallery.** Every script runs when the docs are built
   and the figure on its page is the one it produced, so a broken example fails
   the build instead of rotting quietly. Two benchmark sweeps are listed
   without being executed.
-
-### Fixed
-
-- **The tutorial's equations render.** `nlse_tutorial.ipynb` is rendered by
-  mkdocs-jupyter through nbconvert, not through the mkdocs markdown pipeline,
-  so its maths never reached `pymdownx.arithmatex`: it arrived in the page as
-  literal `$...$` inside `class="jp-MarkdownCell"`. The MathJax configuration
-  processed the `arithmatex` class alone and declared only the `\(...\)`
-  delimiters, so it walked straight past all of it — six display and
-  twenty-two inline formulas were published as their own LaTeX source, for as
-  long as the page has existed and including in 4.0.0.
-
-  `tests/test_docs.py` now pins, for each renderer the docs use, that the
-  configuration processes the class that renderer emits and accepts the
-  delimiters it leaves behind; the docs CI job checks the built HTML as well,
-  because a source-level test cannot see a renderer changing its markup.
-- **The tutorial's stored outputs were from an old version.** They still
-  carried `No FFT wisdom found, starting over ...`, a message pyFFTW printed
-  and which no longer exists in the package, and the pre-4.0.0 wording of the
-  backend fallback. The notebook has been re-run against 4.0.0.
 
 ## 4.0.0 — 2026-08-01
 
