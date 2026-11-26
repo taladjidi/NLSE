@@ -1,5 +1,113 @@
 # Changelog
 
+## Unreleased
+
+The fixes from a full audit of 4.1.0. Several change what a run returns or
+what the API accepts, so the next release is a major one. The breaking changes
+come first.
+
+### Changed (breaking)
+
+- **`GPE` takes `V` and `g` as rates, in rad/s.** They went through the
+  optical conversion, with a wavenumber `GPE` only passes to satisfy the base
+  constructor: `g` reached the kernels 2e-28 times too small and with the
+  optical sign. `GPE` integrates
+  `i ħ ∂ψ/∂t = −ħ²/(2m) ∇²ψ + ħ V ψ + ħ g |ψ|² ψ`, so `V` is in rad/s and `g`
+  in rad/s·m², the unit the kinetic term and `gamma` already used; `V > 0`
+  repels and `g > 0` is repulsive. Runs written for the old scaling need their
+  `V` and `g` divided by ħ. A run that only passed `g` saw almost no
+  interaction before and sees it now.
+- **`NLSE_3d` applies the dispersion with the documented sign.** The operator
+  was `−i (D0/2) Ω²`, the opposite of `i ∂E/∂z = (D0/2) ∂²E/∂t²`. Every run
+  with `D0 ≠ 0` changes the sign of its chirp; the pulse width does not move.
+- **`DDGPE`'s potential advances the phase by `−V t`,** as its documented
+  equation asks; it gave `+V t`. The imaginary part flips with it: a positive
+  imaginary part is now gain.
+- **The non-local response is a product in Fourier space,**
+  `1/(1 + nl_length² K²)`, on every backend and every solver, split step and
+  RK4. It was a real-space convolution with a truncated, renormalised K0
+  kernel, on CPU and CuPy only. The response is periodic, like the
+  propagator, where the old kernel was zero-padded, so results with
+  `nl_length > 0` change. `Backend.convolution` and the `nl_profile`
+  attribute are gone. 100 steps at 512² on CPU: 0.40–0.45 s → 0.16 s.
+- **The medium acts over exactly `L`.** The in-medium step count was rounded
+  up, so the nonlinearity and the loss acted past `L` by up to one step. The
+  run is now split at `L` and each part ends on a partial step. Results
+  change for every run whose `L` is not a whole number of steps.
+- **A complex `delta_z` raises `TypeError`, and `z < 0` raises `ValueError`.**
+  Imaginary time was never implemented; its branches and the claims about it
+  are removed. A backward run is a negative real `delta_z`. A zero or
+  non-finite `delta_z`, also one a callback returns, and a non-finite `z`
+  raise `ValueError`.
+- **`evaluate_delta_n` returns the saturated Kerr index,**
+  `n2 I / (1 + I / I_sat)` with `I = c ε0 |A|² / 2`. It divided `|A|²`
+  (V²/m²) by `I_sat` (W/m²). Its values change wherever `I_sat` is finite.
+- **Kernels nothing called are removed:** `NLSE.kernels.cpu.vortex`,
+  `backend.kernels.vortex_cp` on CuPy and OpenCL, and from
+  `NLSE.kernels.cupy` (alias `NLSE.kernels_gpu`) `rabi_coupling`,
+  `vortex_cp`, `apply_propagator`, `square_mod`, `rk4_axpy`, `rk4_accumulate`
+  and their `_fused` twins.
+- **`DDGPE` drive and noise.** `F_pump_t` and `F_probe_t` hold one sample per
+  asked step, taken at the step's midpoint, and a profile shorter than the
+  run raises `ValueError`. The noise is a Wiener increment, `√|dt|` per step,
+  so the intensity it adds per unit time no longer depends on the step.
+
+### Fixed
+
+- **The Rabi coupling is applied by every scheme.** `CNLSE`, `CNLSE_1d` and
+  `DDGPE` applied it in the `lie` step only: `strang`, `yoshida` and RK4 ran
+  as if `omega` were zero.
+- **A `DDGPE` run with a potential takes the step asked.** The step estimate
+  read `k V / 2` with an optical `k` and capped the step near 1e-30, so the
+  run never finished.
+- **`DDGPE`'s cavity saturates on its own density first,** `(I_sat2, I_sat)`;
+  the pair was swapped. Results change when the two differ.
+- **A backward run stays backward.** The partial last step, the step cap and
+  the adaptive callbacks each turned a negative `delta_z` forward.
+- **Callbacks see the step just taken,** also when it was cut to land on `L`
+  or `z`, so a `DDGPE` pump integrates over the right length.
+  `adapt_delta_z_to_error` scales the step the loop takes next, not a cut one.
+- **RK4 bounds its step by the grid's fastest linear rate.** The limit
+  averaged the dispersion and the potential over the beam, and RK4 amplifies
+  round-off in any mode it is unstable for: a run left to choose its step on
+  a fine grid returned NaN. Such a run is now lowered to the bound, with the
+  usual warning. In the coupled solvers the bound takes the faster of the two
+  potentials and adds the Rabi coupling, `omega / 2`, which no bound counted.
+- **The default step follows the potential of the run.** The rate estimate
+  kept the first potential's grids, so a second run on the same solver took
+  the step of the first one's `V`.
+- **`NLSE_3d.plot_field` draws the x–t panels from a row of the field.** It
+  took a column: the wrong plane, and an `IndexError` for `NX < NY`.
+- **CuPy: the captured loop waits for the work queued before it.** Without
+  that a Strang bracket could read a field still being written; one test
+  failed 11 isolated runs of 12 on an RTX 3050.
+- **CUDA kernels are built without `--use_fast_math`.** Its `sincos` is
+  accurate on [−π, π] only: the error of `exp(i V)` reached 1.4e-4 for
+  `|V| ≤ 1e3` rad and is 9.3e-8 now, at no cost in step time.
+- **Changing a solver's backend drops what the old one built** (propagator,
+  plans, RK4 buffers, caches), and what a run precomputes is cleared when it
+  ends. A propagator left behind made a later `split_step` use the previous
+  run's step.
+- **`adapt_delta_z` reads the solver's own nonlinear rate.** For a `GPE` it
+  returned 4e23 s instead of `1/(12 g n)`.
+- **The benchmark cache cannot break backend selection.** A cache of another
+  shape, with a wrong-typed field, naming a backend this install lacks, or in
+  a directory that cannot be made, counts as no cache. It is written beside
+  itself and renamed, so a failed write keeps the previous one.
+- **`out_field` raises `ValueError` for a wrong shape and `TypeError` for a
+  wrong dtype;** they were asserts. A callback list without `callback_args`
+  gets empty arguments for each. `DDGPE.out_field` no longer changes the
+  caller's callback list or, on CPU, the input field.
+
+### Changed
+
+- `adapt_delta_z_to_error` is exported from the package.
+- One-step `out_field` at 2048² (M3 Max): CPU 73 → 47 ms, MLX 70 → 41 ms; the
+  dispersion eigenvalues are kept and the normalization writes in place. The
+  per-step time is unchanged.
+- The test suite keeps its benchmark cache in each test's own directory and
+  no longer touches the user's.
+
 ## 4.1.0 — 2026-08-05
 
 30 commits since 4.0.0. Nothing in the API moved, but two things change the

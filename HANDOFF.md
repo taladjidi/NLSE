@@ -2,128 +2,92 @@
 
 ## State (2026-11-26)
 
-A full audit of the repo was done at commit `fa7aa59` (v4.1.0 plus six commits).
-The fixes are specified in eight packages, each applied in its own git
-worktree. Every worktree holds its whole patch. p7 and p6 are reviewed and
-merged into `main` (not pushed); p4 and p2 are reviewed and committed on their
-branches; p1a, p1b, p3 and p5 are applied and uncommitted, with a code review
-running on each.
+A full audit of the repo was done at commit `fa7aa59` (v4.1.0 plus six
+commits); its findings are listed under "Findings, ranked" below. All of them
+that were to be fixed are fixed, in eight packages plus two follow-ups, each on
+its own branch and merged into `main` with `--no-ff`:
 
-Baseline at `38a8704`, Apple M3 Max, arm64, Python 3.13.13, CPU and MLX
-backends: `pytest tests/ -q -m "not benchmark"` gives 974 passed, 123 skipped,
-62 deselected; `ruff check`, `ruff format --check` and `mypy NLSE/` are clean.
-In a plain copy of the tree `tests/test_packaging.py` errors 13 times (no
-hatchling there): deselect it, which leaves 956 passed, 123 skipped.
-
-## Fix work in progress
-
-Each package has an architect spec, reviewed once and revised, and the
-architect's verified result as a patch against `38a8704`. Both are outside the
-repo: `~/Documents/LKB/NLSE_tangui_fix_specs/pN.md` and `pN.patch` (p7 also has
-`p7_claude.patch` for the untracked local `CLAUDE.md`). Every patch passes
-`git apply` on a fresh `git archive 38a8704` tree.
-
-The worktrees are `../NLSE_wt/pN`, cut from `38a8704`, each with an untracked
-`.venv` link to this checkout's venv (delete the link before committing, and
-never `git add -A` there). Haiku implementers apply one brief each, in the
-order the spec gives.
-
-**How to tell where a package stands:** apply `pN.patch` to a fresh
-`git archive 38a8704` copy and `diff -rq` it against the worktree (leave out
-`.git`, `.venv` and the caches). No difference means every brief landed. A
-difference means the chain stopped at a brief: read that brief in the spec and
-finish it, or apply the patch.
-
-| Package | Branch | Covers | State when this was written |
+| Package | Branch | Merge | Covers |
 |---|---|---|---|
-| p1a | `fix/stepping-loop` | medium ends exactly at `L`; backward runs; complex `delta_z` raises; callback lists; CuPy stream race | applied, equal to the patch; code review running |
-| p1b | `fix/solver-run-state` | state left after a run or a backend switch; caller's arrays restored; asserts become ValueError/TypeError; dispersion built once; `origin="lower"` | applied, equal to the patch; code review running |
-| p2 | `fix/coupled-solvers` | Rabi coupling in strang, yoshida, RK4; DDGPE uses CNLSE's `split_step`; noise, pump sampling, potential sign | reviewed; 1024 passed; committed `4c8fb80`. Its MAJOR (a cut last step takes the wrong drive sample and length) is fixed by p1a once both are merged: see step 3 |
-| p3 | `fix/gpe-units` | GPE takes `V` and `g` as rates in rad/s with the GPE sign; `adapt_delta_z` on GPE; docs and example | applied, equal to the patch; code review running |
-| p4 | `fix/nonlocal-response` | non-local response applied in Fourier space; `Backend.convolution` and `nl_profile` removed | reviewed; one test added for the coupled RK4 path (the review's MAJOR); 1005 passed; committed `c50a72c`; `p4.patch` refreshed |
-| p5 | `refactor/kernels-cleanup` | unused CuPy and vortex kernels removed; MLX scalar cache bounded; CUDA built without `--use_fast_math` | spec reviewed (GO), its six MINOR notes applied to `p5.md` and `p5.patch`; applied, equal to the patch; code review running |
-| p6 | `test/closed-forms-and-cache` | `evaluate_delta_n`; benchmark cache isolation; tests that could not fail; NLSE_3d dispersion sign | reviewed twice; cache record validated and `test_build_propagator` made to see the sign (the review's MAJORs); 1013 passed; merged as `3f3b6dd`. On CUDA the two RK4 non-local saturation cases stay red until p4 is merged |
-| p7 | `docs/packaging-ci-cleanup` | README, docs, sdist, `uv.lock`, CI, examples, unused files | reviewed (PASS); 974 passed, Sphinx `-W` clean; merged as `ed00008` |
+| p7 | `docs/packaging-ci-cleanup` | `ed00008` | README, docs, sdist, `uv.lock`, CI, examples, unused files |
+| p6 | `test/closed-forms-and-cache` | `3f3b6dd` | `evaluate_delta_n`; benchmark cache isolation; tests that could not fail; NLSE_3d dispersion sign |
+| p5 | `refactor/kernels-cleanup` | `36d952d` | unused CuPy and vortex kernels removed; MLX scalar cache bounded; CUDA built without `--use_fast_math` |
+| p3 | `fix/gpe-units` | `7a5fd6a` | GPE takes `V` and `g` as rates in rad/s with the GPE sign; `adapt_delta_z` on GPE |
+| p1b | `fix/solver-run-state` | `bcda6d8` | state left after a run or a backend switch; asserts become ValueError/TypeError; stale potential grids; NLSE_3d xt panels |
+| p1a | `fix/stepping-loop` | `41f39a4` | medium ends exactly at `L`; backward runs; complex, zero and non-finite `delta_z` raise; CuPy stream race |
+| p4 | `fix/nonlocal-response` | `4eef782` | non-local response applied in Fourier space; `Backend.convolution` and `nl_profile` removed |
+| p2 | `fix/coupled-solvers` | `36bf9e1` | Rabi coupling in strang, yoshida, RK4; DDGPE noise, pump sampling, potential sign |
+| follow-up | `fix/rk4-stability-bound` | see "Open items" | post-merge test fixes (`6bd77e7`); RK4 step bounded by the grid's fastest linear rate (`10bf834`), in the coupled solvers too (`a53a470`); the timing tool's step (`4ac2bb2`) |
 
-`fix/solver-state` is an older, merged branch: p1b uses `fix/solver-run-state`.
+The specs and patches of the eight packages are outside the repo, in
+`~/Documents/LKB/NLSE_tangui_fix_specs/`. The worktrees `../NLSE_wt/pN` are no
+longer needed.
 
-### Next steps
+`CHANGELOG.md` has an `## Unreleased` section with every change, the breaking
+ones first. The next release is a major one (5.0.0 is the suggestion); the
+version is not bumped and nothing is published.
 
-1. Per uncommitted package: read its review, fix CRITICAL and MAJOR findings
-   (MINOR ones go in the final report), run its final check (the last
-   section of each spec gives the commands and counts), commit on the
-   branch. Breaking changes carry `!` and a `BREAKING CHANGE:` footer: p2,
-   p3, p5 (removed kernels: `kernels_cpu.vortex`, `kernels_gpu.vortex_cp`
-   and the CuPy fallbacks `rabi_coupling`, `apply_propagator`, `square_mod`,
-   `rk4_axpy`, `rk4_accumulate` with their `_fused` twins) and p6 (NLSE_3d
-   sign). A commit that stages a `.yml` file needs the plain PATH (the
-   `yaml-parses` hook needs PyYAML, which `.venv` lacks); Python changes
-   need `.venv/bin` first on PATH.
-2. Merge one by one with `--no-ff`, in the order p7, p6 (both done), p3, p5,
-   p1b, p1a, p4, p2. `git rerere` holds the two resolutions below. A trial
-   merge of the eight patches in that order gave two
-   conflicts only, and the merged tree passed on the Mac (ruff, format and
-   mypy clean; 1314 passed, 123 skipped with `tests/test_packaging.py`
-   left out):
-   - `README.md` (p3, p7): keep p7's `NLSE/solvers/*.py` links; the GPE row's
-     notes cell is p3's, ``SI units: masses in kg, times in s, `V` and `g`
-     as energies over ħ (rad/s)``.
-   - `NLSE/solvers/nlse.py`, constructor (p4, p1b): the block becomes the two
-     lines `self._forget_device_state()` and `self.nl_length = nl_length`.
-3. After the merges, by hand:
-   - Run `.venv/bin/python ../NLSE_tangui_fix_specs/post_merge_cut_step_test.py .`
-     and commit the two tests it adds to `tests/solvers/test_ddgpe_drive.py`:
-     they pin p2's MAJOR (20 passed on the trial-merged tree, 4 failed on p2
-     alone).
-   - `CHANGELOG.md`: put `../NLSE_tangui_fix_specs/changelog_unreleased.md`
-     above `## 4.1.0`, corrected for what the last four reviews change. No
-     version bump without the user's word (5.0.0 is the suggestion).
-   - `tests/physics/test_closed_forms.py`: the comment above the non-local
-     case becomes "Two cells of that grid. A plane wave is its own local
-     average, so the answer does not change: only the kernels that compute
-     it do."
-   - `NLSE/backends/cupy_backend.py`: the `kernels` docstring becomes
-     `"""Return CUDA C kernels (with broadcasting fallback)."""`.
-   - p2's `tests/solvers/test_potential_sign.py` cites `--use_fast_math` for
-     `PHASE_ATOL`: p5 removes the flag, so re-measure on CUDA and reword.
-   - The untracked local `CLAUDE.md`: `p7_claude.patch` (lines 55 and 75) and
-     the non-local line 74 from p4.md, step O1.
-4. Full suite on the Mac (CPU, MLX), under the conda Python for OpenCL (the two
-   non-local test files above all: no architect could run CL), and on the CUDA
-   box, at least six runs of each CUDA check. On CuPy also re-check a second
-   RK4 `out_field` call on one solver (1024^2, `alpha=10`): it returned NaN at
-   base, probably the stream race.
-5. Timings before and after into `docs/optimization-log.md`, a CHANGELOG entry
-   from the "Changelog lines" section of each spec, this file, then push.
+### Verification of the final tree
 
-### Review findings left as they are (MINOR, for the final report)
+- Mac (M3 Max, CPU and MLX, `.venv`), at `4ac2bb2`: `pytest tests/ -q -m "not
+  benchmark" --ignore=tests/test_packaging.py` gives 1404 passed, 126 skipped;
+  `ruff check`, `ruff format --check` and `mypy NLSE/` are clean. Five of
+  those tests exist only while `docs/_build` does (`tests/test_doc_claims.py`
+  reads a file in it), so a clean checkout gives 1399.
+- Sphinx, `-W --keep-going`, in a scratch venv with the `docs` extra: exit 0
+  and no warning at `10bf834` (full build, 25 min) and at `4ac2bb2`
+  (incremental).
+- CuPy on the CUDA box (RTX 3050): see "Open items" for the commit and count.
+- OpenCL on the CUDA box (NVIDIA OpenCL, CPU and CL available): see "Open
+  items" too.
+- OpenCL cannot be run on this Mac any more (macOS 27.2). Apple's driver
+  segfaults inside `pyvkfft`'s `VkFFTApp` for any transform, a bare 64x64 one
+  outside NLSE included, and 4.1.0 crashes the same way. The conda env
+  `poclrepro` (POCL) cannot link its kernels: 96 failures on 4.1.0 too.
 
+### Review findings left as they are (MINOR)
+
+- p1a: a callback's shape error surfaces after a step; bare numbers in
+  `tests/solvers/test_backward_run.py:151,170` and
+  `tests/solvers/test_out_field_arguments.py:40`; a CNLSE strang run with a
+  cut step in complex64 is 1.4e-3 from the fine run.
+- p1b: no test fails when `_forget_device_state` is dropped from
+  `_require_backend`; `_forget_device_state` names the RK4 buffers by hand and
+  misses `_rk4_A_sq_c`; `_propagator_rk4_cache_key()` omits the window;
+  `ddgpe.py` binds `_random` at construction; `_energy_rates_on_device` moves
+  `V` to the host on every call, also on a cache hit.
 - p2: RK4 with a batched `omega` of shape `(B,)` or `(B, 1, 1, 1)` raises on
   CPU (`_add_rabi_slope` in `cnlse.py`); `_default_delta_z` leaves
-  `_drive_step` set when called directly; no test for `omega` with a cut
-  step, a step-changing callback or a batched `omega`; `docs/solvers_overview.md:263`
+  `_drive_step` set when called directly; no test for `omega` with a
+  step-changing callback or a batched `omega`; `docs/solvers_overview.md:263`
   says a positive imaginary potential removes power, which is the NLSE
   convention and now the opposite of DDGPE's.
-- p6: the saturated Kerr index is written twice in `callbacks.py` (in
-  `evaluate_delta_n` and `adapt_delta_z`); `evaluate_delta_n` is optical
-  only (it reads component 1's `n2` and `I_sat` on a coupled solver and is
-  wrong for GPE and DDGPE), which the docstring does not say; the cache's
-  temporary file is named by PID alone, so two threads of one process can
-  collide; `invalidate_cache` raises if the cache path is a directory;
-  `docs/backends.md:51` still gives the old cache path and its table omits
-  `NLSE_CACHE_DIR`; several new test docstrings lack a Parameters section.
-- p7: `examples/benchmarks.py:187`, the self-check cannot see a wrong
-  diffraction sign; `.github/workflows/ci.yml:287-296`, the link check only
-  warns, so its comment oversells it; `docs/literature-examples.md` still
-  opens with "None should be written from scratch".
-- p4: `nl_length=np.inf` is accepted and gives NaN (the old window check
-  raised); the smoothed intensity can dip to about -4e-7 of its maximum,
-  where the zero-padded kernel could not; comments at `nlse.py:855`,
+- p3: `_estimated_rates` uses an optical intensity for GPE when no field is
+  given; the floor of `adapt_delta_z_to_error`, `L/1e5`, is 0 for a GPE; the
+  default GPE step ignores the kinetic term; no test with `g < 0`, `V < 0` or
+  complex128.
+- p4: `nl_length=np.inf` is accepted and gives NaN; the smoothed intensity can
+  dip to about -4e-7 of its maximum; comments at `nlse.py:855`,
   `cnlse.py:369`, `examples/nonlocality.py:5` and two test names in
-  `tests/integration/test_broadcasting.py` still say "convolve"; no test
-  changes `nl_length` after construction, runs in double precision, or
-  covers GPE and DDGPE; `_multiply_in_fourier_space` takes a positional
-  bool. OpenCL was read, not run.
+  `tests/integration/test_broadcasting.py` still say "convolve"; no non-local
+  test for GPE and DDGPE; `_multiply_in_fourier_space` takes a positional
+  bool.
+- p5: a batched `omega` on a CNLSE raises TypeError on CuPy.
+- p6: the saturated Kerr index is written twice in `callbacks.py`;
+  `evaluate_delta_n` is optical only (wrong for GPE and DDGPE, and it reads
+  component 1 on a coupled solver); the cache's temporary file is named by PID
+  alone; `invalidate_cache` raises if the cache path is a directory;
+  `docs/backends.md:51` still gives the old cache path.
+- p7: `examples/benchmarks.py:187`, the self-check cannot see a wrong
+  diffraction sign; the CI link check only warns; `docs/literature-examples.md`
+  still opens with "None should be written from scratch".
+- RK4 (review of `36bf9e1..10bf834`): the bound takes the interaction rate
+  the field weighs, not its peak, and the first component's loss only, not
+  `alpha2`; an RK4 run left to choose its step warns that the step was
+  lowered; `_capped_delta_z` computes `_energy_rates` twice per run;
+  `CUT_RUNS` in `tests/solvers/test_ddgpe_drive.py:46` writes its integrals
+  as numbers instead of deriving them from `CUT_DT`; `cnlse.py:143` nests a
+  function (code this work did not touch).
 
 ### Design decisions
 
@@ -136,56 +100,36 @@ finish it, or apply the patch.
 - The medium is the first `L` of travel, also on a backward run (no mirror).
   `z < 0` raises ValueError; a negative `delta_z` runs backward to the end,
   also when a callback hands back a step.
-- Callbacks read `_current_delta_z` as the step just taken, also on a cut step.
+- Callbacks read `_current_delta_z` as the step just taken, also on a cut
+  step. `_step_in_force` is the step the loop takes next, the one the
+  propagator is built from and the one `adapt_delta_z_to_error` scales.
 - DDGPE: noise std goes as `sqrt(|dt|)`. `F_pump_t[j]` is the drive during
   `[j dt, (j+1) dt)` with `dt` the step asked of `out_field`; a profile that is
   too short raises ValueError. The potential gets the documented sign
   (`POTENTIAL_SCALE = -1.0`). Breaking.
 - NLSE_3d: the temporal dispersion gets the documented sign
   (`dz E = +i D0/2 Omega^2 E`). Breaking.
+- The potential's grids on the device are dropped whenever `V` is rescaled
+  (`_forget_potential_grids`), rather than keyed by the potential's content.
+- RK4's bound counts dispersion and potential by their grid maximum, and the
+  interaction and the loss by the field.
 - Not done on purpose: skipping the energy-rate estimate when `delta_z` is
   given (the cap on a caller's step needs it).
 
-### Found while specifying, beyond the audit
+### Still open, not fixed
 
-Confirmed by a run, and fixed by the package named:
-
-- CuPy: `execute_loop` runs on a non-blocking stream that does not wait for the
-  null stream, so the first step raced work queued before it. On the CUDA box
-  `tests/solvers/test_strang_merge.py -k CUPY` failed 11 runs of 12, and 0 of
-  12 with `stream.wait_event(...)` added (p1a). One green full-suite run had
-  hidden it: repeat CUDA runs.
-- DDGPE applies `exp(+iVt)`, the opposite of its documented equation; the
-  interaction sign is right (p2).
-- DDGPE with any potential has its step capped near `pi/(V k/2)` with
-  `k = 2 pi / 1e-30`, so the run never ends (p2).
-- NLSE_3d applies the temporal dispersion with the sign opposite to the docs
-  and to its own docstring; no test could see it (p6).
-- A backward run with an adaptive callback turns forward and ends at `+z`
-  (p1a).
-- `docs/callbacks.md:103` documents the old `evaluate_delta_n` formula (p6).
-
-Left open, to report:
-
-- RK4's default step gives NaN in a trap: its limit uses the field-weighted
-  kinetic rate, not the grid maximum.
-- `_estimated_rates` uses an optical intensity for GPE when no field is given.
 - `evaluate_delta_n` convention: `k/2` or `k`.
 - Setting `simu.wl` does not update `k`.
 - `get_fastest_backend` crashes on a wrong-typed `grid_size`.
-- NLSE_3d's "xt at y=0" panel fixes x.
 - `_normalization_factor` upcasts to float64.
-- `tests/benchmarks/test_benchmark_profile.py` runs GPE with `g=n2`: check it
-  after the units fix.
+- `tests/benchmarks/test_benchmark_profile.py` runs GPE with `g=n2`.
 - `omega=0` (not None) still pays two identity rotations in strang.
 - `DDGPE(omega=None)` raises TypeError in the constructor, so its
   `omega is None` branches never run.
-- `evaluate_delta_n` stays optical-only: on GPE it reads `n2`, not `g`.
-- DDGPE's cavity saturation used the swapped pair `(I_sat, I_sat2)`; p2 fixes
-  it, visible only to a user who set `I_sat2` by hand.
-- `ci.yml:5` sets an `NLSE_CACHE_DIR` nothing reads, and `ci.yml:168-172`
-  caches benchmarks the tests no longer write: decide when p6 and p7 merge.
-- OpenCL was not run for the non-local change (Apple's CL crashes in VkFFT).
+- The `yaml-parses` pre-commit hook needs PyYAML, which the `dev` extra does
+  not list.
+- `ci.yml:162` caches the backend benchmarks between runs; the tests now keep
+  theirs in each test's own directory, so check the step still saves anything.
 
 ## Findings, ranked
 
@@ -301,11 +245,36 @@ Each was reproduced by a script unless marked *(read)* or *(reviewer)*.
 
 ## Open items
 
-- See "Fix work in progress" above for the order of work.
-- CuPy now runs on the CUDA box (CuPy 14.2.0, RTX 3050). Sphinx builds with
-  `-W --keep-going`, exit 0, in about 25 min. `paper/` not read.
-- The project `.venv` has CPU and MLX only. OpenCL needs the conda Python with
-  `PYTHONPATH` set to the repo, because that Python has an old NLSE 2.3.0
-  installed.
+Resume here. `fix/rk4-stability-bound` (`4ac2bb2`) is not merged, and nothing
+is pushed: `main` is at `36bf9e1`, ahead of `origin/main` by the eight merges.
+
+1. Review. The review of `36bf9e1..10bf834` said fix first: the RK4 bound
+   missed the second component's potential and the Rabi coupling, and no test
+   pinned the potential's grid maximum, the interaction or the loss. `a53a470`
+   answers all three (each new test fails when its term is removed; the patch
+   and the mutation script are in `NLSE_tangui_fix_specs/`). The re-review of
+   `10bf834..4ac2bb2` was running when this was written: redo it if its
+   result is not recorded here.
+2. CUDA box at `4ac2bb2`: six full-suite runs on CuPy and one on OpenCL were
+   running when this was written. At `10bf834` they gave 1462 passed, 67
+   skipped in 6 runs of 6 (CuPy) and 1399 passed, 120 skipped (OpenCL).
+3. Step time against 4.1.0 (`38a8704`), `benchmarks/profile_backends.py
+   --baseline 38a8704 --rounds 4` on the RTX 3050 with CuPy: NLSE and CNLSE,
+   split step at 1024² and 2048² and RK4 at 1024², all 1.00x. The RK4 cells at
+   2048² read 2.56x because 4.1.0 returned NaN there and the new bound takes
+   2.56 times the steps; `4ac2bb2` makes the tool ask a step both take, and
+   that cell was being measured again. Not measured for the final tree: CPU
+   and MLX on the Mac. Log the result in `docs/optimization-log.md`.
+4. Merge into `main` with `--no-ff`, then push with
+   `PATH="$PWD/.venv/bin:$PATH" NLSE_CACHE_DIR=<scratch> git push origin main`.
+5. A release is due (5.0.0 suggested); the version is not bumped.
+
+Environment:
+
+- The project `.venv` has CPU and MLX only. CuPy and OpenCL run on the CUDA
+  box, each in its own environment; OpenCL no longer runs on this Mac (see
+  "Verification of the final tree").
+- Sphinx is in no project environment: build the docs from a scratch venv
+  with `uv pip install -e ".[docs]"`. `paper/` was not read.
 - Running `docs/make_validation_figure.py` with any argument rewrites
   `docs/img/validation.png`.
