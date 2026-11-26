@@ -524,32 +524,6 @@ def _rabi_coupling(A1: np.ndarray, A2: np.ndarray, dz: float, omega: float) -> t
 
 
 @numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
-def vortex(
-    im: np.ndarray, i0: int, j0: int, ii: np.ndarray, jj: np.ndarray, ll: int
-) -> None:
-    """Generate a vortex of charge l at position (i0, j0) on the image im.
-
-    Parameters
-    ----------
-    im : np.ndarray
-        Image.
-    i0 : int
-        Row position of the vortex.
-    j0 : int
-        Column position of the vortex.
-    ii : np.ndarray
-        Meshgrid row coordinates of the image.
-    jj : np.ndarray
-        Meshgrid column coordinates of the image.
-    ll : int
-        Vortex charge.
-    """
-    for i in numba.prange(im.shape[0]):
-        for j in numba.prange(im.shape[1]):
-            im[i, j] += np.angle(((ii[i, j] - i0) + 1j * (jj[i, j] - j0)) ** ll)
-
-
-@numba.njit(parallel=True, fastmath=True, cache=True, boundscheck=False)
 def square_mod(A: np.ndarray, A_sq: np.ndarray) -> np.ndarray:
     """Compute the square modulus of the field.
 

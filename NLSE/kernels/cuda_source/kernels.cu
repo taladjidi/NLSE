@@ -621,7 +621,7 @@ extern "C" __global__ void coupled_rk4_nl_rhs_c(
     // Component 1: k += (1j*interact - alpha1*sat + 1j*V1) * a1
     // The contribution is rounded before it is accumulated, as the
     // one-component rk4_nl_rhs_c above does it: folding the two into one
-    // expression lets --use_fast_math contract them into a different chain,
+    // expression lets the compiler contract them into a different chain,
     // and the two paths stop agreeing bit for bit.
     {{FP_TYPE}} interact1_i = (g11 * sq1 + g12 * sq2) * sat;
     {{FP_TYPE}} coeff1_r = -(alpha1 * sat V_LOSS(V1, idx));

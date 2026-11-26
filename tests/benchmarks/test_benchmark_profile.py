@@ -22,7 +22,6 @@ from NLSE.kernels.cpu import (
     nl_prop_without_V_c,
     rabi_coupling,
     square_mod,
-    vortex,
 )
 from scipy.constants import c
 
@@ -237,21 +236,6 @@ class TestKernelBenchmark:
         benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
         assert np.all(np.isfinite(A1))
         assert np.all(np.isfinite(A2))
-
-    def test_vortex(self, benchmark):
-        """Benchmark vortex kernel."""
-        im = np.zeros((N, N), dtype=PRECISION_COMPLEX)
-        coords = np.arange(N, dtype=np.int32)
-        ii, jj = np.meshgrid(coords, coords)
-        i0 = N // 2
-        j0 = N // 2
-        ll = 1
-
-        def kernel():
-            vortex(im.copy(), i0, j0, ii, jj, ll)
-
-        benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
-        assert np.all(np.isfinite(im))
 
 
 @pytest.mark.benchmark(group="solvers-single")

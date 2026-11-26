@@ -5,24 +5,39 @@ Scalar arguments are converted to 0-dim mx.array so that mx.compile traces
 them as proper inputs whose values can change between calls.
 """
 
+import functools
 import math
 
 import mlx.core as mx
 
-_SCALAR_CACHE: dict[float, mx.array] = {}
+# Distinct scalars kept converted, in entries. A run at one step size converts at
+# most 10 (measured: CNLSE, RK4, Rabi coupling); the bound stops an adaptive step,
+# a new value every step, from growing it for the life of the process.
+_SCALAR_CACHE_SIZE = 128
+
+
+@functools.lru_cache(maxsize=_SCALAR_CACHE_SIZE)
+def _scalar_array(fval: float) -> mx.array:
+    """Return ``fval`` as a 0-dim float32 mx.array, one array per cached value.
+
+    Parameters
+    ----------
+    fval : float
+        The scalar to convert.
+
+    Returns
+    -------
+    mx.array
+        The array holding ``fval``, the same object while it stays cached.
+    """
+    return mx.array(fval, dtype=mx.float32)
 
 
 def _to_mx(val):
     """Convert a Python scalar to a 0-dim mx.array for compiled functions."""
     if isinstance(val, mx.array):
         return val
-    fval = float(val)
-    cached = _SCALAR_CACHE.get(fval)
-    if cached is not None:
-        return cached
-    arr = mx.array(fval, dtype=mx.float32)
-    _SCALAR_CACHE[fval] = arr
-    return arr
+    return _scalar_array(float(val))
 
 
 # Largest |u| = |2*alpha*dz| the solved step below is used at. See
