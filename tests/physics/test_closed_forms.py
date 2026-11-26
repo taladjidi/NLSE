@@ -44,8 +44,7 @@ WAIST = 200e-6
 
 # The plane-wave tests have no transverse structure to resolve.
 PLANE_N = 64
-# Two cells of that grid, the least a non-local kernel needs
-# (NLSE._resolved_nl_length). A plane wave is its own local average, so the
+# Two cells of that grid. A plane wave is its own local average, so the
 # answer does not change: only the kernels that compute it do.
 NONLOCAL_LENGTH = 2 * WINDOW / PLANE_N  # m
 # Each integrator, and RK4 again through its non-local branch, which calls

@@ -370,7 +370,7 @@ class CUPYBackend(Backend):
 
     @property
     def kernels(self) -> Any:
-        """Return CUDA C kernels (--use_fast_math, with broadcasting fallback)."""
+        """Return CUDA C kernels (with broadcasting fallback)."""
         if not hasattr(self, "_cuda_kernels"):
             from ..kernels.cupy_kernels import CUDAKernels
 

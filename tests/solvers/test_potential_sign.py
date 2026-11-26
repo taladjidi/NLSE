@@ -18,8 +18,8 @@ T = 0.2  # total time, in the units of DDGPE's rates
 DT = 0.01
 V0 = 0.3  # potential, a rate
 G = 0.5  # interaction, a rate per unit density; the field has n = 1
-# Measured worst error 9.3e-6 rad (CUPY yoshida, built with --use_fast_math at
-# NLSE/kernels/cupy_kernels.py:124), 1.2e-7 on MLX; a wrong sign misses by 0.1.
+# Measured worst error 1.2e-7 rad (yoshida; CUPY on an RTX 3050, and MLX) and
+# 6.6e-8 on CPU; a wrong sign misses by 0.1.
 PHASE_ATOL = 1e-4
 # A direct split_step: a DDGPE potential and step giving -0.05 rad.
 V_DIRECT = 0.5
