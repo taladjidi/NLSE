@@ -64,19 +64,20 @@ def test_a_script_that_writes_imports_the_helper(script):
 
 
 def test_the_helper_stays_out_of_the_working_directory(tmp_path, monkeypatch):
-    """The resolved path does not depend on the working directory."""
+    """The resolved path does not depend on the working directory.
+
+    The directory is then created under tmp_path, not in the checkout, so the
+    test leaves nothing behind whether it passes or fails.
+    """
     monkeypatch.chdir(tmp_path)
     monkeypatch.syspath_prepend(str(EXAMPLES))
-    from _output import output_path
+    import _output
 
-    target = output_path("probe.npy")
-    try:
-        assert target.parent == EXAMPLES / "output"
-        assert not target.is_relative_to(tmp_path)
-        assert target.parent.is_dir(), "output_path did not create the directory"
-    finally:
-        if not any((EXAMPLES / "output").iterdir()):
-            (EXAMPLES / "output").rmdir()
+    assert _output.OUTPUT_DIR == EXAMPLES / "output"
+    assert not _output.OUTPUT_DIR.is_relative_to(tmp_path)
+    monkeypatch.setattr(_output, "OUTPUT_DIR", tmp_path / "output")
+    assert _output.output_path("probe.npy") == tmp_path / "output" / "probe.npy"
+    assert (tmp_path / "output").is_dir(), "output_path did not create the directory"
 
 
 # sphinx-gallery builds the gallery from examples/ itself, so a script cannot

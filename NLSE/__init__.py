@@ -19,6 +19,7 @@ import sys
 from . import utils as utils
 from .callbacks import (
     adapt_delta_z as adapt_delta_z,
+    adapt_delta_z_to_error as adapt_delta_z_to_error,
     evaluate_delta_n as evaluate_delta_n,
     norm as norm,
     sample as sample,

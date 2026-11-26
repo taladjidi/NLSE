@@ -6,6 +6,7 @@ cached for quick subsequent access.
 """
 
 import json
+import os
 import platform
 import time
 from datetime import datetime, timedelta
@@ -204,6 +205,39 @@ def benchmark_all_backends(
     return results
 
 
+def _is_cache_record(cache: Any) -> bool:
+    """Whether a decoded cache file has the fields read from it, typed as read.
+
+    Parameters
+    ----------
+    cache : Any
+        What ``json.load`` returned.
+
+    Returns
+    -------
+    bool
+        True if it is a record ``benchmark_all_backends`` could have written.
+    """
+    if not isinstance(cache, dict):
+        return False
+    grid = cache.get("grid_size")
+    results = cache.get("results")
+    return (
+        isinstance(cache.get("version"), str)
+        and isinstance(cache.get("timestamp"), str)
+        and isinstance(cache.get("platform"), dict)
+        and isinstance(grid, list)
+        and all(isinstance(n, int) for n in grid)
+        and isinstance(cache.get("fastest"), (str, type(None)))
+        and isinstance(results, dict)
+        and all(
+            isinstance(entry, dict)
+            and isinstance(entry.get("time_ms"), (int, float, type(None)))
+            for entry in results.values()
+        )
+    )
+
+
 def load_benchmark_cache() -> BenchmarkResults | None:
     """Load cached benchmark results from disk.
 
@@ -215,17 +249,15 @@ def load_benchmark_cache() -> BenchmarkResults | None:
     """
     from ..utils import get_benchmark_cache_path
 
-    cache_path = get_benchmark_cache_path()
-
-    if not cache_path.exists():
-        return None
-
     try:
+        cache_path = get_benchmark_cache_path()
+        if not cache_path.exists():
+            return None
         with open(cache_path) as f:
             cache = json.load(f)
 
-        # Validate cache structure
-        if "version" not in cache or "timestamp" not in cache:
+        if not _is_cache_record(cache):
+            say("Benchmark cache is not a record this version writes, ignoring it.")
             return None
 
         if cache["version"] != CACHE_VERSION:
@@ -238,7 +270,7 @@ def load_benchmark_cache() -> BenchmarkResults | None:
         # cache lives in the user's cache directory, which is inside a home
         # directory that a lab machine and a laptop may well share, and the
         # answer it holds is a statement about one machine's hardware.
-        cached_platform = cache.get("platform", {})
+        cached_platform = cache["platform"]
         here = (platform.system(), platform.machine())
         there = (cached_platform.get("system"), cached_platform.get("processor"))
         if there != here:
@@ -255,7 +287,10 @@ def load_benchmark_cache() -> BenchmarkResults | None:
 
         return cache
 
-    except (json.JSONDecodeError, ValueError, KeyError) as e:
+    # OSError: the cache directory cannot be made, or the file read.
+    # ValueError: not JSON, or a timestamp that is not a date. TypeError: a
+    # timestamp with a time zone. RecursionError: JSON nested too deep.
+    except (OSError, ValueError, TypeError, RecursionError) as e:
         say(f"Warning: Invalid benchmark cache: {e}")
         return None
 
@@ -270,13 +305,22 @@ def save_benchmark_cache(results: BenchmarkResults) -> None:
     """
     from ..utils import get_benchmark_cache_path
 
-    cache_path = get_benchmark_cache_path()
+    try:
+        cache_path = get_benchmark_cache_path()
+    except OSError as e:
+        say(f"Warning: Failed to save benchmark cache: {e}")
+        return
+    # Written beside the cache and renamed over it, so a reader never sees a
+    # half-written file and a failed write leaves the previous cache whole.
+    partial = cache_path.with_name(f"{cache_path.name}.{os.getpid()}.tmp")
 
     try:
-        with open(cache_path, "w") as f:
+        with open(partial, "w") as f:
             json.dump(results, f, indent=2)
+        os.replace(partial, cache_path)
         say(f"Benchmark results cached to {cache_path}")
     except Exception as e:
+        partial.unlink(missing_ok=True)
         say(f"Warning: Failed to save benchmark cache: {e}")
 
 
@@ -314,6 +358,8 @@ def get_fastest_backend(
         Name of fastest backend ("CPU", "CUPY", or "CL")
 
     """
+    from . import list_available_backends
+
     # Check cache first (unless forced)
     if not force_benchmark:
         cache = load_benchmark_cache()
@@ -321,8 +367,9 @@ def get_fastest_backend(
             # Check if grid size matches
             cached_grid = tuple(cache.get("grid_size", []))
             if cached_grid == grid_size:
+                # A name from another install, or none at all: measure again.
                 fastest = cache.get("fastest")
-                if fastest:
+                if fastest in list_available_backends():
                     return fastest
             else:
                 say(

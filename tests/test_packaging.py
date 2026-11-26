@@ -277,8 +277,16 @@ def test_cache_dir_is_outside_the_installed_package(tmp_path, monkeypatch):
 
     package_dir = Path(NLSE.__file__).resolve().parent
 
+    # The platform default, under a home of this test's own: the real one
+    # holds the user's benchmark cache.
+    home = tmp_path / "home"
     monkeypatch.delenv("NLSE_CACHE_DIR", raising=False)
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     cache_dir = get_cache_dir().resolve()
+    assert cache_dir.is_relative_to(home.resolve())
     assert package_dir not in cache_dir.parents and cache_dir != package_dir, (
         f"cache directory {cache_dir} is inside the installed package {package_dir}"
     )

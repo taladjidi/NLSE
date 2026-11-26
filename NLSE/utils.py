@@ -94,8 +94,8 @@ def get_cache_dir() -> Path:
     no ``__init__.py``, which Python then imports as a namespace package,
     so ``import NLSE`` silently resolves to an empty module.
 
-    Set ``NLSE_CACHE_DIR`` to override, which CI does so it can cache a
-    known path across runs.
+    Set ``NLSE_CACHE_DIR`` to override; the test suite does, so that no test
+    reads or writes the user's cache.
 
     Returns
     -------

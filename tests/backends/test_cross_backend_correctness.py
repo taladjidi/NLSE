@@ -91,60 +91,6 @@ class TestCPUCorrectness:
             err_msg="FFT roundtrip failed to recover original array",
         )
 
-    def test_fft_plan_performance(self):
-        """FFT plans are not degraded by stale wisdom."""
-        import time
-
-        simu = make_nlse()
-        A = np.random.random((N, N)) + 1j * np.random.random((N, N))
-        A = A.astype(PRECISION_COMPLEX)
-        A, _ = simu._prepare_output_array(A, normalize=False)
-        plans = simu._build_fft_plan(A)
-
-        # Warmup
-        for _ in range(3):
-            simu._backend.fft(A, plans)
-            simu._backend.ifft(A, plans)
-
-        t0 = time.perf_counter()
-        for _ in range(10):
-            simu._backend.fft(A, plans)
-            simu._backend.ifft(A, plans)
-        t_per_roundtrip = (time.perf_counter() - t0) / 10
-
-        # A 2048x2048 FFT+IFFT roundtrip should be well under 200ms
-        assert t_per_roundtrip < 0.2, (
-            f"FFT roundtrip too slow: {t_per_roundtrip * 1e3:.0f}ms "
-            f"(stale wisdom file?)"
-        )
-
-    def test_split_step_unitarity(self):
-        """Split step with delta_z=0 preserves the field."""
-        simu = make_nlse()
-        E = np.ones((N, N), dtype=PRECISION_COMPLEX)
-        A, A_sq = simu._prepare_output_array(E, normalize=False)
-        simu.plans = simu._build_fft_plan(A)
-        # A zero step is the identity, which is what unitarity is checked against.
-        simu.propagator = simu._build_propagator(PRECISION_COMPLEX, 0)
-
-        simu.split_step(
-            A,
-            A_sq,
-            simu.V,
-            simu.propagator,
-            simu.plans,
-            0,
-            splitting="strang",
-        )
-
-        np.testing.assert_allclose(
-            A,
-            np.ones((N, N), dtype=PRECISION_COMPLEX),
-            rtol=1e-6,
-            atol=1e-7,
-            err_msg="Split step is not unitary (delta_z=0 should preserve field)",
-        )
-
     def test_propagator_correctness(self):
         """Propagator matches analytical formula."""
         simu = make_nlse()

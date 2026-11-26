@@ -151,6 +151,35 @@ def make(cls, backend="CPU", n=None, symmetric=True, **overrides):
     return solver
 
 
+def gaussian_beam(r_sq, waist, k, z, dims):
+    """Return the paraxial Gaussian beam, the closed form of free diffraction.
+
+    ``dA/dz = (i/2k) grad^2 A`` takes ``exp(-r^2/w0^2)`` at ``z = 0`` to
+    ``q^(-dims/2) exp(-r^2 / (w0^2 q))`` with ``q = 1 + i z/zR`` and
+    ``zR = k w0^2 / 2``.
+
+    Parameters
+    ----------
+    r_sq : np.ndarray
+        Squared distance to the axis, in m^2.
+    waist : float
+        1/e radius of the field at ``z = 0``, in m.
+    k : float
+        Wavenumber, in 1/m.
+    z : float
+        Distance from the waist, in m.
+    dims : int
+        Number of transverse dimensions, 1 or 2.
+
+    Returns
+    -------
+    np.ndarray
+        The complex field, unit amplitude on axis at the waist.
+    """
+    q = 1 + 2j * z / (k * waist**2)
+    return q ** (-dims / 2) * np.exp(-r_sq / (waist**2 * q))
+
+
 def gaussian(shape, waists=(WAIST, WAIST2), window=WINDOW, dtype=PRECISION_COMPLEX):
     """Return a smooth field of this shape, one Gaussian per component.
 
