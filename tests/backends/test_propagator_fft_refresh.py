@@ -41,15 +41,17 @@ def to_numpy(simu, array):
 
 
 def record_propagators(simu, A, z, i, seen):
-    """Keep the twin, the propagator and the step as the run holds them.
+    """Keep the twin, the propagator and the step in force as the run holds them.
 
     All three are run state, cleared when out_field returns, so a callback
     reads them while the run is still going. Each call overwrites the last.
+    The step is the one in force, which the propagator is built from: after
+    a cut last step _current_delta_z holds the shorter one.
     """
     seen[:] = [
         to_numpy(simu, simu._propagator_fft),
         to_numpy(simu, simu.propagator),
-        simu._current_delta_z,
+        simu._step_in_force,
     ]
 
 

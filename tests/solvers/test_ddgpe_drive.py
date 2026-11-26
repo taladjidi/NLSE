@@ -40,6 +40,11 @@ CAPPED_W = 10.0
 SMALL_N = 32
 # Exact up to float32 sums of order-one terms over at most a few hundred steps.
 PUMP_ATOL = 1e-6
+# Runs that are not a whole number of CUT_DT steps, with the integral of
+# CUT_PROFILE over each: two steps and a tenth, then less than one step.
+CUT_DT = 0.1
+CUT_PROFILE = np.array([1.0, 2.0, 4.0])
+CUT_RUNS = [(0.21, 0.1 * 1.0 + 0.1 * 2.0 + 0.01 * 4.0), (0.03, 0.03 * 1.0)]
 # A callback multiplies the default step by this once, after the first step:
 # DEFAULT_MIN_STEPS - 1 = 9 is then three whole steps of 3.
 STEP_FACTOR = 3
@@ -158,6 +163,13 @@ def test_capped_step_samples_by_time(backend):
     assert step < PUMP_DT, "the step was not capped"
     # Only the step across the switch at 0.4 T can miss, by half of itself.
     assert got == pytest.approx(PUMP_EXACT, abs=F0 * step / 2 + PUMP_ATOL)
+
+
+@pytest.mark.parametrize("t, integral", CUT_RUNS)
+def test_cut_last_step_is_driven_for_its_own_length(backend, t, integral):
+    """A last step cut to the end of the run takes its own sample and length."""
+    got = run_pump(pump_solver(backend), t, CUT_PROFILE, CUT_DT)
+    assert got == pytest.approx(-1j * F0 * integral, abs=PUMP_ATOL)
 
 
 def test_short_profile_raises(backend):
