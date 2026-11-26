@@ -3,11 +3,108 @@
 ## State (2026-11-26)
 
 A full audit of the repo was done at commit `fa7aa59` (v4.1.0 plus six commits).
-It changed no code. Nothing below is fixed yet.
+The fixes are specified but not written: no fix code is on any branch yet.
 
-Baseline at that commit, Apple M3 Max, arm64, Python 3.13.13, CPU and MLX
-backends: `pytest tests/ -m "not benchmark"` gives 979 passed, 123 skipped;
-`ruff check`, `ruff format --check` and `mypy NLSE/` are clean.
+Baseline at `38a8704`, Apple M3 Max, arm64, Python 3.13.13, CPU and MLX
+backends: `pytest tests/ -q -m "not benchmark"` gives 974 passed, 123 skipped,
+62 deselected; `ruff check`, `ruff format --check` and `mypy NLSE/` are clean.
+In a plain copy of the tree `tests/test_packaging.py` errors 13 times (no
+hatchling there): deselect it, which leaves 956 passed, 123 skipped.
+
+## Fix work in progress
+
+Eight packages, one architect spec each, each spec applied by its architect to
+a fresh copy of `38a8704` with every acceptance check passing. Seven specs were
+then reviewed (verdict FIX-FIRST on each) and the checked findings sent back
+for one round. That round, the kernels spec and two reviews were still out when
+this was written.
+
+The specs are not in the repo: `~/Documents/LKB/NLSE_tangui_fix_specs/pN.md`.
+After the round each architect also leaves its verified tree as a patch
+against `38a8704` in the same folder (`pN.patch`), to diff the implementers'
+result against. If a patch is missing, the round did not land: fold the
+findings below into the spec by hand.
+
+| Package | Branch | Covers |
+|---|---|---|
+| p1a | `fix/stepping-loop` | medium ends exactly at `L`; backward runs; complex `delta_z` raises; callback lists; CuPy stream race |
+| p1b | `fix/solver-state` | state left after a run or a backend switch; caller's arrays restored; asserts become ValueError/TypeError; dispersion built once; `origin="lower"` |
+| p2 | `fix/coupled-solvers` | Rabi coupling in strang, yoshida, RK4; DDGPE uses CNLSE's `split_step`; noise, pump sampling, potential sign |
+| p3 | `fix/gpe-units` | GPE takes `V` and `g` as rates in rad/s with the GPE sign; docs and example |
+| p4 | `fix/nonlocal-response` | non-local response applied in Fourier space; `Backend.convolution` and `nl_profile` removed |
+| p5 | `refactor/kernels-cleanup` | kernels; spec not written yet |
+| p6 | `test/closed-forms-and-cache` | `evaluate_delta_n`; benchmark cache isolation; tests that could not fail; NLSE_3d dispersion sign |
+| p7 | `docs/packaging-ci-cleanup` | README, docs, sdist, `uv.lock`, CI, examples, unused files |
+
+### Next steps
+
+1. One git worktree per package, cut from `38a8704`. Each package applies all
+   its own briefs there, including the ones that touch another package's file.
+2. Haiku implementers, one brief each, in the order each spec gives. Diff the
+   result against `pN.patch`.
+3. Reviewer per package diff; fix CRITICAL and MAJOR.
+4. Merge one by one. Expected conflicts: `README.md:420` (p3, p7);
+   `nlse.py:224-246` (p1b, p4); `nlse_3d.py` near 133-140 (p4, p6, p1b);
+   `ci.yml` (p6, p7); `step_size.py` (p1a, p1b, no overlap). The local
+   `CLAUDE.md` is untracked: apply the p4 and p7 edits to it by hand.
+5. Full suite on the Mac (CPU, MLX), under the conda Python for OpenCL (the two
+   non-local test files above all: no architect could run CL), and on the CUDA
+   box, several runs each. Timings before and after, then
+   `docs/optimization-log.md`, a CHANGELOG entry and this file.
+
+### Design decisions
+
+- GPE integrates `i hbar dt psi = -hbar^2/2m lap psi + V psi + g|psi|^2 psi`
+  with `V` and `g|psi|^2` in rad/s. Breaking.
+- A complex `delta_z` raises TypeError; imaginary time is not offered.
+- The non-local response is `1/(1 + nl_length^2 (Kx^2 + Ky^2))`, exact on the
+  periodic grid, on every backend. A sub-cell `nl_length` is kept; one longer
+  than the window is not refused.
+- The medium is the first `L` of travel, also on a backward run (no mirror).
+  `z < 0` raises ValueError; a negative `delta_z` runs backward to the end,
+  also when a callback hands back a step.
+- Callbacks read `_current_delta_z` as the step just taken, also on a cut step.
+- DDGPE: noise std goes as `sqrt(|dt|)`. `F_pump_t[j]` is the drive during
+  `[j dt, (j+1) dt)` with `dt` the step asked of `out_field`; a profile that is
+  too short raises ValueError. The potential gets the documented sign
+  (`POTENTIAL_SCALE = -1.0`). Breaking.
+- NLSE_3d: the temporal dispersion gets the documented sign
+  (`dz E = +i D0/2 Omega^2 E`). Breaking.
+- Not done on purpose: skipping the energy-rate estimate when `delta_z` is
+  given (the cap on a caller's step needs it).
+
+### Found while specifying, beyond the audit
+
+Confirmed by a run, and fixed by the package named:
+
+- CuPy: `execute_loop` runs on a non-blocking stream that does not wait for the
+  null stream, so the first step raced work queued before it. On the CUDA box
+  `tests/solvers/test_strang_merge.py -k CUPY` failed 11 runs of 12, and 0 of
+  12 with `stream.wait_event(...)` added (p1a). One green full-suite run had
+  hidden it: repeat CUDA runs.
+- DDGPE applies `exp(+iVt)`, the opposite of its documented equation; the
+  interaction sign is right (p2).
+- DDGPE with any potential has its step capped near `pi/(V k/2)` with
+  `k = 2 pi / 1e-30`, so the run never ends (p2).
+- NLSE_3d applies the temporal dispersion with the sign opposite to the docs
+  and to its own docstring; no test could see it (p6).
+- A backward run with an adaptive callback turns forward and ends at `+z`
+  (p1a).
+- `docs/callbacks.md:103` documents the old `evaluate_delta_n` formula (p6).
+
+Left open, to report:
+
+- RK4's default step gives NaN in a trap: its limit uses the field-weighted
+  kinetic rate, not the grid maximum.
+- `_estimated_rates` uses an optical intensity for GPE when no field is given.
+- `evaluate_delta_n` convention: `k/2` or `k`.
+- Setting `simu.wl` does not update `k`.
+- `get_fastest_backend` crashes on a wrong-typed `grid_size`.
+- NLSE_3d's "xt at y=0" panel fixes x.
+- `_normalization_factor` upcasts to float64.
+- `tests/benchmarks/test_benchmark_profile.py` runs GPE with `g=n2`: check it
+  after the units fix.
+- `omega=0` (not None) still pays two identity rotations in strang.
 
 ## Findings, ranked
 
@@ -123,10 +220,9 @@ Each was reproduced by a script unless marked *(read)* or *(reviewer)*.
 
 ## Open items
 
-- Fix 1 to 8 first; each has a closed form to test against.
-- Not checked: CuPy never run; `NLSE/backends/cupy_backend.py` and
-  `NLSE/backends/opencl.py` not read; Sphinx build not run;
-  `docs/optimization-log.md` and `paper/` not read.
+- See "Fix work in progress" above for the order of work.
+- CuPy now runs on the CUDA box (CuPy 14.2.0, RTX 3050). Sphinx builds with
+  `-W --keep-going`, exit 0, in about 25 min. `paper/` not read.
 - The project `.venv` has CPU and MLX only. OpenCL needs the conda Python with
   `PYTHONPATH` set to the repo, because that Python has an old NLSE 2.3.0
   installed.
