@@ -316,14 +316,38 @@ extensive profiling, ideally not sampling, but whatever is the most accurate."
 
 State:
 
-- CUDA box: a profiling run was under way when this was written. Its tables,
-  ranked candidates and the names of its scripts are in
-  `~/Documents/LKB/NLSE_tangui_fix_specs/perf_profile_cuda_box.md`, partial if
-  the run was cut short. The file did not exist yet when `main` was pushed
-  (`8bce83b`): if it is still missing, the run was lost and starts again from
-  the list above. Not vetted: check its top numbers before using them.
-- Mac: not started. Run it with the machine idle (a push runs the suite).
-- Nothing is in `docs/optimization-log.md` from the profiles yet.
+- CUDA box (CuPy and OpenCL): done, except `ncu`. The report is
+  `~/Documents/LKB/NLSE_tangui_fix_specs/perf_profile_cuda_box.md`: per-kernel
+  tables from `nsys` (CuPy) and from OpenCL profiling events, fixed cost per
+  call, the options that leave the fast path, four prototypes, twelve ranked
+  candidates, the scripts. Its first section says what was re-run by hand:
+  the three prototype figures reproduce; the step figures agree with
+  `profile_backends.py`, but one cell moved 19% between rounds where the
+  report says under 1%. Not shown to the user as suggestions yet.
+- `ncu` is refused on the box (`ERR_NVGPUCTRPERM`,
+  <https://developer.nvidia.com/ERR_NVGPUCTRPERM>): the counters are open to
+  root only, and there is no password-less sudo. The user said the
+  permission is to be given. The report lists the two ways; the script for
+  the first is on the box, to be run as root. Then run `ncu` per kernel on
+  the must-have cells. `nsys` and `ncu` do not see OpenCL kernels.
+- Mac (CPU and MLX): not started. Run it with the machine idle (a push runs
+  the suite).
+- Nothing is in `docs/optimization-log.md` from the profiles yet, and no
+  candidate is implemented.
+
+Top of the ranking, CuPy at 2048², one-step call (measured, prototypes only):
+
+- The propagator is downloaded after every call (`_gpu_array_attrs`,
+  `NLSE/solvers/nlse.py:1668`): 40.6 -> 28.5 ms for NLSE split step without
+  it. Who reads `simu.propagator` on the host afterwards is not traced.
+- The coupled `_energy_rates` runs twice per RK4 call and downloads the field
+  (`NLSE/solvers/cnlse.py:127`): 282 -> 211 ms with one run, CNLSE RK4 with V.
+- The potential grids are rebuilt on every call: 17-25 ms with V.
+- Per step, nothing to gain on the fused CuPy paths (four of five kernels at
+  the bandwidth ceiling). The gains are where a run leaves them: CNLSE RK4
+  with `omega` (2.23x), CNLSE strang with `omega` (2.2x), `nl_length`,
+  callbacks, a batched RK4, DDGPE. On OpenCL: VkFFT's `tune_config` (-23% on a
+  2048² transform, not run in the solver) and an unfused RK4 stage (19%).
 
 Known before the profiles:
 
