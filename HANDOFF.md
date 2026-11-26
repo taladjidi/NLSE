@@ -3,7 +3,9 @@
 ## State (2026-11-26)
 
 A full audit of the repo was done at commit `fa7aa59` (v4.1.0 plus six commits).
-The fixes are specified but not written: no fix code is on any branch yet.
+The fixes are specified in eight packages and are being applied in one git
+worktree per package. Nothing is committed on the fix branches yet and `main`
+holds no fix code.
 
 Baseline at `38a8704`, Apple M3 Max, arm64, Python 3.13.13, CPU and MLX
 backends: `pytest tests/ -q -m "not benchmark"` gives 974 passed, 123 skipped,
@@ -13,44 +15,67 @@ hatchling there): deselect it, which leaves 956 passed, 123 skipped.
 
 ## Fix work in progress
 
-Eight packages, one architect spec each, each spec applied by its architect to
-a fresh copy of `38a8704` with every acceptance check passing. Seven specs were
-then reviewed (verdict FIX-FIRST on each) and the checked findings sent back
-for one round. That round, the kernels spec and two reviews were still out when
-this was written.
+Each package has an architect spec, reviewed once and revised, and the
+architect's verified result as a patch against `38a8704`. Both are outside the
+repo: `~/Documents/LKB/NLSE_tangui_fix_specs/pN.md` and `pN.patch` (p7 also has
+`p7_claude.patch` for the untracked local `CLAUDE.md`). Every patch passes
+`git apply` on a fresh `git archive 38a8704` tree.
 
-The specs are not in the repo: `~/Documents/LKB/NLSE_tangui_fix_specs/pN.md`.
-After the round each architect also leaves its verified tree as a patch
-against `38a8704` in the same folder (`pN.patch`), to diff the implementers'
-result against. If a patch is missing, the round did not land: fold the
-findings below into the spec by hand.
+The worktrees are `../NLSE_wt/pN`, cut from `38a8704`, each with an untracked
+`.venv` link to this checkout's venv (delete the link before committing, and
+never `git add -A` there). Haiku implementers apply one brief each, in the
+order the spec gives.
 
-| Package | Branch | Covers |
-|---|---|---|
-| p1a | `fix/stepping-loop` | medium ends exactly at `L`; backward runs; complex `delta_z` raises; callback lists; CuPy stream race |
-| p1b | `fix/solver-state` | state left after a run or a backend switch; caller's arrays restored; asserts become ValueError/TypeError; dispersion built once; `origin="lower"` |
-| p2 | `fix/coupled-solvers` | Rabi coupling in strang, yoshida, RK4; DDGPE uses CNLSE's `split_step`; noise, pump sampling, potential sign |
-| p3 | `fix/gpe-units` | GPE takes `V` and `g` as rates in rad/s with the GPE sign; docs and example |
-| p4 | `fix/nonlocal-response` | non-local response applied in Fourier space; `Backend.convolution` and `nl_profile` removed |
-| p5 | `refactor/kernels-cleanup` | kernels; spec not written yet |
-| p6 | `test/closed-forms-and-cache` | `evaluate_delta_n`; benchmark cache isolation; tests that could not fail; NLSE_3d dispersion sign |
-| p7 | `docs/packaging-ci-cleanup` | README, docs, sdist, `uv.lock`, CI, examples, unused files |
+**How to tell where a package stands:** apply `pN.patch` to a fresh
+`git archive 38a8704` copy and `diff -rq` it against the worktree (leave out
+`.git`, `.venv` and the caches). No difference means every brief landed. A
+difference means the chain stopped at a brief: read that brief in the spec and
+finish it, or apply the patch.
+
+| Package | Branch | Covers | State when this was written |
+|---|---|---|---|
+| p1a | `fix/stepping-loop` | medium ends exactly at `L`; backward runs; complex `delta_z` raises; callback lists; CuPy stream race | implementers running |
+| p1b | `fix/solver-run-state` | state left after a run or a backend switch; caller's arrays restored; asserts become ValueError/TypeError; dispersion built once; `origin="lower"` | implementers running |
+| p2 | `fix/coupled-solvers` | Rabi coupling in strang, yoshida, RK4; DDGPE uses CNLSE's `split_step`; noise, pump sampling, potential sign | implementers running |
+| p3 | `fix/gpe-units` | GPE takes `V` and `g` as rates in rad/s with the GPE sign; `adapt_delta_z` on GPE; docs and example | implementers running |
+| p4 | `fix/nonlocal-response` | non-local response applied in Fourier space; `Backend.convolution` and `nl_profile` removed | applied, equal to the patch; code review running |
+| p5 | `refactor/kernels-cleanup` | unused CuPy and vortex kernels removed; MLX scalar cache bounded; CUDA built without `--use_fast_math` | spec under review; worktree empty |
+| p6 | `test/closed-forms-and-cache` | `evaluate_delta_n`; benchmark cache isolation; tests that could not fail; NLSE_3d dispersion sign | implementers running |
+| p7 | `docs/packaging-ci-cleanup` | README, docs, sdist, `uv.lock`, CI, examples, unused files | applied, equal to the patch; lint and 974 tests pass; code review running |
+
+`fix/solver-state` is an older, merged branch: p1b uses `fix/solver-run-state`.
 
 ### Next steps
 
-1. One git worktree per package, cut from `38a8704`. Each package applies all
-   its own briefs there, including the ones that touch another package's file.
-2. Haiku implementers, one brief each, in the order each spec gives. Diff the
-   result against `pN.patch`.
-3. Reviewer per package diff; fix CRITICAL and MAJOR.
-4. Merge one by one. Expected conflicts: `README.md:420` (p3, p7);
-   `nlse.py:224-246` (p1b, p4); `nlse_3d.py` near 133-140 (p4, p6, p1b);
-   `ci.yml` (p6, p7); `step_size.py` (p1a, p1b, no overlap). The local
-   `CLAUDE.md` is untracked: apply the p4 and p7 edits to it by hand.
-5. Full suite on the Mac (CPU, MLX), under the conda Python for OpenCL (the two
+1. Per package: its final check (the last section of each spec gives the
+   commands and counts), a reviewer on the worktree diff, fixes for CRITICAL
+   and MAJOR findings, then one commit on the branch. Breaking changes carry
+   `!` and a `BREAKING CHANGE:` footer: p2, p3, p4, p5 (removed kernels) and
+   p6 (NLSE_3d sign).
+2. Merge one by one with `--no-ff`. Expected conflicts:
+   - `README.md:420`: keep p7's link `(NLSE/solvers/gpe.py)` and p3's units cell.
+   - `nlse.py:224-246` (p1b, p4): the block becomes the two lines
+     `self._forget_device_state()` and `self.nl_length = nl_length`.
+   - `nlse_3d.py` (p4, p6, p1b); `ci.yml` (p6, p7); `step_size.py` (p1a, p1b);
+     `ddgpe.py` and `cnlse.py` (p2, p4, p1a, p1b); `callbacks.py` (p6, p1a, p3);
+     `tests/solvers/test_solver_state.py` (p1a, p4, p6);
+     `cupy_kernels.py` and `cupy_backend.py` (p5, p1a, p4).
+3. After the merges, by hand:
+   - `tests/physics/test_closed_forms.py`: no test may still read
+     `Backend.convolution` or `nl_profile` (p4.md, step O3).
+   - `cupy_backend.py`: the `kernels` docstring drops `--use_fast_math`
+     (p5.md, Brief 5).
+   - p2's `tests/solvers/test_potential_sign.py` cites `--use_fast_math` for
+     `PHASE_ATOL`: p5 removes the flag, so re-measure and reword the comment.
+   - The untracked local `CLAUDE.md`: `p7_claude.patch` (lines 55 and 75) and
+     the non-local line 74 from p4.md, step O1.
+4. Full suite on the Mac (CPU, MLX), under the conda Python for OpenCL (the two
    non-local test files above all: no architect could run CL), and on the CUDA
-   box, several runs each. Timings before and after, then
-   `docs/optimization-log.md`, a CHANGELOG entry and this file.
+   box, at least six runs of each CUDA check. On CuPy also re-check a second
+   RK4 `out_field` call on one solver (1024^2, `alpha=10`): it returned NaN at
+   base, probably the stream race.
+5. Timings before and after into `docs/optimization-log.md`, a CHANGELOG entry
+   from the "Changelog lines" section of each spec, this file, then push.
 
 ### Design decisions
 
@@ -105,6 +130,14 @@ Left open, to report:
 - `tests/benchmarks/test_benchmark_profile.py` runs GPE with `g=n2`: check it
   after the units fix.
 - `omega=0` (not None) still pays two identity rotations in strang.
+- `DDGPE(omega=None)` raises TypeError in the constructor, so its
+  `omega is None` branches never run.
+- `evaluate_delta_n` stays optical-only: on GPE it reads `n2`, not `g`.
+- DDGPE's cavity saturation used the swapped pair `(I_sat, I_sat2)`; p2 fixes
+  it, visible only to a user who set `I_sat2` by hand.
+- `ci.yml:5` sets an `NLSE_CACHE_DIR` nothing reads, and `ci.yml:168-172`
+  caches benchmarks the tests no longer write: decide when p6 and p7 merge.
+- OpenCL was not run for the non-local change (Apple's CL crashes in VkFFT).
 
 ## Findings, ranked
 
