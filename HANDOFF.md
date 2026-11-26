@@ -296,7 +296,9 @@ State:
 - CUDA box: a profiling run was under way when this was written. Its tables,
   ranked candidates and the names of its scripts are in
   `~/Documents/LKB/NLSE_tangui_fix_specs/perf_profile_cuda_box.md`, partial if
-  the run was cut short. Not vetted: check its top numbers before using them.
+  the run was cut short. The file did not exist yet when `main` was pushed
+  (`8bce83b`): if it is still missing, the run was lost and starts again from
+  the list above. Not vetted: check its top numbers before using them.
 - Mac: not started. Run it with the machine idle (a push runs the suite).
 - Nothing is in `docs/optimization-log.md` from the profiles yet.
 
