@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from helpers import as_numpy, assert_c_contiguous, make
+from helpers import as_numpy, assert_c_contiguous, gaussian_beam, make
 from NLSE import CNLSE
 from scipy.constants import c, epsilon_0
 
@@ -24,6 +24,12 @@ alpha = 20
 
 # Step used wherever a test builds a propagator or takes a step by hand.
 DZ_TEST = 1e-4
+# A beam well inside the window and well resolved: 16 waists across the
+# window, 16 cells across the waist.
+BEAM_WAIST = window / 16
+# Absolute tolerance of the one-step Gaussian beam check, unit peak; the
+# step lands within 3.6e-7 on CPU and MLX (float32).
+BEAM_ATOL = 1e-5
 
 
 def make_solver(backend="CPU", n=N, **overrides):
@@ -178,28 +184,33 @@ def test_take_components(backend) -> None:
 
 
 def test_split_step(backend) -> None:
-    simu = make_solver(backend)
-    simu.propagator = simu._build_propagator(np.complex64, 0)
-    E = np.ones((2, N, N), dtype=PRECISION_COMPLEX)
-    A, A_sq = simu._prepare_output_array(E, normalize=False)
+    """One linear step lands each component on its own Gaussian beam.
+
+    Lossless and linear, so the step is diffraction alone and exact. The two
+    components have different wavelengths, so swapping them fails, and the
+    complex field is compared, so a propagator of the wrong sign fails too.
+    """
+    simu = make_solver(backend, symmetric=False, n2=0, n12=0, alpha=0)
+    r_sq = simu.XX**2 + simu.YY**2
+    z_rayleigh = simu.k * BEAM_WAIST**2 / 2
+    E = np.stack([gaussian_beam(r_sq, BEAM_WAIST, simu.k, 0, 2)] * 2)
+    A, A_sq = simu._prepare_output_array(E.astype(PRECISION_COMPLEX), normalize=False)
     simu.plans = simu._build_fft_plan(A)
+    simu.propagator = simu._build_propagator(np.complex64, z_rayleigh)
     if simu._backend.is_device_backend:
         simu._send_arrays_to_gpu()
     A = simu.split_step(
-        A,
-        A_sq,
-        simu.V,
-        simu.propagator,
-        simu.plans,
-        0,
-        splitting="strang",
+        A, A_sq, simu.V, simu.propagator, simu.plans, z_rayleigh, splitting="strang"
     )
     np.testing.assert_allclose(
         as_numpy(simu, A),
-        np.ones((2, N, N), dtype=PRECISION_COMPLEX),
-        rtol=1e-5,
-        atol=1e-6,
-        err_msg=f"Split-step is not unitary. (Backend {backend})",
+        [
+            gaussian_beam(r_sq, BEAM_WAIST, simu.k, z_rayleigh, 2),
+            gaussian_beam(r_sq, BEAM_WAIST, simu.k2, z_rayleigh, 2),
+        ],
+        rtol=0,
+        atol=BEAM_ATOL,
+        err_msg=f"One step is not the Gaussian beams at zR. (Backend {backend})",
     )
 
 

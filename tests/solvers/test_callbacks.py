@@ -22,9 +22,17 @@ import warnings
 
 import numpy as np
 import pytest
-from NLSE import NLSE, adapt_delta_z, evaluate_delta_n, norm, sample
+from NLSE import (
+    NLSE,
+    adapt_delta_z,
+    adapt_delta_z_to_error,
+    callbacks,
+    evaluate_delta_n,
+    norm,
+    sample,
+)
 from NLSE.backends import list_available_backends
-from NLSE.callbacks import adapt_delta_z_to_error
+from scipy.constants import c, epsilon_0
 
 AVAILABLE_BACKENDS = list_available_backends()
 
@@ -47,6 +55,30 @@ BASE = {
     "Isat": 10e4,
 }
 
+# The uniform field the closed-form checks below use, in W/m^2: three
+# saturation intensities, where evaluate_delta_n once returned 0.0018 of the
+# true index.
+INTENSITY = 3 * BASE["Isat"]
+# adapt_delta_z steps by this fraction of the nonlinear length 1/(k dn), as
+# its docstring and adapt_delta_z_to_error's say.
+NONLINEAR_LENGTH_FRACTION = 1 / 12
+# adapt_delta_z_to_error: Strang splitting is second order, so its local error
+# goes as step**3. The trial error is the tolerance over 2**3, so the rule asks
+# for twice the step, times the safety factor: 1.8, inside the bounds.
+STRANG_ORDER = 2
+TOLERANCE = 1e-2
+TRIAL_ERROR = TOLERANCE / 2**3
+SAFETY = 0.9
+BOUNDS = (0.5, 2.0)
+# The step handed in is this many times below the solver's own ceiling, and
+# the floor this many times below the step, so neither binds.
+CEILING_MARGIN = 4
+# Relative tolerances of the three closed-form checks below. Measured worst
+# cases over CPU and MLX: 2.5e-8, 0 (exact) and 1.3e-5.
+DELTA_N_RTOL = 1e-5
+STEP_RTOL = 1e-5
+RULE_RTOL = 1e-4
+
 
 def _buffers():
     """Return one output buffer per callback, keyed by name."""
@@ -58,6 +90,23 @@ def _buffers():
 
 
 CALLBACKS = {"sample": sample, "norm": norm, "evaluate_delta_n": evaluate_delta_n}
+
+
+def uniform_field(intensity):
+    """Return a uniform field of the given intensity on the module's grid.
+
+    Parameters
+    ----------
+    intensity : float
+        Intensity ``c eps0 |A|^2 / 2`` in W/m^2.
+
+    Returns
+    -------
+    np.ndarray
+        The field in V/m, complex64.
+    """
+    amplitude = np.sqrt(2 * intensity / (c * epsilon_0))
+    return np.full((N, N), amplitude, dtype=np.complex64)
 
 
 def _run(backend_name, which):
@@ -219,4 +268,88 @@ def test_sample_writes_each_step_to_its_own_slot():
     assert all(np.diff(peaks) < 0), (
         f"the sampled peaks are {peaks}, which is not the monotonic decay a "
         f"lossy run makes -- the samples are out of order or off by a slot"
+    )
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+@pytest.mark.parametrize("isat", [BASE["Isat"], np.inf], ids=["I=3Isat", "Isat=inf"])
+def test_evaluate_delta_n_is_the_saturated_kerr_index(backend_name, isat):
+    """``n2 I / (1 + I/Isat)`` with ``I = c eps0 |A|^2 / 2``, on a uniform field.
+
+    It divided ``|A|^2``, in V^2/m^2, by ``Isat``, in W/m^2, so at three
+    saturation intensities it returned 0.0018 of this.
+
+    Parameters
+    ----------
+    backend_name : str
+        Backend to run on.
+    isat : float
+        Saturation intensity in W/m^2.
+    """
+    simu = NLSE(backend=backend_name, **{**BASE, "Isat": isat})
+    field = simu._backend.from_numpy(uniform_field(INTENSITY))
+    recorded = np.zeros((1, N, N), dtype=np.float32)
+    evaluate_delta_n(simu, field, 0.0, 0, 1, recorded)
+    expected = BASE["n2"] * INTENSITY / (1 + INTENSITY / isat)
+    np.testing.assert_allclose(
+        recorded,
+        expected,
+        rtol=DELTA_N_RTOL,
+        err_msg=f"evaluate_delta_n is not the saturated Kerr index on {backend_name}",
+    )
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_adapt_delta_z_steps_by_a_twelfth_of_the_nonlinear_length(backend_name):
+    """``1 / (12 k |dn|)``, with ``dn`` the saturated Kerr index of the peak.
+
+    Parameters
+    ----------
+    backend_name : str
+        Backend to run on.
+    """
+    simu = NLSE(backend=backend_name, **BASE)
+    simu._current_delta_z = DELTA_Z
+    field = simu._backend.from_numpy(uniform_field(INTENSITY))
+    in_force: list = []
+    got = adapt_delta_z(simu, field, 0.0, 0, 1, in_force)
+    delta_n = abs(BASE["n2"]) * INTENSITY / (1 + INTENSITY / BASE["Isat"])
+    expected = NONLINEAR_LENGTH_FRACTION / (simu.k * delta_n)
+    assert got == pytest.approx(expected, rel=STEP_RTOL), (
+        f"adapt_delta_z asked for {got:.4e} m on {backend_name}, against "
+        f"{expected:.4e} m, a twelfth of the nonlinear length"
+    )
+    assert in_force == [DELTA_Z]
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_adapt_delta_z_to_error_follows_the_step_rule(backend_name, monkeypatch):
+    """``h safety (tolerance / error) ** (1 / (p + 1))``, with p = 2 for Strang.
+
+    The trial propagations are replaced by a whole step that differs from the
+    halves by exactly ``TRIAL_ERROR`` relative, so the rule is checked alone.
+
+    Parameters
+    ----------
+    backend_name : str
+        Backend to run on.
+    monkeypatch : pytest.MonkeyPatch
+        Replaces the trial propagation.
+    """
+    simu = NLSE(backend=backend_name, **BASE)
+    field = simu._backend.from_numpy(uniform_field(INTENSITY))
+    step = simu._split_step_max_dz(field) / CEILING_MARGIN
+    simu._current_delta_z = step
+    monkeypatch.setattr(
+        callbacks,
+        "_trial_propagation",
+        lambda simu, A, step, count: A * (1 + TRIAL_ERROR) if count == 1 else A,
+    )
+    got = adapt_delta_z_to_error(
+        simu, field, 0.0, 0, TOLERANCE, 1, BOUNDS, SAFETY, step / CEILING_MARGIN
+    )
+    expected = step * SAFETY * (TOLERANCE / TRIAL_ERROR) ** (1 / (STRANG_ORDER + 1))
+    assert got == pytest.approx(expected, rel=RULE_RTOL), (
+        f"adapt_delta_z_to_error asked for {got / step:.4f} times the step on "
+        f"{backend_name}, against the {expected / step:.4f} its rule gives"
     )

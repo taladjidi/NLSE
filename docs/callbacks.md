@@ -100,7 +100,7 @@ E_out = simu.out_field(
 
 ### `evaluate_delta_n` -- Monitor nonlinear index change
 
-Evaluates the nonlinear refractive index change $\delta n = n_2 |E|^2 / (1 + |E|^2/I_\text{sat})$ at regular intervals.
+Evaluates the nonlinear refractive index change $\delta n = n_2 I / (1 + I/I_\text{sat})$, with $I = c\epsilon_0 |E|^2 / 2$, at regular intervals.
 
 ```python
 from NLSE import evaluate_delta_n

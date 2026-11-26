@@ -1,5 +1,5 @@
 import numpy as np
-from helpers import as_numpy, assert_c_contiguous, random_field
+from helpers import as_numpy, assert_c_contiguous, gaussian_beam, random_field
 from NLSE import NLSE_3d
 from scipy.constants import c, epsilon_0
 
@@ -25,6 +25,16 @@ alpha = 20
 
 # Step used wherever a test builds a propagator or takes a step by hand.
 DZ_TEST = 1e-4
+# Dispersion, in s^2/m, whose phase over DZ_TEST is about a radian at the
+# band edge (Omega = 2.49e7 rad/s on this grid). D0 itself gives 3.1e-6 rad,
+# which a comparison at np.allclose's tolerance cannot tell from its opposite.
+D0_VISIBLE = 3.2e-11
+# A beam well inside the transverse window and well resolved: 16 waists
+# across the window, 16 cells across the waist.
+BEAM_WAIST = window[0] / 16
+# Absolute tolerance of the one-step Gaussian beam check, unit peak; the
+# step lands within 3.2e-7 on CPU and MLX (float32).
+BEAM_ATOL = 1e-5
 
 
 def make_solver(backend="CPU", n=N, **overrides):
@@ -70,10 +80,10 @@ def test_build_propagator(backend) -> None:
     that left it out. ``D0`` is documented in s^2/m, so ``D0/2 * Omega**2`` is
     a phase per metre and the exponent is not dimensionless without a length.
     """
-    simu = make_solver(backend)
+    simu = make_solver(backend, D0=D0_VISIBLE)
     prop = as_numpy(simu, simu._build_propagator(np.complex64, DZ_TEST))
     spatial = -1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k
-    temporal = -1j * simu.D0 / 2 * simu.Omega**2
+    temporal = 1j * simu.D0 / 2 * simu.Omega**2
     prop_th = np.exp((spatial + temporal) * DZ_TEST)
     assert np.allclose(
         prop,
@@ -249,23 +259,30 @@ def test_retrieve_arrays_from_gpu() -> None:
 
 
 def test_split_step(backend) -> None:
-    simu = make_solver(backend)
-    simu.propagator = simu._build_propagator(np.complex64, 0)
-    E = np.ones((N, N, NZ), dtype=PRECISION_COMPLEX)
+    """One linear step of a Rayleigh length lands on the Gaussian beam.
+
+    Uniform in time, so only the transverse dispersion acts, and lossless and
+    linear, so the step is exact. The complex field is compared, so a
+    transverse propagator of the wrong sign fails too.
+    """
+    simu = make_solver(backend, n2=0, alpha=0)
+    r_sq = simu.XX**2 + simu.YY**2
+    z_rayleigh = simu.k * BEAM_WAIST**2 / 2
+    E = gaussian_beam(r_sq, BEAM_WAIST, simu.k, 0, 2).astype(PRECISION_COMPLEX)
     A, A_sq = simu._prepare_output_array(E, normalize=False)
     simu.plans = simu._build_fft_plan(A)
-    simu.propagator = simu._build_propagator(np.complex64, 0)
+    simu.propagator = simu._build_propagator(np.complex64, z_rayleigh)
     if simu._backend.is_device_backend:
         simu._send_arrays_to_gpu()
     A = simu.split_step(
-        A, A_sq, simu.V, simu.propagator, simu.plans, 0, splitting="strang"
+        A, A_sq, simu.V, simu.propagator, simu.plans, z_rayleigh, splitting="strang"
     )
     np.testing.assert_allclose(
         as_numpy(simu, A),
-        np.ones((N, N, NZ), dtype=PRECISION_COMPLEX),
-        rtol=1e-5,
-        atol=1e-6,
-        err_msg=f"Split step is not unitary. (Backend {backend})",
+        gaussian_beam(r_sq, BEAM_WAIST, simu.k, z_rayleigh, 2),
+        rtol=0,
+        atol=BEAM_ATOL,
+        err_msg=f"One step is not the Gaussian beam at zR. (Backend {backend})",
     )
 
 

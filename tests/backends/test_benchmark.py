@@ -1,35 +1,78 @@
 """Tests for FFT auto-benchmarking system."""
 
 import json
-from pathlib import Path
+import platform
+from datetime import datetime, timedelta, timezone
 
 import pytest
-from NLSE.backends import benchmark, list_available_backends
+from NLSE.backends import (
+    _assumed_rank,
+    backends_by_speed,
+    benchmark,
+    list_available_backends,
+)
 from NLSE.utils import get_benchmark_cache_path, get_cache_dir
+
+# A cache record written by hand, so each rejection below spoils one field of
+# a record that is otherwise accepted.
+CACHED_GRID = [256, 256]
+CACHED_TIME_MS = 1.0  # ms, any positive time
+# Past load_benchmark_cache's 30-day limit (NLSE/backends/benchmark.py:253).
+STALE_AGE_DAYS = 31
+OLD_CACHE_VERSION = "1"
+CPU_SPEEDUP = 1.0  # the CPU against itself, as benchmark_all_backends computes it
+OTHER_SYSTEM = "Plan9"
+NOT_A_BACKEND = "NO_SUCH_BACKEND"
+
+
+def valid_cache_record():
+    """Return a cache record that load_benchmark_cache accepts.
+
+    Returns
+    -------
+    dict
+        Today's record, for this machine and the current cache version.
+    """
+    return {
+        "version": benchmark.CACHE_VERSION,
+        "timestamp": datetime.now().isoformat(),
+        "grid_size": CACHED_GRID,
+        "platform": {
+            "system": platform.system(),
+            "processor": platform.machine(),
+            "python_version": platform.python_version(),
+        },
+        "results": {
+            "CPU": {
+                "time_ms": CACHED_TIME_MS,
+                "speedup": CPU_SPEEDUP,
+                "available": True,
+            }
+        },
+        "fastest": "CPU",
+    }
+
+
+def write_cache(text):
+    """Write raw text where the benchmark cache is read from.
+
+    Parameters
+    ----------
+    text : str
+        File contents.
+    """
+    get_benchmark_cache_path().write_text(text)
 
 
 class TestCacheDir:
     """Test that the cache directory lives outside the installed package."""
 
-    def test_cache_dir_outside_package(self):
-        """Cache dir must not be under the NLSE package directory.
-
-        A cache inside the package fails on a read-only install and, on
-        uninstall, leaves a directory Python then imports as an empty
-        namespace package.
-        """
-        import NLSE
-
-        package_dir = Path(NLSE.__file__).resolve().parent
-        cache_dir = get_cache_dir().resolve()
-        assert cache_dir != package_dir
-        assert package_dir not in cache_dir.parents
-
-    def test_cache_dir_created(self):
+    def test_cache_dir_created(self, tmp_path, monkeypatch):
         """get_cache_dir() should create the directory if needed."""
-        cache_dir = get_cache_dir()
-        assert cache_dir.exists()
-        assert cache_dir.is_dir()
+        missing = tmp_path / "missing" / "cache"
+        monkeypatch.setenv("NLSE_CACHE_DIR", str(missing))
+        assert get_cache_dir() == missing
+        assert missing.is_dir()
 
     def test_benchmark_cache_in_cache_dir(self):
         """Benchmark cache file should be inside the cache dir."""
@@ -126,9 +169,8 @@ class TestCachePersistence:
         """Test that benchmark results are cached."""
         cache_path = get_benchmark_cache_path()
 
-        # Clear cache first
-        if cache_path.exists():
-            cache_path.unlink()
+        # Empty at the start: conftest gives each test a cache of its own
+        assert not cache_path.exists()
 
         # Run benchmark
         fastest = benchmark.get_fastest_backend((256, 256), force_benchmark=True)
@@ -204,10 +246,6 @@ class TestCacheLoading:
 
     def test_load_nonexistent_cache(self):
         """Test loading cache when it doesn't exist."""
-        cache_path = get_benchmark_cache_path()
-        if cache_path.exists():
-            cache_path.unlink()
-
         cache = benchmark.load_benchmark_cache()
         assert cache is None
 
@@ -235,6 +273,107 @@ class TestCacheLoading:
         cache = benchmark.load_benchmark_cache()
         assert cache is None
 
+    def test_load_hand_written_cache(self):
+        """The record the rejections below each spoil one field of is accepted."""
+        record = valid_cache_record()
+        write_cache(json.dumps(record))
+        assert benchmark.load_benchmark_cache() == record
+
+    @pytest.mark.parametrize(
+        "written",
+        [{"system": OTHER_SYSTEM, "processor": platform.machine()}, OTHER_SYSTEM],
+        ids=["another_machine", "not_an_object"],
+    )
+    def test_load_rejects_another_platform(self, written):
+        """A cache is a statement about the machine that wrote it."""
+        record = valid_cache_record()
+        record["platform"] = written
+        write_cache(json.dumps(record))
+        assert benchmark.load_benchmark_cache() is None
+
+    def test_load_rejects_a_stale_cache(self):
+        """Older than 30 days is measured again."""
+        record = valid_cache_record()
+        written = datetime.now() - timedelta(days=STALE_AGE_DAYS)
+        record["timestamp"] = written.isoformat()
+        write_cache(json.dumps(record))
+        assert benchmark.load_benchmark_cache() is None
+
+    def test_load_rejects_an_older_version(self):
+        """A cache from before a change to what it timed is not believed."""
+        record = valid_cache_record()
+        record["version"] = OLD_CACHE_VERSION
+        write_cache(json.dumps(record))
+        assert benchmark.load_benchmark_cache() is None
+
+    @pytest.mark.parametrize(
+        "text",
+        ["null", "42", '"version timestamp"', '["version", "timestamp"]', "{}"],
+        ids=["null", "number", "string", "list", "no_keys"],
+    )
+    def test_load_rejects_valid_json_of_the_wrong_shape(self, text):
+        """Valid JSON that is not a record is refused, not raised on."""
+        write_cache(text)
+        assert benchmark.load_benchmark_cache() is None
+
+    @pytest.mark.parametrize(
+        "field, value",
+        [
+            ("grid_size", 256),
+            ("grid_size", None),
+            ("grid_size", ["256", "256"]),
+            ("fastest", 5),
+            ("fastest", ["CPU"]),
+            ("results", ["CPU"]),
+            ("results", {"CPU": "fast"}),
+            ("results", {"CPU": {"time_ms": "1.0"}}),
+            ("timestamp", 0),
+            ("timestamp", "yesterday"),
+            ("timestamp", datetime.now(timezone.utc).isoformat()),
+            ("version", 2),
+        ],
+        ids=lambda value: json.dumps(value)[:24],
+    )
+    def test_a_wrong_typed_field_is_no_cache(self, field, value):
+        """One field of another type: no cache, and backend selection goes on."""
+        record = valid_cache_record()
+        record[field] = value
+        write_cache(json.dumps(record))
+        assert benchmark.load_benchmark_cache() is None
+        assert backends_by_speed(tuple(CACHED_GRID)) == sorted(
+            list_available_backends(), key=_assumed_rank
+        )
+
+    def test_a_cached_name_that_is_no_backend_is_measured_again(self):
+        """A fastest backend this install does not have is not handed back."""
+        record = valid_cache_record()
+        record["fastest"] = NOT_A_BACKEND
+        write_cache(json.dumps(record))
+        fastest = benchmark.get_fastest_backend(tuple(CACHED_GRID))
+        assert fastest in list_available_backends()
+
+    def test_an_unusable_cache_directory_is_no_cache(self, tmp_path, monkeypatch):
+        """A cache directory that cannot be made stops neither a read nor a write."""
+        blocker = tmp_path / "a_file"
+        blocker.write_text("")
+        monkeypatch.setenv("NLSE_CACHE_DIR", str(blocker))
+        assert benchmark.load_benchmark_cache() is None
+        benchmark.save_benchmark_cache(valid_cache_record())
+        assert blocker.read_text() == ""
+
+    def test_a_failed_write_keeps_the_previous_cache(self):
+        """The cache is replaced whole or not at all.
+
+        A value json cannot serialize stops the write part-way. Written in
+        place, that left a truncated file; renamed over it, the old cache
+        stays, and nothing else is left in the directory.
+        """
+        record = valid_cache_record()
+        write_cache(json.dumps(record))
+        benchmark.save_benchmark_cache({**record, "fastest": object()})
+        assert benchmark.load_benchmark_cache() == record
+        assert list(get_cache_dir().iterdir()) == [get_benchmark_cache_path()]
+
 
 class TestFallbackBehavior:
     """Test graceful fallback on benchmark failures."""
@@ -255,9 +394,8 @@ class TestIntegration:
         """Test complete workflow from benchmark to cache to reuse."""
         cache_path = get_benchmark_cache_path()
 
-        # Step 1: Clear cache
-        if cache_path.exists():
-            cache_path.unlink()
+        # Step 1: Empty at the start: conftest gives each test a cache of its own
+        assert not cache_path.exists()
 
         # Step 2: Get fastest backend (should benchmark)
         fastest1 = benchmark.get_fastest_backend((256, 256))

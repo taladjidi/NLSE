@@ -1,7 +1,9 @@
 """Integration tests for automatic backend selection."""
 
-import time
+import importlib
+from unittest.mock import Mock
 
+import NLSE.backends as backends
 from NLSE import NLSE
 from NLSE.backends import benchmark, list_available_backends
 
@@ -13,6 +15,9 @@ power = 1
 window = 1e-3
 n2 = 1e-20
 L = 1e-2
+# What a benchmark that should not have run answers with: get_backend raises
+# on it, so the run cannot pass by benchmarking and happening to pick CPU.
+NOT_A_BACKEND = "NO_SUCH_BACKEND"
 
 
 def make_solver(backend="CPU", n=N, **overrides):
@@ -57,20 +62,6 @@ class TestAutoBackendSelection:
         # Should select one of the available backends
         assert simu.backend in list_available_backends()
 
-    def test_auto_backend_uses_cache(self):
-        """Test that auto backend uses cached results quickly."""
-        # Force benchmark first to populate cache
-        benchmark.get_fastest_backend((256, 256), force_benchmark=True)
-
-        # Create solver (should use cache, be fast)
-        t0 = time.perf_counter()
-        _simu = make_solver("auto")
-        elapsed = time.perf_counter() - t0
-
-        # Should be very fast (<200ms) when using cache
-        # Note: First import may take longer, so we're generous
-        assert elapsed < 0.5
-
     def test_auto_backend_adapts_to_grid_size(self):
         """Test that auto backend considers actual grid size."""
         # Create solver with specific grid size
@@ -102,76 +93,41 @@ class TestAutoBackendSelection:
 
 
 class TestEnvironmentVariables:
-    """Test environment variable control."""
+    """Test environment variable control.
+
+    Both variables are read when NLSE.backends is imported, so each test
+    reloads it with the variable set, and again without it in a ``finally``,
+    so a failed assertion does not leave the variable in force for later tests.
+    """
 
     def test_env_backend_override(self, monkeypatch):
-        """Test NLSE_BACKEND environment variable."""
-        # Need to reload module for env var to take effect
-        import importlib
-
-        import NLSE.backends
-        from NLSE import NLSE as NLSESolver
-
-        monkeypatch.setenv("NLSE_BACKEND", "CPU")
-        importlib.reload(NLSE.backends)
-
-        # Even with "auto", should use CPU from env var
-        simu = NLSESolver(
-            alpha=0,
-            power=1,
-            window=1e-3,
-            n2=1e-20,
-            V=None,
-            L=1e-2,
-            NX=256,
-            NY=256,
-            backend="auto",
-        )
-
-        assert simu.backend == "CPU"
-
-        # Clean up - reload without env var
-        monkeypatch.delenv("NLSE_BACKEND")
-        importlib.reload(NLSE.backends)
+        """NLSE_BACKEND wins over "auto", which then benchmarks nothing."""
+        monkeypatch.setenv("NLSE_BACKEND", "cpu")
+        importlib.reload(backends)
+        try:
+            monkeypatch.setattr(
+                backends,
+                "get_optimal_backend",
+                lambda *args, **kwargs: NOT_A_BACKEND,
+            )
+            assert backends.get_backend("auto").name == "CPU"
+        finally:
+            monkeypatch.delenv("NLSE_BACKEND")
+            importlib.reload(backends)
 
     def test_env_force_benchmark(self, monkeypatch):
-        """Test NLSE_FORCE_BENCHMARK environment variable."""
-        import importlib
-
-        import NLSE.backends
-        from NLSE import NLSE as NLSESolver
-        from NLSE.utils import get_benchmark_cache_path
-
+        """NLSE_FORCE_BENCHMARK=1 measures again although a cache fits."""
+        benchmark.get_fastest_backend((N, N), force_benchmark=True)
+        spy = Mock(wraps=benchmark.benchmark_all_backends)
+        monkeypatch.setattr(benchmark, "benchmark_all_backends", spy)
         monkeypatch.setenv("NLSE_FORCE_BENCHMARK", "1")
-        importlib.reload(NLSE.backends)
-
-        # Should force re-benchmark even with cache
-        cache_path = get_benchmark_cache_path()
-        if cache_path.exists():
-            mtime_before = cache_path.stat().st_mtime
-        else:
-            mtime_before = None
-
-        _simu = NLSESolver(
-            alpha=0,
-            power=1,
-            window=1e-3,
-            n2=1e-20,
-            V=None,
-            L=1e-2,
-            NX=256,
-            NY=256,
-            backend="auto",
-        )
-
-        # Cache should have been updated
-        if mtime_before is not None:
-            mtime_after = cache_path.stat().st_mtime
-            assert mtime_after > mtime_before
-
-        # Clean up
-        monkeypatch.delenv("NLSE_FORCE_BENCHMARK")
-        importlib.reload(NLSE.backends)
+        importlib.reload(backends)
+        try:
+            backends.get_backend("auto", (N, N))
+        finally:
+            monkeypatch.delenv("NLSE_FORCE_BENCHMARK")
+            importlib.reload(backends)
+        spy.assert_called_once_with((N, N))
 
 
 class TestBackendConsistency:

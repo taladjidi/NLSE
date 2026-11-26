@@ -18,3 +18,13 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if "benchmark" in item.keywords:
             item.add_marker(skip_benchmark)
+
+
+@pytest.fixture(autouse=True)
+def private_benchmark_cache(tmp_path, monkeypatch):
+    """Give every test a benchmark cache of its own, empty at the start.
+
+    Tests that benchmark or clear the cache otherwise rewrite the user's real
+    one, as the audit's runs did with a 64x64 grid.
+    """
+    monkeypatch.setenv("NLSE_CACHE_DIR", str(tmp_path / "nlse_cache"))

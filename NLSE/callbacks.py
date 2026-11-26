@@ -110,10 +110,12 @@ def evaluate_delta_n(
         # are scalars for an ordinary run but device arrays for a batched one
         # that _send_arrays_to_gpu has already moved.
         A_host = simu._as_host_array(A)
-        A_sq = A_host.real * A_host.real + A_host.imag * A_host.imag
+        intensity = (A_host.real * A_host.real + A_host.imag * A_host.imag) * (
+            c * epsilon_0 / 2
+        )
         n2 = simu._as_host_array(simu.n2)
         I_sat = simu._as_host_array(simu.I_sat)
-        delta_n[i // save_every] = c * epsilon_0 / 2 * n2 * A_sq / (1 + A_sq / I_sat)
+        delta_n[i // save_every] = n2 * intensity / (1 + intensity / I_sat)
 
 
 def adapt_delta_z(
@@ -321,8 +323,6 @@ def adapt_delta_z_to_error(
     # adjustments. The cap is recomputed from the current field, so it tightens
     # as a self-focusing beam raises the phase rate.
     cap = simu._split_step_max_dz(A)
-    # Absolute, not relative to the step in force: a floor recomputed as a
-    # fraction of the current step shrinks with it and never binds.
     # Absolute, not relative to the step in force: a floor recomputed as a
     # fraction of the current step shrinks with it and never binds.
     #
