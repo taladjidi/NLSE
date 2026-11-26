@@ -4,6 +4,8 @@ import sys
 import numba
 import numba.np.ufunc.parallel
 import numpy as np
+from numba.core import types
+from numba.extending import overload
 
 # Claim the OpenMP runtime before anything else in the process can.
 #
@@ -39,10 +41,27 @@ numba.get_num_threads()
 # `x - k*(P1+P2)`, collapsing the split into a single rounded pi/2 and
 # reintroducing exactly the cancellation the split exists to avoid. With it on,
 # the error grows with the argument -- 4e-11 by |x| = 1e6 instead of staying at
-# 3e-16. Every kernel that calls _sincos must therefore also carry this set
-# rather than fastmath=True, since numba inlines the body into its caller and
-# the caller's flags are what reach LLVM.
+# 3e-16. Every kernel that calls _rotate or _mul_cexp must therefore also carry
+# this set rather than fastmath=True, since numba inlines the body into its
+# caller and the caller's flags are what reach LLVM.
 _SINCOS_FASTMATH = {"nnan", "ninf", "nsz", "arcp", "contract", "afn"}
+
+# Exact in float32, so one constant serves both widths. A Python literal would
+# not: numba types it float64 or int64 and widens the float32 next to it, which
+# turns a complex64 kernel into double arithmetic on half as many lanes.
+_ONE = np.float32(1.0)
+_TWO = np.float32(2.0)
+_THREE = np.float32(3.0)
+_HALF = np.float32(0.5)
+_QUARTER = np.float32(0.25)
+_IMAG = np.complex64(1j)
+
+# The quadrant of an angle is k modulo 4, read off the two low bits of k.
+_QUADRANT_MASK = 3
+
+# IEEE 754 binary32: the exponent's bias, and the bit its field starts at.
+_F32_EXPONENT_BIAS = 127
+_F32_EXPONENT_SHIFT = 23
 
 # pi/2 split into pieces of 24 significant bits, so that k * piece is exact
 # while |k| < 2**29 and the subtractions above cancel without error. Four of
@@ -67,6 +86,21 @@ _C4 = -2.75573143513906633035e-07
 _C5 = 2.08757232129817482790e-09
 _C6 = -1.13596475577881948265e-11
 
+# The float32 set, from cephes sinf.c:
+# https://github.com/jeremybarnes/cephes/blob/60f27df395b8322c2da22c83751a2366b82d50d1/single/sinf.c#L108-L122
+# pi/2 in three pieces (twice its pi/4 ones), the first two of at most 11
+# significant bits so that k * piece is exact while |k| < 2**13.
+_TWO_OVER_PI_32 = np.float32(6.36619772367581382433e-01)
+_PIO2_1_32 = np.float32(1.5703125)
+_PIO2_2_32 = np.float32(4.837512969970703125e-4)
+_PIO2_3_32 = np.float32(7.54978995489188216e-8)
+_S1_32 = np.float32(-1.6666654611e-1)
+_S2_32 = np.float32(8.3321608736e-3)
+_S3_32 = np.float32(-1.9515295891e-4)
+_C1_32 = np.float32(4.166664568298827e-2)
+_C2_32 = np.float32(-1.388731625493765e-3)
+_C3_32 = np.float32(2.443315711809948e-5)
+
 
 @numba.njit(inline="always", fastmath=_SINCOS_FASTMATH, cache=True)
 def _sincos(x):
@@ -74,7 +108,8 @@ def _sincos(x):
 
     Accurate to 1.5 ulp for ``|x| < 2**29``, which is far past the point where
     the argument's own last bit is worth more than the result: by then a 1 ulp
-    change in ``x`` moves the answer by more than 1e-7.
+    change in ``x`` moves the answer by more than 1e-7. Double precision only:
+    see ``_rotate32`` for what a float32 angle gets instead.
 
     Parameters
     ----------
@@ -88,14 +123,14 @@ def _sincos(x):
     """
     k = np.rint(x * _TWO_OVER_PI)
     r = (((x - k * _PIO2_1) - k * _PIO2_2) - k * _PIO2_3) - k * _PIO2_4
-    j = np.int64(k) & 3
+    j = np.int64(k) & _QUADRANT_MASK
     z = r * r
     sin_r = r + (z * r) * (
         _S1 + z * (_S2 + z * (_S3 + z * (_S4 + z * (_S5 + z * _S6))))
     )
     cos_r = (
-        1.0
-        - 0.5 * z
+        _ONE
+        - _HALF * z
         + (z * z) * (_C1 + z * (_C2 + z * (_C3 + z * (_C4 + z * (_C5 + z * _C6)))))
     )
     # Quadrant: sin and cos swap on odd j, and each changes sign on its own
@@ -104,9 +139,61 @@ def _sincos(x):
     sin_x = sin_r + swap * (cos_r - sin_r)
     cos_x = cos_r + swap * (sin_r - cos_r)
     return (
-        sin_x * (1.0 - 2.0 * np.float64((j >> 1) & 1)),
-        cos_x * (1.0 - 2.0 * np.float64(((j + 1) >> 1) & 1)),
+        sin_x * (_ONE - _TWO * np.float64((j >> 1) & 1)),
+        cos_x * (_ONE - _TWO * np.float64(((j + 1) >> 1) & 1)),
     )
+
+
+def _rotate32(a, theta):
+    """Return ``a * exp(i theta)`` in float32, for ``|theta| < 8192``."""
+    k = np.rint(theta * _TWO_OVER_PI_32)
+    r = ((theta - k * _PIO2_1_32) - k * _PIO2_2_32) - k * _PIO2_3_32
+    z = r * r
+    sin_r = r + (z * r) * (_S1_32 + z * (_S2_32 + z * _S3_32))
+    cosm1_r = (z * z) * (_C1_32 + z * (_C2_32 + z * _C3_32)) - _HALF * z
+    # a + a*(cos r - 1 + i sin r) rather than a*(cos r + i sin r): the increment
+    # is small, so is its rounding, and a is rounded once. A cosine rounded next
+    # to 1 instead shrinks |a|^2 by 0.04 * 2**-24 a step on average.
+    re = a.real + (a.real * cosm1_r - a.imag * sin_r)
+    im = a.imag + (a.real * sin_r + a.imag * cosm1_r)
+    # Times i**k: a swap and two signs, exact, and written branch-free.
+    j = np.int32(k) & _QUADRANT_MASK
+    swap = np.float32(j & 1)
+    keep = _ONE - swap
+    sign = _ONE - _TWO * np.float32((j >> 1) & 1)
+    return complex(sign * (keep * re - swap * im), sign * (keep * im + swap * re))
+
+
+def _rotate64(a, theta):
+    """Return ``a * exp(i theta)`` in float64."""
+    s, c = _sincos(theta)
+    return complex(a.real * c - a.imag * s, a.real * s + a.imag * c)
+
+
+def _rotate(a, theta):
+    """Return ``a * exp(i theta)``, computed at the width of ``theta``.
+
+    Parameters
+    ----------
+    a : complex
+        The field value.
+    theta : float
+        Angle in radians.
+
+    Returns
+    -------
+    complex
+        ``a`` turned by ``theta``.
+    """
+    if isinstance(theta, np.float32):
+        return _rotate32(a, theta)
+    return _rotate64(a, theta)
+
+
+@overload(_rotate, inline="always")
+def _rotate_typed(a, theta):
+    """Give numba the ``_rotate`` body for the width it typed ``theta`` at."""
+    return _rotate32 if theta == types.float32 else _rotate64
 
 
 # fdlibm __ieee754_exp, on |r| <= ln2/2 after x = k*ln2 + r.
@@ -125,11 +212,33 @@ _E5 = 4.13813679705723846039e-08
 _EXP_HI = 710.0
 _EXP_LO = -746.0
 
+# The float32 set, from cephes expf.c (peak relative error 1.7e-7 there):
+# https://github.com/jeremybarnes/cephes/blob/60f27df395b8322c2da22c83751a2366b82d50d1/single/expf.c#L70-L122
+_INV_LN2_32 = np.float32(1.44269504088896341)
+_LN2_HI_32 = np.float32(0.693359375)
+_LN2_LO_32 = np.float32(-2.12194440e-4)
+_EXP32_C0 = np.float32(5.0000001201e-1)
+_EXP32_C1 = np.float32(1.6666665459e-1)
+_EXP32_C2 = np.float32(4.1665795894e-2)
+_EXP32_C3 = np.float32(8.3334519073e-3)
+_EXP32_C4 = np.float32(1.3981999507e-3)
+_EXP32_C5 = np.float32(1.9875691500e-4)
+
+# exp(89) is past the largest float32 and exp(-105) rounds to zero.
+_EXP_HI_32 = np.float32(89.0)
+_EXP_LO_32 = np.float32(-105.0)
+
 
 @numba.njit(inline="always", fastmath=_SINCOS_FASTMATH, cache=True)
 def _two_pow(k):
     """Return ``2.0**k`` by writing the exponent field, for ``|k| < 1023``."""
     return np.int64((k + 1023) << 52).view(np.float64)
+
+
+@numba.njit(inline="always", fastmath=_SINCOS_FASTMATH, cache=True)
+def _two_pow32(k):
+    """Return float32 ``2.0**k`` by writing the exponent field, for ``|k| < 127``."""
+    return np.int32((k + _F32_EXPONENT_BIAS) << _F32_EXPONENT_SHIFT).view(np.float32)
 
 
 @numba.njit(inline="always", fastmath=_SINCOS_FASTMATH, cache=True)
@@ -139,6 +248,7 @@ def _exp(x):
     Accurate to 1 ulp. ``math.ldexp`` would be the obvious way to apply the
     ``2**k``, and it is also a call: using it costs more than the polynomial
     saves (0.85x against libm, where writing the exponent field gives 1.5x).
+    Double precision only: ``_exp32`` is what a float32 exponent gets.
 
     Parameters
     ----------
@@ -157,7 +267,7 @@ def _exp(x):
     r = hi - lo
     z = r * r
     c = r - z * (_E1 + z * (_E2 + z * (_E3 + z * (_E4 + z * _E5))))
-    y = 1.0 - ((lo - (r * c) / (2.0 - c)) - hi)
+    y = _ONE - ((lo - (r * c) / (_TWO - c)) - hi)
     # In two halves: a single (k + 1023) << 52 overflows the field, and the
     # wrap turns exp(-1e4) into inf rather than 0 -- the opposite answer,
     # which then spreads through the field as NaN.
@@ -167,22 +277,59 @@ def _exp(x):
 
 
 @numba.njit(inline="always", fastmath=_SINCOS_FASTMATH, cache=True)
-def _cexp(w):
-    """Return ``exp(w)`` for complex ``w``, as ``exp(re) * (cos im + i sin im)``.
+def _exp32(x):
+    """Return ``exp(x)`` of a float32, saturating to ``inf`` and ``0``."""
+    x = min(max(x, _EXP_LO_32), _EXP_HI_32)
+    k = np.rint(x * _INV_LN2_32)
+    r = (x - k * _LN2_HI_32) - k * _LN2_LO_32
+    poly = _EXP32_C0 + r * (
+        _EXP32_C1 + r * (_EXP32_C2 + r * (_EXP32_C3 + r * (_EXP32_C4 + r * _EXP32_C5)))
+    )
+    y = (r * r) * poly + r + _ONE
+    # In two halves, for the reason given in _exp.
+    ki = np.int32(k)
+    half = ki >> 1
+    return y * _two_pow32(half) * _two_pow32(ki - half)
+
+
+def _mul_cexp32(a, scale, w):
+    """Return ``a * scale * exp(w)`` in float32, the rotation first."""
+    return (scale * _exp32(w.real)) * _rotate(a, w.imag)
+
+
+def _mul_cexp64(a, scale, w):
+    """Return ``a * scale * exp(w)`` in float64."""
+    decay = _exp(w.real)
+    s, c = _sincos(w.imag)
+    return a * (scale * complex(decay * c, decay * s))
+
+
+def _mul_cexp(a, scale, w):
+    """Return ``a * scale * exp(w)``, computed at the width of ``w``.
 
     Parameters
     ----------
+    a : complex
+        The field value.
+    scale : float
+        A real factor, the part of the decay that is not in the exponent.
     w : complex
         The exponent.
 
     Returns
     -------
     complex
-        ``e**w``.
+        ``a * scale * e**w``.
     """
-    decay = _exp(w.real)
-    s, c = _sincos(w.imag)
-    return complex(decay * c, decay * s)
+    if isinstance(w, np.complex64):
+        return _mul_cexp32(a, scale, w)
+    return _mul_cexp64(a, scale, w)
+
+
+@overload(_mul_cexp, inline="always")
+def _mul_cexp_typed(a, scale, w):
+    """Give numba the ``_mul_cexp`` body for the width it typed ``w`` at."""
+    return _mul_cexp32 if w == types.complex64 else _mul_cexp64
 
 
 # How many passes of the iteration in _loss_factor to make. Each one raises the
@@ -258,7 +405,7 @@ def _loss_factor(sat, u):
     P = sat
     for _ in range(_LOSS_PASSES):
         Pu = P * u
-        P = sat * (1.0 - Pu * P * (0.5 + Pu / 3.0 + Pu * Pu / 4.0))
+        P = sat * (_ONE - Pu * P * (_HALF + Pu / _THREE + Pu * Pu * _QUARTER))
     return P
 
 
@@ -294,16 +441,18 @@ def _nl_prop(
     A_flat = A.ravel()
     A_sq_flat = A_sq.ravel()
     V_flat = V.ravel()
-    u = 2 * alpha * dz
+    ft = A_flat.real.dtype.type
+    dz, alpha, g, Isat = ft(dz), ft(alpha), ft(g), ft(Isat)
+    u = _TWO * alpha * dz
     if abs(u) > _LOSS_SOLVED_LIMIT:
         # Either lossless, where freezing |A|^2 is exact, or a step so lossy
         # that solving it is out of reach. See _LOSS_SOLVED_LIMIT.
         for i in numba.prange(A_flat.size):
             # saturation
-            sat = 1 / (1 + A_sq_flat[i] / Isat)
+            sat = _ONE / (_ONE + A_sq_flat[i] / Isat)
             # Losses and interactions
-            arg = -alpha * sat + 1j * g * A_sq_flat[i] * sat + 1j * V_flat[i]
-            A_flat[i] *= _cexp(dz * arg)
+            arg = -alpha * sat + _IMAG * g * A_sq_flat[i] * sat + _IMAG * V_flat[i]
+            A_flat[i] = _mul_cexp(A_flat[i], _ONE, dz * arg)
         return A
     # Lossy: the interaction is evaluated at the saturation the step averages
     # out to rather than the one it starts at, and the decay comes out of the
@@ -311,10 +460,10 @@ def _nl_prop(
     # one, is left in the exponential -- the identity behind _loss_factor holds
     # for one decay channel, and a complex potential is a second.
     for i in numba.prange(A_flat.size):
-        sat = 1 / (1 + A_sq_flat[i] / Isat)
+        sat = _ONE / (_ONE + A_sq_flat[i] / Isat)
         P = _loss_factor(sat, u)
-        arg = 1j * g * A_sq_flat[i] * P + 1j * V_flat[i]
-        A_flat[i] *= np.sqrt(1 - P * u) * _cexp(dz * arg)
+        arg = _IMAG * g * A_sq_flat[i] * P + _IMAG * V_flat[i]
+        A_flat[i] = _mul_cexp(A_flat[i], np.sqrt(_ONE - P * u), dz * arg)
     return A
 
 
@@ -346,39 +495,35 @@ def _nl_prop_without_V(
     """
     A_flat = A.ravel()
     A_sq_flat = A_sq.ravel()
+    ft = A_flat.real.dtype.type
+    dz, alpha, g, Isat = ft(dz), ft(alpha), ft(g), ft(Isat)
     if alpha == 0:
         # Lossless: the exponent is purely imaginary, so the step is a
         # rotation. exp(0) is exactly 1, so this is the same result computed
-        # with sin and cos instead of a complex exponential -- and _sincos
+        # with sin and cos instead of a complex exponential -- and _rotate
         # keeps the loop free of the libm call that would stop it vectorizing.
         for i in numba.prange(A_flat.size):
-            sat = 1 / (1 + A_sq_flat[i] / Isat)
+            sat = _ONE / (_ONE + A_sq_flat[i] / Isat)
             theta = dz * g * A_sq_flat[i] * sat
-            s, c = _sincos(theta)
-            a = A_flat[i]
-            A_flat[i] = complex(a.real * c - a.imag * s, a.real * s + a.imag * c)
+            A_flat[i] = _rotate(A_flat[i], theta)
         return A
-    u = 2 * alpha * dz
+    u = _TWO * alpha * dz
     if abs(u) > _LOSS_SOLVED_LIMIT:
         # Too lossy a step to solve; the frozen one, as before. See
         # _LOSS_SOLVED_LIMIT.
         for i in numba.prange(A_flat.size):
-            sat = 1 / (1 + A_sq_flat[i] / Isat)
-            arg = -alpha * sat + 1j * g * A_sq_flat[i] * sat
-            A_flat[i] *= _cexp(dz * arg)
+            sat = _ONE / (_ONE + A_sq_flat[i] / Isat)
+            arg = -alpha * sat + _IMAG * g * A_sq_flat[i] * sat
+            A_flat[i] = _mul_cexp(A_flat[i], _ONE, dz * arg)
         return A
     # Lossy: see _loss_factor. sincos rather than a complex exponential,
     # because what is left in the exponent is again purely imaginary once the
     # decay is a factor of its own.
     for i in numba.prange(A_flat.size):
-        sat = 1 / (1 + A_sq_flat[i] / Isat)
+        sat = _ONE / (_ONE + A_sq_flat[i] / Isat)
         P = _loss_factor(sat, u)
-        decay = np.sqrt(1 - P * u)
-        s, c = _sincos(dz * g * A_sq_flat[i] * P)
-        a = A_flat[i]
-        A_flat[i] = complex(
-            decay * (a.real * c - a.imag * s), decay * (a.real * s + a.imag * c)
-        )
+        decay = np.sqrt(_ONE - P * u)
+        A_flat[i] = decay * _rotate(A_flat[i], dz * g * A_sq_flat[i] * P)
     return A
 
 
@@ -424,16 +569,25 @@ def _nl_prop_c(
     A_sq_1_flat = A_sq_1.ravel()
     A_sq_2_flat = A_sq_2.ravel()
     V_flat = V.ravel()
+    ft = A1_flat.real.dtype.type
+    dz, alpha, g11, g12, Isat1, Isat2 = (
+        ft(dz),
+        ft(alpha),
+        ft(g11),
+        ft(g12),
+        ft(Isat1),
+        ft(Isat2),
+    )
     for i in numba.prange(A1_flat.size):
         # Saturation parameter
-        sat = 1 / (1 + A_sq_1_flat[i] / Isat1 + A_sq_2_flat[i] / Isat2)
+        sat = _ONE / (_ONE + A_sq_1_flat[i] / Isat1 + A_sq_2_flat[i] / Isat2)
         # Losses
         arg = -alpha * sat
         # Interactions
-        arg += 1j * (g11 * A_sq_1_flat[i] * sat + g12 * A_sq_2_flat[i] * sat)
+        arg += _IMAG * (g11 * A_sq_1_flat[i] * sat + g12 * A_sq_2_flat[i] * sat)
         # Potential
-        arg += 1j * V_flat[i]
-        A1_flat[i] *= _cexp(dz * arg)
+        arg += _IMAG * V_flat[i]
+        A1_flat[i] = _mul_cexp(A1_flat[i], _ONE, dz * arg)
     return A1
 
 
@@ -475,23 +629,30 @@ def _nl_prop_without_V_c(
     A1_flat = A1.ravel()
     A_sq_1_flat = A_sq_1.ravel()
     A_sq_2_flat = A_sq_2.ravel()
+    ft = A1_flat.real.dtype.type
+    dz, alpha, g11, g12, Isat1, Isat2 = (
+        ft(dz),
+        ft(alpha),
+        ft(g11),
+        ft(g12),
+        ft(Isat1),
+        ft(Isat2),
+    )
     if alpha == 0:
         # See _nl_prop_without_V: lossless is a rotation, not an exponential.
         for i in numba.prange(A1_flat.size):
-            sat = 1 / (1 + A_sq_1_flat[i] / Isat1 + A_sq_2_flat[i] / Isat2)
+            sat = _ONE / (_ONE + A_sq_1_flat[i] / Isat1 + A_sq_2_flat[i] / Isat2)
             theta = dz * (g11 * A_sq_1_flat[i] * sat + g12 * A_sq_2_flat[i] * sat)
-            s, c = _sincos(theta)
-            a = A1_flat[i]
-            A1_flat[i] = complex(a.real * c - a.imag * s, a.real * s + a.imag * c)
+            A1_flat[i] = _rotate(A1_flat[i], theta)
         return A1
     for i in numba.prange(A1_flat.size):
         # Saturation parameter
-        sat = 1 / (1 + A_sq_1_flat[i] / Isat1 + A_sq_2_flat[i] / Isat2)
+        sat = _ONE / (_ONE + A_sq_1_flat[i] / Isat1 + A_sq_2_flat[i] / Isat2)
         # Losses
         arg = -alpha * sat
         # Interactions
-        arg += 1j * (g11 * A_sq_1_flat[i] * sat + g12 * A_sq_2_flat[i] * sat)
-        A1_flat[i] *= _cexp(dz * arg)
+        arg += _IMAG * (g11 * A_sq_1_flat[i] * sat + g12 * A_sq_2_flat[i] * sat)
+        A1_flat[i] = _mul_cexp(A1_flat[i], _ONE, dz * arg)
     return A1
 
 
@@ -514,6 +675,9 @@ def _rabi_coupling(A1: np.ndarray, A2: np.ndarray, dz: float, omega: float) -> t
     """
     A1_flat = A1.ravel()
     A2_flat = A2.ravel()
+    # Double arithmetic at either width, on purpose: rounded to float32, cos and
+    # sin leave the unit circle by up to 2**-24, and every step then moves the
+    # total power the same way. It costs nothing measurable; the loop is copies.
     cos_val = np.cos(omega * dz)
     sin_val = np.sin(omega * dz)
     for i in numba.prange(A1_flat.size):
@@ -570,37 +734,35 @@ def _square_mod_nl_prop(
         Saturation
     """
     A_flat = A.ravel()
+    ft = A_flat.real.dtype.type
+    dz, alpha, g, Isat = ft(dz), ft(alpha), ft(g), ft(Isat)
     if alpha == 0:
         # See _nl_prop_without_V: lossless is a rotation, not an exponential.
         for i in numba.prange(A_flat.size):
             a = A_flat[i]
             A_sq_val = a.real * a.real + a.imag * a.imag
-            sat = 1 / (1 + A_sq_val / Isat)
+            sat = _ONE / (_ONE + A_sq_val / Isat)
             theta = dz * g * A_sq_val * sat
-            s, c = _sincos(theta)
-            A_flat[i] = complex(a.real * c - a.imag * s, a.real * s + a.imag * c)
+            A_flat[i] = _rotate(a, theta)
         return A
-    u = 2 * alpha * dz
+    u = _TWO * alpha * dz
     if abs(u) > _LOSS_SOLVED_LIMIT:
         # See _LOSS_SOLVED_LIMIT: the frozen step, as before.
         for i in numba.prange(A_flat.size):
             a = A_flat[i]
             A_sq_val = a.real * a.real + a.imag * a.imag
-            sat = 1 / (1 + A_sq_val / Isat)
-            arg = -alpha * sat + 1j * g * A_sq_val * sat
-            A_flat[i] *= _cexp(dz * arg)
+            sat = _ONE / (_ONE + A_sq_val / Isat)
+            arg = -alpha * sat + _IMAG * g * A_sq_val * sat
+            A_flat[i] = _mul_cexp(A_flat[i], _ONE, dz * arg)
         return A
     # Lossy: see _loss_factor, and _nl_prop_without_V for why sincos.
     for i in numba.prange(A_flat.size):
         a = A_flat[i]
         A_sq_val = a.real * a.real + a.imag * a.imag
-        sat = 1 / (1 + A_sq_val / Isat)
+        sat = _ONE / (_ONE + A_sq_val / Isat)
         P = _loss_factor(sat, u)
-        decay = np.sqrt(1 - P * u)
-        s, c = _sincos(dz * g * A_sq_val * P)
-        A_flat[i] = complex(
-            decay * (a.real * c - a.imag * s), decay * (a.real * s + a.imag * c)
-        )
+        decay = np.sqrt(_ONE - P * u)
+        A_flat[i] = decay * _rotate(a, dz * g * A_sq_val * P)
     return A
 
 
@@ -632,22 +794,24 @@ def _square_mod_nl_prop_v(
     """
     A_flat = A.ravel()
     V_flat = V.ravel()
-    u = 2 * alpha * dz
+    ft = A_flat.real.dtype.type
+    dz, alpha, g, Isat = ft(dz), ft(alpha), ft(g), ft(Isat)
+    u = _TWO * alpha * dz
     if abs(u) > _LOSS_SOLVED_LIMIT:
         # Lossless, or too lossy to solve. See _LOSS_SOLVED_LIMIT.
         for i in numba.prange(A_flat.size):
             A_sq_val = A_flat[i].real * A_flat[i].real + A_flat[i].imag * A_flat[i].imag
-            sat = 1 / (1 + A_sq_val / Isat)
-            arg = -alpha * sat + 1j * g * A_sq_val * sat + 1j * V_flat[i]
-            A_flat[i] *= _cexp(dz * arg)
+            sat = _ONE / (_ONE + A_sq_val / Isat)
+            arg = -alpha * sat + _IMAG * g * A_sq_val * sat + _IMAG * V_flat[i]
+            A_flat[i] = _mul_cexp(A_flat[i], _ONE, dz * arg)
         return A
     # Lossy: see _loss_factor, and _nl_prop for what stays in the exponential.
     for i in numba.prange(A_flat.size):
         A_sq_val = A_flat[i].real * A_flat[i].real + A_flat[i].imag * A_flat[i].imag
-        sat = 1 / (1 + A_sq_val / Isat)
+        sat = _ONE / (_ONE + A_sq_val / Isat)
         P = _loss_factor(sat, u)
-        arg = 1j * g * A_sq_val * P + 1j * V_flat[i]
-        A_flat[i] *= np.sqrt(1 - P * u) * _cexp(dz * arg)
+        arg = _IMAG * g * A_sq_val * P + _IMAG * V_flat[i]
+        A_flat[i] = _mul_cexp(A_flat[i], np.sqrt(_ONE - P * u), dz * arg)
     return A
 
 
@@ -667,7 +831,7 @@ def _apply_propagator(A: np.ndarray, propagator: np.ndarray) -> np.ndarray:
     for i in numba.prange(A_flat.size):
         a = A_flat[i]
         p = prop_flat[i]
-        A_flat[i] = (a.real * p.real - a.imag * p.imag) + 1j * (
+        A_flat[i] = (a.real * p.real - a.imag * p.imag) + _IMAG * (
             a.real * p.imag + a.imag * p.real
         )
     return A
@@ -696,6 +860,8 @@ def rk4_axpy(
     out_flat = out.ravel()
     A_flat = A.ravel()
     k_flat = k.ravel()
+    ft = out_flat.real.dtype.type
+    c = ft(c)
     for i in numba.prange(A_flat.size):
         out_flat[i] = A_flat[i] + c * k_flat[i]
     return out
@@ -720,6 +886,8 @@ def rk4_accumulate(
     """
     acc_flat = acc.ravel()
     k_flat = k.ravel()
+    ft = acc_flat.real.dtype.type
+    w = ft(w)
     for i in numba.prange(acc_flat.size):
         acc_flat[i] += w * k_flat[i]
     return acc
@@ -754,9 +922,11 @@ def _rk4_nl_rhs(
     A_prop_flat = A_prop.ravel()
     A_flat = A.ravel()
     A_sq_flat = A_sq.ravel()
+    ft = A_prop_flat.real.dtype.type
+    alpha, g, Isat = ft(alpha), ft(g), ft(Isat)
     for i in numba.prange(A_flat.size):
-        sat = 1 / (1 + A_sq_flat[i] / Isat)
-        A_prop_flat[i] += (1j * g * A_sq_flat[i] * sat - alpha * sat) * A_flat[i]
+        sat = _ONE / (_ONE + A_sq_flat[i] / Isat)
+        A_prop_flat[i] += (_IMAG * g * A_sq_flat[i] * sat - alpha * sat) * A_flat[i]
     return A_prop
 
 
@@ -793,10 +963,12 @@ def _rk4_nl_rhs_v(
     A_flat = A.ravel()
     A_sq_flat = A_sq.ravel()
     V_flat = V.ravel()
+    ft = A_prop_flat.real.dtype.type
+    alpha, g, Isat = ft(alpha), ft(g), ft(Isat)
     for i in numba.prange(A_flat.size):
-        sat = 1 / (1 + A_sq_flat[i] / Isat)
+        sat = _ONE / (_ONE + A_sq_flat[i] / Isat)
         A_prop_flat[i] += (
-            1j * g * A_sq_flat[i] * sat - alpha * sat + 1j * V_flat[i]
+            _IMAG * g * A_sq_flat[i] * sat - alpha * sat + _IMAG * V_flat[i]
         ) * A_flat[i]
     return A_prop
 
@@ -826,10 +998,12 @@ def _square_mod_rk4_nl_rhs(
     """
     A_prop_flat = A_prop.ravel()
     A_flat = A.ravel()
+    ft = A_prop_flat.real.dtype.type
+    alpha, g, Isat = ft(alpha), ft(g), ft(Isat)
     for i in numba.prange(A_flat.size):
         A_sq_val = A_flat[i].real * A_flat[i].real + A_flat[i].imag * A_flat[i].imag
-        sat = 1 / (1 + A_sq_val / Isat)
-        A_prop_flat[i] += (1j * g * A_sq_val * sat - alpha * sat) * A_flat[i]
+        sat = _ONE / (_ONE + A_sq_val / Isat)
+        A_prop_flat[i] += (_IMAG * g * A_sq_val * sat - alpha * sat) * A_flat[i]
     return A_prop
 
 
@@ -862,11 +1036,13 @@ def _square_mod_rk4_nl_rhs_v(
     A_prop_flat = A_prop.ravel()
     A_flat = A.ravel()
     V_flat = V.ravel()
+    ft = A_prop_flat.real.dtype.type
+    alpha, g, Isat = ft(alpha), ft(g), ft(Isat)
     for i in numba.prange(A_flat.size):
         A_sq_val = A_flat[i].real * A_flat[i].real + A_flat[i].imag * A_flat[i].imag
-        sat = 1 / (1 + A_sq_val / Isat)
+        sat = _ONE / (_ONE + A_sq_val / Isat)
         A_prop_flat[i] += (
-            1j * g * A_sq_val * sat - alpha * sat + 1j * V_flat[i]
+            _IMAG * g * A_sq_val * sat - alpha * sat + _IMAG * V_flat[i]
         ) * A_flat[i]
     return A_prop
 
@@ -910,10 +1086,12 @@ def _rk4_nl_rhs_c(
     A_flat = A_orig.ravel()
     A_sq_1_flat = A_sq_1.ravel()
     A_sq_2_flat = A_sq_2.ravel()
+    ft = A_prop_flat.real.dtype.type
+    alpha, g11, g12, Isat1, Isat2 = ft(alpha), ft(g11), ft(g12), ft(Isat1), ft(Isat2)
     for i in numba.prange(A_flat.size):
-        sat = 1 / (1 + A_sq_1_flat[i] / Isat1 + A_sq_2_flat[i] / Isat2)
+        sat = _ONE / (_ONE + A_sq_1_flat[i] / Isat1 + A_sq_2_flat[i] / Isat2)
         A_prop_flat[i] += (
-            1j * (g11 * A_sq_1_flat[i] + g12 * A_sq_2_flat[i]) * sat - alpha * sat
+            _IMAG * (g11 * A_sq_1_flat[i] + g12 * A_sq_2_flat[i]) * sat - alpha * sat
         ) * A_flat[i]
     return A_prop
 
@@ -961,12 +1139,14 @@ def _rk4_nl_rhs_c_v(
     A_sq_1_flat = A_sq_1.ravel()
     A_sq_2_flat = A_sq_2.ravel()
     V_flat = V.ravel()
+    ft = A_prop_flat.real.dtype.type
+    alpha, g11, g12, Isat1, Isat2 = ft(alpha), ft(g11), ft(g12), ft(Isat1), ft(Isat2)
     for i in numba.prange(A_flat.size):
-        sat = 1 / (1 + A_sq_1_flat[i] / Isat1 + A_sq_2_flat[i] / Isat2)
+        sat = _ONE / (_ONE + A_sq_1_flat[i] / Isat1 + A_sq_2_flat[i] / Isat2)
         A_prop_flat[i] += (
-            1j * (g11 * A_sq_1_flat[i] + g12 * A_sq_2_flat[i]) * sat
+            _IMAG * (g11 * A_sq_1_flat[i] + g12 * A_sq_2_flat[i]) * sat
             - alpha * sat
-            + 1j * V_flat[i]
+            + _IMAG * V_flat[i]
         ) * A_flat[i]
     return A_prop
 
