@@ -173,7 +173,7 @@ jobs:
 
             - name: Run benchmarks
               run: |
-                  pytest tests/ -m benchmark --benchmark-json=benchmark.json || true
+                  pytest tests/ -m benchmark --benchmark-json=benchmark.json
 
             # The key must be unique per run, and the prefix must not be one
             # another cache in this job also matches.
@@ -274,16 +274,26 @@ jobs:
             # toctree fails the build rather than shipping.
             # The gallery runs every example while it builds, so this job is
             # also what checks they still work -- sphinx-gallery fails the
-            # build on an example that raises. Four are not executed: two are
-            # benchmark sweeps taking minutes, and two exit early without a
-            # GPU or without data a benchmark run produces.
+            # build on an example that raises. Two are not executed: they exit
+            # early without a GPU or without data a benchmark run produces
+            # (filename_pattern in docs/conf.py).
             - name: Build the site
               run: python -m sphinx -b html docs docs/_build/html -W --keep-going
 
             # A broken internal link is caught above; a link to a file in the
             # repository is not, and the examples gallery had one for months.
+            # Exit 1 is a link that is broken or timed out, which a host being
+            # down also gives, so it only warns. Anything else is Sphinx failing.
             - name: Check external-facing links resolve
-              run: python -m sphinx -b linkcheck docs docs/_build/linkcheck || true
+              run: |
+                  status=0
+                  python -m sphinx -b linkcheck docs docs/_build/linkcheck || status=$?
+                  if [ "$status" -eq 1 ]; then
+                      echo "::warning title=Links did not resolve::listed in this step's log"
+                      cat docs/_build/linkcheck/output.txt
+                  elif [ "$status" -ne 0 ]; then
+                      exit "$status"
+                  fi
 
             - name: Upload the site
               uses: actions/upload-pages-artifact@v5
