@@ -416,9 +416,12 @@ class StepSize:
         eigenvalue — dispersion, potential, interaction and loss — and they
         add.
 
-        Dispersion alone is almost never the largest: V is scaled by k/2, so
-        omitting it puts RK4 outside its stability region whenever there is a
-        potential.
+        The two linear terms count by their maximum over the grid, not by the
+        field-weighted rates of ``_energy_rates``. Past the radius RK4
+        amplifies whatever a mode holds, and round-off puts something in every
+        mode: a run stepped by the weighted rates returned NaN wherever the
+        grid's shortest wave, or a potential the field never reaches, was
+        faster than the field itself.
 
         The absorption of a complex potential counts here, unlike in
         ``_split_step_max_dz``: split-step applies it exactly through the
@@ -428,21 +431,21 @@ class StepSize:
         Parameters
         ----------
         A : np.ndarray, optional
-            Field. Without it the field-weighted rates cannot be formed, so a
-            conservative grid maximum is used instead.
+            Field, for the interaction and the loss. Without it only the
+            linear terms count.
 
         Returns
         -------
         float
             Largest stable step, or infinity if every rate vanishes.
         """
-        if A is None:
-            rate = self._max_dispersion_rate()
-            V_scaled = self._as_host_array(self._V_scaled)
-            if V_scaled is not None:
-                rate += float(np.max(np.abs(V_scaled)))
-        else:
-            rate = sum(self._energy_rates(A).values())
+        rate = self._max_dispersion_rate()
+        V_scaled = self._as_host_array(self._V_scaled)
+        if V_scaled is not None:
+            rate += float(np.max(np.abs(V_scaled)))
+        if A is not None:
+            rates = self._energy_rates(A)
+            rate += rates["interaction"] + rates["loss"]
         if rate == 0:
             return np.inf
         return RK4_STABILITY_RADIUS / rate

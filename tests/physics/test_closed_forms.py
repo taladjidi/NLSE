@@ -80,6 +80,9 @@ CACHE_TEST_DISTANCE = 0.5  # Rayleigh lengths at the first k
 CACHE_TEST_STEPS = 64
 # Relative tolerance on the waist; measured worst case 7.3e-7.
 WAIST_RTOL = 2e-3
+# Distance of the RK4 run that chooses its own step, in Rayleigh lengths. On
+# this grid the shortest wave turns 1600 times faster than the beam does.
+RK4_DEFAULT_STEP_DISTANCE = 0.5
 
 # A pulse in time, uniform across: dispersion alone. Its 1/e half-width
 # spans 8 samples and the window holds eight of them each side, so after
@@ -439,6 +442,34 @@ def test_a_new_wavenumber_diffracts_at_its_own_rate(backend, method):
             f"{backend}, {method}: at k = {k:.4e} /m the waist is "
             f"{got * 1e6:.2f} um against the {expected * 1e6:.2f} um that k gives"
         )
+
+
+@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
+def test_rk4_left_to_choose_its_step_diffracts_at_the_closed_form_rate(backend):
+    """RK4 bounds its step by the grid's fastest mode, not by the beam's.
+
+    Outside its stability region RK4 amplifies whatever a mode holds, and
+    round-off puts something in every mode. A step sized by the rates the
+    field weighs is far too long for the grid's shortest wave: that run
+    returned NaN. Here it has to return ``w0 sqrt(1 + (z/zR)^2)``.
+    """
+    simu = solver(backend)
+    field = np.exp(-(simu.XX**2 + simu.YY**2) / WAIST**2).astype(np.complex64)
+    z = RK4_DEFAULT_STEP_DISTANCE * simu.k * WAIST**2 / 2
+    # The run lowers the default step and says so.
+    with pytest.warns(UserWarning, match="RK4 stability"):
+        out = to_host(
+            simu,
+            simu.out_field(
+                field, z, method="RK4", verbose=False, plot=False, normalize=False
+            ),
+        )
+    got = waist_of(np.abs(out) ** 2, simu.XX, simu.YY)
+    expected = WAIST * np.sqrt(1 + RK4_DEFAULT_STEP_DISTANCE**2)
+    assert got == pytest.approx(expected, rel=WAIST_RTOL), (
+        f"{backend}: RK4 at its own step gives a waist of {got * 1e6:.2f} um "
+        f"against the {expected * 1e6:.2f} um diffraction theory gives"
+    )
 
 
 @pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
