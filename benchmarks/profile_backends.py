@@ -36,6 +36,10 @@ POWER = 1.05
 N2 = -1.6e-9
 ISAT = 1e5
 DELTA_Z = 1e-4
+# Largest grid whose RK4 stability bound is above DELTA_Z at this window: the
+# bound is 4.35e-5 m at 2048² (the solver's own warning) and falls as 1/N².
+# Past it the step shrinks alike, so no revision lowers it.
+RK4_STABLE_N = 1024
 # Per-step cost is the slope between two step counts, so everything that
 # happens once per run -- FFT planning, propagator build, host-to-device
 # transfers -- cancels instead of being divided by the step count. Timing a
@@ -125,14 +129,25 @@ def input_field(simu, solver_name, np):
     return field
 
 
+def step_for(simu):
+    """Return a step every revision takes unchanged on this solver's grid.
+
+    A revision that bounds the RK4 step lowers one past the bound, and the
+    two sides would then take different numbers of steps: 4.1.0 returned
+    NaN at 2048² where its successor took 2.56 times the steps.
+    """
+    return DELTA_Z * min(1.0, (RK4_STABLE_N / simu.NX) ** 2)
+
+
 def propagate(simu, field, method, steps):
     """Run ``steps`` steps, however this revision wants the step given."""
     kwargs = {"verbose": False, "plot": False, "method": method}
+    delta_z = step_for(simu)
     if "delta_z" in signature(simu.out_field).parameters:
-        kwargs["delta_z"] = DELTA_Z
+        kwargs["delta_z"] = delta_z
     else:  # 3.0.0 and earlier carried the step on the solver
-        simu.delta_z = DELTA_Z
-    return simu.out_field(field.copy(), steps * DELTA_Z, **kwargs)
+        simu.delta_z = delta_z
+    return simu.out_field(field.copy(), steps * delta_z, **kwargs)
 
 
 def time_run(nlse_module, solver_name, backend, n, method, steps, field, np, alpha=0.0):
