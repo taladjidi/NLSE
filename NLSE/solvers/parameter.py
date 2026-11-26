@@ -11,7 +11,7 @@ declares the mapping and shares the storage:
 
     class GPE(NLSE):
         m = Parameter("k", "Mass of one atom in kg.")
-        g = Parameter("n2", "Interaction energy in Hz*m^2.")
+        g = Parameter("n2", "Interaction energy over hbar, in rad/s*m^2.")
 
 Copies were what made this worth changing. They were taken once in __init__,
 so assigning the documented name afterwards moved the copy and left the solver

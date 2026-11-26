@@ -417,7 +417,7 @@ alongside what it costs and what it supports:
 | [`NLSE_3d`](docs/reference/nlse_3d.md) | full 3D+1 with dispersion | space complexity goes as $N^3$; be careful |
 | [`CNLSE`](docs/reference/cnlse.md) | two coupled fields | back-reaction of a fluid on a defect, two-component problems |
 | [`CNLSE_1d`](docs/reference/cnlse_1d.md) | the same in 1D | |
-| [`GPE`](docs/reference/gpe.md) | 2D Gross–Pitaevskii | atomic units: masses in kg, times in s |
+| [`GPE`](docs/reference/gpe.md) | 2D Gross–Pitaevskii | SI units: masses in kg, times in s, `V` and `g` as energies over ħ (rad/s) |
 | [`DDGPE`](docs/reference/ddgpe.md) | driven-dissipative coupled fields | built for exciton polaritons in microcavities |
 
 Terms are turned off by leaving their parameter `None`, and the solver then

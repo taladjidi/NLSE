@@ -3,7 +3,7 @@
 ``plot_field`` is shared; the differences are declared per solver as
 ``_plot_density_scale`` and friends. An optical intensity in W/cm^2 for NLSE
 and CNLSE, a particle density for GPE and DDGPE; distance in metres, or time
-in picoseconds for DDGPE; psi_1/psi_2 against psi_x/psi_c.
+in seconds for GPE and picoseconds for DDGPE; psi_1/psi_2 against psi_x/psi_c.
 
 Asserting only that ``plot_field`` runs would pass a solver drawing the wrong
 quantity under the wrong label, so these check the declarations.
@@ -106,7 +106,7 @@ def draw(simu, components):
     "build,components,symbol,unit",
     [
         (nlse, 1, "z", "m"),
-        (gpe, 1, "z", "m"),
+        (gpe, 1, "t", "s"),
         (cnlse, 2, "z", "m"),
         (ddgpe, 2, "t", "ps"),
     ],

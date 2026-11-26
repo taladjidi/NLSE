@@ -31,7 +31,7 @@ print(NLSE.__version__)"`. Upgrading from 3.0.0 changes four things — see
 | [`NLSE_3d`](api/NLSE/solvers/nlse_3d/index) | 3D+1 paraxial propagation (includes GVD) |
 | [`CNLSE`](api/NLSE/solvers/cnlse/index) | 2D Coupled NLSE (two-component fields) |
 | [`CNLSE_1d`](api/NLSE/solvers/cnlse_1d/index) | 1D Coupled NLSE |
-| [`GPE`](api/NLSE/solvers/gpe/index) | 2D Gross-Pitaevskii Equation (atomic units) |
+| [`GPE`](api/NLSE/solvers/gpe/index) | 2D Gross-Pitaevskii Equation (SI units; V in rad/s, g in rad/s·m²) |
 | [`DDGPE`](api/NLSE/solvers/ddgpe/index) | 2D Driven-Dissipative GPE (exciton-polaritons) |
 
 ## Quick Example

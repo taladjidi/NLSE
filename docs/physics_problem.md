@@ -71,16 +71,23 @@ Setting parameters to `None` disables the corresponding term for optimal perform
 The `GPE` class solves the 2D Gross-Pitaevskii equation for the temporal evolution of a Bosonic field:
 
 $$
-i\hbar\partial_{t}\psi = -\frac{\hbar^2}{2m}\nabla^2\psi+V\psi+g|\psi|^2\psi
+i\hbar\partial_{t}\psi = -\frac{\hbar^2}{2m}\nabla^2\psi+\hbar V\psi+\hbar g|\psi|^2\psi
 $$
 
-The GPE uses **atomic units**:
+The GPE uses SI units, with the potential and the interaction given as energies
+divided by $\hbar$:
 
 - $m$: atom mass in kg (defaults to Rubidium-87)
-- $g$: interaction energy in Hz$\cdot$m$^2$
-- $V$: potential in Hz
-- $\gamma$: losses in Hz
+- $g$: interaction energy divided by $\hbar$, in rad/s$\cdot$m$^2$; $g > 0$ is repulsive
+- $V$: potential energy divided by $\hbar$, in rad/s; a harmonic trap is
+  $m\omega^2 r^2 / (2\hbar)$
+- $\gamma$: atom loss rate in s$^{-1}$, so that $N(t) = N(0)\,e^{-\gamma t}$
+- `sat`: saturation density in atoms/m$^2$; the interaction and the loss are
+  divided by $1 + |\psi|^2/\mathrm{sat}$
 - $N$: total atom number
+
+A uniform condensate of density $n$ therefore turns its phase at
+$-(V + g n)$ rad/s.
 
 The solver interface is identical to NLSE, but the physical interpretation changes: the propagation coordinate is time (not space), and the field is normalized to atom number (not optical power).
 
