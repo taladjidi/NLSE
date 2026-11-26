@@ -121,7 +121,10 @@ def _compile_kernels(precision="single"):
         return _COMPILED_MODULES[precision]
 
     source = _get_kernel_source(precision)
-    module = cp.RawModule(code=source, options=("--use_fast_math",))
+    # No --use_fast_math: it turns sincosf into __sincosf, whose error grows with
+    # the phase (1.4e-4 at 1e3 rad, 9e-8 without the flag). Step time within
+    # 0.5%: docs/optimization-log.md.
+    module = cp.RawModule(code=source)
 
     _COMPILED_MODULES[precision] = module
     return module
@@ -1591,23 +1594,3 @@ class CUDAKernels:
                 kernels["coupled_rk4_nl_rhs_c"], N_sq, k, A_in, *params, N_sq_i
             )
         return k
-
-    def vortex_cp(self, im, i, j, ii, jj, ll):
-        """Generate vortex of charge ll at position (i, j) using CuPy.
-
-        Parameters
-        ----------
-        im : cp.ndarray
-            Image array
-        i : int
-            Vortex row position
-        j : int
-            Vortex column position
-        ii : cp.ndarray
-            Row coordinate meshgrid
-        jj : cp.ndarray
-            Column coordinate meshgrid
-        ll : int
-            Vortex charge
-        """
-        im += cp.angle(((ii - i) + 1j * (jj - j)) ** ll)

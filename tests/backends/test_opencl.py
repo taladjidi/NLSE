@@ -218,46 +218,6 @@ class TestOptimizedKernelCorrectness:
         )
 
 
-class TestVortexBugFix:
-    """Test that vortex_cp bug fix is correct."""
-
-    def test_vortex_cp_uses_atan2(self):
-        """Verify vortex_cp now uses atan2 instead of atan."""
-        import numpy as np
-        from NLSE.backends.opencl import OpenCLBackend
-        from pyopencl import array as cla
-
-        backend = OpenCLBackend()
-        N = 128
-
-        # Create coordinate grids
-        x = np.arange(N) - N // 2
-        ii, jj = np.meshgrid(x, x, indexing="ij")
-        ii = ii.astype(np.float32)
-        jj = jj.astype(np.float32)
-
-        # Create vortex with charge 1 at coordinate origin (center of grid)
-        im = cla.zeros(backend.queue, (N, N), np.float32)
-        ii_gpu = cla.to_device(backend.queue, ii)
-        jj_gpu = cla.to_device(backend.queue, jj)
-
-        backend.kernels.vortex_cp(im, 0, 0, ii_gpu, jj_gpu, 1)
-        phase = im.get()
-
-        # Verify phase winding
-        # For charge 1, phase should wind from -π to π
-        assert phase.min() > -np.pi - 0.1, "Phase minimum incorrect"
-        assert phase.max() < np.pi + 0.1, "Phase maximum incorrect"
-
-        # Phase at vortex core should be near 0 (or any value, it's undefined)
-        # Check phase makes a full 2π winding
-        # Phase difference along any line through center should show winding
-        phase_diff_vert = np.abs(np.diff(phase[:, N // 2]))
-        assert np.any(phase_diff_vert > 3.0), (
-            "No phase discontinuity found (not a vortex)"
-        )
-
-
 @pytest.mark.benchmark
 class TestOptimizedKernelPerformance:
     """Benchmark optimized kernels vs original."""

@@ -1014,6 +1014,28 @@ pass and nothing else. `NLSE_FUSE_PROPAGATOR=0` switches it off.
 of it was written; it is deleted rather than left to claim the question is
 still open. Its four questions are the four answered above.
 
+**Deployed: the kernels are built without `--use_fast_math`.** RTX 3050, CUDA
+13.3, CuPy 14.2.0. The flag turns `sincosf` into `__sincosf`, which is accurate
+on [-pi, pi] only
+([CUDA Programming Guide, 5.6.9](https://docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/mathematical-functions.html#use-fast-math-effect)).
+`nl_prop` with a pure potential returns `exp(i V)`: over a million phases in
+[-1e3, 1e3] rad its largest error was 1.36e-4 with the flag and 9.3e-8 without
+(`tests/backends/test_cuda_phase_accuracy.py`).
+
+It bought no speed. Two campaigns, both sides interleaved, complex64:
+
+| case | with the flag | without | ratio |
+|---|---|---|---|
+| split step and RK4, 1024² and 2048² | — | — | 0.999 to 1.002 |
+| NLSE split step, 2048², `V` set | 15.585 ms | 15.583 ms | 1.000 |
+| NLSE RK4, 2048², `V` set | 18.405 ms | 18.480 ms | 1.004 |
+| CNLSE split step, 1024², `omega` set | 3.788 ms | 3.791 ms | 1.001 |
+
+The last three rows are medians of 7 pairs of 100 asked steps, each cut by the
+step limit, so a row is comparable with itself only. RK4 was slower without the
+flag in 7 pairs of 7, by 0.4%: under the 1.1% this box resolves at 2048², and
+the price of a phase that is right.
+
 ## Open
 
 **The absorbing-potential and coupled halves of the lossy step.** The solved
