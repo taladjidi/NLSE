@@ -108,6 +108,11 @@ class NLSE(StepSize):
     # plain attribute access rather than a getattr with a default at each site.
     _V_scaled: Any = None
     _propagator_fft: Any = None
+    # Run state besides the step constants; _forget_run_state clears it.
+    _run_state_attrs: tuple[str, ...] = ("_V_scaled", "_propagator_fft")
+    # Key, dispersion eigenvalues and their largest magnitude, for the last
+    # configuration only: one float64 grid, 33.5 MB at 2048x2048.
+    _eigenvalues: tuple[tuple, np.ndarray, float] | None = None
     # Assigned None in __init__ too, but only the declaration here says what
     # they become: whichever array type the backend allocates, and a list of
     # whichever plan object it builds. Without it they read as None-and-only-
@@ -222,8 +227,7 @@ class NLSE(StepSize):
         self.Kx = 2 * np.pi * np.fft.fftfreq(self.NX, d=self.delta_X)
         self.Ky = 2 * np.pi * np.fft.fftfreq(self.NY, d=self.delta_Y)
         self.Kxx, self.Kyy = np.meshgrid(self.Kx, self.Ky)
-        self.propagator = None
-        self.plans = None
+        self._forget_device_state()
         self.nl_length = self._resolved_nl_length(nl_length)
         if self.nl_length > 0:
             self._require_backend(
@@ -249,13 +253,6 @@ class NLSE(StepSize):
         self._norm_grid_factor = np.float32(self.delta_X * self.delta_Y)
         self._norm_constant = np.float32(c * epsilon_0 / 2)
 
-        # Propagator cache for repeated calls with same parameters
-        # Bounded, least-recently-used. Dispersion operators live apart:
-        # there are only a handful, one per grid and splitting, and evicting
-        # one would cost the host build the propagators no longer pay.
-        self._propagator_cache: OrderedDict[tuple, Any] = OrderedDict()
-        self._dispersion_cache: dict[tuple, Any] = {}
-
     # The public surface: a solver is built, asked to propagate, and plotted.
     # split_step and split_step_RK4 are the single-step primitives out_field
     # drives; they are public because a caller may want one step at a time.
@@ -266,8 +263,9 @@ class NLSE(StepSize):
 
     @backend.setter
     def backend(self, value: str) -> None:
-        """Set the backend for the simulation."""
+        """Set the backend, dropping the arrays the previous one built."""
         self._backend = get_backend(value, grid_size=(self.NX, self.NY))
+        self._forget_device_state()
 
     def out_field(
         self,
@@ -354,13 +352,14 @@ class NLSE(StepSize):
                 f"splitting must be one of {SPLITTINGS}, got {splitting!r}"
             )
 
-        assert (
-            E_in.shape[self._last_axes[0] :] == self.XX.shape[self._last_axes[0] :]
-        ), "Shape mismatch"
-        assert E_in.dtype in [
-            np.complex64,
-            np.complex128,
-        ], "Type mismatch, E_in should be complex64 or complex128"
+        grid_shape = self.XX.shape[self._last_axes[0] :]
+        if E_in.shape[self._last_axes[0] :] != grid_shape:
+            raise ValueError(
+                f"E_in has shape {E_in.shape}, which does not end in the "
+                f"grid's {grid_shape}"
+            )
+        if E_in.dtype not in (np.complex64, np.complex128):
+            raise TypeError(f"E_in must be complex64 or complex128, not {E_in.dtype}")
         self._check_batch_support(E_in)
         field_dtype = self._field_dtype(E_in)
         self._warn_about_splitting(splitting, field_dtype)
@@ -611,6 +610,7 @@ class NLSE(StepSize):
             stacklevel=3,
         )
         self._backend = replacement
+        self._forget_device_state()
 
     def _warn_about_splitting(self, splitting: str, field_dtype: np.dtype) -> None:
         """Say so when the splitting and the float width do not go together.
@@ -1056,7 +1056,8 @@ class NLSE(StepSize):
         rho = np.abs(A_plot) ** 2 * self._plot_density_scale
         phi = np.angle(A_plot)
         im_fft = np.abs(np.fft.fftshift(np.fft.fft2(A_plot)))
-        im0 = ax[0].imshow(rho, extent=ext_real)
+        # Row 0 is the smallest y: without origin="lower" it is drawn on top.
+        im0 = ax[0].imshow(rho, extent=ext_real, origin="lower")
         ax[0].set_title("Intensity")
         ax[0].set_xlabel("x (mm)")
         ax[0].set_ylabel("y (mm)")
@@ -1064,6 +1065,7 @@ class NLSE(StepSize):
         im1 = ax[1].imshow(
             phi,
             extent=ext_real,
+            origin="lower",
             cmap="twilight_shifted",
             vmin=-np.pi,
             vmax=np.pi,
@@ -1075,6 +1077,7 @@ class NLSE(StepSize):
         im2 = ax[2].imshow(
             im_fft,
             extent=ext_fourier,
+            origin="lower",
             cmap="nipy_spectral",
         )
         ax[2].set_title("Fourier space")
@@ -1147,6 +1150,35 @@ class NLSE(StepSize):
             ``K^2 / (2 k)`` over the Fourier grid.
         """
         return 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k
+
+    def _dispersion_eigenvalues(self) -> np.ndarray:
+        """Return ``_dispersion_operator()``, built once per configuration.
+
+        The step limiters read it on every ``out_field`` call, and building it
+        took 4.8 ms at 2048x2048, twice per call. A new
+        ``_propagator_rk4_cache_key()`` replaces the grid kept.
+
+        Returns
+        -------
+        np.ndarray
+            The dispersion eigenvalues over the Fourier grid.
+        """
+        key = self._propagator_rk4_cache_key()
+        if self._eigenvalues is None or self._eigenvalues[0] != key:
+            grid = self._dispersion_operator()
+            self._eigenvalues = (key, grid, float(np.max(np.abs(grid))))
+        return self._eigenvalues[1]
+
+    def _max_dispersion_rate(self) -> float:
+        """Return the largest dispersion eigenvalue in magnitude, cached alike.
+
+        Returns
+        -------
+        float
+            ``max |_dispersion_operator()|``.
+        """
+        self._dispersion_eigenvalues()
+        return self._eigenvalues[2]
 
     def _propagator_cache_key(self, dtype: np.dtype, delta_z: float) -> tuple:
         """Return cache key for the split-step propagator."""
@@ -1425,7 +1457,10 @@ class NLSE(StepSize):
                 integral = np.sum(arr_np, axis=self._last_axes)
                 integral = integral * self._norm_constant
                 E_00 = self._normalization_factor(self._norm_target, integral)
-                result = (E_00.T * E_in_np.T).T.astype(E_in_np.dtype)
+                # E_00 is float64, so the bare product would be a complex128
+                # temporary twice the field's size; write it at the field's.
+                result = np.empty_like(E_in_np)
+                np.multiply(E_00.T, E_in_np.T, out=result.T)
                 A = self._backend.from_numpy(result)
             else:
                 integral = np.sum(arr, axis=self._last_axes)
@@ -1438,7 +1473,7 @@ class NLSE(StepSize):
                         np.asarray(target, dtype=integral.dtype)
                     )
                 E_00 = self._normalization_factor(target, integral)
-                A[:] = (E_00.T * E_in.T).T
+                np.multiply(E_00.T, E_in.T, out=A.T)
         else:
             A[:] = E_in
         return A, A_sq
@@ -1595,6 +1630,7 @@ class NLSE(StepSize):
                 V, self._k_half, self._potential_dtype(V, field_dtype)
             )
         )
+        self._forget_potential_grids()
         self._update_propagator_fft()
 
     @staticmethod
@@ -1673,6 +1709,38 @@ class NLSE(StepSize):
             return np.asarray(value)
         return np.asarray(self._backend.to_numpy(value))
 
+    def _forget_device_state(self) -> None:
+        """Drop everything built as arrays of the current backend.
+
+        The propagator, the plans, the RK4 scratch buffers and both caches are
+        arrays of the backend that built them. Kept across a change of
+        backend they reach kernels that cannot read them: MLX to CPU raised,
+        and CPU to MLX propagated with a propagator built on the host.
+        """
+        self.propagator = None
+        self.plans = None
+        # Bounded, least-recently-used. Dispersion operators live apart:
+        # there are only a handful, one per grid and splitting, and evicting
+        # one would cost the host build the propagators no longer pay.
+        self._propagator_cache: OrderedDict[tuple, Any] = OrderedDict()
+        self._dispersion_cache: dict[tuple, Any] = {}
+        # Host array and device copy of each attribute a run sent, by name.
+        self._sent_arrays: dict[str, tuple[Any, Any]] = {}
+        # The RK4 steppers reallocate every buffer when _rk4_k is missing.
+        for name in ("_rk4_k", "_rk4_A_tmp", "_rk4_acc"):
+            vars(self).pop(name, None)
+
+    def _forget_run_state(self) -> None:
+        """Clear what a run set up for its own steps.
+
+        The step constants, the scaled potential and the pre-normalized
+        propagator describe one run. Left set, a later ``split_step`` used
+        them instead of the ``V`` and propagator it was given, and after a
+        run past ``L`` kept a zero coupling.
+        """
+        for name in (*self._step_constants(), *self._run_state_attrs):
+            setattr(self, name, None)
+
     @contextlib.contextmanager
     def _arrays_on_device(self, field_dtype: np.dtype) -> Iterator[None]:
         """Hold the solver's arrays on the device for the duration of a run.
@@ -1680,7 +1748,8 @@ class NLSE(StepSize):
         V, nl_profile, the propagator and any batched parameter are moved onto
         the device and put back afterwards, on the way out of a failed run as
         well as a finished one. Left there, they break the next run rather than
-        the one that failed: from_numpy is handed a device array.
+        the one that failed: from_numpy is handed a device array. The run's
+        step constants are cleared on the way out as well.
 
         Parameters
         ----------
@@ -1696,6 +1765,7 @@ class NLSE(StepSize):
             yield
         finally:
             self._retrieve_arrays_from_gpu()
+            self._forget_run_state()
 
     def _send_arrays_to_gpu(self, field_dtype: np.dtype = np.complex64) -> None:
         """Send arrays to device using backend.
@@ -1715,11 +1785,12 @@ class NLSE(StepSize):
                 # and from_numpy handed a device array does not complain about
                 # the type: it tries to enqueue a write *from* it.
                 continue
+            sent = val
             if attr == "V":
-                val = np.ascontiguousarray(
+                sent = np.ascontiguousarray(
                     val, dtype=self._potential_dtype(val, field_dtype)
                 )
-            setattr(self, attr, self._backend.from_numpy(val))
+            self._send_to_device(attr, val, sent)
         if not self._backend.broadcasts_parameters_natively:
             # The kernels take one simulation's scalar value per launch, so a
             # batched parameter is picked apart on the host and never reaches
@@ -1728,7 +1799,23 @@ class NLSE(StepSize):
         for attr in self._gpu_param_attrs:
             val = getattr(self, attr)
             if isinstance(val, np.ndarray):
-                setattr(self, attr, self._backend.from_numpy(val))
+                self._send_to_device(attr, val, val)
+
+    def _send_to_device(self, attr: str, host: np.ndarray, sent: np.ndarray) -> None:
+        """Replace an attribute by a device copy, remembering its host array.
+
+        Parameters
+        ----------
+        attr : str
+            Attribute name.
+        host : np.ndarray
+            The array the attribute held, which the run gives back.
+        sent : np.ndarray
+            What is transferred: ``host`` itself, or V at the field's width.
+        """
+        device = self._backend.from_numpy(sent)
+        self._sent_arrays[attr] = (host, device)
+        setattr(self, attr, device)
 
     def _send_propagator_to_gpu(self) -> None:
         """Move the freshly built propagator onto the device.
@@ -1762,13 +1849,35 @@ class NLSE(StepSize):
             val = getattr(self, attr, None)
             if val is None:
                 continue
-            setattr(self, attr, self._backend.to_numpy(val))
-        if not self._backend.broadcasts_parameters_natively:
-            return
-        for attr in self._gpu_param_attrs:
-            val = getattr(self, attr)
-            if not isinstance(val, (int, float)):
-                setattr(self, attr, self._backend.to_numpy(val))
+            setattr(self, attr, self._host_value(attr, val))
+        if self._backend.broadcasts_parameters_natively:
+            for attr in self._gpu_param_attrs:
+                val = getattr(self, attr)
+                if not isinstance(val, (int, float)):
+                    setattr(self, attr, self._host_value(attr, val))
+        self._sent_arrays.clear()
+
+    def _host_value(self, attr: str, value: Any) -> Any:
+        """Return an attribute's value on the host after a run.
+
+        The array the caller gave, if the attribute still holds the copy sent
+        from it: converting that copy back returned V at the field's width,
+        so a float64 potential came back float32.
+
+        Parameters
+        ----------
+        attr : str
+            Attribute name.
+        value : Any
+            Its value on the device.
+
+        Returns
+        -------
+        Any
+            The host array that was sent, or ``value`` converted to numpy.
+        """
+        host, device = self._sent_arrays.get(attr, (None, None))
+        return host if value is device else self._backend.to_numpy(value)
 
     # The pieces of a step.
     def _apply_linear_step(

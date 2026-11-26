@@ -84,6 +84,10 @@ DEFAULT_MIN_STEPS = 10
 # that takes out 5% of the intensity is already a poor step.
 LOSS_PER_STEP_LIMIT = 0.05
 
+# Names _grid_on_device keeps the potential's real part and absorption under.
+# Their key holds the grid and not V, so they are dropped when V is rescaled.
+POTENTIAL_GRIDS = ("V_re", "V_im")
+
 
 class StepSize:
     """The step-size half of a solver, mixed into NLSE.
@@ -186,7 +190,7 @@ class StepSize:
         spectrum = backend.kernels.square_mod(spectrum_field, spectrum)
         spectral_total = backend.sum(spectrum)
         dispersion = self._grid_on_device(
-            "rate", self._dispersion_operator(), real_dtype, A.shape
+            "rate", self._dispersion_eigenvalues(), real_dtype, A.shape
         )
         kinetic = (
             backend.sum(spectrum * dispersion) / spectral_total
@@ -199,9 +203,12 @@ class StepSize:
             potential = absorption = 0.0
         else:
             host_V = self._as_host_array(V_scaled)
-            real_V = self._grid_on_device("V_re", np.real(host_V), real_dtype, A.shape)
+            real_name, imag_name = POTENTIAL_GRIDS
+            real_V = self._grid_on_device(
+                real_name, np.real(host_V), real_dtype, A.shape
+            )
             imag_V = self._grid_on_device(
-                "V_im", np.abs(np.imag(host_V)), real_dtype, A.shape
+                imag_name, np.abs(np.imag(host_V)), real_dtype, A.shape
             )
             potential = backend.sum(weight * real_V) / total
             absorption = backend.sum(weight * imag_V) / total
@@ -259,6 +266,12 @@ class StepSize:
             )
         return self._dispersion_cache[key]
 
+    def _forget_potential_grids(self) -> None:
+        """Drop the potential's grids, which another potential would reuse."""
+        stale = [key for key in self._dispersion_cache if key[-1] in POTENTIAL_GRIDS]
+        for key in stale:
+            del self._dispersion_cache[key]
+
     def _energy_rates_on_host(self, A: np.ndarray) -> dict[str, float]:
         """Return the rates by bringing the field back. The reference."""
         A_np = np.asarray(self._backend.to_numpy(A))
@@ -270,7 +283,7 @@ class StepSize:
 
         spectrum = np.abs(np.fft.fftn(A_np, axes=self._last_axes)) ** 2
         spectral_total = float(np.sum(spectrum))
-        dispersion = np.asarray(self._dispersion_operator())
+        dispersion = np.asarray(self._dispersion_eigenvalues())
         kinetic = (
             float(np.sum(spectrum * dispersion) / spectral_total)
             if spectral_total > 0
@@ -316,7 +329,7 @@ class StepSize:
         dict
             ``kinetic``, ``potential``, ``interaction`` and ``loss`` rates.
         """
-        kinetic = float(np.max(np.abs(self._dispersion_operator())))
+        kinetic = self._max_dispersion_rate()
 
         V = self._as_host_array(self._V_scaled)
         if V is None and self.V is not None:
@@ -418,7 +431,7 @@ class StepSize:
             Largest stable step, or infinity if every rate vanishes.
         """
         if A is None:
-            rate = float(np.max(np.abs(self._dispersion_operator())))
+            rate = self._max_dispersion_rate()
             V_scaled = self._as_host_array(self._V_scaled)
             if V_scaled is not None:
                 rate += float(np.max(np.abs(V_scaled)))
@@ -498,7 +511,7 @@ class StepSize:
         float
             Largest step, or infinity if the problem has no dispersion.
         """
-        rate = float(np.max(np.abs(self._dispersion_operator())))
+        rate = self._max_dispersion_rate()
         if rate == 0:
             return np.inf
         return SPLIT_STEP_DISPERSION_PHASE_LIMIT / rate

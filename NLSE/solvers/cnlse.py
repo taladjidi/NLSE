@@ -20,6 +20,7 @@ class CNLSE(NLSE):
     _gpu_param_attrs = (*NLSE._gpu_param_attrs, "n22", "n12")
     # The second component's potential; None until a run scales it.
     _V2_scaled: Any = None
+    _run_state_attrs = (*NLSE._run_state_attrs, "_V2_scaled")
     # Both intra- and inter-component couplings switch off past the medium.
     _medium_attrs = (*NLSE._medium_attrs, "n12", "n22", "alpha2")
 
@@ -839,7 +840,8 @@ class CNLSE(NLSE):
         rho1 = np.abs(A_plot[1]) ** 2 * self._plot_density_scale
         phi1 = np.angle(A_plot[1])
         # plot amplitudes and phases
-        im0 = ax[0, 0].imshow(rho0, extent=ext_real)
+        # Row 0 is the smallest y: without origin="lower" it is drawn on top.
+        im0 = ax[0, 0].imshow(rho0, extent=ext_real, origin="lower")
         first, second = self._plot_components
         ax[0, 0].set_title(rf"$|{first}|^2$")
         ax[0, 0].set_xlabel("x (mm)")
@@ -848,6 +850,7 @@ class CNLSE(NLSE):
         im1 = ax[0, 1].imshow(
             phi0,
             extent=ext_real,
+            origin="lower",
             cmap="twilight_shifted",
             vmin=-np.pi,
             vmax=np.pi,
@@ -856,7 +859,7 @@ class CNLSE(NLSE):
         ax[0, 1].set_xlabel("x (mm)")
         ax[0, 1].set_ylabel("y (mm)")
         fig.colorbar(im1, ax=ax[0, 1], shrink=0.6, label="Phase (rad)")
-        im2 = ax[1, 0].imshow(rho1, extent=ext_real)
+        im2 = ax[1, 0].imshow(rho1, extent=ext_real, origin="lower")
         ax[1, 0].set_title(rf"$|{second}|^2$")
         ax[1, 0].set_xlabel("x (mm)")
         ax[1, 0].set_ylabel("y (mm)")
@@ -864,6 +867,7 @@ class CNLSE(NLSE):
         im3 = ax[1, 1].imshow(
             phi1,
             extent=ext_real,
+            origin="lower",
             cmap="twilight_shifted",
             vmin=-np.pi,
             vmax=np.pi,
