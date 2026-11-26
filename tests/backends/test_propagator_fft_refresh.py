@@ -34,15 +34,23 @@ def make_solver(backend, **kwargs):
 
 
 def to_numpy(simu, array):
-    """Bring a possibly-device array back to numpy.
-
-    After out_field, _retrieve_arrays_from_gpu has already pulled
-    ``propagator`` back to the host, while ``_propagator_fft`` is not in
-    _gpu_array_attrs and so is still on the device. Handle both.
-    """
+    """Bring a possibly-device array back to numpy; None stays None."""
     if array is None or isinstance(array, np.ndarray):
         return array
     return simu._backend.to_numpy(array)
+
+
+def record_propagators(simu, A, z, i, seen):
+    """Keep the twin, the propagator and the step as the run holds them.
+
+    All three are run state, cleared when out_field returns, so a callback
+    reads them while the run is still going. Each call overwrites the last.
+    """
+    seen[:] = [
+        to_numpy(simu, simu._propagator_fft),
+        to_numpy(simu, simu.propagator),
+        simu._current_delta_z,
+    ]
 
 
 @pytest.mark.skipif(
@@ -56,14 +64,20 @@ class TestPropagatorFFTRefresh:
         """_propagator_fft is propagator / N after an ordinary run."""
         simu = make_solver(backend)
         E = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(PRECISION_COMPLEX)
+        seen = []
         simu.out_field(
-            E.copy(), 2 * (L / 20), verbose=False, plot=False, delta_z=L / 20
+            E.copy(),
+            2 * (L / 20),
+            verbose=False,
+            plot=False,
+            delta_z=L / 20,
+            callback=record_propagators,
+            callback_args=(seen,),
         )
 
-        prop_fft = to_numpy(simu, getattr(simu, "_propagator_fft", None))
+        prop_fft, prop, _ = seen
         if prop_fft is None:
             pytest.skip(f"{backend} does not use a pre-normalized propagator")
-        prop = to_numpy(simu, simu.propagator)
         np.testing.assert_allclose(
             prop_fft,
             prop / (N * N),
@@ -88,15 +102,21 @@ class TestPropagatorFFTRefresh:
         z = 500 * dz_default
         E = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(PRECISION_COMPLEX)
 
+        seen = []
         with pytest.warns(UserWarning, match="exceeds"):
             simu.out_field(
-                E.copy(), z, verbose=False, plot=False, delta_z=1000 * dz_default
+                E.copy(),
+                z,
+                verbose=False,
+                plot=False,
+                delta_z=1000 * dz_default,
+                callback=record_propagators,
+                callback_args=(seen,),
             )
 
-        prop_fft = to_numpy(simu, getattr(simu, "_propagator_fft", None))
+        prop_fft, prop, delta_z = seen
         if prop_fft is None:
             pytest.skip(f"{backend} does not use a pre-normalized propagator")
-        prop = to_numpy(simu, simu.propagator)
 
         np.testing.assert_allclose(
             prop_fft,
@@ -111,7 +131,7 @@ class TestPropagatorFFTRefresh:
 
         # And it must correspond to the clamped delta_z itself.
         expected = np.exp(
-            -1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * simu._current_delta_z
+            -1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * delta_z
         ).astype(np.complex64)
         np.testing.assert_allclose(
             prop,

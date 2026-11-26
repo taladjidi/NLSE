@@ -185,9 +185,11 @@ class NLSE_3d(NLSE):
         phi = np.angle(A_plot)
         rho_xy = rho[:, :, self.NZ // 2]
         phi_xy = phi[:, :, self.NZ // 2]
-        rho_xt = rho[:, self.NY // 2, :]
-        phi_xt = phi[:, self.NY // 2, :]
-        im0 = ax[0, 0].imshow(rho_xy, extent=ext_real)
+        # The field is (NY, NX, NZ): the xt plane holds a row, not a column.
+        rho_xt = rho[self.NY // 2, :, :]
+        phi_xt = phi[self.NY // 2, :, :]
+        # Row 0 is the smallest coordinate: without origin="lower" it is on top.
+        im0 = ax[0, 0].imshow(rho_xy, extent=ext_real, origin="lower")
         ax[0, 0].set_title(r"Intensity in $xy$ plane at $t$=0")
         ax[0, 0].set_xlabel("x (mm)")
         ax[0, 0].set_ylabel("y (mm)")
@@ -195,6 +197,7 @@ class NLSE_3d(NLSE):
         im1 = ax[0, 1].imshow(
             phi_xy,
             extent=ext_real,
+            origin="lower",
             cmap="twilight_shifted",
             vmin=-np.pi,
             vmax=np.pi,
@@ -203,7 +206,7 @@ class NLSE_3d(NLSE):
         ax[0, 1].set_xlabel("x (mm)")
         ax[0, 1].set_ylabel("y (mm)")
         fig.colorbar(im1, ax=ax[0, 1], shrink=0.6, label="Phase (rad)")
-        im2 = ax[1, 0].imshow(rho_xt, extent=ext_time, aspect="auto")
+        im2 = ax[1, 0].imshow(rho_xt, extent=ext_time, aspect="auto", origin="lower")
         ax[1, 0].set_title(r"Intensity in $xt$ plane at $y$=0")
         ax[1, 0].set_ylabel(r"$x$ ($mm$)")
         ax[1, 0].set_xlabel(r"$t$ ($\mu s$)")
@@ -211,6 +214,7 @@ class NLSE_3d(NLSE):
         im3 = ax[1, 1].imshow(
             phi_xt,
             extent=ext_time,
+            origin="lower",
             cmap="twilight_shifted",
             vmin=-np.pi,
             vmax=np.pi,
