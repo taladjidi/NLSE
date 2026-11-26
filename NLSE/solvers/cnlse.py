@@ -168,6 +168,21 @@ class CNLSE(NLSE):
         )
         return rates
 
+    def _max_local_linear_rate(self) -> float:
+        """Return the fastest point-by-point linear rate of the coupled system.
+
+        Each component sees the potential scaled by its own k, and the faster
+        of the two counts. The Rabi coupling turns one component into the
+        other at ``omega / 2``, on top of either potential.
+        """
+        rate = super()._max_local_linear_rate()
+        V2_scaled = self._as_host_array(self._V2_scaled)
+        if V2_scaled is not None:
+            rate = max(rate, float(np.max(np.abs(V2_scaled))))
+        if self.omega is not None:
+            rate += float(np.max(np.abs(self._as_host_array(self.omega)))) / 2
+        return rate
+
     def _propagator_rk4_cache_key(self) -> tuple:
         """Return cache key for coupled RK4 dispersion operator."""
         return (self.NX, self.NY, "RK4", float(self.k), float(self.k2))

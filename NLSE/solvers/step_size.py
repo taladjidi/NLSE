@@ -407,16 +407,32 @@ class StepSize:
             dz = self.k * min(self.window) ** 2
         return dz
 
+    def _max_local_linear_rate(self) -> float:
+        """Return the fastest linear rate RK4 evaluates point by point.
+
+        Here that is the potential, absorption included. The coupled solvers
+        add what else they have.
+
+        Returns
+        -------
+        float
+            ``max |V k / 2|`` over the grid, or 0 without a potential.
+        """
+        V_scaled = self._as_host_array(self._V_scaled)
+        if V_scaled is None:
+            return 0.0
+        return float(np.max(np.abs(V_scaled)))
+
     def _rk4_max_dz(self, A: np.ndarray | None = None) -> float:
         """Compute the maximum stable step size for explicit RK4.
 
         RK4's stability region reaches ~2.83 along the imaginary axis, so the
         step is bounded by ``2.83 / |lambda|`` for the right-hand side it
         integrates. Every term it evaluates explicitly belongs in that
-        eigenvalue — dispersion, potential, interaction and loss — and they
-        add.
+        eigenvalue — dispersion, potential, coupling, interaction and loss —
+        and they add.
 
-        The two linear terms count by their maximum over the grid, not by the
+        The linear terms count by their maximum over the grid, not by the
         field-weighted rates of ``_energy_rates``. Past the radius RK4
         amplifies whatever a mode holds, and round-off puts something in every
         mode: a run stepped by the weighted rates returned NaN wherever the
@@ -439,10 +455,7 @@ class StepSize:
         float
             Largest stable step, or infinity if every rate vanishes.
         """
-        rate = self._max_dispersion_rate()
-        V_scaled = self._as_host_array(self._V_scaled)
-        if V_scaled is not None:
-            rate += float(np.max(np.abs(V_scaled)))
+        rate = self._max_dispersion_rate() + self._max_local_linear_rate()
         if A is not None:
             rates = self._energy_rates(A)
             rate += rates["interaction"] + rates["loss"]
@@ -566,8 +579,9 @@ class StepSize:
         """Return delta_z, lowered if it leaves the method's convergence region.
 
         Only ever lowers its magnitude, and keeps its sign, which is the
-        direction of the run. A step the solver chose itself is already well
-        inside the limit, so this binds on a step the caller passed.
+        direction of the run. The default step is well inside the split-step
+        limit, so there this binds on a step the caller passed. RK4's limit is
+        set by the grid's shortest wave and can bind on the default step too.
 
         Parameters
         ----------
