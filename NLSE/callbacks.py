@@ -284,20 +284,15 @@ def adapt_delta_z_to_error(
     Returns
     -------
     float or None
-        The new step, on the steps where it is measured, else None. Also None
-        under imaginary time, which this does not control -- see below.
+        The size of the new step, on the steps where it is measured, else
+        None. The loop gives it the sign of the run.
     """
-    step = simu._current_delta_z
+    # Not the step just taken: one cut to land on L or z is a sliver, and a
+    # proposal scaled from it takes several steps to grow back.
+    step = simu._step_in_force
     if delta_z is not None:
         delta_z.append(step)
     if i % update_every != 0 or step is None:
-        return None
-    # Imaginary time passes a complex step, and the two ends of this compare it
-    # against a floor and a cap, which no complex number answers: it raised
-    # TypeError rather than adapting anything. Declining is the honest reply --
-    # imaginary time is a relaxation towards a ground state, not a trajectory,
-    # so a local error against the step it took is not the quantity to control.
-    if isinstance(step, complex):
         return None
 
     whole = _trial_propagation(simu, A, step, 1)
@@ -334,9 +329,10 @@ def adapt_delta_z_to_error(
     # success is worse than a slow run.
     floor = min(min_step if min_step is not None else float(simu.L) / 1e5, cap)
     if error == 0:
-        return float(min(step * bounds[1], cap))
+        return float(min(abs(step) * bounds[1], cap))
 
     order = 2
     factor = safety * (tolerance / error) ** (1.0 / (order + 1))
-    proposed = step * float(np.clip(factor, *bounds))
+    # A size: the floor and the cap are sizes, and a backward step is negative.
+    proposed = abs(step) * float(np.clip(factor, *bounds))
     return float(min(max(proposed, floor), cap))

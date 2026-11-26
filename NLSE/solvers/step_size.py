@@ -18,6 +18,7 @@ paying for: every method below is called by the ones below it or by the
 propagation loop, and nothing else in NLSE calls in.
 """
 
+import math
 import warnings
 from typing import Any
 
@@ -83,6 +84,11 @@ DEFAULT_MIN_STEPS = 10
 # here. This is the ceiling for a propagation, which is the looser job: a step
 # that takes out 5% of the intensity is already a poor step.
 LOSS_PER_STEP_LIMIT = 0.05
+
+# Fraction of a limit that a step past it is lowered to (dimensionless): a
+# margin under the bound rather than the bound itself. A design choice, not a
+# derived value: the 0.9 the cap has used since commit c6449e4.
+CAPPED_STEP_FRACTION = 0.9
 
 
 class StepSize:
@@ -543,7 +549,8 @@ class StepSize:
     def _capped_delta_z(self, delta_z: float, A: np.ndarray, method: str) -> float:
         """Return delta_z, lowered if it leaves the method's convergence region.
 
-        Only ever lowers it. A step the solver chose itself is already well
+        Only ever lowers its magnitude, and keeps its sign, which is the
+        direction of the run. A step the solver chose itself is already well
         inside the limit, so this binds on a step the caller passed.
 
         Parameters
@@ -580,11 +587,14 @@ class StepSize:
             max_dz = self._split_step_max_dz(A)
             label = "split-step accuracy"
             extra = ""
-        if delta_z > max_dz:
+        # By magnitude: a backward step leaves the region of convergence at
+        # the same length a forward one does.
+        if abs(delta_z) > max_dz:
+            capped = math.copysign(CAPPED_STEP_FRACTION * max_dz, delta_z)
             warnings.warn(
                 f"delta_z={delta_z:.2e} exceeds {label} limit "
-                f"({max_dz:.2e}). Reducing to {0.9 * max_dz:.2e}.{extra}",
+                f"({max_dz:.2e}). Reducing to {capped:.2e}.{extra}",
                 stacklevel=2,
             )
-            return 0.9 * max_dz
+            return capped
         return delta_z

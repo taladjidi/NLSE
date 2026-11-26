@@ -408,6 +408,10 @@ class CUPYBackend(Backend):
             return
 
         stream = cp.cuda.Stream(non_blocking=True)
+        # A non-blocking stream does not wait for the null stream: without this
+        # the first step raced the work queued before the loop, such as a
+        # Strang half-step or the partial step that ends a segment.
+        stream.wait_event(cp.cuda.get_current_stream().record())
         with stream:
             # Warmup: execute one step to prime cuFFT / lazy kernels
             step_fn()
