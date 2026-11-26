@@ -4,9 +4,10 @@
 
 A full audit of the repo was done at commit `fa7aa59` (v4.1.0 plus six commits).
 The fixes are specified in eight packages, each applied in its own git
-worktree. Every worktree holds its whole patch. p7 and p4 are reviewed and
-committed on their branches; the other six are uncommitted, with a code
-review running on each. Nothing is merged: `main` holds no fix code.
+worktree. Every worktree holds its whole patch. p7 and p6 are reviewed and
+merged into `main` (not pushed); p4 and p2 are reviewed and committed on their
+branches; p1a, p1b, p3 and p5 are applied and uncommitted, with a code review
+running on each.
 
 Baseline at `38a8704`, Apple M3 Max, arm64, Python 3.13.13, CPU and MLX
 backends: `pytest tests/ -q -m "not benchmark"` gives 974 passed, 123 skipped,
@@ -37,12 +38,12 @@ finish it, or apply the patch.
 |---|---|---|---|
 | p1a | `fix/stepping-loop` | medium ends exactly at `L`; backward runs; complex `delta_z` raises; callback lists; CuPy stream race | applied, equal to the patch; code review running |
 | p1b | `fix/solver-run-state` | state left after a run or a backend switch; caller's arrays restored; asserts become ValueError/TypeError; dispersion built once; `origin="lower"` | applied, equal to the patch; code review running |
-| p2 | `fix/coupled-solvers` | Rabi coupling in strang, yoshida, RK4; DDGPE uses CNLSE's `split_step`; noise, pump sampling, potential sign | applied, equal to the patch; code review running |
+| p2 | `fix/coupled-solvers` | Rabi coupling in strang, yoshida, RK4; DDGPE uses CNLSE's `split_step`; noise, pump sampling, potential sign | reviewed; 1024 passed; committed `4c8fb80`. Its MAJOR (a cut last step takes the wrong drive sample and length) is fixed by p1a once both are merged: see step 3 |
 | p3 | `fix/gpe-units` | GPE takes `V` and `g` as rates in rad/s with the GPE sign; `adapt_delta_z` on GPE; docs and example | applied, equal to the patch; code review running |
 | p4 | `fix/nonlocal-response` | non-local response applied in Fourier space; `Backend.convolution` and `nl_profile` removed | reviewed; one test added for the coupled RK4 path (the review's MAJOR); 1005 passed; committed `c50a72c`; `p4.patch` refreshed |
 | p5 | `refactor/kernels-cleanup` | unused CuPy and vortex kernels removed; MLX scalar cache bounded; CUDA built without `--use_fast_math` | spec reviewed (GO), its six MINOR notes applied to `p5.md` and `p5.patch`; applied, equal to the patch; code review running |
-| p6 | `test/closed-forms-and-cache` | `evaluate_delta_n`; benchmark cache isolation; tests that could not fail; NLSE_3d dispersion sign | applied, equal to the patch; code review running |
-| p7 | `docs/packaging-ci-cleanup` | README, docs, sdist, `uv.lock`, CI, examples, unused files | reviewed (PASS); 974 passed, Sphinx `-W` clean; committed in five commits, `78e5ee9` to `08017de` |
+| p6 | `test/closed-forms-and-cache` | `evaluate_delta_n`; benchmark cache isolation; tests that could not fail; NLSE_3d dispersion sign | reviewed twice; cache record validated and `test_build_propagator` made to see the sign (the review's MAJORs); 1013 passed; merged as `3f3b6dd`. On CUDA the two RK4 non-local saturation cases stay red until p4 is merged |
+| p7 | `docs/packaging-ci-cleanup` | README, docs, sdist, `uv.lock`, CI, examples, unused files | reviewed (PASS); 974 passed, Sphinx `-W` clean; merged as `ed00008` |
 
 `fix/solver-state` is an older, merged branch: p1b uses `fix/solver-run-state`.
 
@@ -58,8 +59,9 @@ finish it, or apply the patch.
    sign). A commit that stages a `.yml` file needs the plain PATH (the
    `yaml-parses` hook needs PyYAML, which `.venv` lacks); Python changes
    need `.venv/bin` first on PATH.
-2. Merge one by one with `--no-ff`, in the order p7, p6, p3, p5, p1b, p1a,
-   p4, p2. A trial merge of the eight patches in that order gave two
+2. Merge one by one with `--no-ff`, in the order p7, p6 (both done), p3, p5,
+   p1b, p1a, p4, p2. `git rerere` holds the two resolutions below. A trial
+   merge of the eight patches in that order gave two
    conflicts only, and the merged tree passed on the Mac (ruff, format and
    mypy clean; 1314 passed, 123 skipped with `tests/test_packaging.py`
    left out):
@@ -69,6 +71,13 @@ finish it, or apply the patch.
    - `NLSE/solvers/nlse.py`, constructor (p4, p1b): the block becomes the two
      lines `self._forget_device_state()` and `self.nl_length = nl_length`.
 3. After the merges, by hand:
+   - Run `.venv/bin/python ../NLSE_tangui_fix_specs/post_merge_cut_step_test.py .`
+     and commit the two tests it adds to `tests/solvers/test_ddgpe_drive.py`:
+     they pin p2's MAJOR (20 passed on the trial-merged tree, 4 failed on p2
+     alone).
+   - `CHANGELOG.md`: put `../NLSE_tangui_fix_specs/changelog_unreleased.md`
+     above `## 4.1.0`, corrected for what the last four reviews change. No
+     version bump without the user's word (5.0.0 is the suggestion).
    - `tests/physics/test_closed_forms.py`: the comment above the non-local
      case becomes "Two cells of that grid. A plane wave is its own local
      average, so the answer does not change: only the kernels that compute
@@ -89,6 +98,20 @@ finish it, or apply the patch.
 
 ### Review findings left as they are (MINOR, for the final report)
 
+- p2: RK4 with a batched `omega` of shape `(B,)` or `(B, 1, 1, 1)` raises on
+  CPU (`_add_rabi_slope` in `cnlse.py`); `_default_delta_z` leaves
+  `_drive_step` set when called directly; no test for `omega` with a cut
+  step, a step-changing callback or a batched `omega`; `docs/solvers_overview.md:263`
+  says a positive imaginary potential removes power, which is the NLSE
+  convention and now the opposite of DDGPE's.
+- p6: the saturated Kerr index is written twice in `callbacks.py` (in
+  `evaluate_delta_n` and `adapt_delta_z`); `evaluate_delta_n` is optical
+  only (it reads component 1's `n2` and `I_sat` on a coupled solver and is
+  wrong for GPE and DDGPE), which the docstring does not say; the cache's
+  temporary file is named by PID alone, so two threads of one process can
+  collide; `invalidate_cache` raises if the cache path is a directory;
+  `docs/backends.md:51` still gives the old cache path and its table omits
+  `NLSE_CACHE_DIR`; several new test docstrings lack a Parameters section.
 - p7: `examples/benchmarks.py:187`, the self-check cannot see a wrong
   diffraction sign; `.github/workflows/ci.yml:287-296`, the link check only
   warns, so its comment oversells it; `docs/literature-examples.md` still
