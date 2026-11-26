@@ -10,6 +10,55 @@ from .parameter import Parameter
 if __CUPY_AVAILABLE__:
     import cupy as cp
 
+# Scale from DDGPE's potential to the phase rate the kernels apply, unitless.
+# The kernels advance by exp(+i V_scaled dt) (NLSE's sign, V_scaled = k V / 2);
+# DDGPE's V is an energy rate, i dpsi/dt = V psi (docs/solvers_overview.md).
+POTENTIAL_SCALE = -1.0
+
+
+def _drive_sample(profile: Any, simu: Any, t: float, i: int) -> Any:
+    """Return the sample of a temporal drive profile for the step just taken.
+
+    ``profile[j]`` is the drive during ``[j dt, (j + 1) dt)``, ``dt`` the step
+    out_field was asked for (its own default if none), before any cap. The
+    step just taken ends at ``t``, so its midpoint picks ``j``: an uncapped
+    run takes sample ``i`` at step ``i``, a capped one samples by time.
+
+    Parameters
+    ----------
+    profile : Any
+        Samples of the drive, one per asked step.
+    simu : Any
+        The DDGPE running the step.
+    t : float
+        Time at the end of the step just taken.
+    i : int
+        Index of that step, used when not inside out_field.
+
+    Returns
+    -------
+    Any
+        The sample in force over the step.
+
+    Raises
+    ------
+    ValueError
+        If the profile ends before the step does.
+    """
+    if simu._drive_step is None:
+        # Called outside out_field: no asked step to time by.
+        index = i
+    else:
+        midpoint = abs(t) - abs(simu._current_delta_z) / 2
+        index = int(np.floor(midpoint / abs(simu._drive_step)))
+    if index >= len(profile):
+        raise ValueError(
+            f"The drive profile has {len(profile)} samples but the step "
+            f"ending at t={abs(t):.6g} needs {index + 1}: give one sample "
+            "per asked step over the whole run."
+        )
+    return profile[index]
+
 
 class DDGPE(CNLSE):
     """A class to solve the 2D driven dissipative Gross-Pitaevskii equation."""
@@ -46,8 +95,8 @@ class DDGPE(CNLSE):
     # g2 belongs to the second component and has storage of its own, so unlike
     # g and g12 it is not covered by the inherited entries.
     #
-    # split_step passes n2 and n12 rather than g and g12: the kernels want the
-    # NLSE sign convention, which is what the storage holds.
+    # _step_constants passes n2 and n12 rather than g and g12: the kernels want
+    # the NLSE sign convention, which is what the storage holds.
     _medium_attrs = (*CNLSE._medium_attrs, "g2")
 
     def __init__(
@@ -168,23 +217,22 @@ class DDGPE(CNLSE):
             Propagation step.
         noise : float
             Amplitude of the noise, as a multiple of sqrt(gamma / 4 dX dY).
-            Zero, the default, adds nothing.
+            Zero, the default, adds nothing. Each step adds a Wiener
+            increment: each quadrature has standard deviation
+            ``noise * sqrt(gamma / (4 dX dY)) * sqrt(dt)``, so a component
+            gains ``noise**2 * gamma / (2 dX dY)`` of mean intensity per unit
+            time, whatever the step.
         """
-
-        def draw():
-            """Return one complex noise grid, on the host."""
-            scale = simu._current_delta_z
-            return simu._random(
-                loc=0, scale=scale, size=(simu.NY, simu.NX)
-            ) + 1j * simu._random(loc=0, scale=scale, size=(simu.NY, simu.NX))
-
+        # A Wiener increment's variance, not its deviation, grows with dt.
+        increment = np.sqrt(abs(simu._current_delta_z))
         area = 4 * (simu.delta_X * simu.delta_Y)
         # Not A.dtype: MLX names its own dtypes and numpy cannot interpret
         # them, and handing a complex128 draw to a complex64 field is how the
         # noise arrives scaled by whatever the reinterpretation makes of it.
         dtype = simu._field_dtype(A)
         for component, gamma in ((0, simu.gamma), (1, simu.gamma2)):
-            delta = (noise * np.sqrt(gamma / area) * draw()).astype(dtype)
+            draw = simu._complex_noise(increment)
+            delta = (noise * np.sqrt(gamma / area) * draw).astype(dtype)
             # Read, add, write back, rather than `A[..., c, :, :] += delta`.
             # pyopencl accepts the in-place form on a slice and silently
             # discards it -- no exception, and the field comes out exactly as
@@ -194,6 +242,23 @@ class DDGPE(CNLSE):
             A[..., component, :, :] = A[
                 ..., component, :, :
             ] + simu._backend.from_numpy(delta)
+
+    def _complex_noise(self, scale: float) -> Any:
+        """Return one grid of complex Gaussian noise.
+
+        Parameters
+        ----------
+        scale : float
+            Standard deviation of the real part, and of the imaginary part.
+
+        Returns
+        -------
+        Any
+            An (NY, NX) grid from the solver's generator.
+        """
+        shape = (self.NY, self.NX)
+        real = self._random(loc=0, scale=scale, size=shape)
+        return real + 1j * self._random(loc=0, scale=scale, size=shape)
 
     @staticmethod
     def laser_excitation(
@@ -226,11 +291,15 @@ class DDGPE(CNLSE):
         F_pump_r : np.ndarray
             The spatial profile of the pump field.
         F_pump_t : np.ndarray
-            The temporal profile of the pump field.
+            The temporal profile of the pump field: ``F_pump_t[j]`` is the
+            drive during ``[j dt, (j + 1) dt)``, ``dt`` the step out_field was
+            asked for (its default if None), before any cap. Each step takes
+            the sample at its midpoint; a profile that ends first raises
+            ValueError.
         F_probe_r : np.ndarray
             The spatial profile of the probe field.
         F_probe_t : np.ndarray
-            The temporal profile of the probe field.
+            The temporal profile of the probe field, sampled as F_pump_t.
         """
         # Read, subtract, write back, and one profile at a time so that the
         # arithmetic is the two subtractions it always was.
@@ -242,23 +311,30 @@ class DDGPE(CNLSE):
         # first step -- subtracting a pump of exactly zero still zeroed it --
         # and the exciton then drifted away through the Rabi coupling.
         dtype = simu._field_dtype(A)
+        dt = simu._current_delta_z
         for profile_r, profile_t in ((F_pump_r, F_pump_t), (F_probe_r, F_probe_t)):
-            delta = profile_r * profile_t[i] * simu._current_delta_z * 1j
+            amplitude = _drive_sample(profile_t, simu, t, i)
+            delta = profile_r * amplitude * dt * 1j
             if isinstance(delta, np.ndarray):
                 delta = simu._backend.from_numpy(delta.astype(dtype))
             A[..., 1, :, :] = A[..., 1, :, :] - delta
 
     def _step_constants(self) -> dict[str, Any]:
-        """Override the couplings, which DDGPE gives the kernels unconverted.
+        """Override the constants, which DDGPE gives the kernels unconverted.
 
-        CNLSE scales them by ``k / 2 * c * epsilon_0``, and DDGPE's ``k`` comes
-        from a wavelength it supplies only to satisfy the base constructor, so
-        that conversion would inflate the interaction rate by ~1e26.
+        CNLSE scales the couplings by ``k / 2 * c * epsilon_0``, the potential
+        by ``k / 2`` and the saturation by ``2 / (epsilon_0 * c)``. DDGPE's
+        ``k`` comes from a wavelength it supplies only to satisfy the base
+        constructor, so that conversion would inflate the interaction rate by
+        ~1e26. The cavity loss is ``gamma2``, not CNLSE's ``alpha2``.
         """
         return {
             **super()._step_constants(),
-            "_gamma_half": self.gamma / 2,
-            "_gamma2_half": self.gamma2 / 2,
+            "_alpha2_half": self.gamma2 / 2,
+            "_Isat_conv": self.I_sat,
+            "_Isat_conv2": self.I_sat2,
+            "_k_half": POTENTIAL_SCALE,
+            "_k2_half": POTENTIAL_SCALE,
             "_g11": self.n2,
             # Both components are the same field at the same energy scale here,
             # so the two cross constants CNLSE splits by k coincide.
@@ -266,12 +342,6 @@ class DDGPE(CNLSE):
             "_g21": self.n12,
             "_g22": self.g2,
         }
-
-    def _precompute_step_constants(
-        self, V: np.ndarray | None, field_dtype: np.dtype = np.complex64
-    ) -> None:
-        """Pre-compute constants for DDGPE propagation steps."""
-        super()._precompute_step_constants(V, field_dtype)
 
     def _propagator_cache_key(self, dtype: np.dtype, delta_z: float) -> tuple:
         """Return cache key for DDGPE propagator."""
@@ -326,190 +396,39 @@ class DDGPE(CNLSE):
         )
         return np.maximum(D_exc, D_cav)
 
-    def _prepare_output_array(self, E_in: np.ndarray, normalize: bool) -> np.ndarray:
-        """Prepare the output array depending on __BACKEND__.
-
-        Parameters
-        ----------
-        E_in : np.ndarray
-            Input array.
-        normalize : bool
-            Normalize the field to the total power.
-
-        Returns
-        -------
-        np.ndarray
-            Output array.
-        """
-        A_sq = self._backend.allocate_real_field(E_in.shape, E_in.real.dtype)
-        A = self._backend.from_numpy(E_in)
-        if normalize:
-            pass
-        return A, A_sq
-
     # Its step drives the cavity and adds noise, so it is not a product of
     # the same two operators taken in halves.
     _lie_step_is_strang_body = False
 
-    def split_step(
+    # The step out_field was asked for, which the drive profiles are sampled
+    # by; None outside out_field.
+    _drive_step: float | complex | None = None
+
+    def _default_delta_z(
         self,
-        A: np.ndarray,
-        A_sq: np.ndarray,
-        V: np.ndarray,
-        propagator: np.ndarray,
-        plans: list,
-        delta_z: float,
-        splitting: str = "lie",
-    ) -> np.ndarray:
-        """Split step function for one propagation step.
+        A: np.ndarray | None = None,
+        method: str = "split_step",
+        z: float | None = None,
+    ) -> float:
+        """Return the solver's default step, kept as the drive's sampling step.
 
         Parameters
         ----------
-        A : np.ndarray
-            Fields to propagate of shape (2, NY, NX).
-        A_sq : np.ndarray
-            Squared modulus of the fields.
-        V : np.ndarray
-            Potential field (can be None).
-        propagator : np.ndarray
-            Propagator matrix for both fields
-            [propagator1, propagator2].
-        plans : list
-            List of FFT plan objects: one plan used in both directions on
-            the GPU backends, and the axes to transform over on CPU.
-        delta_z : float
-            Step to take. Must match the propagator, which was built
-            from it.
-        splitting : str, optional
-            Single or double application of the nonlinear
-            propagation step. Defaults to "lie".
+        A : np.ndarray, optional
+            Field, as for the parent.
+        method : str, optional
+            Integration method, as for the parent.
+        z : float, optional
+            Total time, as for the parent.
 
         Returns
         -------
-        np.ndarray
-            The propagated field.
+        float
+            The parent's default step.
         """
-        # Use pre-computed constants with fallbacks
-        gamma_half = self._constant("_gamma_half")
-        gamma2_half = self._constant("_gamma2_half")
-        kernels = self._backend.kernels
-
-        A1, A2 = self._take_components(A)
-
-        # First half-step (double precision only)
-        if splitting == "strang":
-            A_sq, A_sq_1, A_sq_2 = self._compute_A_sq_components(A, A_sq)
-            if V is None:
-                A1 = kernels.nl_prop_without_V_c(
-                    A1,
-                    A_sq_1,
-                    A_sq_2,
-                    delta_z / 2,
-                    gamma_half,
-                    self.n2,
-                    self.n12,
-                    self.I_sat,
-                    self.I_sat2,
-                )
-                A2 = kernels.nl_prop_without_V_c(
-                    A2,
-                    A_sq_2,
-                    A_sq_1,
-                    delta_z / 2,
-                    gamma2_half,
-                    self.g2,
-                    self.n12,
-                    self.I_sat,
-                    self.I_sat2,
-                )
-            else:
-                A1 = kernels.nl_prop_c(
-                    A1,
-                    A_sq_1,
-                    A_sq_2,
-                    delta_z / 2,
-                    gamma_half,
-                    V,
-                    self.n2,
-                    self.n12,
-                    self.I_sat,
-                    self.I_sat2,
-                )
-                A2 = kernels.nl_prop_c(
-                    A2,
-                    A_sq_2,
-                    A_sq_1,
-                    delta_z / 2,
-                    gamma2_half,
-                    V,
-                    self.g2,
-                    self.n12,
-                    self.I_sat,
-                    self.I_sat2,
-                )
-            self._set_components(A, A1, A2)
-
-        # Linear propagation in Fourier domain
-        A = self._apply_linear_step(A, propagator, plans)
-
-        # Second half-step (always)
-        A1, A2 = self._take_components(A)
-        A_sq, A_sq_1, A_sq_2 = self._compute_A_sq_components(A, A_sq)
-
-        dz_step = delta_z / 2 if splitting == "strang" else delta_z
-        if V is None:
-            A1 = kernels.nl_prop_without_V_c(
-                A1,
-                A_sq_1,
-                A_sq_2,
-                dz_step,
-                gamma_half,
-                self.n2,
-                self.n12,
-                self.I_sat,
-                self.I_sat2,
-            )
-            A2 = kernels.nl_prop_without_V_c(
-                A2,
-                A_sq_2,
-                A_sq_1,
-                dz_step,
-                gamma2_half,
-                self.g2,
-                self.n12,
-                self.I_sat,
-                self.I_sat2,
-            )
-        else:
-            A1 = kernels.nl_prop_c(
-                A1,
-                A_sq_1,
-                A_sq_2,
-                dz_step,
-                gamma_half,
-                V,
-                self.n2,
-                self.n12,
-                self.I_sat,
-                self.I_sat2,
-            )
-            A2 = kernels.nl_prop_c(
-                A2,
-                A_sq_2,
-                A_sq_1,
-                dz_step,
-                gamma2_half,
-                V,
-                self.g2,
-                self.n12,
-                self.I_sat,
-                self.I_sat2,
-            )
-        if splitting == "lie" and self.omega is not None:
-            A1, A2 = kernels.rabi_coupling(A1, A2, delta_z, self.omega / 2)
-
-        self._set_components(A, A1, A2)
-        return A
+        delta_z = super()._default_delta_z(A, method, z)
+        self._drive_step = delta_z
+        return delta_z
 
     def out_field(
         self,
@@ -559,22 +478,29 @@ class DDGPE(CNLSE):
         np.ndarray
             Propagated field.
         """
-        if callback is None:
-            callback = []
-        elif callable(callback):
-            callback = [callback]
-        if laser_excitation is None:
-            callback.insert(0, self.laser_excitation)
-        else:
-            callback.insert(0, laser_excitation)
-        return super().out_field(
-            E_in=E_in,
-            z=t,
-            delta_z=delta_z,
-            plot=plot,
-            splitting=splitting,
-            verbose=verbose,
-            normalize=False,
-            callback=callback,
-            callback_args=callback_args,
+        excitation = (
+            self.laser_excitation if laser_excitation is None else laser_excitation
         )
+        # A new list, so the caller's own can be passed again unchanged.
+        if callback is None:
+            callbacks = [excitation]
+        elif callable(callback):
+            callbacks = [excitation, callback]
+        else:
+            callbacks = [excitation, *callback]
+        # None asks for the default, which _default_delta_z records instead.
+        self._drive_step = delta_z
+        try:
+            return super().out_field(
+                E_in=E_in,
+                z=t,
+                delta_z=delta_z,
+                plot=plot,
+                splitting=splitting,
+                verbose=verbose,
+                normalize=False,
+                callback=callbacks,
+                callback_args=callback_args,
+            )
+        finally:
+            self._drive_step = None

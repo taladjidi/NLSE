@@ -29,9 +29,6 @@ from .step_size import (
     StepSize,
 )
 
-if __CUPY_AVAILABLE__:
-    pass  # type: ignore[import-not-found]
-
 # How many propagators to keep. Built where the field is, this costs one
 # exponential over the grid -- 0.059 ms at 512x512 on CUPY against 9.7 ms for
 # the host round trip it replaces -- so there is little left to cache and every
@@ -1970,8 +1967,8 @@ class NLSE(StepSize):
             return False
         if self.nl_length > 0:
             return False
-        # A Rabi coupling rides on the Lie step alone, so the body would
-        # apply it and the Strang step it stands in for would not.
+        # A Rabi coupling wraps each Strang step in two half rotations, which
+        # a Lie body between two nonlinear half steps does not reproduce.
         if getattr(self, "omega", None) is not None:
             return False
         V_scaled = self._as_host_array(self._V_scaled)
