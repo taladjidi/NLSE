@@ -291,6 +291,29 @@ CUDA box):
   `docs/optimization-log.md` first: nothing it lists as deployed or rejected
   comes back.
 
+Tools, asked 2026-11-26 in these words: "for profiling use CUDA tools (ncu,
+nsys etc ...), whatever metal alternative exists and on the CPU I want
+extensive profiling, ideally not sampling, but whatever is the most accurate."
+
+- CUDA (CuPy): `nsys` for the timeline and `ncu` per kernel, not wall-clock
+  timers around a synchronize; timers only as a cross-check. Both are
+  installed on the box (`/usr/local/cuda/bin`, nsys 2026.1.3). The repo
+  already has `benchmarks/trace_solvers.py --nvtx` and
+  `benchmarks/nsys_summary.py`.
+- OpenCL on that box: not checked whether `nsys` or `ncu` see its kernels.
+  If they do not, say so and use OpenCL's own event profiling.
+- Metal (MLX): the Mac has `xctrace` 27.0 with the templates "Metal System
+  Trace", "CPU Counters", "Allocations", "System Trace" and "Time Profiler",
+  and `powermetrics`. None was tried on MLX here: find out which gives GPU
+  time per kernel, and say what it cannot give.
+- CPU: instrumented rather than sampled, and whichever is the more accurate.
+  Installed: `xctrace` "CPU Counters", `dtrace` and `sample` on the Mac;
+  `perf` on the box (`perf_event_paranoid` is 2), no `valgrind`. My reading,
+  not the user's words: a counter around every kernel call, with hardware
+  counters for cache misses and traffic, the cost of the instrumentation
+  measured against the untraced step, and a sampler only to cross-check.
+- Every table names its tool and its command line.
+
 State:
 
 - CUDA box: a profiling run was under way when this was written. Its tables,
