@@ -3,9 +3,10 @@
 ## State (2026-11-26)
 
 A full audit of the repo was done at commit `fa7aa59` (v4.1.0 plus six commits).
-The fixes are specified in eight packages and are being applied in one git
-worktree per package. Nothing is committed on the fix branches yet and `main`
-holds no fix code.
+The fixes are specified in eight packages, each applied in its own git
+worktree. Every worktree holds its whole patch. p7 and p4 are reviewed and
+committed on their branches; the other six are uncommitted, with a code
+review running on each. Nothing is merged: `main` holds no fix code.
 
 Baseline at `38a8704`, Apple M3 Max, arm64, Python 3.13.13, CPU and MLX
 backends: `pytest tests/ -q -m "not benchmark"` gives 974 passed, 123 skipped,
@@ -34,39 +35,48 @@ finish it, or apply the patch.
 
 | Package | Branch | Covers | State when this was written |
 |---|---|---|---|
-| p1a | `fix/stepping-loop` | medium ends exactly at `L`; backward runs; complex `delta_z` raises; callback lists; CuPy stream race | implementers running |
-| p1b | `fix/solver-run-state` | state left after a run or a backend switch; caller's arrays restored; asserts become ValueError/TypeError; dispersion built once; `origin="lower"` | implementers running |
-| p2 | `fix/coupled-solvers` | Rabi coupling in strang, yoshida, RK4; DDGPE uses CNLSE's `split_step`; noise, pump sampling, potential sign | implementers running |
-| p3 | `fix/gpe-units` | GPE takes `V` and `g` as rates in rad/s with the GPE sign; `adapt_delta_z` on GPE; docs and example | implementers running |
-| p4 | `fix/nonlocal-response` | non-local response applied in Fourier space; `Backend.convolution` and `nl_profile` removed | applied, equal to the patch; code review running |
-| p5 | `refactor/kernels-cleanup` | unused CuPy and vortex kernels removed; MLX scalar cache bounded; CUDA built without `--use_fast_math` | spec under review; worktree empty |
-| p6 | `test/closed-forms-and-cache` | `evaluate_delta_n`; benchmark cache isolation; tests that could not fail; NLSE_3d dispersion sign | implementers running |
-| p7 | `docs/packaging-ci-cleanup` | README, docs, sdist, `uv.lock`, CI, examples, unused files | applied, equal to the patch; lint and 974 tests pass; code review running |
+| p1a | `fix/stepping-loop` | medium ends exactly at `L`; backward runs; complex `delta_z` raises; callback lists; CuPy stream race | applied, equal to the patch; code review running |
+| p1b | `fix/solver-run-state` | state left after a run or a backend switch; caller's arrays restored; asserts become ValueError/TypeError; dispersion built once; `origin="lower"` | applied, equal to the patch; code review running |
+| p2 | `fix/coupled-solvers` | Rabi coupling in strang, yoshida, RK4; DDGPE uses CNLSE's `split_step`; noise, pump sampling, potential sign | applied, equal to the patch; code review running |
+| p3 | `fix/gpe-units` | GPE takes `V` and `g` as rates in rad/s with the GPE sign; `adapt_delta_z` on GPE; docs and example | applied, equal to the patch; code review running |
+| p4 | `fix/nonlocal-response` | non-local response applied in Fourier space; `Backend.convolution` and `nl_profile` removed | reviewed; one test added for the coupled RK4 path (the review's MAJOR); 1005 passed; committed `c50a72c`; `p4.patch` refreshed |
+| p5 | `refactor/kernels-cleanup` | unused CuPy and vortex kernels removed; MLX scalar cache bounded; CUDA built without `--use_fast_math` | spec reviewed (GO), its six MINOR notes applied to `p5.md` and `p5.patch`; applied, equal to the patch; code review running |
+| p6 | `test/closed-forms-and-cache` | `evaluate_delta_n`; benchmark cache isolation; tests that could not fail; NLSE_3d dispersion sign | applied, equal to the patch; code review running |
+| p7 | `docs/packaging-ci-cleanup` | README, docs, sdist, `uv.lock`, CI, examples, unused files | reviewed (PASS); 974 passed, Sphinx `-W` clean; committed in five commits, `78e5ee9` to `08017de` |
 
 `fix/solver-state` is an older, merged branch: p1b uses `fix/solver-run-state`.
 
 ### Next steps
 
-1. Per package: its final check (the last section of each spec gives the
-   commands and counts), a reviewer on the worktree diff, fixes for CRITICAL
-   and MAJOR findings, then one commit on the branch. Breaking changes carry
-   `!` and a `BREAKING CHANGE:` footer: p2, p3, p4, p5 (removed kernels) and
-   p6 (NLSE_3d sign).
-2. Merge one by one with `--no-ff`. Expected conflicts:
-   - `README.md:420`: keep p7's link `(NLSE/solvers/gpe.py)` and p3's units cell.
-   - `nlse.py:224-246` (p1b, p4): the block becomes the two lines
-     `self._forget_device_state()` and `self.nl_length = nl_length`.
-   - `nlse_3d.py` (p4, p6, p1b); `ci.yml` (p6, p7); `step_size.py` (p1a, p1b);
-     `ddgpe.py` and `cnlse.py` (p2, p4, p1a, p1b); `callbacks.py` (p6, p1a, p3);
-     `tests/solvers/test_solver_state.py` (p1a, p4, p6);
-     `cupy_kernels.py` and `cupy_backend.py` (p5, p1a, p4).
+1. Per uncommitted package: read its review, fix CRITICAL and MAJOR findings
+   (MINOR ones go in the final report), run its final check (the last
+   section of each spec gives the commands and counts), commit on the
+   branch. Breaking changes carry `!` and a `BREAKING CHANGE:` footer: p2,
+   p3, p5 (removed kernels: `kernels_cpu.vortex`, `kernels_gpu.vortex_cp`
+   and the CuPy fallbacks `rabi_coupling`, `apply_propagator`, `square_mod`,
+   `rk4_axpy`, `rk4_accumulate` with their `_fused` twins) and p6 (NLSE_3d
+   sign). A commit that stages a `.yml` file needs the plain PATH (the
+   `yaml-parses` hook needs PyYAML, which `.venv` lacks); Python changes
+   need `.venv/bin` first on PATH.
+2. Merge one by one with `--no-ff`, in the order p7, p6, p3, p5, p1b, p1a,
+   p4, p2. A trial merge of the eight patches in that order gave two
+   conflicts only, and the merged tree passed on the Mac (ruff, format and
+   mypy clean; 1314 passed, 123 skipped with `tests/test_packaging.py`
+   left out):
+   - `README.md` (p3, p7): keep p7's `NLSE/solvers/*.py` links; the GPE row's
+     notes cell is p3's, ``SI units: masses in kg, times in s, `V` and `g`
+     as energies over ħ (rad/s)``.
+   - `NLSE/solvers/nlse.py`, constructor (p4, p1b): the block becomes the two
+     lines `self._forget_device_state()` and `self.nl_length = nl_length`.
 3. After the merges, by hand:
-   - `tests/physics/test_closed_forms.py`: no test may still read
-     `Backend.convolution` or `nl_profile` (p4.md, step O3).
-   - `cupy_backend.py`: the `kernels` docstring drops `--use_fast_math`
-     (p5.md, Brief 5).
+   - `tests/physics/test_closed_forms.py`: the comment above the non-local
+     case becomes "Two cells of that grid. A plane wave is its own local
+     average, so the answer does not change: only the kernels that compute
+     it do."
+   - `NLSE/backends/cupy_backend.py`: the `kernels` docstring becomes
+     `"""Return CUDA C kernels (with broadcasting fallback)."""`.
    - p2's `tests/solvers/test_potential_sign.py` cites `--use_fast_math` for
-     `PHASE_ATOL`: p5 removes the flag, so re-measure and reword the comment.
+     `PHASE_ATOL`: p5 removes the flag, so re-measure on CUDA and reword.
    - The untracked local `CLAUDE.md`: `p7_claude.patch` (lines 55 and 75) and
      the non-local line 74 from p4.md, step O1.
 4. Full suite on the Mac (CPU, MLX), under the conda Python for OpenCL (the two
@@ -76,6 +86,21 @@ finish it, or apply the patch.
    base, probably the stream race.
 5. Timings before and after into `docs/optimization-log.md`, a CHANGELOG entry
    from the "Changelog lines" section of each spec, this file, then push.
+
+### Review findings left as they are (MINOR, for the final report)
+
+- p7: `examples/benchmarks.py:187`, the self-check cannot see a wrong
+  diffraction sign; `.github/workflows/ci.yml:287-296`, the link check only
+  warns, so its comment oversells it; `docs/literature-examples.md` still
+  opens with "None should be written from scratch".
+- p4: `nl_length=np.inf` is accepted and gives NaN (the old window check
+  raised); the smoothed intensity can dip to about -4e-7 of its maximum,
+  where the zero-padded kernel could not; comments at `nlse.py:855`,
+  `cnlse.py:369`, `examples/nonlocality.py:5` and two test names in
+  `tests/integration/test_broadcasting.py` still say "convolve"; no test
+  changes `nl_length` after construction, runs in double precision, or
+  covers GPE and DDGPE; `_multiply_in_fourier_space` takes a positional
+  bool. OpenCL was read, not run.
 
 ### Design decisions
 
