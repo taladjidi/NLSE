@@ -1,8 +1,9 @@
 """Example scripts must write through ``examples/_output.output_path``.
 
 A bare filename lands in whatever directory the script was run from, which
-is what these check. Whether the scripts still *run* is the Examples job in
-CI, which executes every one of them bar the two benchmark sweeps.
+is what these check. Whether the scripts still *run* is the docs build in CI:
+sphinx-gallery executes every one of them bar ``juliaGPE_vs_NLSE.py`` and
+``profile_cupy.py`` (``filename_pattern`` in ``docs/conf.py``).
 """
 
 import ast

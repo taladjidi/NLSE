@@ -79,6 +79,8 @@ for i, size in enumerate(sizes):
                 PRECISION_COMPLEX
             )
         for m, method in enumerate(METHODS):
+            # Untimed: the first call compiles the kernels and plans the transforms.
+            simu.out_field(E_0.copy(), L, verbose=False, method=method, delta_z=1e-4)
             for k in range(N_avg):
                 t0 = time.perf_counter()
                 simu.out_field(

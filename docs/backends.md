@@ -48,7 +48,7 @@ Use `backend="auto"` to benchmark all available backends and select the fastest 
 simu = NLSE(..., backend="auto")
 ```
 
-Benchmark results are cached to disk (in `NLSE/.cache/fft_benchmark.json`) so subsequent runs reuse them.
+Benchmark results are cached to disk, in `fft_benchmark.json`, so subsequent runs reuse them. The file goes in `NLSE_CACHE_DIR` if it is set, and otherwise in the platform's cache directory: `~/Library/Caches/NLSE` on macOS, `$XDG_CACHE_HOME/NLSE` (by default `~/.cache/NLSE`) on Linux, `%LOCALAPPDATA%\NLSE\Cache` on Windows.
 
 ### Switching at runtime
 
@@ -65,6 +65,7 @@ simu.backend = "CL"
 | `NLSE_BACKEND` | Force a specific backend (e.g., `"CPU"`, `"CUPY"`, `"CL"`, `"MLX"`) |
 | `NLSE_QUIET` | Suppress backend auto-selection messages when set |
 | `NLSE_FORCE_BENCHMARK` | Re-run FFT benchmarks even if cache exists |
+| `NLSE_CACHE_DIR` | Directory for the benchmark cache, instead of the platform's cache directory |
 | `NLSE_FUSE_PROPAGATOR` | Set to `0` to stop CUPY applying the propagator from a cuFFT callback |
 
 `NLSE_FUSE_PROPAGATOR` is an escape hatch rather than a tuning knob. On CUPY

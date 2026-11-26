@@ -24,21 +24,23 @@ this repository whether or not you have the site open.
 | choose a backend, or debug one | [GPU computing](#gpu-computing) | [Backends](docs/backends.md) |
 | watch or steer a run | [Callbacks](#callbacks) | [Callbacks](docs/callbacks.md) |
 | copy a working script | [`examples/`](examples/) | [Examples Gallery](https://taladjidi.github.io/NLSE/auto_examples/) |
-| look up a class or method | — | [API Reference](docs/reference/) |
+| look up a class or method | — | [API Reference](https://taladjidi.github.io/NLSE/api/) |
 | know why the code is shaped this way | — | [Optimization log](docs/optimization-log.md) |
 | contribute | [Contributing](#contributing-and-issues) | [Contributing](docs/contributing.md) |
 
 To read the docs as a site rather than as files:
 
 ```bash
-uv pip install ".[docs]"
-mkdocs serve -f mkdocs-documentation/mkdocs.yml
+uv pip install -e ".[docs]"
+python -m sphinx -b html docs docs/_build/html -W --keep-going
+python -m http.server -d docs/_build/html      # then open http://localhost:8000
 ```
 
-`mkdocs build --strict` is what checks the links, and CI runs it on every push;
-a push to `main` publishes the result. The build leaves warnings about unclosed
-`Div`s, which come from nbconvert rendering the tutorial notebook and are not
-mkdocs's own.
+CI runs the same build on every push, and a push to `main` publishes it. `-W`
+makes a warning fail the build: a broken cross-reference, or a page missing
+from a toctree. The build also runs every script in `examples/` but two for
+the gallery, so it takes minutes rather than seconds, and the vortex animation
+needs `ffmpeg`. More in [Contributing](docs/contributing.md#building-the-documentation).
 
 ## Installation
 
@@ -64,7 +66,7 @@ uv pip install ".[gpu]"      # CuPy, for Nvidia GPUs
 uv pip install ".[opencl]"   # PyOpenCL + pyvkfft, for OpenCL devices
 uv pip install -e ".[dev]"   # pytest, ruff, mypy
 uv pip install ".[mlx]"      # MLX, for Apple silicon
-uv pip install ".[docs]"     # mkdocs, to build the documentation
+uv pip install ".[docs]"     # Sphinx, to build the documentation
 ```
 
 ## Basic usage
@@ -367,8 +369,10 @@ gone and it dominates — on a self-focusing beam at $256^2$ it reached 1.08e-09
 in 31 ms where `"strang"` needed 1202 ms for the same accuracy. The solver
 warns if you ask for it in single precision, or ask for the others in double.
 
-The backwards sub-step also means `"yoshida"` is wrong for a lossy medium,
-where running a step backwards amplifies rather than decays. That warns too.
+In a lossy medium the backwards sub-step amplifies instead of decaying. The
+result is still right and still fourth order — with an unsaturated loss the
+power follows Beer's law — but the field in between is not physical and may
+overflow if the loss per step is large. That warns too.
 
 #### The propagation step
 
@@ -412,13 +416,13 @@ alongside what it costs and what it supports:
 
 | Class | Solves | Notes |
 |---|---|---|
-| [`NLSE`](docs/reference/nlse.md) | 2D paraxial propagation | the base every other class specialises |
-| [`NLSE_1d`](docs/reference/nlse_1d.md) | the same in 1D | a specialization for speed, same features |
-| [`NLSE_3d`](docs/reference/nlse_3d.md) | full 3D+1 with dispersion | space complexity goes as $N^3$; be careful |
-| [`CNLSE`](docs/reference/cnlse.md) | two coupled fields | back-reaction of a fluid on a defect, two-component problems |
-| [`CNLSE_1d`](docs/reference/cnlse_1d.md) | the same in 1D | |
-| [`GPE`](docs/reference/gpe.md) | 2D Gross–Pitaevskii | atomic units: masses in kg, times in s |
-| [`DDGPE`](docs/reference/ddgpe.md) | driven-dissipative coupled fields | built for exciton polaritons in microcavities |
+| [`NLSE`](NLSE/solvers/nlse.py) | 2D paraxial propagation | the base every other class specialises |
+| [`NLSE_1d`](NLSE/solvers/nlse_1d.py) | the same in 1D | a specialization for speed, same features |
+| [`NLSE_3d`](NLSE/solvers/nlse_3d.py) | full 3D+1 with dispersion | space complexity goes as $N^3$; be careful |
+| [`CNLSE`](NLSE/solvers/cnlse.py) | two coupled fields | back-reaction of a fluid on a defect, two-component problems |
+| [`CNLSE_1d`](NLSE/solvers/cnlse_1d.py) | the same in 1D | |
+| [`GPE`](NLSE/solvers/gpe.py) | 2D Gross–Pitaevskii | atomic units: masses in kg, times in s |
+| [`DDGPE`](NLSE/solvers/ddgpe.py) | driven-dissipative coupled fields | built for exciton polaritons in microcavities |
 
 Terms are turned off by leaving their parameter `None`, and the solver then
 skips the corresponding evolution term rather than multiplying by zero.

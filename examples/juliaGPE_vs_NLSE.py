@@ -3,15 +3,27 @@ Against FourierGPE.jl
 =====================
 
 The same condensate solved here and in Julia, for comparison.
+
+It plots what two other runs write to ``examples/output``:
+``vortex_precession_benchmark.py`` for every backend it found, and
+``vortex_precession.jl`` for FourierGPE.jl.
 """
 
-import pathlib
 import sys
 
 import matplotlib.pyplot as plt
 import numpy as np
 from _output import output_path
 from cycler import cycler
+
+# What the two benchmark runs write, under examples/output.
+PYTHON_TIMES = "python_vortex_precession_{}_times.npy"
+PYTHON_SIZES = "python_vortex_precession_{}_sizes.npy"
+JULIA_TIMES = "julia_vortex_precession_times.npy"
+JULIA_SIZES = "julia_vortex_precession_sizes.npy"
+# Every name vortex_precession_benchmark.py can write timings under.
+BACKENDS = ("CPU", "CUPY", "CL", "MLX")
+MARKERS = ("o", "s", "D", "v")
 
 # for plots
 tab_colors = [
@@ -46,79 +58,60 @@ custom_cycler = (
 )
 plt.rc("axes", prop_cycle=custom_cycler)
 
-NEEDED = (
-    "python_vortex_precession_CPU_times.npy",
-    "python_vortex_precession_CPU_sizes.npy",
-    "python_vortex_precession_GPU_times.npy",
-    "python_vortex_precession_GPU_sizes.npy",
-    "julia_vortex_precession_times.npy",
-    "julia_vortex_precession_sizes.npy",
-)
-_missing = [name for name in NEEDED if not pathlib.Path(name).exists()]
-if _missing:
+
+def plot_timings(ax, sizes, times, label, marker):
+    """Draw the mean time per grid size, with the spread of the repeats.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        Axes to draw on.
+    sizes : np.ndarray
+        Grid side lengths, in points.
+    times : np.ndarray
+        Times in s, one row per size and one column per repeat.
+    label : str
+        Legend entry.
+    marker : str
+        Matplotlib marker.
+    """
+    mean = np.mean(times, axis=-1)
+    ax.errorbar(
+        np.log2(sizes),
+        mean,
+        yerr=[mean - np.min(times, axis=-1), np.max(times, axis=-1) - mean],
+        label=label,
+        marker=marker,
+        capsize=4,
+    )
+
+
+found = [b for b in BACKENDS if output_path(PYTHON_TIMES.format(b)).exists()]
+if not found or not output_path(JULIA_TIMES).exists():
     print(
-        "This plots timings that two other runs produce; "
-        f"{len(_missing)} of {len(NEEDED)} files are not here yet "
-        f"(first: {_missing[0]}).\n"
+        "This plots timings that two other runs produce, and they are not in "
+        f"{output_path(JULIA_TIMES).parent} yet.\n"
         "Run examples/vortex_precession_benchmark.py for the Python side, and "
-        "the Julia benchmark for the other."
+        "examples/vortex_precession.jl for the Julia one."
     )
     sys.exit(0)
 
-ts_py_CPU = np.load("python_vortex_precession_CPU_times.npy")
-sizes_py_CPU = np.load("python_vortex_precession_CPU_sizes.npy")
-ts_py_GPU = np.load("python_vortex_precession_GPU_times.npy")
-sizes_py_GPU = np.load("python_vortex_precession_GPU_sizes.npy")
-ts_jl_CPU = np.load("julia_vortex_precession_times.npy")
-sizes_jl_CPU = np.load("julia_vortex_precession_sizes.npy")
 fig, ax = plt.subplots()
-err_low = np.mean(ts_py_CPU, axis=-1) - np.min(ts_py_CPU, axis=-1)
-err_high = np.max(ts_py_CPU, axis=-1) - np.mean(ts_py_CPU, axis=-1)
-ax.errorbar(
-    np.log2(sizes_py_CPU),
-    np.mean(ts_py_CPU, axis=-1),
-    yerr=[err_low, err_high],
-    label="NLSE CPU",
-    marker="o",
-    capsize=4,
-)
-err_low = np.mean(ts_py_GPU, axis=-1) - np.min(ts_py_GPU, axis=-1)
-err_high = np.max(ts_py_GPU, axis=-1) - np.mean(ts_py_GPU, axis=-1)
-ax.errorbar(
-    np.log2(sizes_py_GPU),
-    np.mean(ts_py_GPU, axis=-1),
-    yerr=[err_low, err_high],
-    label="NLSE GPU",
-    marker="s",
-    capsize=4,
-)
-err_low = np.mean(ts_jl_CPU, axis=-1) - np.min(ts_jl_CPU, axis=-1)
-err_high = np.max(ts_jl_CPU, axis=-1) - np.mean(ts_jl_CPU, axis=-1)
-ax.errorbar(
-    np.log2(sizes_jl_CPU),
-    np.mean(ts_jl_CPU, axis=-1),
-    yerr=[err_low, err_high],
-    label="JuliaGPE.jl",
-    marker="^",
-    capsize=4,
-)
-# ax.plot(
-#     sizes_jl_CPU,
-#     np.min(ts_jl_CPU, axis=-1),
-#     label="Julia min",
-#     marker="^",
-# )
-# ax.plot(
-#     sizes_jl_CPU,
-#     np.max(ts_jl_CPU, axis=-1),
-#     label="Julia",
-#     marker="^",
-# )
+for backend, marker in zip(BACKENDS, MARKERS, strict=True):
+    if backend in found:
+        plot_timings(
+            ax,
+            np.load(output_path(PYTHON_SIZES.format(backend))),
+            np.load(output_path(PYTHON_TIMES.format(backend))),
+            f"NLSE {backend}",
+            marker,
+        )
+sizes_jl = np.load(output_path(JULIA_SIZES))
+plot_timings(ax, sizes_jl, np.load(output_path(JULIA_TIMES)), "FourierGPE.jl", "^")
 ax.legend()
 ax.set_xlabel(r"Size of the system $2^N$")
 ax.set_ylabel("Time (s)")
-ax.set_xticks(np.log2(sizes_py_CPU).astype(int))
-
+ax.set_xticks(np.log2(sizes_jl).astype(int))
 ax.set_yscale("log")
 ax.set_title("Vortex precession")
 fig.savefig(output_path("vortex_precession.svg"), dpi=300)

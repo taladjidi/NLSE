@@ -74,5 +74,7 @@ for (i, n) in enumerate(sizes)
      end
      println("Average time to solve : $(mean(ts[i, :])) s (min $(minimum(ts[i, :])) / max $(maximum(ts[i, :])))")
 end
-npzwrite("julia_vortex_precession_times.npy", ts)
-npzwrite("julia_vortex_precession_sizes.npy", sizes)
+# Next to the Python timings, where juliaGPE_vs_NLSE.py reads both.
+outdir = mkpath(joinpath(@__DIR__, "output"))
+npzwrite(joinpath(outdir, "julia_vortex_precession_times.npy"), ts)
+npzwrite(joinpath(outdir, "julia_vortex_precession_sizes.npy"), sizes)
