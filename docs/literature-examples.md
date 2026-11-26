@@ -1,15 +1,14 @@
-# Planned: examples from the literature
+# Examples from the literature
 
-The gallery shows what the solvers *do*. It does not yet show what they are
-*for*, which is the experiments the LKB quantum optics group runs on paraxial
-fluids of light. This is the plan for closing that, one example per result,
-each one a page in the gallery with the figure the script drew.
+The gallery shows what the solvers *do*. These pages are about what they are
+*for*: the experiments the LKB quantum optics group runs on paraxial fluids of
+light, one example per result, each one a page in the gallery with the figure
+the script drew.
 
-Nothing here is implemented, and none of it should be written from scratch.
-There are already scripts for several of these outside the repository, and the
-parameters are in the papers; both are better starting points than anything
-reconstructed from the physics. *What went wrong on the first attempt*, at the
-end, is what reconstructing it costs.
+Four of the five are built; the analogue horizon (§2) is not yet. None should
+be written from scratch: the parameters are in the papers, a better starting
+point than anything reconstructed from the physics. *What went wrong on the
+first attempt*, at the end, is what reconstructing it costs.
 
 The **dimensionless form of the equation** — which is how these problems are
 posed in the group, and the natural way to write an example that is about a
@@ -37,7 +36,7 @@ than a matter of trying:
   wraps round and re-enters the obstacle is not the physics being modelled,
   and it is what turned a first attempt into noise.
 
-## 1. Swimming against the flow — `CNLSE`
+## 1. Swimming against the flow — `CNLSE` — **done**
 
 [Swimming against a superfluid flow: self-propulsion via vortex-antivortex
 shedding in a quantum fluid of light](https://arxiv.org/abs/2512.09028) —
@@ -59,6 +58,8 @@ whole result: a static `V` cannot recoil, so it cannot swim. So
 What the figure should show: the vortex pairs downstream, and the defect's
 position against $z$ going the other way.
 
+Built as `examples/vortex_shedding.py`.
+
 ## 2. An analogue horizon — `DDGPE`
 
 [Polariton fluids as quantum field theory simulators on tailored curved
@@ -78,7 +79,7 @@ medium — see *Open* in the [optimization log](optimization-log.md). DDGPE is
 where that matters most, and an example that leans on it is also a reason to
 fix it.
 
-## 3. Spin and density modes — `CNLSE`
+## 3. Spin and density modes — `CNLSE` — **done**
 
 Spin and density modes in a binary fluid of light — Piekarski, Cherroret,
 Aladjidi, Glorieux, Phys. Rev. Lett. **134**, 223403 (2025).
@@ -90,6 +91,8 @@ Perturb in phase and out of phase, and measure how fast each spreads. This is
 the most *quantitative* of the four — the two speeds have closed forms, so it
 belongs in `tests/physics/` as well as in the gallery, next to the checks that
 are already there.
+
+Built as `examples/spin_and_density_modes.py`.
 
 ## 4. Rayleigh-Taylor fingers — `CNLSE` — **done**
 
@@ -106,7 +109,7 @@ through a light core — which makes the acceleration $Cr_0$ and hands the mode
 number to the circumference. Seven fingers against a predicted 8.2, growing at
 11 m⁻¹ against 16.
 
-## 5. Jones-Roberts solitons — `NLSE`
+## 5. Jones-Roberts solitons — `NLSE` — **done**
 
 [Observation of Jones-Roberts solitons in a paraxial quantum fluid of
 light](https://arxiv.org/abs/2501.08383) — Baker-Rasooli, Aladjidi, Krause,
@@ -116,6 +119,8 @@ Single component, and the easiest to start with: the initial condition is a
 known ansatz and the result is that it propagates without changing shape,
 which is a sharp thing for a figure to show and a sharp thing to assert. Like
 §3, it could be a physics test as much as an example.
+
+Built as `examples/jones_roberts_solitons.py`.
 
 ## What went wrong on the first attempt
 
@@ -134,6 +139,6 @@ mistakes are not specific to that example.
 With 1 and 2 fixed the obstacle behaves — the density at its centre falls to
 0.006 of the mean at Mach 0.3 and fills back to 0.52 at Mach 2.0 — but no
 clean shedding appeared: too short and nothing sheds, longer and the whole box
-goes turbulent. That is where a dedicated session starts: from the existing
-scripts and the published parameters, in the dimensionless variables, rather
-than from reverse-engineered ones.
+goes turbulent. The example now in the gallery, `examples/vortex_shedding.py`,
+dropped the potential altogether: its impurity is the second component of a
+`CNLSE`, in the saturable medium of the paper.

@@ -16,6 +16,18 @@ For development (includes pytest, ruff, mypy, etc.):
 pip install -e ".[dev]"
 ```
 
+## Optional extras
+
+| Extra | Installs | For |
+|---|---|---|
+| `gpu` | `cupy` | the CUPY backend, on NVIDIA GPUs (see below) |
+| `opencl` | `pyopencl`, `pyvkfft`, `mako` | the CL backend |
+| `mlx` | `mlx` | the MLX backend, on Apple silicon |
+| `dev` | `pytest`, `pytest-cov`, `pytest-benchmark`, `ruff`, `mypy`, `pre-commit`, `hatchling` | the tests and the linters |
+| `docs` | `sphinx`, `furo`, `myst-nb`, `sphinx-autoapi`, `sphinx-copybutton`, `sphinx-gallery` | building this documentation |
+
+Combine them in one install: `pip install -e ".[dev,opencl]"`.
+
 ## Requirements
 
 - **Python**: 3.10 or later
@@ -37,6 +49,10 @@ pip install cupy-cuda12x   # for CUDA 12.x
 pip install cupy-cuda11x   # for CUDA 11.x
 ```
 
+The `gpu` extra installs the `cupy` package instead, which PyPI ships as source
+only, so it compiles against the CUDA toolkit on the machine. The prebuilt
+wheels above are faster to install.
+
 See the [CuPy installation guide](https://docs.cupy.dev/en/stable/install.html) for details.
 
 ### OpenCL (Cross-platform GPU)
@@ -44,7 +60,7 @@ See the [CuPy installation guide](https://docs.cupy.dev/en/stable/install.html) 
 For AMD, Intel, or NVIDIA GPUs via OpenCL:
 
 ```bash
-pip install pyopencl
+pip install ".[opencl]"   # pyopencl, pyvkfft and mako
 ```
 
 You also need an OpenCL runtime installed for your GPU. On macOS, OpenCL is available by default.
@@ -54,7 +70,7 @@ You also need an OpenCL runtime installed for your GPU. On macOS, OpenCL is avai
 For Apple Silicon Macs (M1/M2/M3/M4):
 
 ```bash
-pip install mlx
+pip install ".[mlx]"
 ```
 
 MLX provides native GPU acceleration on Apple hardware.
