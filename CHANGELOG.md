@@ -102,6 +102,13 @@ come first.
 ### Changed
 
 - `adapt_delta_z_to_error` is exported from the package.
+- **The CPU complex64 kernels compute in float32.** They ran in double: numba
+  widened the float32 field next to `dz`, `alpha`, `g` and `Isat`, which the
+  solver passes as Python floats. The nonlinear kernels are 1.4x faster on an
+  M3 Max and 1.6 to 2.2x on an AVX2 machine; a whole split step gains 7 to 12%
+  and 3 to 32%. complex128 results are bit-identical. complex64 results move
+  at the 2^-24 level; a lossless step keeps the rounding it had up to the
+  default 0.1 rad per step. Figures in `docs/optimization-log.md`.
 - One-step `out_field` at 2048² (M3 Max): CPU 73 → 47 ms, MLX 70 → 41 ms; the
   dispersion eigenvalues are kept and the normalization writes in place. The
   per-step time is unchanged.

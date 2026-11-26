@@ -777,6 +777,129 @@ to matter. Note also that `backends/cpu.py` allocates with plain `np.zeros`
 since pyFFTW's aligned allocator went away with `b69a42e`; restoring alignment
 is one line if it ever matters.
 
+**complex64 kernels compute in float32 — deployed** (2026-11-26). numba widens
+a float32 that meets a Python float, a float64 argument or an int literal. The
+solver passes `dz`, `alpha`, `g` and `Isat` as Python floats and the polynomial
+constants were float64, so every nonlinear and RK4 right-hand-side kernel ran
+its complex64 loop in double, on half as many lanes, and converted back at the
+store. The scalars are now cast to the field's real type at kernel entry, the
+shared constants are exact in float32, and a float32 angle or exponent gets its
+own polynomial ([cephes `sinf.c`](https://github.com/jeremybarnes/cephes/blob/60f27df395b8322c2da22c83751a2366b82d50d1/single/sinf.c#L108-L122),
+[`expf.c`](https://github.com/jeremybarnes/cephes/blob/60f27df395b8322c2da22c83751a2366b82d50d1/single/expf.c#L70-L122)),
+picked by `numba.extending.overload` on the type. complex128 keeps its code:
+bit-identical per kernel and through nine solver runs.
+
+`vec_bias.py 1024 40` (Mac) and `1024 30` (box), 1024², min over rounds × 5
+calls, `main`'s kernels and the branch's interleaved in one process. Mac: M3
+Max, 16 threads, numba 0.66.0. Box: Ryzen 3 4100, 8 threads, AVX2, numba 0.68.1.
+
+| kernel | Mac, `main` → branch | box, `main` → branch |
+|---|---|---|
+| `_square_mod_nl_prop`, lossless | 0.423 → 0.298 ms (1.42x) | 0.942 → 0.585 ms (1.61x) |
+| `_square_mod_nl_prop`, lossy | 0.694 → 0.496 (1.40x) | 1.536 → 0.696 (2.21x) |
+| `_square_mod_nl_prop_v` | 0.713 → 0.496 (1.44x) | 1.599 → 0.735 (2.18x) |
+| `_square_mod_rk4_nl_rhs` | 0.184 → 0.126 (1.45x) | 0.846 → 0.848 (1.00x) |
+| `rk4_axpy` | 0.153 → 0.134 (1.14x) | 0.855 → 0.865 (0.99x) |
+| `rk4_accumulate` | 0.132 → 0.118 (1.12x) | 0.850 → 0.865 (0.98x) |
+| `_rabi_coupling` | 0.182 → 0.180 (1.01x) | 1.324 → 1.324 (1.00x) |
+| complex128 `_square_mod_nl_prop` | 0.429 → 0.427 (1.01x) | 1.344 → 1.319 (1.02x) |
+| complex128 `_square_mod_nl_prop_v` | 0.868 → 0.864 (1.00x) | 1.684 → 1.697 (0.99x) |
+
+The RK4 kernels are traffic on the four-core box and do not move there. A whole
+lie step (`step_cost.py 30`: both transforms, the propagator multiply and the
+fused kernel) gains less, since the transforms are most of it:
+
+| size, case | Mac, `main` → branch | box, `main` → branch |
+|---|---|---|
+| 512², lossless | 0.617 → 0.551 ms (1.12x) | 1.076 → 0.980 ms (1.10x) |
+| 512², lossy with `V` | 0.642 → 0.588 (1.09x) | 1.591 → 1.404 (1.13x) |
+| 1024², lossless | 1.688 → 1.572 (1.07x) | 8.655 → 6.833 (1.27x) |
+| 1024², lossy with `V` | 2.056 → 1.860 (1.11x) | 9.478 → 7.159 (1.32x) |
+| 2048², lossless | 6.277 → 5.815 (1.08x) | 35.970 → 35.015 (1.03x) |
+| 2048², lossy with `V` | 7.377 → 6.755 (1.09x) | 38.702 → 35.095 (1.10x) |
+
+On the box a step costs 3.7 ns a point at 512² and 8.3 at 2048²: past its
+8 MB of L3 the transforms are bound on memory, and they are nine tenths of the
+step.
+
+*Rounding.* In units of 2^-24 relative to the value (one rounding of a float32),
+against the complex128 kernel on float32-representable inputs. `main` computed
+in double and rounded once at the store, which is the best a complex64 kernel
+can do: 1.0 at most, 0.42 rms.
+
+- **Lossless rotation.** `a * (cos + i sin)` with a float32 cosine does not
+  reach that: the cosine is rounded next to 1 and `|a|^2` shrinks by 0.04 a
+  step on average, always the same way. `_rotate32` writes it as a sum,
+  `a + a * ((cos r - 1) + i sin r)`, then multiplies by `i**k` with a swap and
+  two signs. The increment is small, so is its rounding, and `a` is rounded
+  once. Up to 0.1 rad a step, which is what the solver takes by default, the
+  result has `main`'s rounding: 0.99 at most (1.03 on the box), 0.42 rms, and a
+  mean change of `|a|^2` under 0.0001 (`vec_bias.py`, 2^20 points).
+- **Phases near 1 rad.** 2.1 at most on the Mac and 2.9 on the box, where
+  `main` gives 1.5; through the kernels that take a potential, up to 3.9 with a
+  mean change of `|a|^2` of -0.01 to -0.03 a step (`vec_check.py`, 256²). The
+  angle is reduced in float32, and that rounding is not in sum form.
+- **Large phases.** The error grows as the phase times the relative error of
+  the phase, on `main` too, where `|A|^2` was already a float32: 10.8 at 10 rad.
+  The branch gives 12.7 on the Mac and 28.5 on the box. The difference is the
+  saturation division: under `arcp`, LLVM divides float32 vectors on x86 with
+  `vrcpps` and one Newton step (three `vrcpps` in the loop, no `vdivps`).
+  Dropping `arcp` was not tried: at 0.1 rad it moves the maximum from 0.99 to
+  1.03. Past 8192 rad the float32 reduction itself stops being exact, and past
+  about 3e7 rad the result is no longer bounded, where `main`'s was: a float32
+  phase is already worth nothing there, its spacing being 2 rad.
+- **Decay.** cephes states 1.7e-7 for its `expf`, which is 2.9, and a decay
+  multiplies the whole value. The lossy, frozen-loss and complex-potential
+  branches reach 2.3 to 4.5 at most, 0.66 to 1.11 rms, with a mean change of
+  `|a|^2` within 0.013 (lossy, `alpha dz` = 0.02) and of +0.03 to +0.09
+  (frozen, `alpha dz` = 0.74). The RK4 right-hand sides reach 2.4 to 5.1 on
+  `k`, which enters the field multiplied by the step. Not put in sum form:
+  nothing is conserved there, and see the end-to-end table.
+- **Rabi coupling stays in double**, on purpose. Rounded to float32, `cos` and
+  `sin` leave the unit circle by up to 2^-24 and every step then moves the total
+  power the same way, by up to 1. In double the mean change is 0.002, and the
+  loop times the same as on `main` (table above).
+
+End to end (`e2e.py`, then `e2e_cmp.py`: 512², default step, complex64 against
+the complex128 run from the same float32-representable input), `main` and the
+branch:
+
+| run | steps | field error, rel. L2 | power drift per step |
+|---|---|---|---|
+| Kerr, lossless, lie | 176 | 4900 → 4852 | -2.77 → -2.75 |
+| Kerr, lossless, strang | 176 | 4815 → 4880 | -2.75 → -2.78 |
+| Kerr, lossless, yoshida | 176 | 14489 → 14401 | -8.28 → -8.25 |
+| saturable, lossless, V | 96 | 666 → 678 | -2.38 → -2.43 |
+| saturable, lossy | 95 | 669 → 676 | -2.45 → -2.49 |
+| saturable, lossy, V, strang | 96 | 666 → 669 | -2.46 → -2.47 |
+| Kerr, lossless, RK4 | 220 | 10.0 → 10.0 | 0.000 → 0.000 |
+| coupled, lossless | 263 | 11180 → 11188 | -2.89 → -2.90 |
+| coupled, Rabi, lossless | 263 | 11511 → 11542 | -2.93 → -2.93 |
+
+The kernels are not what sets the complex64 error: the transforms are. One
+complex64 `fft2` + `ifft2` round trip does not conserve power, by an amount
+fixed by the size and the library (`fft_bias.py`, white noise, per round trip):
+
+| size | scipy 1.18.0 | numpy 2.4.6 |
+|---|---|---|
+| 256² | -2.89 | -1.25 |
+| 512² | -2.78 | -1.22 |
+| 1024² | -2.82 | -1.29 |
+| 2048² | -3.61 | -1.67 |
+| 1000² | +2.04 | +4.06 |
+| 1536² | -3.72 | -0.21 |
+
+A split step pays it on the whole field every step (three times for yoshida),
+and the lost power then turns into a phase error through the nonlinearity. RK4
+transforms the field too, but adds the result as an increment times the step,
+which is why its row reads 10 where the others read thousands. See *Open* for
+the split step written the same way.
+
+The regression test is `tests/backends/test_cpu_kernel_precision.py`: every
+parallel loop of every kernel vectorized and free of double arithmetic for
+complex64 with Python-float scalars, the rotation's rounding and modulus, and
+the Rabi power. The scripts are in `~/Documents/LKB/NLSE_tangui_fix_specs/cpu_float32/`.
+
 ## OpenCL (PyOpenCL + VkFFT)
 
 **Native OpenCL C kernels instead of PyOpenCL array expressions — deployed.**
@@ -1117,9 +1240,37 @@ not a cuFFT limit, so it may fix itself. Reaching `PlanNd` for a rank-1
 transform, if it accepts one, would sidestep it without waiting.
 
 **An `alpha == 0` branch for `_nl_prop` and `_square_mod_nl_prop_v`.** They call
-`_cexp` unconditionally, but with a real potential and no loss their exponent is
-purely imaginary, so they could take `_sincos` alone and skip `_exp` entirely —
-the branch `_nl_prop_without_V` and `_square_mod_nl_prop` already have.
+`_mul_cexp` unconditionally, but with a real potential and no loss their
+exponent is purely imaginary, so they could take `_rotate` alone and skip the
+exponential entirely — the branch `_nl_prop_without_V` and `_square_mod_nl_prop`
+already have.
+
+**The linear step as an increment, `A + ifft((P - 1) fft(A))`.** In complex64
+the transforms set the error (see the CPU entry on float32 kernels), and they
+set it on the whole field. Written as an increment they only touch the part of
+the field the step changes, with `P - 1` built in double and then rounded.
+Prototyped through the real solver by overriding `_build_propagator` and
+`_apply_linear_step` (`inc_linear.py`, 512², CPU, complex64 against complex128,
+units of 2^-24):
+
+| run | steps | field error, today → increment | power drift per step |
+|---|---|---|---|
+| Kerr, lossless, lie | 176 | 4852 → 18.7 | -2.75 → +0.001 |
+| Kerr, lossless, strang | 176 | 4880 → 23.5 | -2.78 → 0.000 |
+| Kerr, lossless, yoshida | 176 | 14401 → 37.0 | -8.25 → -0.001 |
+| saturable, lossless, V | 96 | 678 → 11.7 | -2.43 → 0.000 |
+| saturable, lossy | 95 | 676 → 12.5 | -2.49 → +0.002 |
+| saturable, lossy, V, strang | 96 | 669 → 17.7 | -2.47 → +0.003 |
+
+It costs traffic: the field has to survive the forward transform, so the
+transform works on a copy and the nonlinear kernel reads two arrays. One
+lossless lie step on the Mac, the copy as a pass of its own and nothing fused
+(`inc_cost.py 15`, min over 15 × 5, interleaved): 0.613 → 0.774 ms at 512²
+(1.26x), 1.640 → 1.876 at 1024² (1.14x), 7.109 → 8.164 at 2048² (1.15x),
+32.65 → 34.88 at 4096² (1.07x). Not implemented: it changes the linear step of
+every backend, and on CuPy the store callbacks that the fewer-passes work
+builds, and it trades the bytes that work removes for accuracy. complex128 has
+no use for it.
 
 **Whether CuPy should split its complex exponential.** `kernels/cupy.py` calls
 `cp.exp` on a complex array, where the OpenCL kernel splits into `exp` and

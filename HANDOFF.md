@@ -263,6 +263,65 @@ Resume here. Everything above is merged into `main` and pushed. Open: the
 performance profiles, and the release (5.0.0 suggested; the version is not
 bumped and nothing is published).
 
+### Performance work (2026-11-26 and 27)
+
+Asked, in these words: "Really check at the lowermost level possible, so we
+can see where memory bandwidth is spent. From this point on, we need to
+transfer less data."; "Then we'll take the teachings of these optis for the
+other platforms. Let's make sure we look at the CPU backend and make sure
+everything emits vectorized instructions"; on the CPU FFT, "Revisit these
+claims, probably there are newer libraries / updates ? Then also how about
+writing our own implementation of threading for vDSP ?"; then "continue alone
+through the night. Let's try to squeeze the most out of the hardware. At the
+end, do make a thorough review pass, including arch, testing, and docs. Follow
+the good practices in Downloads." (`~/Downloads/Good practices.md`: every
+timing against the hardware peak, with its configuration; docs along Diátaxis;
+facts sourced.)
+
+Done:
+
+- **CPU complex64 kernels in float32** (`perf/cpu-float32-kernels`). numba
+  promoted them to double. Kernels 1.4x (M3 Max) and 1.6 to 2.2x (box), a
+  whole lie step 1.07 to 1.12x and 1.03 to 1.32x; complex128 bit-identical.
+  The lossless rotation is a sum (`_rotate32`), so it rounds as double did up
+  to 0.1 rad a step. `_rabi_coupling` stays in double on purpose. Test:
+  `tests/backends/test_cpu_kernel_precision.py`. Entry in the optimization
+  log, CPU section. Scripts: `~/Documents/LKB/NLSE_tangui_fix_specs/cpu_float32/`.
+  Reviewer: no critical or major finding. Left as they are: the float32
+  angle reduction is exact only below 8192 rad and unbounded past about 3e7;
+  `benchmarks/roofline.py` still measures the double `_sincos` and `_exp` as
+  its transcendental ceiling, which is no longer what a complex64 run calls.
+
+Decisions taken by the user:
+
+- CuPy store callbacks: one path at every grid size and dtype. The callback
+  path loses 20 to 26% at 1280, 1536, 2560, 3000 and 3072 and wins 16 to 26%
+  at powers of two from 512: "Document that gap for non power of 2 sizes,
+  20-26% slower is bearable. The most used config is power of 2 !"
+
+Open, in this order:
+
+- **CuPy, fewer passes.** Specs and reference patches:
+  `~/Documents/LKB/NLSE_tangui_fix_specs/cuda_fewer_passes_spec_{1,2}.{md,patch}`
+  (1: the nonlinear step in the inverse transform's store callback, bitwise,
+  88 to 64 bytes a point per lie step; 2: a separable propagator in the
+  forward callback, not bitwise). Spec-reviewed, seven findings sent back to
+  the architect. Then implement, review, and validate on the box (tests six
+  times, step time interleaved against `main`, `ncu` bytes a point). Branch
+  `perf/cuda-fewer-passes` exists, empty.
+- **The CPU transform.** It is 60% of a step on the Mac and 90% on the box.
+  The log's rejections (pyFFTW on arm64, vDSP, thread counts) are being
+  re-checked against current libraries, and a hand-threaded transform that
+  owns its passes (and can fuse the propagator and the nonlinear step into
+  them) is to be prototyped. Not measured on x86 at all.
+- **complex64 accuracy is set by the transforms**, not the kernels: a round
+  trip loses 2.8 units of 2^-24 of power, every step. Writing the linear step
+  as `A + ifft((P - 1) fft(A))` cuts the field error 40 to 390 times for 7 to
+  26% of a CPU step (prototype, optimization log, *Open*). The user has not
+  decided.
+- Per-call costs from the CUDA-box profile, below: the propagator download,
+  `_energy_rates` twice, the potential grids.
+
 ### Performance profiles (started 2026-11-26, not finished)
 
 Asked, in these words: "I want deep profiles, make suggestions as to how to
