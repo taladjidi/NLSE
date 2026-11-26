@@ -32,7 +32,7 @@ def build(cls, backend):
             gamma=0,
             N=1e6,
             window=window,
-            g=1e-3,
+            g=1e-8,  # rad/s*m^2: g*n = 126 rad/s at 1.3e10 atoms/m^2
             V=None,
             m=1e-27,
             NX=N,

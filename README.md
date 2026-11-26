@@ -421,7 +421,7 @@ alongside what it costs and what it supports:
 | [`NLSE_3d`](NLSE/solvers/nlse_3d.py) | full 3D+1 with dispersion | space complexity goes as $N^3$; be careful |
 | [`CNLSE`](NLSE/solvers/cnlse.py) | two coupled fields | back-reaction of a fluid on a defect, two-component problems |
 | [`CNLSE_1d`](NLSE/solvers/cnlse_1d.py) | the same in 1D | |
-| [`GPE`](NLSE/solvers/gpe.py) | 2D Gross–Pitaevskii | atomic units: masses in kg, times in s |
+| [`GPE`](NLSE/solvers/gpe.py) | 2D Gross–Pitaevskii | SI units: masses in kg, times in s, `V` (rad/s) and `g` (rad/s·m²) as energies over ħ |
 | [`DDGPE`](NLSE/solvers/ddgpe.py) | driven-dissipative coupled fields | built for exciton polaritons in microcavities |
 
 Terms are turned off by leaving their parameter `None`, and the solver then

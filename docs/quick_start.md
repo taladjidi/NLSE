@@ -52,24 +52,25 @@ E_out = simu.out_field(E_in, L, splitting="lie")
 
 ## GPE (Gross-Pitaevskii)
 
-Solve the time-dependent GPE for a BEC in a harmonic trap:
+Solve the time-dependent GPE for a BEC in a harmonic trap. `V` and `g` are
+energies divided by ħ, in rad/s and rad/s·m²:
 
 ```python
 import numpy as np
 from NLSE import GPE
-from scipy.constants import atomic_mass
+from scipy.constants import atomic_mass, hbar
 
 N_atoms = 1e6
-g = 1e-2                     # interaction parameter (Hz*m^2)
+g = 1e-11                    # interaction energy / hbar (rad/s*m^2)
 m = 87 * atomic_mass          # Rubidium-87 mass
 window = 100e-6               # computational window (m)
 T = 1e-3                      # propagation time (s)
 
 simu = GPE(gamma=0, N=N_atoms, window=window, g=g, V=None, m=m, NX=512, NY=512)
 
-# Harmonic trap potential
+# Harmonic trap, as a potential energy divided by hbar (rad/s)
 omega_trap = 2 * np.pi * 50   # trap frequency (rad/s)
-V = 0.5 * m * omega_trap**2 * (simu.XX**2 + simu.YY**2)
+V = 0.5 * m * omega_trap**2 * (simu.XX**2 + simu.YY**2) / hbar
 simu.V = V
 
 # Gaussian initial state

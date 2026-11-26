@@ -138,7 +138,7 @@ def test_gpe_zero_potential_matches_no_potential(backend_name):
         "gamma": 0.0,
         "N": 1e6,
         "window": 100e-6,
-        "g": 1e3,
+        "g": 1e-11,  # rad/s*m^2: g*n = 1e3 rad/s at 1e14 atoms/m^2
         "m": 87 * 1.66e-27,
         "NX": N,
         "NY": N,
@@ -152,7 +152,10 @@ def test_gpe_zero_potential_matches_no_potential(backend_name):
             bare,
             bare.out_field(E.copy(), 1e-6, verbose=False, plot=False, delta_z=1e-8),
         ),
-        host(zero, zero.out_field(E.copy(), 1e-6, verbose=False, plot=False)),
+        host(
+            zero,
+            zero.out_field(E.copy(), 1e-6, verbose=False, plot=False, delta_z=1e-8),
+        ),
         f"GPE[{backend_name}]",
     )
 

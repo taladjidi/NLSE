@@ -2,7 +2,9 @@
 A Bose-Einstein condensate
 ==========================
 
-``GPE`` solves the Gross-Pitaevskii equation in atomic units rather than optical ones.
+``GPE`` solves the Gross-Pitaevskii equation in SI units rather than optical ones:
+masses in kg, times in s, and the potential and the interaction as energies
+divided by hbar, in rad/s and rad/s*m^2.
 """
 
 import numpy as np
@@ -14,6 +16,7 @@ PRECISION_REAL = np.float32
 
 N = 2048
 N_at = 1e6
+# rad/s*m^2: g*n = 1e3 rad/s at the mean density, N_at atoms over the 1 mm window
 g = 1e3 / (N_at / 1e-3**2)
 waist = 1e-3
 window = 1e-3
@@ -35,6 +38,7 @@ def main():
     psi_0 = np.exp(-(simu_gpe.XX**2 + simu_gpe.YY**2) / waist**2).astype(
         PRECISION_COMPLEX
     )
+    # t in s: 1 us of evolution
     simu_gpe.out_field(psi_0, 1e-6, verbose=True, plot=True, splitting="lie")
 
 

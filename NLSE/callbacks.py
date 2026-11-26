@@ -166,11 +166,13 @@ def adapt_delta_z(
     # the last of the built-ins to still take the field as though it were
     # numpy -- it was the one with tests, and they all run on the CPU.
     A_host = simu._as_host_array(A)
-    A_sq = (A_host.real * A_host.real + A_host.imag * A_host.imag) * c * epsilon_0 / 2
-    n2 = simu._as_host_array(simu.n2)
-    I_sat = simu._as_host_array(simu.I_sat)
-    delta_n = np.abs(n2) * A_sq / (1 + A_sq / I_sat)
-    z_nl = float(1 / (simu.k * delta_n.max()))
+    A_sq = A_host.real * A_host.real + A_host.imag * A_host.imag
+    # The solver's own phase rate, k n2 I for NLSE and g n for GPE, whose k, n2
+    # and optical intensity are not physical quantities.
+    g = np.abs(simu._as_host_array(simu._constant("_g")))
+    Isat = simu._as_host_array(simu._constant("_Isat_conv"))
+    rate = g * A_sq / (1 + A_sq / Isat)
+    z_nl = float(1 / rate.max())
     return np.abs(z_nl) / 12
 
 

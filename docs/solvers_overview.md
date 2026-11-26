@@ -94,10 +94,10 @@ $$
 The `GPE` class allows to solve the 2D Gross-Pitaevskii equation describing the temporal evolution of a Bosonic field:
 
 $$
-i\partial_{t}\psi = -\frac{1}{2}\nabla^2\psi+V\psi+g|\psi|^2\psi.
+i\hbar\partial_{t}\psi = -\frac{\hbar^2}{2m}\nabla^2\psi+\hbar V\psi+\hbar g|\psi|^2\psi.
 $$
 
-It follows exactly the same conventions as the other classes a part from the fact that since it describes atoms, the units are the "atomic" units (masses in kg, times in s).
+It follows the same conventions as the other classes, except that it describes atoms: SI units (masses in kg, times in s), with `V` and `g` given as energies divided by $\hbar$, in rad/s and rad/s$\cdot$m$^2$.
 
 ### The `DDGPE` class
 
