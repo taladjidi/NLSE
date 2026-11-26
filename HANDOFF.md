@@ -17,7 +17,7 @@ its own branch and merged into `main` with `--no-ff`:
 | p1a | `fix/stepping-loop` | `41f39a4` | medium ends exactly at `L`; backward runs; complex, zero and non-finite `delta_z` raise; CuPy stream race |
 | p4 | `fix/nonlocal-response` | `4eef782` | non-local response applied in Fourier space; `Backend.convolution` and `nl_profile` removed |
 | p2 | `fix/coupled-solvers` | `36bf9e1` | Rabi coupling in strang, yoshida, RK4; DDGPE noise, pump sampling, potential sign |
-| follow-up | `fix/rk4-stability-bound` | see "Open items" | post-merge test fixes (`6bd77e7`); RK4 step bounded by the grid's fastest linear rate (`10bf834`), in the coupled solvers too (`a53a470`); the timing tool's step (`4ac2bb2`) |
+| follow-up | `fix/rk4-stability-bound` | last merge on `main` | post-merge test fixes (`6bd77e7`); RK4 step bounded by the grid's fastest linear rate (`10bf834`), in the coupled solvers too (`a53a470`); the timing tool asks a step no run lowers (`4ac2bb2`, then under the split-step limit too) |
 
 The specs and patches of the eight packages are outside the repo, in
 `~/Documents/LKB/NLSE_tangui_fix_specs/`. The worktrees `../NLSE_wt/pN` are no
@@ -37,9 +37,15 @@ version is not bumped and nothing is published.
 - Sphinx, `-W --keep-going`, in a scratch venv with the `docs` extra: exit 0
   and no warning at `10bf834` (full build, 25 min) and at `4ac2bb2`
   (incremental).
-- CuPy on the CUDA box (RTX 3050): see "Open items" for the commit and count.
-- OpenCL on the CUDA box (NVIDIA OpenCL, CPU and CL available): see "Open
-  items" too.
+- CuPy on the CUDA box (RTX 3050), at `4ac2bb2`: 1468 passed, 67 skipped, in
+  6 runs of 6.
+- OpenCL on the CUDA box (NVIDIA OpenCL, CPU and CL available), at
+  `4ac2bb2`: 1405 passed, 120 skipped.
+- After `4ac2bb2` only the docs and `benchmarks/profile_backends.py` changed.
+- Step time against 4.1.0 (`38a8704`): no cell slower by more than its own
+  scatter on CuPy (RTX 3050), MLX and CPU (M3 Max), NLSE and CNLSE, split step
+  and RK4, 1024² and 2048². Numbers and configuration in
+  `docs/optimization-log.md`, "The audit fixes cost no step time".
 - OpenCL cannot be run on this Mac any more (macOS 27.2). Apple's driver
   segfaults inside `pyvkfft`'s `VkFFTApp` for any transform, a bare 64x64 one
   outside NLSE included, and 4.1.0 crashes the same way. The conda env
@@ -88,6 +94,14 @@ version is not bumped and nothing is published.
   `CUT_RUNS` in `tests/solvers/test_ddgpe_drive.py:46` writes its integrals
   as numbers instead of deriving them from `CUT_DT`; `cnlse.py:143` nests a
   function (code this work did not touch).
+- RK4 (re-review of `10bf834..4ac2bb2`, verdict pass): no test fails when
+  the bound reads `|Re V|` for `|V|`, so the absorption of a complex
+  potential is unpinned; with `alpha=0`, `alpha2=1e5` and a step of 1e-2 a
+  CNLSE RK4 run reaches 2.4e5 (the `alpha2` gap above, run); for a Gaussian
+  the weighted interaction rate is half the peak one; `0.1 * peak` is a
+  bare number in `tests/solvers/test_solver_state.py`;
+  `benchmarks/profile_backends.py --solver CNLSE_1d` raises TypeError
+  because `build()` passes `NY` (older than this work).
 
 ### Design decisions
 
@@ -245,29 +259,67 @@ Each was reproduced by a script unless marked *(read)* or *(reviewer)*.
 
 ## Open items
 
-Resume here. `fix/rk4-stability-bound` (`4ac2bb2`) is not merged, and nothing
-is pushed: `main` is at `36bf9e1`, ahead of `origin/main` by the eight merges.
+Resume here. Everything above is merged into `main` and pushed. Open: the
+performance profiles, and the release (5.0.0 suggested; the version is not
+bumped and nothing is published).
 
-1. Review. The review of `36bf9e1..10bf834` said fix first: the RK4 bound
-   missed the second component's potential and the Rabi coupling, and no test
-   pinned the potential's grid maximum, the interaction or the loss. `a53a470`
-   answers all three (each new test fails when its term is removed; the patch
-   and the mutation script are in `NLSE_tangui_fix_specs/`). The re-review of
-   `10bf834..4ac2bb2` was running when this was written: redo it if its
-   result is not recorded here.
-2. CUDA box at `4ac2bb2`: six full-suite runs on CuPy and one on OpenCL were
-   running when this was written. At `10bf834` they gave 1462 passed, 67
-   skipped in 6 runs of 6 (CuPy) and 1399 passed, 120 skipped (OpenCL).
-3. Step time against 4.1.0 (`38a8704`), `benchmarks/profile_backends.py
-   --baseline 38a8704 --rounds 4` on the RTX 3050 with CuPy: NLSE and CNLSE,
-   split step at 1024² and 2048² and RK4 at 1024², all 1.00x. The RK4 cells at
-   2048² read 2.56x because 4.1.0 returned NaN there and the new bound takes
-   2.56 times the steps; `4ac2bb2` makes the tool ask a step both take, and
-   that cell was being measured again. Not measured for the final tree: CPU
-   and MLX on the Mac. Log the result in `docs/optimization-log.md`.
-4. Merge into `main` with `--no-ff`, then push with
-   `PATH="$PWD/.venv/bin:$PATH" NLSE_CACHE_DIR=<scratch> git push origin main`.
-5. A release is due (5.0.0 suggested); the version is not bumped.
+### Performance profiles (started 2026-11-26, not finished)
+
+Asked, in these words: "I want deep profiles, make suggestions as to how to
+improve perf"; "do profiles over several steps to get some statistics. Like 50
+steps"; "we need the breakdown for each kernel within the step, both CPU / GPU
+and memory".
+
+What to deliver, per backend (CPU and MLX on the Mac, CuPy and OpenCL on the
+CUDA box):
+
+- One row per kernel the step calls: each transform, the propagator multiply,
+  `square_mod`, each `nl_prop*`, `square_mod_nl_prop[_v]`, the non-local
+  multiply and its transforms, `rabi_coupling`, the RK4 stages, normalisation,
+  callbacks. The rows must add up to the untraced step, or the gap is named.
+- Per row: host CPU time, device time, and memory. "Memory" was read as both
+  traffic (against the `benchmarks/roofline.py` ceiling) and footprint
+  (allocations per step, peak device and host memory); the user did not say
+  which.
+- 50 steps or more per cell, median and spread.
+- Cells: every solver and method; at least NLSE and CNLSE, lie split step and
+  RK4, at 512² and 2048², with and without `V`. Then the options (`alpha`,
+  `nl_length`, `omega`, complex128, a batch), small grids, and the cost of a
+  call as the intercept of time against step count.
+- Then suggestions, ranked: what, `file:line`, measured share, expected gain,
+  size, risk. Suggestions, not an implementation. Read
+  `docs/optimization-log.md` first: nothing it lists as deployed or rejected
+  comes back.
+
+State:
+
+- CUDA box: a profiling run was under way when this was written. Its tables,
+  ranked candidates and the names of its scripts are in
+  `~/Documents/LKB/NLSE_tangui_fix_specs/perf_profile_cuda_box.md`, partial if
+  the run was cut short. Not vetted: check its top numbers before using them.
+- Mac: not started. Run it with the machine idle (a push runs the suite).
+- Nothing is in `docs/optimization-log.md` from the profiles yet.
+
+Known before the profiles:
+
+- The solver lowers a step past its limits, so a run can take more steps than
+  it was asked for. Count the steps taken. `profile_backends.step_for` is now
+  under both limits; `benchmarks/trace_solvers.py` and
+  `benchmarks/propagator_fusion.py` still ask 1e-4 m at every size, which
+  split-step lowers at 1024² and above (1.79 steps per step asked).
+- A call costs many steps. One `out_field` call of one step on CuPy at 2048²,
+  solver already run: 37.7 ms for NLSE split step (a step is about 1.95 ms),
+  54.4 ms for RK4 (9.9 ms a step), 109.8 and 181.3 ms for CNLSE. Table in the
+  optimization log; the script and raw output are `fixed_cost.py` and
+  `fixed_cost_cupy_raw.log` in `NLSE_tangui_fix_specs/`. Not broken down.
+- From reading `NLSE/solvers/step_size.py`, not measured: one call computes
+  `_energy_rates` up to four times (`_default_delta_z`, `_capped_delta_z`,
+  `_rk4_max_dz`, Yoshida's extra `_split_step_max_dz`), each with a transform
+  of a copy of the field, and `_energy_rates_on_device` copies `V` to the host
+  every time.
+- Open in the optimization log already: the separable propagator, the
+  nonlinear step as an inverse-transform store callback, a plan callback in
+  1D, an `alpha == 0` branch in `_nl_prop`.
 
 Environment:
 
