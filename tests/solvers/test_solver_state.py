@@ -1170,7 +1170,7 @@ def test_ddgpe_couplings_are_not_scaled_by_the_optical_constant():
 class TestArraysComeBackFromTheDevice:
     """A run leaves the solver's arrays on the host, however it ends.
 
-    ``out_field`` moves V, nl_profile, the propagator and any batched
+    ``out_field`` moves V, the propagator and any batched
     parameter onto the device for the duration of a run. Left there, the next
     run is what breaks: ``from_numpy`` is handed a device array. On CL that
     surfaced as ``ValueError: setting an array element with a sequence`` from

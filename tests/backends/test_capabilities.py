@@ -257,21 +257,6 @@ def test_no_solver_branches_on_the_backend_name(path):
 
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
-def test_a_backend_claiming_a_convolution_has_a_working_one(backend_name):
-    """``convolution`` doubles as the non-locality capability, so it must run."""
-    backend = get_backend(backend_name)
-    if backend.convolution is None:
-        pytest.skip("declares no convolution")
-
-    signal = backend.from_numpy(np.ones((8, 8), dtype=np.float32))
-    kernel = backend.from_numpy(np.ones((3, 3), dtype=np.float32))
-    out = np.asarray(backend.to_numpy(backend.convolution(signal, kernel, mode="same")))
-
-    assert out.shape == (8, 8)
-    assert out[4, 4] == pytest.approx(9.0), "a 3x3 box over ones is 9 in the interior"
-
-
-@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_synchronize_takes_an_array_or_nothing(backend_name):
     """The solver calls it with the field; the contract allows neither."""
     backend = get_backend(backend_name)

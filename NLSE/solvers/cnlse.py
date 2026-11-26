@@ -66,10 +66,9 @@ class CNLSE(NLSE):
             Saturation intensity, assumed to be the same
             for both components. Defaults to infinity.
         nl_length : float
-            Non local length in m.
-            The non-local kernel is the instantiated as a Bessel function
-            to model a diffusive non-locality stored in the nl_profile
-            attribute.
+            Non-local length in m, of a diffusive non-locality: the
+            interaction reads the intensity smoothed by
+            1 / (1 + nl_length^2 K^2) in Fourier space. 0 is local.
         wvl : float, optional
             Wavelength in m. Defaults to 780 nm.
         omega : float, optional
@@ -183,6 +182,11 @@ class CNLSE(NLSE):
         prop1 = super()._compute_propagator_rk4()
         prop2 = -1j * 0.5 * (self.Kxx**2 + self.Kyy**2) / self.k2
         return np.array([prop1, prop2])
+
+    def _nonlocal_response(self) -> np.ndarray:
+        """Return the response for both components, laid out as the propagator."""
+        response = super()._nonlocal_response()
+        return np.array([response, response])
 
     def _step_constants(self) -> dict[str, Any]:
         """Add the second component's constants to NLSE's."""
@@ -486,16 +490,11 @@ class CNLSE(NLSE):
         A1, A2 = self._take_components(A_in)
         k1, k2 = self._take_components(k)
 
-        A_sq = kernels.square_mod(A_in, self._rk4_A_sq_c)
-        A_sq_1, A_sq_2 = self._take_components(A_sq)
-
         if self.nl_length > 0:
-            A_sq_1 = self._backend.convolution(
-                A_sq_1, self._nl_kernel(A_sq_1), mode="same", axes=self._last_axes
-            )
-            A_sq_2 = self._backend.convolution(
-                A_sq_2, self._nl_kernel(A_sq_2), mode="same", axes=self._last_axes
-            )
+            A_sq = self._nonlocal_intensity(A_in, self._rk4_A_sq_c)
+        else:
+            A_sq = kernels.square_mod(A_in, self._rk4_A_sq_c)
+        A_sq_1, A_sq_2 = self._take_components(A_sq)
 
         if V is None:
             k1 = kernels.rk4_nl_rhs_c(
@@ -677,16 +676,12 @@ class CNLSE(NLSE):
         return A1, A2
 
     def _compute_A_sq_components(self, A, A_sq):
-        """Compute squared modulus and extract/convolve components."""
-        A_sq = self._backend.kernels.square_mod(A, A_sq)
-        A_sq_1, A_sq_2 = self._take_components(A_sq)
+        """Compute the squared modulus, smoothed if non-local, and its components."""
         if self.nl_length > 0:
-            A_sq_1 = self._backend.convolution(
-                A_sq_1, self._nl_kernel(A_sq_1), mode="same", axes=self._last_axes
-            )
-            A_sq_2 = self._backend.convolution(
-                A_sq_2, self._nl_kernel(A_sq_2), mode="same", axes=self._last_axes
-            )
+            A_sq = self._nonlocal_intensity(A, A_sq)
+        else:
+            A_sq = self._backend.kernels.square_mod(A, A_sq)
+        A_sq_1, A_sq_2 = self._take_components(A_sq)
         return A_sq, A_sq_1, A_sq_2
 
     def split_step(

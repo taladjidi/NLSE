@@ -180,11 +180,6 @@ def test_the_capability_table_matches_the_backends():
     wrong = []
     for name in list_available_backends():
         backend = get_backend(name, (64, 64))
-        claimed = rows["Convolution"][columns[name]]
-        actual = backend.convolution is not None
-        if (claimed.lower() == "yes") != actual:
-            wrong.append(f"{name} convolution: table says {claimed!r}, is {actual}")
-
         claimed = rows["Double precision"][columns[name]]
         actual = bool(backend.supports_double_precision())
         # "Device-dependent" is an honest answer for OpenCL and not a claim.

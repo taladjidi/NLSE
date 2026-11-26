@@ -16,7 +16,6 @@ if not __CUPY_AVAILABLE__:
 
 import cupy as cp
 import cupyx.scipy.fft as _cufft
-import cupyx.scipy.signal as _cusignal
 from cupyx.scipy.fftpack import get_fft_plan
 
 # Rewrites the block that the store callback reads the propagator pointer
@@ -292,11 +291,6 @@ class CUPYBackend(Backend):
     def allocate_real_field(self, shape: tuple, dtype: npt.DTypeLike) -> Any:
         """Allocate real array on GPU."""
         return cp.zeros(shape, dtype=dtype)
-
-    @property
-    def convolution(self):
-        """Return CuPy's overlap-add convolution."""
-        return _cusignal.oaconvolve
 
     def synchronize(self, array=None) -> None:
         """Wait for the null stream, which is where the kernels are queued."""

@@ -25,10 +25,8 @@ from NLSE.backends import get_backend, list_available_backends
 PRECISION_COMPLEX = np.complex64
 
 AVAILABLE_BACKENDS = list_available_backends()
-# Non-locality is a convolution, and a backend without one refuses it outright.
-NONLOCAL_BACKENDS = [
-    b for b in AVAILABLE_BACKENDS if get_backend(b).convolution is not None
-]
+# Every backend can run a non-local response.
+NONLOCAL_BACKENDS = AVAILABLE_BACKENDS
 
 N = 32
 COUNT = 3

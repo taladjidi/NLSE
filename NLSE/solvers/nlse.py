@@ -12,7 +12,6 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 import tqdm
-from scipy import special
 from scipy.constants import c, epsilon_0
 
 from ..backends import Backend, fastest_backend_supporting, get_backend
@@ -167,10 +166,9 @@ class NLSE(StepSize):
         Isat : float
             Saturation intensity in W/m^2
         nl_length : float
-            Non local length in m.
-            The non-local kernel is the instantiated as a Bessel function
-            to model a diffusive non-locality stored in the nl_profile
-            attribute.
+            Non-local length in m, of a diffusive non-locality: the
+            interaction reads the intensity smoothed by
+            1 / (1 + nl_length^2 K^2) in Fourier space. 0 is local.
         wvl : float
             Wavelength in m
         backend : str, optional
@@ -224,26 +222,7 @@ class NLSE(StepSize):
         self.Kxx, self.Kyy = np.meshgrid(self.Kx, self.Ky)
         self.propagator = None
         self.plans = None
-        self.nl_length = self._resolved_nl_length(nl_length)
-        if self.nl_length > 0:
-            self._require_backend(
-                lambda backend: backend.convolution is not None,
-                "a non-local interaction (nl_length > 0)",
-            )
-        if self.nl_length > 0:
-            d = self.nl_length // self.delta_X
-            x = np.arange(-3 * d, 3 * d + 1)
-            y = np.arange(-3 * d, 3 * d + 1)
-            XX, YY = np.meshgrid(x, y)
-            R = np.hypot(XX, YY)
-            self.nl_profile = special.kn(0, R / d)
-            self.nl_profile[
-                self.nl_profile.shape[0] // 2, self.nl_profile.shape[1] // 2
-            ] = np.nanmax(self.nl_profile[np.logical_not(np.isinf(self.nl_profile))])
-            self.nl_profile /= self.nl_profile.sum()
-            self.nl_profile = self.nl_profile.astype(np.float32)
-        else:
-            self.nl_profile = np.ones((self.NY, self.NX), dtype=np.float32)
+        self.nl_length = nl_length
 
         # Pre-compute normalization factors to avoid runtime upcasting
         self._norm_grid_factor = np.float32(self.delta_X * self.delta_Y)
@@ -485,8 +464,8 @@ class NLSE(StepSize):
         if V_scaled is None and V is not None:
             V_scaled = V * k_half
 
-        # Fused fast path (CL, MLX). Not eligible with a nonlocal kernel,
-        # which needs the convolution between |A|^2 and the nonlinear step.
+        # Fused fast path (CL, MLX). Not eligible with a non-local response,
+        # which smooths |A|^2 between the linear and the nonlinear step.
         if self._backend.has_fused_split_step and self.nl_length == 0:
             dz = delta_z / 2 if splitting == "strang" else delta_z
             prop, unnorm = self._fused_propagator(propagator)
@@ -514,28 +493,6 @@ class NLSE(StepSize):
         dz_step = delta_z / 2 if splitting == "strang" else delta_z
         return self._nonlinear_step(A, A_sq, V_scaled, dz_step)
 
-    def _nl_kernel(self, A_sq):
-        """Return the non-local kernel with the rank the intensity has.
-
-        Both convolutions require equal rank of their two arguments even when
-        ``axes`` says which to transform, and a batched run carries leading
-        axes the profile does not. Broadcasting the profile over them is what
-        a shared kernel means: every simulation in the batch convolves with
-        the same one.
-
-        Parameters
-        ----------
-        A_sq : np.ndarray
-            The intensity about to be convolved.
-
-        Returns
-        -------
-        np.ndarray
-            The profile, with leading axes added if the intensity has any.
-        """
-        extra = A_sq.ndim - len(self._last_axes)
-        return self.nl_profile if extra <= 0 else self.nl_profile[(None,) * extra]
-
     def _nonlinear_step(self, A, A_sq, V_scaled, dz):
         """Apply the real-space part of the step: interaction, potential, loss.
 
@@ -549,7 +506,7 @@ class NLSE(StepSize):
             Field, modified in place on the array backends.
         A_sq : np.ndarray
             Scratch for the intensity. Only used by the non-local path, which
-            has to convolve it before the kernel reads it.
+            has to smooth it before the kernel reads it.
         V_scaled : np.ndarray or None
             Pre-scaled potential, or None.
         dz : float
@@ -567,12 +524,9 @@ class NLSE(StepSize):
         Isat_conv = self._constant("_Isat_conv")
 
         if self.nl_length > 0:
-            # The convolution needs the intensity as an array of its own, so
+            # The smoothing needs the intensity as an array of its own, so
             # the kernel that computes it inline cannot be used.
-            A_sq = kernels.square_mod(A, A_sq)
-            A_sq[:] = self._backend.convolution(
-                A_sq, self._nl_kernel(A_sq), mode="same", axes=self._last_axes
-            )
+            A_sq = self._nonlocal_intensity(A, A_sq)
             if V_scaled is None:
                 return kernels.nl_prop_without_V(A, A_sq, dz, alpha_half, g, Isat_conv)
             return kernels.nl_prop(A, A_sq, dz, alpha_half, V_scaled, g, Isat_conv)
@@ -1083,54 +1037,74 @@ class NLSE(StepSize):
         fig.colorbar(im2, ax=ax[2], shrink=0.6, label="Intensity (a.u.)")
         show_if_possible()
 
-    # Construction.
-    def _resolved_nl_length(self, nl_length: float) -> float:
-        """Return the non-local length, or 0 where the grid cannot resolve it.
+    # The non-local response. The interaction reads the intensity smoothed by
+    # the Green function of a diffusion equation, applied as its transform on
+    # the periodic grid the propagator uses.
+    def _transverse_k_squared(self) -> np.ndarray:
+        """Return the squared transverse wavenumber over the Fourier grid.
 
-        The non-local kernel spans ``nl_length // delta_X`` cells, so on a grid
-        coarser than ``nl_length`` it is a single point — the identity, which
-        is a local run that still pays for a convolution on every step. Fall
-        back to the local path, and say so, rather than quietly charge for a
-        non-locality that is not there.
-
-        The other end was unguarded. The kernel is built six interaction
-        lengths wide, so it is ``(6 * nl_length / delta_X + 1)**2`` cells, and
-        a length given in the wrong unit takes that past what the machine has:
-        5 m on a 8.9 mm window is a 215281 x 215281 kernel, and the process is
-        killed while building it, with no traceback and nothing said. A range
-        longer than the window is not a grid that needs refining -- it is a
-        number that cannot mean what it says -- so it raises instead.
-
-        Parameters
-        ----------
-        nl_length : float
-            Non-local length in m, as given to the constructor.
+        The non-locality is the index diffusing across the beam, so only the
+        transverse wavenumbers enter it: in 3D the time axis is left alone.
+        The solvers on a 1D grid override this alone.
 
         Returns
         -------
-        float
-            The same value, or 0 if the grid does not resolve it.
+        np.ndarray
+            ``Kx^2 + Ky^2``, with the propagator's grid shape.
         """
-        window = self.NX * self.delta_X
-        if nl_length > window:
-            raise ValueError(
-                f"nl_length={nl_length:.3g} m is longer than the "
-                f"{window:.3g} m window, so every point would interact with "
-                f"every other and the kernel, six interaction lengths wide, "
-                f"would be {int(6 * nl_length // self.delta_X) + 1} cells "
-                f"across against a grid of {self.NX}. Check the units: "
-                f"nl_length is in metres."
-            )
-        if nl_length <= 0 or nl_length // self.delta_X >= 1:
-            return nl_length
-        warnings.warn(
-            f"nl_length={nl_length:.3g} m is below one grid cell "
-            f"({self.delta_X:.3g} m), so the non-local kernel would be a "
-            f"single point and the propagation local anyway. Running local. "
-            f"Refine the grid or raise nl_length to model non-locality.",
-            stacklevel=3,
+        return self.Kxx**2 + self.Kyy**2
+
+    def _nonlocal_response(self) -> np.ndarray:
+        """Return the non-local response in Fourier space.
+
+        ``1 / (1 + nl_length^2 K^2)`` is the transform of the diffusion
+        equation's Green function: ``K0(r / l) / (2 pi l^2)`` in 2D and
+        ``exp(-|x| / l) / (2 l)`` in 1D. It is 1 at ``K = 0``, so the smoothed
+        intensity has the same total as the intensity.
+
+        Returns
+        -------
+        np.ndarray
+            The response, with the propagator's shape.
+        """
+        return 1 / (1 + self.nl_length**2 * self._transverse_k_squared())
+
+    def _nonlocal_response_on_device(self, dtype: np.dtype) -> tuple[Any, bool]:
+        """Return the response where the backend can use it, and if it has 1/N.
+
+        Built once per grid, length, width and backend, and kept with the
+        dispersion operators. Complex at the field's width, which is what the
+        propagator kernels multiply by. Where the backend can skip the inverse
+        transform's 1/N it is folded in here, as it is into the propagator.
+
+        Parameters
+        ----------
+        dtype : np.dtype
+            Complex dtype of the field whose intensity it smooths.
+
+        Returns
+        -------
+        tuple
+            ``(response, unnorm_ifft)``.
+        """
+        unnorm = self._backend.supports_unnormalized_ifft
+        key = (
+            *self._propagator_rk4_cache_key(),
+            "nl_response",
+            float(self.nl_length),
+            np.dtype(dtype).str,
+            self._backend.name,
         )
-        return 0
+        if key not in self._dispersion_cache:
+            response = self._nonlocal_response()
+            if unnorm:
+                response = response / math.prod(
+                    response.shape[ax] for ax in self._last_axes
+                )
+            self._dispersion_cache[key] = self._backend.from_numpy(
+                np.ascontiguousarray(response, dtype=dtype)
+            )
+        return self._dispersion_cache[key], unnorm
 
     # The linear operator, and the propagator built from it. Subclasses
     # override the compute/key pairs alone; the caching around them is shared.
@@ -1646,7 +1620,7 @@ class NLSE(StepSize):
     #
     # Arrays are always transferred; params only if they are np.ndarray, i.e.
     # batched. Subclasses extend these tuples with their own attributes.
-    _gpu_array_attrs = ("V", "nl_profile", "propagator")
+    _gpu_array_attrs = ("V", "propagator")
     _gpu_param_attrs = ("power", "n2", "alpha", "I_sat")
 
     def _as_host_array(self, value: Any) -> Any:
@@ -1677,7 +1651,7 @@ class NLSE(StepSize):
     def _arrays_on_device(self, field_dtype: np.dtype) -> Iterator[None]:
         """Hold the solver's arrays on the device for the duration of a run.
 
-        V, nl_profile, the propagator and any batched parameter are moved onto
+        V, the propagator and any batched parameter are moved onto
         the device and put back afterwards, on the way out of a failed run as
         well as a finished one. Left there, they break the next run rather than
         the one that failed: from_numpy is handed a device array.
@@ -1790,17 +1764,65 @@ class NLSE(StepSize):
         np.ndarray
             The propagated field.
         """
-        kernels = self._backend.kernels
         prop, unnorm = self._fused_propagator(propagator)
+        return self._multiply_in_fourier_space(A, prop, plans, unnorm)
+
+    def _multiply_in_fourier_space(
+        self, A: Any, multiplier: Any, plans: list, unnorm: bool
+    ) -> Any:
+        """Transform, multiply by an operator diagonal in K, transform back.
+
+        Parameters
+        ----------
+        A : Any
+            Complex array to transform, modified in place where the backend
+            allows it.
+        multiplier : Any
+            Operator on the Fourier grid: complex at A's width, with A's grid
+            shape or A's shape.
+        plans : list
+            FFT plans for A, from the backend.
+        unnorm : bool
+            Whether ``multiplier`` carries the inverse transform's 1/N.
+
+        Returns
+        -------
+        Any
+            The result.
+        """
+        kernels = self._backend.kernels
         if self._backend.has_linear_step:
-            return kernels.linear_step(A, prop, plans[0], unnorm_ifft=unnorm)
+            return kernels.linear_step(A, multiplier, plans[0], unnorm_ifft=unnorm)
         # The pre-normalized propagator carries the inverse transform's 1/N,
         # so the transform itself can skip it. A backend without a fused
         # linear step reaches it here rather than through kernels.linear_step.
         A = self._backend.fft(A, plans)
-        A = kernels.apply_propagator(A, prop)
+        A = kernels.apply_propagator(A, multiplier)
         A = self._backend.ifft(A, plans, normalize=not unnorm)
         return A
+
+    def _nonlocal_intensity(self, A: Any, A_sq: Any) -> Any:
+        """Write the intensity, smoothed by the non-local response, into A_sq.
+
+        Parameters
+        ----------
+        A : Any
+            Field. Left unchanged.
+        A_sq : Any
+            Real scratch of A's shape and width, overwritten.
+
+        Returns
+        -------
+        Any
+            ``A_sq``.
+        """
+        response, unnorm = self._nonlocal_response_on_device(self._field_dtype(A))
+        # |A|^2 as a complex array, so it goes through the field's own plans.
+        intensity = self._multiply_in_fourier_space(
+            A * A.conj(), response, self._build_fft_plan(A), unnorm
+        )
+        A_sq[:] = intensity.real
+        return A_sq
 
     def _RK4_rhs(
         self,
@@ -1854,9 +1876,11 @@ class NLSE(StepSize):
         k = self._apply_linear_step(k, propagator, plans)
 
         if self.nl_length > 0:
-            A_sq = (A_in * A_in.conj()).real
-            A_sq[:] = self._backend.convolution(
-                A_sq, self._nl_kernel(A_sq), mode="same", axes=self._last_axes
+            A_sq = self._nonlocal_intensity(
+                A_in,
+                self._backend.allocate_real_field(
+                    A_in.shape, self._real_dtype(self._field_dtype(A_in))
+                ),
             )
             if V is None:
                 k = kernels.rk4_nl_rhs(k, A_in, A_sq, alpha_half, g, Isat_conv)

@@ -3,7 +3,7 @@
 import contextlib
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -130,17 +130,6 @@ class Backend(ABC):
     # the result sent back. For backends whose array type cannot do the
     # reduction in place, or does it more slowly than the round trip costs.
     normalizes_on_host = False
-
-    @property
-    def convolution(self) -> Callable | None:
-        """Return this backend's overlap-add convolution, or None.
-
-        Non-local interaction is a convolution between the field's intensity
-        and the non-local kernel. A backend without one cannot run a non-local
-        simulation, which is the whole of what ``nl_length > 0`` requires, so
-        this doubles as the capability check.
-        """
-        return None
 
     def synchronize(self, array: Any = None) -> None:
         """Block until work already submitted has finished.

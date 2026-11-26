@@ -106,10 +106,9 @@ class DDGPE(CNLSE):
             Saturation intensity, assumed to be the same
             for both components. Defaults to infinity.
         nl_length : float, optional
-            Non local length in m.
-            The non-local kernel is the instantiated as a Bessel function
-            to model a diffusive non-locality stored in the nl_profile
-            attribute. Defaults to 0.
+            Non-local length in m, of a diffusive non-locality: the
+            interaction reads the intensity smoothed by
+            1 / (1 + nl_length^2 K^2) in Fourier space. Defaults to 0, local.
         backend : str, optional
             "GPU" or "CPU". Defaults to __BACKEND__.
         """
