@@ -23,6 +23,7 @@ classifiers = [
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Topic :: Scientific/Engineering :: Physics",
 ]
 requires-python = ">=3.10"
@@ -79,7 +80,9 @@ packages = ["NLSE"]
 exclude = ["*.pyc", "__pycache__", ".cache"]
 
 [tool.hatch.build.targets.sdist]
-include = ["NLSE", "tests", "README.md", "LICENSE", "pyproject.toml"]
+# Anchored with "/": a bare "LICENSE" also matched docs/_static/mathjax/LICENSE.
+# No tests: they read docs/ and examples/, which the sdist does not carry.
+include = ["/NLSE", "/README.md", "/LICENSE", "/pyproject.toml"]
 exclude = ["*.pyc", "__pycache__", ".cache"]
 
 [tool.pytest.ini_options]
