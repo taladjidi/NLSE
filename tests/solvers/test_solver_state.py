@@ -14,6 +14,7 @@ from NLSE.callbacks import adapt_delta_z
 from NLSE.solvers.nlse import DEFAULT_MIN_STEPS, DEFAULT_PHASE_PER_STEP
 from NLSE.solvers.step_size import (
     RK4_PHASE_PER_STEP,
+    RK4_STABILITY_RADIUS,
     SPLIT_STEP_DISPERSION_PHASE_LIMIT,
 )
 from scipy.constants import atomic_mass
@@ -34,6 +35,29 @@ power = 1.05
 Isat = 10e4
 L = 10e-3
 alpha = 0.0
+
+# Ring potential outside the beam for the RK4 bound: radius and width in m,
+# peak as an index change. Scaled by k/2 the peak is 4.0e4 rad/m, against
+# 63 rad/m for this grid's shortest wave (both measured, CPU).
+FAR_RING_RADIUS = 4e-3
+FAR_RING_WIDTH = 2e-4
+FAR_RING_PEAK = 1e-2
+# Loss in 1/m for the RK4 bound test; any value above zero serves.
+BOUND_ALPHA = 20.0
+# Coupled RK4 runs, all linear. Uniform potential as an index change, the
+# ratio k2 / k that makes the second component's potential the faster one
+# (1.6e5 rad/m), and a Rabi coupling in rad/m whose half is 5e4 rad/m.
+COUPLED_V = 1e-2
+K2_OVER_K = 4
+RABI_OMEGA = 1e5
+# Their length and the step the caller asks, in m: the step is 57 and 18
+# times past the bound (2.83 over those two rates), so only the cap keeps
+# the run stable.
+COUPLED_RUN_LENGTH = 2e-3
+COUPLED_CALLER_STEP = 1e-3
+# How far above its input the norm of a stable lossless run may sit: float32
+# round-off over the 40 to 130 steps these runs take.
+NORM_GROWTH_RTOL = 1e-4
 
 
 def make_solver(backend="CPU", **kwargs):
@@ -912,7 +936,9 @@ class TestStepLimitEnergies:
     where the field has support — rather than a maximum over the grid. A
     maximum is a property of the grid, not of the solution: a tall potential
     in a corner the field never reaches would otherwise set the step for a
-    run it has no effect on.
+    run it has no effect on. That holds for accuracy. RK4's stability bound
+    takes its linear terms at their grid maximum all the same, because past
+    the radius it amplifies round-off wherever it sits.
 
     RK4 diverged to NaN under any potential because its limit counted the
     dispersion alone, and V is scaled by k/2 ~ 4e6. Split-step omitted V
@@ -926,9 +952,9 @@ class TestStepLimitEnergies:
         r = np.sqrt(simu.XX**2 + simu.YY**2)
         return (amplitude * np.exp(-((r - 2e-3) ** 2) / (3e-4) ** 2)).astype(np.float32)
 
-    def prepared(self, V, backend="CPU"):
+    def prepared(self, V, backend="CPU", **kwargs):
         """Return a solver with its step constants and field ready."""
-        simu = make_solver(V=V, backend=backend)
+        simu = make_solver(V=V, backend=backend, **kwargs)
         E = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(PRECISION_COMPLEX)
         simu._precompute_step_constants(V, np.complex64)
         A, _ = simu._prepare_output_array(E, True)
@@ -962,6 +988,86 @@ class TestStepLimitEnergies:
         assert with_V._split_step_max_dz(A_V) < bare._split_step_max_dz(A_bare), (
             "a potential must make the split-step limit more restrictive, "
             "even though the exponential applies V exactly"
+        )
+
+    def test_rk4_takes_the_potential_at_its_grid_maximum(self):
+        """A potential the field barely reaches still sets the RK4 step."""
+        probe = make_solver()
+        r = np.sqrt(probe.XX**2 + probe.YY**2)
+        ring = np.exp(-((r - FAR_RING_RADIUS) ** 2) / FAR_RING_WIDTH**2)
+        ring = (FAR_RING_PEAK * ring / ring.max()).astype(np.float32)
+        simu, A = self.prepared(ring)
+        rates = simu._energy_rates(A)
+        peak = float(np.max(np.abs(as_numpy(simu, simu._V_scaled))))
+        assert rates["potential"] < 0.1 * peak, "precondition: V is off the beam"
+
+        fastest = simu._max_dispersion_rate() + peak
+        fastest += rates["interaction"] + rates["loss"]
+        assert simu._rk4_max_dz(A) == pytest.approx(RK4_STABILITY_RADIUS / fastest), (
+            "the RK4 bound does not take the potential at its grid maximum"
+        )
+
+    def test_rk4_counts_the_interaction_and_the_loss(self):
+        """The field's own rates add to the linear ones in the RK4 bound."""
+        simu, A = self.prepared(None, alpha=BOUND_ALPHA)
+        rates = simu._energy_rates(A)
+        assert rates["interaction"] > 0, "precondition: the medium is nonlinear"
+        assert rates["loss"] > 0, "precondition: the medium absorbs"
+
+        linear = RK4_STABILITY_RADIUS / simu._rk4_max_dz()
+        full = RK4_STABILITY_RADIUS / simu._rk4_max_dz(A)
+        assert full - linear == pytest.approx(rates["interaction"] + rates["loss"]), (
+            "the RK4 bound does not add the interaction and the loss"
+        )
+
+    @staticmethod
+    def stable_coupled_run(simu):
+        """Run a linear coupled solver by RK4 and return the norm's growth.
+
+        The caller's step is far past the bound, so the run must say it
+        lowered it. Inside its stability region RK4 cannot raise the norm of
+        a lossless linear field.
+        """
+        beam = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2)
+        E = np.array([beam, beam]).astype(PRECISION_COMPLEX)
+        with pytest.warns(UserWarning, match="RK4 stability"):
+            out = simu.out_field(
+                E.copy(),
+                COUPLED_RUN_LENGTH,
+                delta_z=COUPLED_CALLER_STEP,
+                method="RK4",
+                verbose=False,
+                plot=False,
+                normalize=False,
+            )
+        out = np.asarray(as_numpy(simu, out))
+        return float(np.linalg.norm(out) / np.linalg.norm(E))
+
+    @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+    def test_rk4_takes_the_faster_of_the_two_potentials(self, backend_name):
+        """With k2 > k the second component's potential sets the RK4 step."""
+        probe = make(CNLSE, backend_name, n=N)
+        V = np.full((probe.NY, probe.NX), COUPLED_V, dtype=np.float32)
+        simu = make(CNLSE, backend_name, n=N, V=V, alpha=0.0, n2=0.0, n12=0.0)
+        simu.k2 = K2_OVER_K * simu.k
+        growth = self.stable_coupled_run(simu)
+        assert growth <= 1 + NORM_GROWTH_RTOL, (
+            f"{backend_name}: the norm grew {growth:.3g} times, so the RK4 "
+            f"step ignores the second component's potential"
+        )
+
+    @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+    def test_rk4_counts_the_rabi_coupling(self, backend_name):
+        """The Rabi coupling is a linear rate of omega / 2 and bounds the step."""
+        simu = make(
+            CNLSE, backend_name, n=N, alpha=0.0, n2=0.0, n12=0.0, omega=RABI_OMEGA
+        )
+        fastest = simu._max_dispersion_rate() + RABI_OMEGA / 2
+        assert simu._rk4_max_dz() == pytest.approx(RK4_STABILITY_RADIUS / fastest)
+        growth = self.stable_coupled_run(simu)
+        assert growth <= 1 + NORM_GROWTH_RTOL, (
+            f"{backend_name}: the norm grew {growth:.3g} times, so the RK4 "
+            f"step ignores the Rabi coupling"
         )
 
     def test_the_rates_are_energies_not_grid_maxima(self):

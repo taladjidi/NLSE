@@ -569,6 +569,58 @@ generates the no-V / real-V / complex-V variants from one VBLOCK-marked kernel,
 shared between the OpenCL and CUDA C sources, guarded by
 `tests/backends/test_kernel_templating.py`.
 
+**The audit fixes cost no step time — measured** (2026-11-26).
+`profile_backends.py --baseline 38a8704 --rounds 4`, complex64, lossless, NLSE
+and CNLSE, split step and RK4 at 1024² and 2048²: 4.1.0 (`38a8704`) against
+`4ac2bb2`. No cell is slower by more than it moved between rounds of the same
+code.
+
+| | NLSE | CNLSE | moved between rounds |
+|---|---|---|---|
+| CUPY, RTX 3050 | 1.00x | 1.00–1.01x | 0.1–1% |
+| MLX, M3 Max | 1.00x | 0.99–1.00x | 0.4–4.6% |
+| CPU, M3 Max | 0.99–1.06x | 0.96–1.04x | 2.7–13.9% |
+
+RK4, in ms per step, 1024² then 2048²: CUPY 2.439 → 2.444 and 9.869 → 9.887
+(NLSE), 4.855 → 4.892 and 19.836 → 19.916 (CNLSE); MLX 1.594 → 1.600 and
+8.779 → 8.786 (NLSE), 6.219 → 6.213 and 27.745 → 27.735 (CNLSE). The CNLSE
+cell at 1024² on CUPY is +0.8% here and was +0.4% in an earlier campaign
+(4.856 → 4.877): under what that box resolves, and the only cell that leaned
+the same way twice.
+
+**The tool timed more steps than it asked for — fixed.** Two cases, both the
+solver lowering the step it was given. Split-step at 1024² and above: the
+limit at the tool's window is 6.19e-5 m at 1024² and falls as 1/N², so
+`DELTA_Z = 1e-4` became 5.57e-5 and a cell ran 1.79 steps per step asked (7.18
+at 2048² before the step shrank with the grid). Both revisions lower alike,
+so the ratios above stand, but a split-step "ms per step" from this tool at
+1024² or above is per step asked, not per step taken: the split-step figures
+behind the table are not quoted for that reason. RK4 at 2048²: 4.1.0 took
+the step asked and returned NaN, its successor bounds the step and took 2.56
+times as many, which read as "2.56x slower". `step_for` now shrinks the step
+as `(512/N)²` past 512², under both limits: no cell of NLSE, CNLSE or NLSE_1d
+from 256 to 2048 has its step lowered, on either revision.
+`trace_solvers.py` and `propagator_fusion.py` still ask 1e-4 at every size.
+
+**A call costs less than in 4.1.0, and is still worth many steps — measured**
+(2026-11-26). One `out_field` call of one step asked, on a solver that has
+run before, CUPY on the RTX 3050, complex64, fastest of 7 calls in 3
+alternating rounds:
+
+| 2048² | 4.1.0 | `4ac2bb2` |
+|---|---|---|
+| NLSE split step | 93.3 ms | 37.7 ms |
+| NLSE split step, `V` set | 107.5 ms | 57.1 ms |
+| NLSE split step, default step | 133.3 ms | 56.2 ms |
+| NLSE RK4 | 102.9 ms | 54.4 ms |
+| CNLSE split step | 170.1 ms | 109.8 ms |
+| CNLSE RK4 | 234.9 ms | 181.3 ms |
+
+All 48 cells (512² too, both solvers, cut and whole runs) are at 0.40–0.98x.
+A split step taken at 2048² is about 1.95 ms there (13.97 ms per step asked,
+7.18 taken), so the NLSE call is still worth about 19 steps. What it is made
+of is not broken down yet.
+
 ## CPU (numba + scipy.fft)
 
 **scipy.fft instead of pyFFTW — deployed** (`b69a42e`). Per step, best of 5 on

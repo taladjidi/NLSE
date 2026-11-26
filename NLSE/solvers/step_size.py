@@ -407,18 +407,37 @@ class StepSize:
             dz = self.k * min(self.window) ** 2
         return dz
 
+    def _max_local_linear_rate(self) -> float:
+        """Return the fastest linear rate RK4 evaluates point by point.
+
+        Here that is the potential, absorption included. The coupled solvers
+        add what else they have.
+
+        Returns
+        -------
+        float
+            ``max |V k / 2|`` over the grid, or 0 without a potential.
+        """
+        V_scaled = self._as_host_array(self._V_scaled)
+        if V_scaled is None:
+            return 0.0
+        return float(np.max(np.abs(V_scaled)))
+
     def _rk4_max_dz(self, A: np.ndarray | None = None) -> float:
         """Compute the maximum stable step size for explicit RK4.
 
         RK4's stability region reaches ~2.83 along the imaginary axis, so the
         step is bounded by ``2.83 / |lambda|`` for the right-hand side it
         integrates. Every term it evaluates explicitly belongs in that
-        eigenvalue — dispersion, potential, interaction and loss — and they
-        add.
+        eigenvalue — dispersion, potential, coupling, interaction and loss —
+        and they add.
 
-        Dispersion alone is almost never the largest: V is scaled by k/2, so
-        omitting it puts RK4 outside its stability region whenever there is a
-        potential.
+        The linear terms count by their maximum over the grid, not by the
+        field-weighted rates of ``_energy_rates``. Past the radius RK4
+        amplifies whatever a mode holds, and round-off puts something in every
+        mode: a run stepped by the weighted rates returned NaN wherever the
+        grid's shortest wave, or a potential the field never reaches, was
+        faster than the field itself.
 
         The absorption of a complex potential counts here, unlike in
         ``_split_step_max_dz``: split-step applies it exactly through the
@@ -428,21 +447,18 @@ class StepSize:
         Parameters
         ----------
         A : np.ndarray, optional
-            Field. Without it the field-weighted rates cannot be formed, so a
-            conservative grid maximum is used instead.
+            Field, for the interaction and the loss. Without it only the
+            linear terms count.
 
         Returns
         -------
         float
             Largest stable step, or infinity if every rate vanishes.
         """
-        if A is None:
-            rate = self._max_dispersion_rate()
-            V_scaled = self._as_host_array(self._V_scaled)
-            if V_scaled is not None:
-                rate += float(np.max(np.abs(V_scaled)))
-        else:
-            rate = sum(self._energy_rates(A).values())
+        rate = self._max_dispersion_rate() + self._max_local_linear_rate()
+        if A is not None:
+            rates = self._energy_rates(A)
+            rate += rates["interaction"] + rates["loss"]
         if rate == 0:
             return np.inf
         return RK4_STABILITY_RADIUS / rate
@@ -563,8 +579,9 @@ class StepSize:
         """Return delta_z, lowered if it leaves the method's convergence region.
 
         Only ever lowers its magnitude, and keeps its sign, which is the
-        direction of the run. A step the solver chose itself is already well
-        inside the limit, so this binds on a step the caller passed.
+        direction of the run. The default step is well inside the split-step
+        limit, so there this binds on a step the caller passed. RK4's limit is
+        set by the grid's shortest wave and can bind on the default step too.
 
         Parameters
         ----------
