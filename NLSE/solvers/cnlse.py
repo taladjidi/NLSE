@@ -4,14 +4,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.constants import c, epsilon_0
 
-from ..utils import __BACKEND__, __CUPY_AVAILABLE__, __PYOPENCL_AVAILABLE__
+from ..utils import __BACKEND__
 from .nlse import NLSE, show_if_possible
-
-if __CUPY_AVAILABLE__:
-    pass
-
-if __PYOPENCL_AVAILABLE__:
-    pass
 
 
 class CNLSE(NLSE):
@@ -462,9 +456,14 @@ class CNLSE(NLSE):
             V2_scaled = V * k2_half
 
         # Fused fast path: zero component copies, and the transform writes
-        # straight into k rather than the stage starting with a copy.
-        if self._backend.has_fused_coupled_rk4_rhs and self._can_fuse_components(
-            A_in, (alpha_half, alpha2_half, g11, g12, g21, g22, Isat1, Isat2)
+        # straight into k rather than the stage starting with a copy. The
+        # fused kernel has no Rabi term, so a coupled run takes the generic one.
+        if (
+            self.omega is None
+            and self._backend.has_fused_coupled_rk4_rhs
+            and self._can_fuse_components(
+                A_in, (alpha_half, alpha2_half, g11, g12, g21, g22, Isat1, Isat2)
+            )
         ):
             prop, unnorm = self._fused_propagator(propagator)
             return kernels.rk4_rhs_coupled_fused(
@@ -546,9 +545,34 @@ class CNLSE(NLSE):
                 Isat1,
             )
 
+        if self.omega is not None:
+            k1, k2 = self._add_rabi_slope(k1, k2, A1, A2)
         self._set_components(k, k1, k2)
 
         return k
+
+    def _add_rabi_slope(
+        self, k1: np.ndarray, k2: np.ndarray, A1: np.ndarray, A2: np.ndarray
+    ) -> tuple:
+        """Add the Rabi coupling to each component's right-hand side.
+
+        The term ``i dA1/dz = (omega / 2) A2``, and its mirror for ``A2``,
+        which ``rabi_coupling`` integrates exactly in the split step.
+
+        Parameters
+        ----------
+        k1, k2 : np.ndarray
+            Right-hand sides of the two components.
+        A1, A2 : np.ndarray
+            The components they were evaluated at.
+
+        Returns
+        -------
+        tuple
+            The two right-hand sides with the coupling added.
+        """
+        rate = -1j * self.omega / 2
+        return k1 + rate * A2, k2 + rate * A1
 
     def _fusable_params(self) -> tuple:
         """Return the parameters the coupled whole-stage kernel takes as scalars."""
@@ -562,6 +586,23 @@ class CNLSE(NLSE):
             self._constant("_Isat_conv"),
             self._constant("_Isat_conv2"),
         )
+
+    def _can_fuse_rk4_stage(self, A: np.ndarray) -> bool:
+        """Whether the whole-stage kernels can serve this run.
+
+        Not with a Rabi coupling, which those kernels do not apply.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            The coupled field.
+
+        Returns
+        -------
+        bool
+            True if the fused path applies.
+        """
+        return self.omega is None and super()._can_fuse_rk4_stage(A)
 
     def _RK4_fused_stage(
         self,
@@ -723,6 +764,58 @@ class CNLSE(NLSE):
         np.ndarray
             The propagated field.
         """
+        # Half a Rabi rotation on each side keeps the Strang step symmetric,
+        # hence second order, and Yoshida's sub-steps with it.
+        rabi_halves = splitting == "strang" and self.omega is not None
+        if rabi_halves:
+            A = self._rabi_rotation(A, delta_z / 2)
+        A = self._split_step_body(A, A_sq, V, propagator, plans, delta_z, splitting)
+        if rabi_halves:
+            A = self._rabi_rotation(A, delta_z / 2)
+        return A
+
+    def _rabi_rotation(self, A: np.ndarray, dz: float) -> np.ndarray:
+        """Exchange the two components through the Rabi coupling over dz.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            Coupled field, written back in place.
+        dz : float
+            Step to rotate over.
+
+        Returns
+        -------
+        np.ndarray
+            The field.
+        """
+        A1, A2 = self._take_components(A)
+        A1, A2 = self._backend.kernels.rabi_coupling(A1, A2, dz, self.omega / 2)
+        self._set_components(A, A1, A2)
+        return A
+
+    def _split_step_body(
+        self,
+        A: np.ndarray,
+        A_sq: np.ndarray,
+        V: np.ndarray | None,
+        propagator: np.ndarray,
+        plans: list,
+        delta_z: float,
+        splitting: str,
+    ) -> np.ndarray:
+        """Take the step ``split_step`` describes, a Lie step's Rabi rotation included.
+
+        Parameters
+        ----------
+        A, A_sq, V, propagator, plans, delta_z, splitting
+            As for ``split_step``.
+
+        Returns
+        -------
+        np.ndarray
+            The propagated field.
+        """
         # Use pre-computed constants with fallbacks for direct calls
         alpha_half = self._constant("_alpha_half")
         alpha2_half = self._constant("_alpha2_half")
@@ -735,8 +828,9 @@ class CNLSE(NLSE):
         V_scaled = self._V_scaled
         V2_scaled = self._V2_scaled
         if V is not None and V_scaled is None:
-            V_scaled = V * np.float32(self.k / 2)
-            V2_scaled = V * np.float32(self.k2 / 2)
+            # The solver's own scale: DDGPE's is not k / 2.
+            V_scaled = V * np.float32(self._constant("_k_half"))
+            V2_scaled = V * np.float32(self._constant("_k2_half"))
         nl_args = (
             V_scaled,
             V2_scaled,
