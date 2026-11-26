@@ -4,7 +4,7 @@ from typing import Any
 
 import numpy as np
 import numpy.typing as npt
-from scipy import fft as scipy_fft, signal
+from scipy import fft as scipy_fft
 
 from ..kernels import cpu as kernels_cpu
 from .backend import Backend
@@ -46,11 +46,6 @@ class CPUBackend(Backend):
     def allocate_real_field(self, shape: tuple, dtype: npt.DTypeLike) -> np.ndarray:
         """Allocate a real field array."""
         return np.zeros(shape, dtype=dtype)
-
-    @property
-    def convolution(self):
-        """Return scipy's overlap-add convolution."""
-        return signal.oaconvolve
 
     def to_numpy(self, array: np.ndarray) -> np.ndarray:
         """Already numpy, return as-is."""

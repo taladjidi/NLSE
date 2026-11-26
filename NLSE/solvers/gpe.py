@@ -76,10 +76,9 @@ class GPE(NLSE):
             Saturation density in atoms/m^2: the interaction and the
             loss are divided by 1 + |psi|^2 / sat.
         nl_length : float
-            Non local length in m.
-            The non-local kernel is the instantiated as a Bessel function
-            to model a diffusive non-locality stored in the nl_profile
-            attribute.
+            Non-local length in m, of a diffusive non-locality: the
+            interaction reads the intensity smoothed by
+            1 / (1 + nl_length^2 K^2) in Fourier space. 0 is local.
         backend : str, optional
             "GPU" or "CPU". Defaults to __BACKEND__.
         """

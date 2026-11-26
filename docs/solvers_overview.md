@@ -24,11 +24,11 @@ NLSE (2D base class)
 |--------|-----------|------------|-------------|-------------|-----|
 | `NLSE` | 2D | 1 | Optics (SI) | Yes | No |
 | `NLSE_1d` | 1D | 1 | Optics (SI) | Yes | No |
-| `NLSE_3d` | 3D | 1 | Optics (SI) | No | Yes |
-| `CNLSE` | 2D | 2 | Optics (SI) | No | No |
-| `CNLSE_1d` | 1D | 2 | Optics (SI) | No | No |
+| `NLSE_3d` | 3D | 1 | Optics (SI) | Transverse | Yes |
+| `CNLSE` | 2D | 2 | Optics (SI) | Yes | No |
+| `CNLSE_1d` | 1D | 2 | Optics (SI) | Yes | No |
 | `GPE` | 2D | 1 | Atomic (SI) | Yes | No |
-| `DDGPE` | 2D | 2 | Polariton | No | No |
+| `DDGPE` | 2D | 2 | Polariton | Yes | No |
 
 ## The equation each solver integrates
 
@@ -225,17 +225,12 @@ For 2D solvers, the potential should have shape `(NY, NX)`. Set to `None` for fr
 
 #### Non-locality
 
-`nl_length` models a diffusive non-locality, as a Bessel kernel convolved with
-the intensity. The kernel spans `nl_length // delta_X` grid cells, so the grid
-has to resolve the length you ask for: below one cell the kernel is a single
-point, which is the identity. The solver warns and propagates locally in that
-case rather than charging you for a convolution that does nothing.
-
-Only CPU and CUPY have the convolution. Asking for a non-locality on OpenCL or
-MLX moves the solver to the fastest backend that has one, with a warning saying
-which and why — the backend is how a run goes, the non-locality is what it
-computes, and the physics is not the part to give up. See
-[Backends](backends.md).
+`nl_length` models a diffusive non-locality: the interaction reads the
+intensity smoothed by `1 / (1 + nl_length**2 * K**2)` in Fourier space, the
+transform of the diffusion equation's Green function. The product is taken on
+the periodic grid, so the length is not rounded to whole cells and the two
+axes keep their own spacing. Every backend runs it. In 3D only the transverse
+wavenumbers enter: the index diffuses across the beam, not along the pulse.
 
 #### Complex potentials
 

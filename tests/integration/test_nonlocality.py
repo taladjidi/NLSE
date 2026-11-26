@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import pytest
 from NLSE import CNLSE, GPE, NLSE, CNLSE_1d, NLSE_1d, NLSE_3d
@@ -7,161 +9,16 @@ from scipy.constants import c, epsilon_0
 PRECISION_COMPLEX = np.complex64
 PRECISION_REAL = np.float32
 
-# Non-locality is a convolution, and a backend without one refuses a positive
-# nl_length outright. Asked of the backend rather than listed here, so a
-# backend that gains the kernel moves between these lists on its own.
-AVAILABLE_BACKENDS = [
-    b for b in list_available_backends() if get_backend(b).convolution is not None
-]
-UNSUPPORTED = [
-    b for b in list_available_backends() if get_backend(b).convolution is None
-]
+# The non-local response is a product in Fourier space, which every backend
+# has: none of them hands a non-local run to another.
+AVAILABLE_BACKENDS = list_available_backends()
 
 
-@pytest.mark.parametrize("backend", UNSUPPORTED)
-def test_unsupported_backends_fall_back_for_nonlocality(backend):
-    """A backend without the convolution must hand the run to one that has it.
-
-    The backend is a performance choice and the non-locality is physics, so
-    the physics wins and the swap is announced. What must not happen is a
-    silent local run, which is a different problem returning a plausible
-    field.
-
-    The grid has to resolve nl_length, or there is nothing to fall back for:
-    below one cell the solver drops the non-locality and runs local, which
-    these backends do perfectly well.
-    """
-    with pytest.warns(UserWarning, match=r"non-local"):
-        NLSE(
-            alpha=0,
-            power=1.05,
-            window=4 * 2.23e-3,
-            n2=-1e-9,
-            V=None,
-            L=2e-4,
-            NX=512,
-            NY=512,
-            Isat=10e4,
-            nl_length=60e-6,
-            backend=backend,
-        )
-
-
-@pytest.mark.parametrize("backend", UNSUPPORTED)
-def test_the_fallback_lands_on_a_backend_that_can_convolve(backend):
-    """Announcing a swap is no use if the solver stays where it was."""
-    with pytest.warns(UserWarning, match=r"non-local"):
-        simu = NLSE(
-            alpha=0,
-            power=1.05,
-            window=4 * 2.23e-3,
-            n2=-1e-9,
-            V=None,
-            L=2e-4,
-            NX=512,
-            NY=512,
-            Isat=10e4,
-            nl_length=60e-6,
-            backend=backend,
-        )
-    assert simu._backend.convolution is not None
-    assert simu._backend.name != backend
-
-
-@pytest.mark.parametrize("backend", list_available_backends())
-def test_an_unresolvable_nl_length_falls_back_to_local(backend):
-    """Below one grid cell there is no non-locality to model.
-
-    The kernel spans ``nl_length // delta_X`` cells, so on a coarser grid it
-    is a single point: the identity, and a local run paying for a convolution
-    every step. The solver warns and drops it instead, which also lets the
-    backends without a convolution kernel accept it.
-    """
-    with pytest.warns(UserWarning, match="below one grid cell"):
-        simu = NLSE(
-            alpha=0,
-            power=1.05,
-            window=4 * 2.23e-3,
-            n2=-1e-9,
-            V=None,
-            L=2e-4,
-            NX=64,
-            NY=64,
-            Isat=10e4,
-            nl_length=60e-6,  # smaller than this grid's 139 um cell
-            backend=backend,
-        )
-    assert simu.nl_length == 0, "the unresolvable length was not dropped"
-    assert simu.nl_profile.shape == (64, 64), (
-        "a local run should have the flat profile, not a 1x1 kernel"
-    )
-
-
-@pytest.mark.parametrize("backend", list_available_backends())
-def test_an_nl_length_longer_than_the_window_is_refused(backend):
-    """Past the window there is no kernel to build, only a machine to fill.
-
-    The kernel is six interaction lengths wide, so its size grows as the
-    square of nl_length / delta_X with nothing bounding it above. Only the
-    lower end was checked. A length in the wrong unit -- 5 m instead of 5 um
-    on a 8.9 mm window -- asks for a 215281 x 215281 kernel, and the process
-    is killed part way through building it: no traceback, no message, exit
-    137, and on a shared machine possibly something else killed instead.
-
-    Refined grids do not help here and coarser ones make it worse, so this
-    raises rather than falling back the way an unresolvable length does.
-
-    Parameters
-    ----------
-    backend : str
-        Backend to run on. The check is on the grid, so it is the same on
-        every one, and it has to come before the convolution refusal or the
-        backends without a convolution would report the wrong problem.
-    """
-    with pytest.raises(ValueError, match="longer than the"):
-        NLSE(
-            alpha=0,
-            power=1.05,
-            window=4 * 2.23e-3,
-            n2=-1e-9,
-            V=None,
-            L=2e-4,
-            NX=64,
-            NY=64,
-            Isat=10e4,
-            nl_length=5.0,  # metres, on a 8.9 mm window
-            backend=backend,
-        )
-
-
-def test_a_resolved_nl_length_is_kept():
-    """The fallback must not fire on a grid that does resolve the length."""
-    simu = NLSE(
-        alpha=0,
-        power=1.05,
-        window=4 * 2.23e-3,
-        n2=-1e-9,
-        V=None,
-        L=2e-4,
-        NX=512,
-        NY=512,
-        Isat=10e4,
-        nl_length=60e-6,
-        backend="CPU",
-    )
-    assert simu.nl_length == 60e-6
-    assert simu.nl_profile.shape[0] > 1, "no non-local kernel was built"
-
-
-def test_supported_backends_accept_nonlocality():
-    """And the ones on the list must accept it.
-
-    The grid has to resolve nl_length: the non-local kernel spans
-    ``nl_length // delta_X`` cells, so on a coarser grid than that it collapses
-    to a single point and the run is local again, silently.
-    """
-    assert AVAILABLE_BACKENDS, "no backend can run the tests below"
-    for backend in AVAILABLE_BACKENDS:
+@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
+def test_a_non_local_run_stays_on_the_backend_asked_for(backend):
+    """No backend lacks what non-locality needs, so none is swapped, silently or not."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
         simu = NLSE(
             alpha=0,
             power=1.05,
@@ -175,9 +32,34 @@ def test_supported_backends_accept_nonlocality():
             nl_length=60e-6,
             backend=backend,
         )
-        assert simu.nl_profile.shape[0] > 1, (
-            f"{backend} accepted nl_length but built no non-local profile"
+    assert simu._backend.name == backend
+    assert simu.nl_length == 60e-6
+
+
+@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
+def test_a_length_below_one_cell_is_kept(backend):
+    """The response is exact at any length, so a sub-cell one is not dropped.
+
+    The old real-space kernel was a whole number of cells wide and collapsed
+    to the identity below one, so the solver warned and ran local. The
+    response ``1 / (1 + l^2 K^2)`` has no such floor: it smooths a little.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        simu = NLSE(
+            alpha=0,
+            power=1.05,
+            window=4 * 2.23e-3,
+            n2=-1e-9,
+            V=None,
+            L=2e-4,
+            NX=64,
+            NY=64,
+            Isat=10e4,
+            nl_length=60e-6,  # smaller than this grid's 139 um cell
+            backend=backend,
         )
+    assert simu.nl_length == 60e-6, "the sub-cell length was dropped"
 
 
 def test_nonlocality():
@@ -344,18 +226,10 @@ def test_nonlocality():
 
 @pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_a_three_dimensional_run_can_be_non_local(backend):
-    """NLSE_3d has taken an nl_length since it existed and never used one.
+    """NLSE_3d smooths across the beam and runs to the end.
 
-    The base builds a transverse kernel and ``NLSE_1d`` narrows it to its own
-    rank; the three-dimensional solver convolves over three axes and inherited
-    the two-dimensional kernel unchanged, so every non-local run raised out of
-    the convolution -- ``in1 and in2 should have the same dimensionality`` --
-    batched or not. Nothing here covered it: this file's cases are all 2D or
-    1D.
-
-    The non-locality is transverse, so the time axis convolves with a delta.
-    That is the modelling choice the fix makes: the index diffuses across the
-    beam, not along the pulse.
+    The closed form of the transverse response is checked in
+    tests/physics/test_nonlocal_response.py; this is the whole run.
     """
     simu = NLSE_3d(
         alpha=0,
@@ -373,20 +247,6 @@ def test_a_three_dimensional_run_can_be_non_local(backend):
         nl_length=1e-3,
         backend=backend,
     )
-    assert simu.nl_length > 0, "the grid dropped the length before anything ran"
-    assert simu.nl_profile.ndim == len(simu._last_axes), (
-        f"the kernel is rank {simu.nl_profile.ndim} against {len(simu._last_axes)} "
-        f"convolved axes, which is what the convolution refuses"
-    )
-    assert simu.nl_profile.shape[-1] == 1, (
-        "the kernel spans more than one sample in time, so the non-locality is "
-        "not the transverse one it is documented to be"
-    )
-    assert float(np.asarray(simu.nl_profile).sum()) == pytest.approx(1.0, rel=1e-5), (
-        "the kernel stopped being normalized, so it changes the intensity it "
-        "is only meant to redistribute"
-    )
-
     field = np.exp(
         -(simu.XX**2 + simu.YY**2) / (2.23e-3) ** 2 - simu.TT**2 / (1e-9 / 4) ** 2
     ).astype(PRECISION_COMPLEX)
@@ -399,20 +259,19 @@ def test_a_three_dimensional_run_can_be_non_local(backend):
     assert np.all(np.isfinite(out)), "the non-local 3D run returned non-finite values"
 
 
+@pytest.mark.parametrize("splitting", ["lie", "RK4"])
 @pytest.mark.parametrize("backend", [b for b in AVAILABLE_BACKENDS if b != "CPU"])
-def test_a_non_local_run_agrees_with_the_cpu(backend):
-    """Each backend's convolution has to be the same convolution.
+def test_a_non_local_run_agrees_with_the_cpu(backend, splitting):
+    """Each backend's smoothing has to be the same smoothing.
 
-    The capability test only asks that a box kernel over ones comes back as
-    the box's sum, which a circular convolution would also pass. This runs the
-    physics and compares the field, so a backend that wrapped at the edges
-    instead of zero-padding, or that dropped the centring offset, is caught.
+    The closed-form tests check one nonlinear step. This runs the physics,
+    split-step and RK4 alike, and compares the field.
     """
     # About a radian of nonlinear phase over the cell. Enough that the
-    # convolution changes the answer, little enough that the run is not
+    # smoothing changes the answer, little enough that the run is not
     # chaotic: at the couple of hundred radians these parameters reach if the
     # power is left at 1 W, two backends disagree by 100% on a LOCAL run and
-    # the comparison says nothing about either convolution.
+    # the comparison says nothing about either smoothing.
     window, n, nl = 1e-3, 64, 5 * 1e-3 / 64
     kwargs = {
         "alpha": 0,
@@ -433,7 +292,11 @@ def test_a_non_local_run_agrees_with_the_cpu(backend):
             PRECISION_COMPLEX
         )
         fields.append(
-            np.asarray(simu._backend.to_numpy(simu.out_field(E, 1e-3, verbose=False)))
+            np.asarray(
+                simu._backend.to_numpy(
+                    simu.out_field(E, 1e-3, verbose=False, splitting=splitting)
+                )
+            )
         )
     cpu, other = fields
     difference = np.max(np.abs(other - cpu)) / np.max(np.abs(cpu))

@@ -38,13 +38,7 @@ $$
 n_2(\mathbf{r})|E|^2(\mathbf{r})=n_2\int_{\mathbb{R}^2}\mathrm{d}\mathbf{r}' K(\mathbf{r}-\mathbf{r}')|E|^2(\mathbf{r}'),
 $$
 
-where $K(\mathbf{r})$ is a non-local kernel, typically the Green function of a diffusion equation. The kernel is set via the `nl_length` parameter and uses a modified Bessel function $K_0$.
-
-:::{note}
-Only CPU and CUPY have the convolution a non-local interaction needs.
-Asking for one on OpenCL or MLX moves the run to a backend that has it,
-with a warning saying which and why.
-:::
+where $K(\mathbf{r})$ is a non-local kernel, typically the Green function of a diffusion equation. The solvers use that one, of length $\ell$ set by the `nl_length` parameter: $K_0(r/\ell)/(2\pi\ell^2)$ in 2D and $e^{-|x|/\ell}/(2\ell)$ in 1D. The convolution is applied in Fourier space on the periodic grid, as a multiplication by $1/(1+\ell^2 k_\perp^2)$, and runs on every backend. In 3D it acts across the beam only.
 ## Coupled NLSE (CNLSE)
 
 The `CNLSE` class solves a system of two coupled nonlinear Schrödinger equations:

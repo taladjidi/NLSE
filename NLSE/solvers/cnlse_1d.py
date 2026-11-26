@@ -50,10 +50,9 @@ class CNLSE_1d(CNLSE):
             Saturation intensity, assumed to be the same
             for both components. Defaults to infinity.
         nl_length : float
-            Non local length in m.
-            The non-local kernel is the instantiated as a Bessel function
-            to model a diffusive non-locality stored in the nl_profile
-            attribute.
+            Non-local length in m, of a diffusive non-locality: the
+            interaction reads the intensity smoothed by
+            1 / (1 + nl_length^2 K^2) in Fourier space. 0 is local.
         wvl : float, optional
             Wavelength in m. Defaults to 780 nm.
         omega : float, optional
@@ -78,8 +77,6 @@ class CNLSE_1d(CNLSE):
             backend=backend,
         )
         self._last_axes = (-1,)
-        self.nl_profile = self.nl_profile[0]
-        self.nl_profile /= self.nl_profile.sum()
 
         # Override normalization factor for 1D (delta_X^2 instead of delta_X * delta_Y)
         self._norm_grid_factor = np.float32(self.delta_X**2)
@@ -92,6 +89,10 @@ class CNLSE_1d(CNLSE):
         by the field needs the operator itself, on the right grid.
         """
         return 0.5 * self.Kx**2 / min(self.k, self.k2)
+
+    def _transverse_k_squared(self) -> np.ndarray:
+        """Return the squared wavenumber over the 1D Fourier grid."""
+        return self.Kx**2
 
     def _propagator_cache_key(self, dtype: np.dtype, delta_z: float) -> tuple:
         """Return cache key for 1D coupled propagator."""

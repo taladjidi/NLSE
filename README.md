@@ -122,8 +122,8 @@ statement about *how* a run goes, not about what it computes, so naming one
 that this machine cannot provide is answered rather than refused: the solver
 moves to the fastest backend that is installed and tells you which and why.
 The same happens when a backend is installed but cannot serve the run — MLX
-and OpenCL have no convolution, so a non-local interaction lands on CPU or
-CUPY. A name that is not a backend at all is still an error, because that is a
+and OpenCL cannot broadcast a coupled solver over a batch, so that run lands on
+CPU or CUPY. A name that is not a backend at all is still an error, because that is a
 typo and guessing at it would hide the typo.
 
 This is what lets a script written on one machine run on another. Pass the
@@ -155,7 +155,7 @@ Other than this, the code relies on these libraries :
 
 - `numba` : compiles the CPU kernels, and runs them across cores
 - `numpy`
-- `scipy` : the CPU transform, and the non-local convolution
+- `scipy` : the CPU transform
 - `matplotlib`
 - `tqdm`
 

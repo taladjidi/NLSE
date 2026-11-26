@@ -737,13 +737,11 @@ class TestNLSEConstructor:
         assert simu.backend == "CPU"
 
     def test_nl_length_positive(self):
-        """Positive nl_length creates Bessel non-local profile."""
+        """Positive nl_length is kept, and its response keeps the total."""
         simu = make_nlse("CPU", n=S, nl_length=1e-3)
-        assert simu.nl_length > 0
-        # nl_profile should be a small kernel, not full grid
-        assert simu.nl_profile.shape[0] < S
-        # nl_profile should be normalized
-        np.testing.assert_allclose(simu.nl_profile.sum(), 1.0, rtol=1e-5)
+        assert simu.nl_length == 1e-3
+        # R(K = 0) = 1: the smoothing redistributes the intensity only.
+        assert simu._nonlocal_response()[0, 0] == 1.0
 
 
 class TestNLSEPropagator:
@@ -823,7 +821,7 @@ class TestNLSESplitStep:
         assert np.isfinite(A).all()
 
     def test_nonlocal_propagation(self):
-        """Split step with nl_length > 0 uses convolution."""
+        """Split step with nl_length > 0 smooths the intensity in Fourier space."""
         simu = make_nlse("CPU", n=S, nl_length=1e-3)
         XX, YY = np.meshgrid(simu.X, simu.Y)
         E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
