@@ -516,7 +516,7 @@ class DDGPE(CNLSE):
         E_in: np.ndarray,
         t: float,
         laser_excitation: Callable | None,
-        delta_z: float | complex | None = None,
+        delta_z: float | None = None,
         plot: bool = False,
         splitting: str = "lie",
         verbose: bool = True,
@@ -532,7 +532,7 @@ class DDGPE(CNLSE):
             E_in[1] is the cavity field.
         t : float
             Time to propagate to in s.
-        delta_z : float or complex, optional
+        delta_z : float, optional
             Time step. Defaults to None, meaning the solver derives one from
             the field.
         laser_excitation : callable or None

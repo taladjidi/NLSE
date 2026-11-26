@@ -339,7 +339,7 @@ def test_adapt_delta_z_to_error_follows_the_step_rule(backend_name, monkeypatch)
     simu = NLSE(backend=backend_name, **BASE)
     field = simu._backend.from_numpy(uniform_field(INTENSITY))
     step = simu._split_step_max_dz(field) / CEILING_MARGIN
-    simu._current_delta_z = step
+    simu._step_in_force = step
     monkeypatch.setattr(
         callbacks,
         "_trial_propagation",

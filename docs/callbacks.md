@@ -155,8 +155,8 @@ def refine_past_halfway(simu, A, z, i, dz_fine):
     return dz_fine if z >= simu.L / 2 else None
 ```
 
-`simu._current_delta_z` holds the step in force, for a callback that needs to
-see it.
+`simu._current_delta_z` holds the step just taken, for a callback that needs to
+see it: the shorter one when a step was cut to land on `L` or on `z`.
 
 ### `adapt_delta_z_to_error` -- step sizing from a measured error
 

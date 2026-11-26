@@ -615,8 +615,8 @@ class TestNonlinearityCutoff:
     def test_callback_loop_cuts_off_at_the_same_place(self):
         """The callback loop and the fast loop must agree past L.
 
-        They cut off differently: the fast loop splits into two execute_loop
-        segments, the callback loop switches mid-iteration on z_prop.
+        Both split the run at L and cut the step that would cross it; the fast
+        loop hands each segment to execute_loop, the callback loop steps it.
         """
         E = gaussian_input()
         z = 3 * L

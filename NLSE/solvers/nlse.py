@@ -60,6 +60,11 @@ YOSHIDA_SPAN = max(abs(w) for w in YOSHIDA_WEIGHTS)
 # the same time.
 SPLITTINGS = ("lie", "strang", "yoshida")
 
+# Fraction of a step below which a distance left over is round-off in
+# distance / step rather than real propagation (dimensionless): z / dz for 237
+# steps comes to 237.00000000000003, which must still be 237 whole steps.
+STEP_ROUNDOFF = 1e-9
+
 
 # Backends that render to a file rather than a window. Calling show() on one
 # does nothing except warn, and a library should not warn a user for the
@@ -97,11 +102,14 @@ class NLSE(StepSize):
     _plot_axis_format = ".2e"
     _plot_components = (r"\psi_1", r"\psi_2")
 
-    # Step currently in force, for callbacks that need it -- callbacks receive
+    # Step just taken, for callbacks that need it -- callbacks receive
     # (simu, A, z, i, *args) and have no other way to see it. Written by the
     # propagation loop, meaningless outside one, and not a way to set the step:
     # a callback changes it by *returning* a new one.
-    _current_delta_z: float | complex | None = None
+    _current_delta_z: float | None = None
+    # Step the loop takes next. It is not the one just taken when that one was
+    # cut to land on L or z, and it is the one a controller has to scale.
+    _step_in_force: float | None = None
 
     # Set per run rather than derived from the parameters, so they are None
     # until a run sets them up. Declared here so reading one before that is a
@@ -271,7 +279,7 @@ class NLSE(StepSize):
         self,
         E_in: np.ndarray,
         z: float,
-        delta_z: float | complex | None = None,
+        delta_z: float | None = None,
         plot: bool = False,
         splitting: str = "lie",
         method: str = "split_step",
@@ -285,24 +293,19 @@ class NLSE(StepSize):
         This function propagates the field E_in over a distance z by
         calling the split step function in a loop.
 
-        This function supports imaginary time evolution provided you pass
-        a complex delta_z.
-        This allows to find the ground state of the system.
-        Warning: this is still experimental !
-
         Parameters
         ----------
         E_in : np.ndarray
             Normalized input field (between 0 and 1).
         z : float
-            Propagation distance in m.
-        delta_z : float or complex, optional
+            Propagation distance in m, not negative.
+        delta_z : float, optional
             Step to propagate with. Defaults to None, meaning the solver
             derives one from the field: a step that imprints a fixed phase
             per step, against the same energy rates the stability and
             accuracy limits are built from. A step given here is used as
             given, capped only where it would leave the method's region of
-            convergence. Pass a complex value for imaginary time evolution.
+            convergence. A negative step propagates backwards over z.
         plot : bool, optional
             Plots the results. Defaults to False.
         splitting : str, optional
@@ -334,15 +337,25 @@ class NLSE(StepSize):
         callback : callable, optional
             Callback function.
             Defaults to None.
-        callback_args : tuple, optional
-            Additional arguments for the
-            callback function.
+        callback_args : tuple or list of tuples, optional
+            Additional arguments for the callback, or one tuple per callback
+            when ``callback`` is a list. Defaults to no arguments for every
+            callback.
 
         Returns
         -------
         np.ndarray
             Propagated field in proper units V/m.
+
+        Raises
+        ------
+        TypeError
+            If delta_z is complex: imaginary time is not supported.
+        ValueError
+            If delta_z is zero or not finite, or if z is negative or not
+            finite.
         """
+        self._check_distance_and_step(z, delta_z)
         # Backward compat: splitting="RK4" maps to method="RK4"
         if splitting == "RK4":
             method = "RK4"
@@ -380,7 +393,8 @@ class NLSE(StepSize):
             if splitting == "yoshida":
                 # The phase limits are written per real-space application, and
                 # Yoshida's longest sub-step is 1.7 times the step itself.
-                delta_z = min(delta_z, self._split_step_max_dz(A) / YOSHIDA_SPAN)
+                yoshida_max = self._split_step_max_dz(A) / YOSHIDA_SPAN
+                delta_z = math.copysign(min(abs(delta_z), yoshida_max), delta_z)
 
             # The propagator depends on delta_z, k, the grid and the precision,
             # any of which may have changed since the last run. _build_propagator
@@ -402,8 +416,6 @@ class NLSE(StepSize):
                     unit="%",
                     unit_scale=True,
                 )
-            if type(delta_z) is complex:
-                print("Warning: imaginary time evolution !")
 
             with self._backend.timed() as timing:
                 A = self._run_propagation(
@@ -1986,14 +1998,16 @@ class NLSE(StepSize):
         """Cover the distance left over after the whole steps.
 
         The propagator is built from the step, so a shorter one needs its own.
-        Cache-backed, and a run takes at most one of these.
+        Cache-backed, and a run takes at most one of these per segment: one
+        landing on L where the run leaves the medium, one landing on z.
 
         Parameters
         ----------
         step_factory : callable
             Builds the per-step closure for a given step size.
         remainder : float
-            Distance still to cover.
+            Distance still to cover, signed like the step: negative in a
+            backward run.
         method : str
             Integration method ("split_step" or "RK4").
         dtype : np.dtype
@@ -2119,19 +2133,6 @@ class NLSE(StepSize):
         np.ndarray
             The propagated field (may be a new object for functional backends).
         """
-        # Whole steps, then whatever distance is left over. Taking ceil(z/dz)
-        # whole steps instead propagates past z by up to a full step, and the
-        # error that leaves is the phase the medium imprints over the excess --
-        # which is not small: a step derived from the physics rarely divides z,
-        # and floating point makes even an exact division fragile (z/dz for 237
-        # steps comes to 237.00000000000003, so ceil asks for 238).
-        n_steps = int(z / abs(delta_z))
-        remainder = z - n_steps * abs(delta_z)
-        # Anything below this is round-off in z/dz rather than real distance.
-        if remainder < 1e-9 * abs(delta_z):
-            remainder = 0.0
-        n_steps_nl = self._nonlinear_step_count(z, n_steps, delta_z)
-
         # Use a mutable container so the closure can update A for functional
         # backends (MLX) where kernels return new arrays.
         state = [A]
@@ -2178,52 +2179,25 @@ class NLSE(StepSize):
             return _step
 
         is_scalar_n2 = isinstance(self.n2, (int, float, np.floating))
-        can_use_fast_loop = (
-            callback is None
-            and is_scalar_n2
-            and self.nl_length == 0
-            and not isinstance(delta_z, complex)
-        )
+        can_use_fast_loop = callback is None and is_scalar_n2 and self.nl_length == 0
         # Zeroing the nonlinearity mutates self, so restore it afterwards.
         saved = {attr: getattr(self, attr) for attr in self._medium_attrs}
         try:
             if can_use_fast_loop:
-                # Two segments rather than a mid-loop switch: the constants are
-                # baked into the CUDA graph that execute_loop captures, so each
-                # segment needs its own capture.
-                merged = self._merges_strang_halves(splitting)
-                step = _make_step(delta_z, "lie" if merged else splitting)
-                self._current_delta_z = delta_z
-                state[0] = self._open_strang_bracket(merged, state[0], A_sq, delta_z)
-                self._backend.execute_loop(step, n_steps_nl)
-                state[0] = self._close_strang_bracket(merged, state[0], A_sq, delta_z)
-                if n_steps > n_steps_nl:
-                    self._leave_medium(V, self._field_dtype(state[0]))
-                    state[0] = self._open_strang_bracket(
-                        merged, state[0], A_sq, delta_z
-                    )
-                    self._backend.execute_loop(step, n_steps - n_steps_nl)
-                    state[0] = self._close_strang_bracket(
-                        merged, state[0], A_sq, delta_z
-                    )
-                if remainder:
-                    self._take_partial_step(
-                        _make_step, remainder, method, self._field_dtype(state[0])
-                    )
+                self._loop_without_callbacks(
+                    _make_step, z, delta_z, splitting, method, state, A_sq, V
+                )
             else:
                 self._loop_with_callbacks(
                     _make_step,
                     z,
                     delta_z,
-                    remainder,
                     callback,
                     callback_args,
                     state,
                     verbose,
                     pbar,
-                    z_switch=self.L if n_steps_nl < n_steps else None,
                     V=V,
-                    splitting=splitting,
                     method=method,
                     dtype=self._field_dtype(A),
                 )
@@ -2232,20 +2206,63 @@ class NLSE(StepSize):
                 setattr(self, attr, value)
         return state[0]
 
+    def _loop_without_callbacks(
+        self, step_factory, z, delta_z, splitting, method, state, A_sq, V
+    ):
+        """Run the whole steps through the backend's loop, segment by segment.
+
+        One ``execute_loop`` per segment rather than a mid-loop switch: the
+        constants are baked into the CUDA graph it captures, so each segment
+        needs its own capture. A segment the step does not divide ends on a
+        cut step, so the medium acts over L exactly and the run stops at z.
+
+        Parameters
+        ----------
+        step_factory : callable
+            Builds the per-step closure for a step size and a splitting.
+        z : float
+            Total propagation distance.
+        delta_z : float
+            Step, negative for a backward run.
+        splitting : str
+            Splitting the caller asked for.
+        method : str
+            Integration method ("split_step" or "RK4").
+        state : list
+            One-element list holding the field, updated in place.
+        A_sq : np.ndarray
+            Intensity buffer the nonlinear steps use.
+        V : np.ndarray or None
+            Potential, needed to re-derive the constants outside the medium.
+        """
+        merged = self._merges_strang_halves(splitting)
+        step = step_factory(delta_z, "lie" if merged else splitting)
+        self._current_delta_z = delta_z
+        start = 0.0
+        for n, end in enumerate(self._medium_ends(z)):
+            if n > 0:
+                self._leave_medium(V, self._field_dtype(state[0]))
+            n_steps, remainder = self._whole_steps(end - start, delta_z)
+            state[0] = self._open_strang_bracket(merged, state[0], A_sq, delta_z)
+            self._backend.execute_loop(step, n_steps)
+            state[0] = self._close_strang_bracket(merged, state[0], A_sq, delta_z)
+            if remainder:
+                self._take_partial_step(
+                    step_factory, remainder, method, self._field_dtype(state[0])
+                )
+            start = end
+
     def _loop_with_callbacks(
         self,
         step_factory,
         z,
         delta_z,
-        remainder,
         callback,
         callback_args,
         state,
         verbose,
         pbar,
-        z_switch=None,
         V=None,
-        splitting="lie",
         method="split_step",
         dtype=np.complex64,
     ):
@@ -2255,67 +2272,136 @@ class NLSE(StepSize):
         is rebuilt to match before the next step: it is built from delta_z, so
         changing one without the other silently propagates the linear part by
         the wrong distance.
+
+        A step that would pass the end of a segment -- L where the run leaves
+        the medium, then z -- is cut to land on it, whatever a callback has
+        made of the step by then. A grown step would otherwise overshoot.
+        The callbacks are shown the step just taken, cut or whole.
+
+        Parameters
+        ----------
+        step_factory : callable
+            Builds the per-step closure for a step size.
+        z : float
+            Total propagation distance.
+        delta_z : float
+            Initial step, negative for a backward run.
+        callback : callable, list of callable, or None
+            Called after every step as ``callback(self, A, z, i, *args)``.
+        callback_args : tuple or list of tuples
+            Extra arguments for the callback, or one tuple per callback.
+        state : list
+            One-element list holding the field, updated in place.
+        verbose : bool
+            Whether to update the progress bar.
+        pbar : tqdm or None
+            Progress bar, used when verbose.
+        V : np.ndarray or None
+            Potential, needed to re-derive the constants outside the medium.
+        method : str
+            Integration method ("split_step" or "RK4").
+        dtype : np.dtype
+            Complex dtype of the field.
         """
         step_fn = step_factory(delta_z)
         self._current_delta_z = delta_z
+        self._step_in_force = delta_z
         z_prop = 0.0
         i = 0
-        switched = False
-        # Strictly less than the whole-step total: the leftover is taken below,
-        # at its own size, so the run lands on z rather than past it.
-        whole = z - remainder
-        while abs(z_prop) < whole - 1e-12 * z:
-            # Trim the last step to land on z rather than past it. `whole` was
-            # divided into steps before the run, so a callback that *grows*
-            # the step leaves the loop taking one that does not fit: a run
-            # whose step doubled overshot by 10% of the distance, which shows
-            # up as a phase error the size of the extra propagation and not as
-            # anything obviously wrong with the field. A shrinking step
-            # overshoots by at most one small step, which is why this stayed
-            # hidden while the controller only ever shrank.
-            left = whole - abs(z_prop)
-            if not isinstance(delta_z, complex) and abs(delta_z) > left + 1e-12 * z:
-                delta_z = math.copysign(left, delta_z)
-                self._current_delta_z = delta_z
-                if method != "RK4":
-                    self.propagator = self._build_propagator(dtype, delta_z)
-                    self._update_propagator_fft()
-                step_fn = step_factory(delta_z)
-            if z_switch is not None and not switched and abs(z_prop) >= z_switch:
+        for n, end in enumerate(self._medium_ends(z)):
+            if n > 0:
                 self._leave_medium(V, dtype)
-                switched = True
-            step_fn()
-            # Advance before the callbacks, so the position they get is the one
-            # the field they are handed is actually at.
-            z_prop += delta_z
-            if callback is not None:
-                requested = self._run_callbacks(
-                    callback, callback_args, state[0], z_prop, i
+            while end - abs(z_prop) > STEP_ROUNDOFF * abs(delta_z):
+                # Advanced before the callbacks, so the position they get is
+                # the one the field they are handed is actually at.
+                taken = self._advance(
+                    step_fn, step_factory, delta_z, end - abs(z_prop), method, dtype
                 )
-                if requested is not None and requested != delta_z:
-                    delta_z = requested
-                    self._current_delta_z = delta_z
-                    if method != "RK4":
-                        self.propagator = self._build_propagator(dtype, delta_z)
-                        self._update_propagator_fft()
-                    step_fn = step_factory(delta_z)
-            i += 1
-            if verbose:
-                # Clamped: the last step covers the distance left over, and
-                # rounding can put z_prop a hair past z, which tqdm reports as
-                # a warning about a fraction outside [0, 1].
-                pbar.n = min(100.0, abs(z_prop) / z * 100)
-                pbar.refresh()
-        if remainder:
-            # An adaptive callback may have moved the step, so what is left is
-            # measured from where the loop actually stopped, not from the
-            # remainder computed before it ran.
-            left = z - abs(z_prop)
-            if left > 1e-12 * z:
-                self._take_partial_step(step_factory, left, method, dtype)
-                z_prop += left
+                z_prop += taken
                 if callback is not None:
-                    self._run_callbacks(callback, callback_args, state[0], z_prop, i)
+                    # The callbacks see the step just taken, cut or whole:
+                    # DDGPE's pump and noise integrate over it.
+                    self._current_delta_z = taken
+                    requested = self._run_callbacks(
+                        callback, callback_args, state[0], z_prop, i
+                    )
+                    if requested is not None and abs(requested) != abs(delta_z):
+                        delta_z = self._adopt_step(requested, method, dtype)
+                        step_fn = step_factory(delta_z)
+                    else:
+                        self._current_delta_z = delta_z
+                i += 1
+                if verbose:
+                    # Clamped: rounding can put z_prop a hair past z, which
+                    # tqdm reports as a fraction outside [0, 1].
+                    pbar.n = min(100.0, abs(z_prop) / z * 100)
+                    pbar.refresh()
+
+    def _advance(self, step_fn, step_factory, delta_z, left, method, dtype):
+        """Take one step, or a cut one if a whole step would pass the end.
+
+        Parameters
+        ----------
+        step_fn : callable
+            The whole step, built for delta_z.
+        step_factory : callable
+            Builds a step of another size, for the cut one.
+        delta_z : float
+            Step in force, negative for a backward run.
+        left : float
+            Distance to the end of the segment, positive.
+        method : str
+            Integration method ("split_step" or "RK4").
+        dtype : np.dtype
+            Complex dtype of the field.
+
+        Returns
+        -------
+        float
+            Signed distance covered.
+        """
+        if abs(delta_z) > left + STEP_ROUNDOFF * abs(delta_z):
+            cut = math.copysign(left, delta_z)
+            self._take_partial_step(step_factory, cut, method, dtype)
+            return cut
+        step_fn()
+        return delta_z
+
+    def _adopt_step(self, requested, method, dtype):
+        """Make the step a callback asked for the one in force.
+
+        Parameters
+        ----------
+        requested : float
+            Step the callback returned. Only its size is used.
+        method : str
+            Integration method ("split_step" or "RK4").
+        dtype : np.dtype
+            Complex dtype of the field.
+
+        Returns
+        -------
+        float
+            The step now in force, signed like the run.
+
+        Raises
+        ------
+        TypeError
+            If the step is complex.
+        ValueError
+            If the step is zero or not finite.
+        """
+        # The direction is the caller's: the adaptive callbacks return a size,
+        # and a backward run that took it as given turned forward.
+        self._check_step(requested)
+        requested = math.copysign(abs(requested), self._current_delta_z)
+        self._current_delta_z = requested
+        self._step_in_force = requested
+        # RK4's propagator does not depend on the step.
+        if method != "RK4":
+            self.propagator = self._build_propagator(dtype, requested)
+            self._update_propagator_fft()
+        return requested
 
     def _run_callbacks(self, callback, callback_args, A, z, i):
         """Dispatch user callbacks at each solver step.
@@ -2331,7 +2417,10 @@ class NLSE(StepSize):
         if isinstance(callback, Callable):
             requested = callback(self, A, z, i, *callback_args)
         elif isinstance(callback, list) and isinstance(callback[0], Callable):
-            for c, ca in zip(callback, callback_args, strict=True):
+            # Left at its default, the arguments are none for every callback,
+            # as for a single one; a list given must match in length.
+            per_callback = callback_args if callback_args else [()] * len(callback)
+            for c, ca in zip(callback, per_callback, strict=True):
                 got = c(self, A, z, i, *ca)
                 if got is not None:
                     requested = got
@@ -2339,30 +2428,57 @@ class NLSE(StepSize):
             raise ValueError("callbacks should be a callable or a list of callables")
         return requested
 
-    def _nonlinear_step_count(self, z: float, n_steps: int, delta_z: float) -> int:
-        """Return how many of the n_steps fall inside the nonlinear medium.
+    def _medium_ends(self, z: float) -> tuple[float, ...]:
+        """Return where each segment of a run over z ends.
 
-        Propagation past the medium length L continues linearly. Solvers that
-        do not model a finite medium leave L at 0, which disables the cutoff
-        entirely (GPE passes L=0, so every step stays nonlinear).
+        Propagation past the medium length L continues outside it, so a run
+        longer than L is two segments, to L and on to z. Solvers that do not
+        model a finite medium leave L at 0, which disables the cutoff entirely
+        (GPE passes L=0, so every step stays in the medium; DDGPE passes its
+        duration T, so a run longer than T is cut there like any other).
 
         Parameters
         ----------
         z : float
             Total propagation distance.
-        n_steps : int
-            Total number of steps for this run.
-        delta_z : float
-            Step size.
 
         Returns
         -------
-        int
-            Number of leading steps to run with the nonlinearity enabled.
+        tuple of float
+            ``(L, z)`` if the run leaves the medium, else ``(z,)``.
         """
-        if not self.L > 0 or z <= self.L:
-            return n_steps
-        return min(n_steps, int(np.ceil(self.L / abs(delta_z))))
+        if 0 < self.L < z:
+            return (self.L, z)
+        return (z,)
+
+    @staticmethod
+    def _whole_steps(distance: float, delta_z: float) -> tuple[int, float]:
+        """Split a distance into whole steps and a signed leftover.
+
+        Whole steps, then the distance left over. Taking ceil(distance/dz)
+        whole steps instead overshoots by up to a step, and the medium
+        imprints its phase over the excess.
+
+        Parameters
+        ----------
+        distance : float
+            Distance to cover, positive.
+        delta_z : float
+            Step, negative for a backward run.
+
+        Returns
+        -------
+        tuple of (int, float)
+            Number of whole steps, and the leftover signed like delta_z, so a
+            backward run takes its last partial step backward too. 0.0 when
+            the leftover is round-off.
+        """
+        step = abs(delta_z)
+        n_steps = int(distance / step + STEP_ROUNDOFF)
+        remainder = distance - n_steps * step
+        if remainder < STEP_ROUNDOFF * step:
+            remainder = 0.0
+        return n_steps, math.copysign(remainder, delta_z)
 
     def _leave_medium(self, V: np.ndarray | None, field_dtype: np.dtype) -> None:
         """Zero what the medium provides and re-derive the step constants.
@@ -2378,6 +2494,65 @@ class NLSE(StepSize):
         for attr in self._medium_attrs:
             setattr(self, attr, 0)
         self._precompute_step_constants(V, field_dtype)
+
+    @staticmethod
+    def _check_distance_and_step(z: float, delta_z: float | None) -> None:
+        """Reject a distance or a step the propagation loop cannot take.
+
+        Parameters
+        ----------
+        z : float
+            Propagation distance.
+        delta_z : float or None
+            Step, or None for the solver to derive one.
+
+        Raises
+        ------
+        TypeError
+            If delta_z is complex.
+        ValueError
+            If delta_z is zero or not finite, or if z is negative or not
+            finite. A backward run is a negative delta_z over a positive z.
+        """
+        if delta_z is not None:
+            NLSE._check_step(delta_z)
+        if not math.isfinite(z):
+            raise ValueError(f"z={z!r} is not a finite distance.")
+        if z < 0:
+            raise ValueError(
+                f"z={z!r} is negative: pass a positive distance and a negative "
+                "delta_z to propagate backwards."
+            )
+
+    @staticmethod
+    def _check_step(delta_z: float) -> None:
+        """Reject a step the propagation loop cannot take.
+
+        Parameters
+        ----------
+        delta_z : float
+            Step, asked of out_field or returned by a callback.
+
+        Raises
+        ------
+        TypeError
+            If delta_z is complex. Imaginary time would need the step limits,
+            the propagator cache and the kernels to take a complex step, and
+            none of them do.
+        ValueError
+            If delta_z is zero or not finite. A zero step never reaches the
+            end of the run, and a NaN one ends it at once.
+        """
+        if np.iscomplexobj(delta_z):
+            raise TypeError(
+                f"delta_z={delta_z!r} is complex: imaginary-time evolution is "
+                "not supported. Pass a real step; a negative one propagates "
+                "backwards."
+            )
+        if delta_z == 0 or not math.isfinite(delta_z):
+            raise ValueError(
+                f"delta_z={delta_z!r} is not a step: it must be finite and not zero."
+            )
 
     # Plotting helpers.
     def _to_plot_array(self, A_plot: np.ndarray, target_ndim: int) -> np.ndarray:

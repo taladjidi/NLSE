@@ -27,6 +27,8 @@ N = 64
 L = 1e-3
 WAIST = 2.23e-3
 WINDOW = 4 * WAIST
+STEPS_IN_L = 4.25  # four whole steps and a quarter of one, cut at L
+KEEP = (1.0, 1.0)  # bounds under which the controller returns the step it scaled
 
 
 def beam(dtype=np.complex64):
@@ -94,7 +96,7 @@ def test_the_step_never_passes_the_solvers_own_ceiling():
     """
     simu, prepared = prepared_solver()
     ceiling = simu._split_step_max_dz(prepared)
-    simu._current_delta_z = ceiling
+    simu._step_in_force = ceiling
     proposed = adapt_delta_z_to_error(simu, prepared, 0.0, 0, 1e-3, 1)
     assert proposed is not None
     assert proposed <= ceiling * 1.001, (
@@ -113,7 +115,7 @@ def test_an_unreachable_tolerance_stops_shrinking():
     floor = L / 1e4
     step = L / 100
     for _ in range(80):
-        simu._current_delta_z = step
+        simu._step_in_force = step
         proposed = adapt_delta_z_to_error(
             simu, prepared, 0.0, 0, 1e-14, 1, (0.5, 2.0), 0.9, floor
         )
@@ -241,4 +243,39 @@ def test_a_run_whose_step_grows_still_lands_on_z():
     assert error < 1e-3, (
         f"adaptive run is {error:.3e} from the reference, which is the size of "
         f"an overshoot rather than of a step-size difference"
+    )
+
+
+def keep_step_and_record(simu, A, z, i, taken):
+    """Record the step just taken, then run a controller that keeps its step."""
+    taken.append(simu._current_delta_z)
+    return adapt_delta_z_to_error(simu, A, z, i, 1e-3, 1, KEEP)
+
+
+def test_a_cut_step_is_not_what_the_controller_scales():
+    """After the step cut at L, the run goes on at the step in force.
+
+    The controller scaled its proposal from the step just taken. A cut one is
+    a sliver, so the run restarted from it: with bounds that keep the step, it
+    went on at the sliver's size for the rest of the run.
+    """
+    simu = solver()
+    taken: list = []
+    simu.out_field(
+        beam(),
+        2 * L,
+        delta_z=L / STEPS_IN_L,
+        verbose=False,
+        plot=False,
+        splitting="strang",
+        callback=keep_step_and_record,
+        callback_args=(taken,),
+    )
+    whole = int(STEPS_IN_L)
+    assert taken[whole] == pytest.approx(L - whole * taken[0]), (
+        f"step {whole} was {taken[whole]:.3e} m, not the one cut at L"
+    )
+    assert taken[whole + 1] == pytest.approx(taken[0]), (
+        f"the step after the cut was {taken[whole + 1]:.3e} m, where the step "
+        f"in force is {taken[0]:.3e} m"
     )
