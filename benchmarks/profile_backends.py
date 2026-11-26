@@ -36,10 +36,11 @@ POWER = 1.05
 N2 = -1.6e-9
 ISAT = 1e5
 DELTA_Z = 1e-4
-# Largest grid whose RK4 stability bound is above DELTA_Z at this window: the
-# bound is 4.35e-5 m at 2048² (the solver's own warning) and falls as 1/N².
-# Past it the step shrinks alike, so no revision lowers it.
-RK4_STABLE_N = 1024
+# Largest grid that takes DELTA_Z unchanged at this window. The split-step
+# limit is 6.19e-5 m at 1024² and the RK4 bound 4.35e-5 m at 2048² (the
+# solver's own warnings), and both fall as 1/N². Past it the step shrinks
+# alike, so a cell times the steps it asked for, on every revision.
+STABLE_N = 512
 # Per-step cost is the slope between two step counts, so everything that
 # happens once per run -- FFT planning, propagator build, host-to-device
 # transfers -- cancels instead of being divided by the step count. Timing a
@@ -132,11 +133,13 @@ def input_field(simu, solver_name, np):
 def step_for(simu):
     """Return a step every revision takes unchanged on this solver's grid.
 
-    A revision that bounds the RK4 step lowers one past the bound, and the
-    two sides would then take different numbers of steps: 4.1.0 returned
-    NaN at 2048² where its successor took 2.56 times the steps.
+    The solver lowers a step past its limits, and a cell would then time more
+    steps than it asked for: 1.79 times as many for split-step at 1024². A
+    revision that bounds RK4 where another does not makes the two sides
+    differ as well: 4.1.0 returned NaN at 2048² where its successor took 2.56
+    times the steps.
     """
-    return DELTA_Z * min(1.0, (RK4_STABLE_N / simu.NX) ** 2)
+    return DELTA_Z * min(1.0, (STABLE_N / simu.NX) ** 2)
 
 
 def propagate(simu, field, method, steps):
