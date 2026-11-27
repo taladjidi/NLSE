@@ -147,7 +147,30 @@ threading layer decides (`fix/ci-threading-layer-tests`). Still open:
     `NLSE/kernels/cpu.py:14-16` overrides when pyfftw is imported first;
     the DDGPE equation leaves out `g2`. The CuPy and OpenCL claims of the
     pages were checked by reading the code, not by a run.
-  - Next: the README's headline performance.
+  - Next: the README's headline performance. Spec revision 2 (after its
+    review) and both patches are in `NLSE_tangui_fix_specs/docs/readme_perf.md`
+    and `docs/patches/readme-perf-{1-roofline,2-test}.patch`; the Mac's
+    measurement environment is `<scratchpad>/perf/venv-perf`
+    (`UV_PROJECT_ENVIRONMENT`, so the repo's `.venv` keeps no pyopencl).
+- **CuPy two-axis batch without the callbacks** (`fix/cupy-two-axis-propagator`,
+  2026-11-27). `CUDAKernels.apply_propagator` walked one batch axis, so a
+  `(B1, B2, N, N)` field read past the shared propagator whenever the cuFFT
+  callbacks were off or refused: NaN or another member's values, no error.
+  Found by putting CuPy and OpenCL in one environment on the box, where a
+  conda NVRTC made cuFFT refuse the callbacks. One launch per propagator-sized
+  block now; the case `two-axis batch` in
+  `tests/backends/test_fft_propagator_fusion.py` is red on the old kernel.
+  Box, combined environment: 6 full suites and one with
+  `NLSE_FUSE_PROPAGATOR=0`, each 2275 passed, 103 skipped.
+  - Reviewer MINORs left: a non-contiguous field would be reshaped to a copy
+    and the multiply lost (no caller passes one; the old code was wrong there
+    too); the branch does not check that the propagator is the field's
+    trailing block; no two-axis case for RK4 or a coupled field in that file
+    (`tests/integration/test_broadcasting.py` covers RK4 with the callbacks
+    off only when run with `NLSE_FUSE_PROPAGATOR=0`); one launch per member.
+  - After a change to the CuPy kernels, run the box suite once more with
+    `NLSE_FUSE_PROPAGATOR=0`: the default never reaches the unfused kernels
+    on a batch, and CI has no GPU.
 - CI on `e60e2a4`: all green, the four macOS jobs on a second try (GitHub
   cancelled them the first time for lack of a runner).
 - The CPU blocked step, merged (`7518025`): three passes in
@@ -1042,8 +1065,13 @@ Known before the profiles:
 Environment:
 
 - The project `.venv` has CPU and MLX only. CuPy and OpenCL run on the CUDA
-  box, each in its own environment; OpenCL no longer runs on this Mac (see
-  "Verification of the final tree").
+  box in one environment, `~/Documents/nlse_env_both`: a clone of the conda
+  OpenCL environment plus the `cupy-cuda13x` wheel, with the conda
+  `cuda-nvrtc` removed. That package (NVRTC 13.5, pulled in by `pyvkfft`)
+  made cuFFT 12.3 of the system's CUDA 13.3 refuse the store callbacks with
+  status 17, `CUFFT_MISSING_DEPENDENCY`, which CuPy reports as `KeyError: 17`.
+  The two older environments still exist. OpenCL no longer runs on this Mac
+  (see "Verification of the final tree").
 - Sphinx comes with `uv sync --group docs` (repeat the `--extra` flags of the
   backends in use). `paper/` was not read.
 - Running `docs/make_validation_figure.py` with any argument rewrites
