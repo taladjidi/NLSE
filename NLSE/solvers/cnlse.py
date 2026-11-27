@@ -17,6 +17,8 @@ class CNLSE(NLSE):
     _run_state_attrs = (*NLSE._run_state_attrs, "_V2_scaled")
     # Both intra- and inter-component couplings switch off past the medium.
     _medium_attrs = (*NLSE._medium_attrs, "n12", "n22", "alpha2")
+    # The second component's loss bounds the step as the first one's does.
+    _loss_constants = (*NLSE._loss_constants, "_alpha2_half")
     # A merged Strang run brackets its Lie steps with the scalar
     # `_nonlinear_step`, which has neither the cross coupling nor the second
     # loss, so no coupled run merges.

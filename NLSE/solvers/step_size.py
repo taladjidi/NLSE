@@ -69,6 +69,10 @@ class StepSize:
     never instantiated on its own and carries no state of its own.
     """
 
+    # Step constants each holding one component's loss as the kernels take it,
+    # alpha / 2 (NLSE._step_constants). CNLSE adds its second component's.
+    _loss_constants = ("_alpha_half",)
+
     def _energy_rates(self, A: np.ndarray) -> dict[str, float]:
         """Return the phase rate each term contributes, weighted by the field.
 
@@ -523,7 +527,9 @@ class StepSize:
         Written against ``alpha`` and not against the loss energy rate, which
         carries the saturation: the rate is the average over the grid and the
         iteration has to converge at the point that saturates least, where the
-        saturation is 1 and the rate is ``alpha`` itself.
+        saturation is 1 and the rate is ``alpha`` itself. Every component's
+        ``alpha`` counts, as the kernels receive it (``_loss_constants``), and
+        the largest binds.
 
         Returns
         -------
@@ -532,12 +538,12 @@ class StepSize:
             iteration's region, or infinity for a lossless medium.
 
         """
-        # A batched run holds its parameters on the device, so alpha is not
-        # necessarily something numpy will convert.
-        alpha = self.alpha
-        if not isinstance(alpha, (int, float)):
-            alpha = self._backend.to_numpy(alpha)
-        peak = float(np.max(np.abs(np.asarray(alpha, dtype=float))))
+        # Through the host: a batched run holds its constants on the device.
+        halves = [
+            np.max(np.abs(self._as_host_array(self._constant(name))))
+            for name in self._loss_constants
+        ]
+        peak = 2 * float(max(halves))
         if peak == 0:
             return np.inf
         return LOSS_PER_STEP_LIMIT / (2 * peak)

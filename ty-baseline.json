@@ -600,14 +600,14 @@
       },
       {
         "rule": "missing-attribute",
-        "startColumn": 16,
-        "endColumn": 26,
+        "startColumn": 26,
+        "endColumn": 45,
         "lineCount": 1
       },
       {
         "rule": "missing-attribute",
-        "startColumn": 20,
-        "endColumn": 33,
+        "startColumn": 46,
+        "endColumn": 60,
         "lineCount": 1
       }
     ]
