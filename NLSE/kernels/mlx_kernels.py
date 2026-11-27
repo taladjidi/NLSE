@@ -140,13 +140,9 @@ def _nl_factor_lossless(A_sq, dz, g, Isat, V=None):
     return mx.exp(dz * arg)
 
 
-# The solved step as one Metal kernel, which is where its cost went. Written
-# out of registers rather than out of MLX ops: mx.compile does not fuse the
-# iteration, so each of its ~9 elementwise ops materialized a full array and
-# went to memory. Measured at 512x512, chained, against the frozen step this
-# replaces: 3.9x for the graph form, 1.4x for this one; over a whole split
-# step, 1.62x against 1.18x. The `sincos` is one instruction here and two
-# passes over memory there.
+# The solved step as one Metal kernel: mx.compile does not fuse the iteration,
+# so as MLX ops every pass went to memory. At 512x512: 66.8 us as ops, 25.1 us
+# here, 19.2 us for the frozen step (docs/optimization-log.md).
 _LOSSY_BODY = """
     uint i = thread_position_in_grid.x;
     float ar = A[i].real;
@@ -798,11 +794,9 @@ def linear_step(
 
 
 def _make_split_step(splitting, has_V, axes, mode="general"):
-    # The real-space step is chosen when the graph is compiled, not per
-    # element, because alpha and dz are read on the host. A lossless run never
-    # traces the iteration at all -- both arms of an mx.where are evaluated,
-    # which is what made a lossless step cost 1.45x -- and a solved one goes
-    # to a Metal kernel rather than to ops MLX will not fuse.
+    # Chosen when the graph is compiled, as alpha and dz are host values: a
+    # lossless run never traces the iteration (mx.where evaluates both arms), and
+    # a solved one goes to the Metal kernel.
     if mode == "solved":
 
         def apply_nl(A, dz, alpha, g, Isat, V=None):

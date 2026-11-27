@@ -65,10 +65,26 @@ threading layer decides (`fix/ci-threading-layer-tests`). Still open:
     (1806 and 68); box OpenCL 1700 passed, 153 skipped (1714 and 149). The
     10 fewer are the merged and deleted tests; without CuPy the four merged
     ones skip where a half of each pair used to pass on the host.
-  - package (`NLSE/`, six patches, net -357 lines, mostly comments over four
-    lines): spec reviewed and revised, the patches apply on top of the tests
-    branch. Next: six implementers on `refactor/debloat-package`, then step
-    timings at 1024², 2048² and 4096² before and after, and the box suites.
+  - `refactor/debloat-package`: done. `NLSE/` loses 357 lines net, mostly
+    comments over four lines; their measurements that were in no log are in
+    the commit messages. Code: `benchmark._synchronize_backend` and
+    `_assumed_rank` are gone (the benchmark calls `Backend.synchronize`, so
+    a CUPY timing no longer includes a copy to the host, and
+    `CACHE_VERSION` is 3), as are `CNLSE.propagator1/2`, a second
+    `self.V = V` in `GPE` and `Parameter.__set_name__`. Reviewer: pass; the
+    comment-only files have the same AST, the kernel sources the same code
+    with comments stripped. Suites unchanged: Mac 1723 passed, 160 skipped;
+    box CuPy 1796 and 68; box OpenCL 1700 and 153 (the box ran 2416eb3, one
+    docstring before the head). Step time, complex64, before and after in
+    turn, ms per step: Mac CPU 1.94 and 1.91 (1024²), 7.31 and 7.44
+    (2048²), 25.8 and 24.2 (4096²); MLX 0.283 and 0.282, 1.777 and 1.780,
+    7.40 and 7.42; box CUPY 0.388 and 0.386, 1.569 and 1.559, 8.63 and
+    8.58; box CL 0.595 and 0.595, 3.408 and 3.410, 18.56 and 18.57. No
+    difference above the floor. The reviewer's minor notes, not fixed:
+    three shortened comments lost their reason (`kernels.cu:287` why
+    `A_orig` may alias `out`; `ddgpe.py` near 296 why one profile at a
+    time; `cpu.py` near 20 "not `fastmath=True`"), and nothing tests that
+    the benchmark synchronizes.
   - Left for the owner, not done: the tutorial notebook's 8 MB of outputs
     (re-render smaller), `paper/` and `img/output.png` (the JOSS record),
     `examples/juliaGPE_vs_NLSE.py` with `vortex_precession.jl`, merging

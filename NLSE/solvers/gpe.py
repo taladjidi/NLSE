@@ -96,7 +96,6 @@ class GPE(NLSE):
             wvl=2 * np.pi / m,
             backend=backend,
         )
-        self.V = V
         # do some conversion for the units
         self.I_sat *= epsilon_0 * c / 2
         # |psi|^2 is a density in atoms/m^2, not an optical field, so the

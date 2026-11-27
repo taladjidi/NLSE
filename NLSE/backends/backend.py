@@ -83,12 +83,10 @@ class Backend(ABC):
     # A whole single-component split step without returning to Python.
     has_fused_split_step = False
 
-    # kernels.linear_nonlinear_step(
-    #     A, propagator, plan, V_scaled, dz, alpha, g, Isat, factors=None) -> bool
-    # The linear step then the nonlinear step, in fewer passes over the field:
-    # a cuFFT store callback on CUPY, blocked passes on CPU. False, with A
-    # untouched, where it cannot. factors() returns the propagator as
-    # (rows, columns) or None, and is called only by a step that is taken.
+    # kernels.linear_nonlinear_step(A, propagator, plan, V_scaled, dz, alpha, g,
+    #     Isat, factors=None) -> bool: both steps in fewer passes (cuFFT store
+    # callback on CUPY, blocked passes on CPU). False, A untouched, where it cannot;
+    # factors() returns the propagator as (rows, columns) or None.
     has_linear_nonlinear_step = False
 
     # kernels.rk4_rhs_fused(
@@ -127,11 +125,10 @@ class Backend(ABC):
     #     g11, g12, g21, g22, Isat1, Isat2, unnorm_ifft=False)
     has_fused_coupled_rk4_rhs = False
 
-    # A batched physical parameter can be handed to the kernels as a device
-    # array and broadcast inside them (CUPY's cp.fuse kernels, MLX's traced
-    # graphs). Backends that leave this False take one simulation's scalar
-    # value per launch instead, so their batched parameters must stay on the
-    # host: CPU loops in _broadcast_batch, CL loops with global_offset.
+    # A batched parameter can go to the kernels as a device array and broadcast
+    # there (CUPY's cp.fuse, MLX's graphs). Where False the kernels take one scalar
+    # per launch and batched parameters stay on the host (CPU _broadcast_batch,
+    # CL global_offset).
     broadcasts_parameters_natively = False
 
     # The field is normalized on the host: the reduction is done in numpy and

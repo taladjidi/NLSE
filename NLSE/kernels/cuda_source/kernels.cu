@@ -1,12 +1,7 @@
-// CUDA C kernels for NLSE operations (optimized fused versions only)
-// Precision-agnostic template using {{FP_TYPE}}, {{FP2_TYPE}}, {{FP_SUFFIX}}, {{SINCOS_FUNC}}
-//
-// A kernel that reads a potential is written once, between the VBLOCK markers
-// and against the V_ARG/V_PHASE/V_LOSS macros, and compiled three times: as
-// <name> with no potential, <name>_v with a real one and <name>_cv with a
-// complex (absorbing) one. See _expand_v_blocks in kernels/cupy_kernels.py.
-// The step those kernels share is nlse_nonlinear_element, in nonlinear_step.cuh,
-// which templating.cuda_kernel_template prepends to this file.
+// Precision-agnostic via {{FP_TYPE}}, {{FP2_TYPE}}, {{FP_SUFFIX}}, {{SINCOS_FUNC}}.
+// A kernel between the VBLOCK markers, written against V_ARG/V_PHASE/V_LOSS, is
+// compiled as <name>, <name>_v and <name>_cv (no, real, complex potential); see
+// _expand_v_blocks in kernels/cupy_kernels.py. nonlinear_step.cuh is prepended.
 
 // FUSED: square_mod + nl_prop
 // {{VBLOCK}}
@@ -289,26 +284,10 @@ extern "C" __global__ void rk4_nl_rhs_c(
 }
 // {{END_VBLOCK}}
 
-// Whole-stage RK4 kernels
-//
-// A stage otherwise writes its slope to memory and the stage update reads it
-// straight back: 8 accesses per element where 6 will do. These take the
-// linear part as the transform left it, finish the slope in registers, and
-// spend it on the accumulator and the next stage's argument without it ever
-// reaching memory.
-//
-// One kernel serves all four stages. `mode` is uniform across the grid, so
-// the branches cost nothing and each stage touches only what it needs -- in
-// particular stage 1 sets the accumulator rather than reading it, and stage 4
-// does not write it at all:
-//
+// Whole-stage RK4, the slope kept in registers. A_orig may alias out (per index).
 //   mode 0 (stage 1)    acc = rhs;         out = A + c*rhs
 //   mode 1 (stages 2-3) acc = acc + w*rhs; out = A + c*rhs
 //   mode 2 (stage 4)    acc untouched;     out = A + c*(acc + rhs)
-//
-// In stages 2-4 `A_orig` and `out` are the same buffer. Each thread reads and
-// writes only its own index, so the read precedes the write for the element
-// it concerns and no thread depends on another's.
 
 // {{VBLOCK}}
 extern "C" __global__ void square_mod_rk4_stage(
@@ -435,17 +414,9 @@ extern "C" __global__ void coupled_rk4_stage_c(
 }
 // {{END_VBLOCK}}
 
-// Interleaved coupled kernels
-//
-// These read both components straight out of the (2, ...) array the coupled
-// solvers already hold: the thread at idx takes A[idx] as component 1 and
-// A[idx + N_sq] as component 2. The kernels above take one component at a
-// time, so reaching them means copying each component out and the results
-// back -- 36 complex and 10 real array copies per step across the coupled
-// cases, moving 185 MB and computing nothing.
-//
-// The saturation factor is shared by the two components, so it is also
-// computed once here rather than twice.
+// Interleaved coupled kernels: component 1 at A[idx], component 2 at
+// A[idx + N_sq] of the (2, ...) array, so no per-component copies, and the
+// saturation is computed once for both.
 
 // Coupled nonlinear propagation on an interleaved (2, N_sq) field
 // {{VBLOCK}}
@@ -523,11 +494,8 @@ extern "C" __global__ void coupled_rk4_nl_rhs_c(
     {{FP_TYPE}} sq2 = a2.x * a2.x + a2.y * a2.y;
     {{FP_TYPE}} sat = ({{FP_TYPE}})1.0 / (({{FP_TYPE}})1.0 + sq1 / Isat1 + sq2 / Isat2);
 
-    // Component 1: k += (1j*interact - alpha1*sat + 1j*V1) * a1
-    // The contribution is rounded before it is accumulated, as the
-    // one-component rk4_nl_rhs_c above does it: folding the two into one
-    // expression lets the compiler contract them into a different chain,
-    // and the two paths stop agreeing bit for bit.
+    // Component 1: k += (1j*interact - alpha1*sat + 1j*V1) * a1. Rounded before
+    // it is accumulated, as in rk4_nl_rhs_c, so the two paths agree bit for bit.
     {{FP_TYPE}} interact1_i = (g11 * sq1 + g12 * sq2) * sat;
     {{FP_TYPE}} coeff1_r = -(alpha1 * sat V_LOSS(V1, idx));
     {{FP_TYPE}} coeff1_i = interact1_i V_PHASE(V1, idx);

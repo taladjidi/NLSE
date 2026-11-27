@@ -29,41 +29,16 @@ from scipy.constants import c, epsilon_0
 # imaginary axis. Every solver's step limit is derived from it.
 RK4_STABILITY_RADIUS = 2.83
 
-# Phase the linear step may imprint per step on the SHORTEST wave the grid
-# resolves, before split-step goes numerically unstable on a finite-amplitude
-# background -- the conditional instability of Weideman and Herbst, SIAM J.
-# Numer. Anal. 23, 485 (1986).
-#
-# Measured rather than assumed, on a vortex dipole in a uniform defocusing
-# background, which is the worst case: sharp cores put energy at every
-# resolved wavenumber and a plane-wave background has nowhere to lose it.
-# Density fluctuation relative to the mean after 40 nonlinear lengths, against
-# the phase per step:
-#
-#     3.95 rad -> 0.99      1.97 rad -> 0.93      1.32 rad -> 0.044
-#     3.16 rad -> 1.00      1.58 rad -> 0.87      0.99 rad -> 0.044
-#     2.63 rad -> 0.97                            0.66 rad -> 0.044
-#
-# so the threshold sits between 1.3 and 1.6, and below it the answer stops
-# moving. Unity leaves a little margin. Note this is well under pi: the first
-# resonance is not where the naive aliasing argument puts it.
+# Phase per step the linear step may put on the shortest resolved wave before
+# split-step goes unstable on a finite background (Weideman and Herbst, SIAM J.
+# Numer. Anal. 23, 485 (1986)). On a vortex dipole: unstable from 1.6 rad,
+# converged below 1.3 (CHANGELOG.md, 4.1.0), so 1.0 leaves a margin.
 SPLIT_STEP_DISPERSION_PHASE_LIMIT = 1.0
 
-# Phase in radians the default step imprints per step, per method. The limits
-# are ceilings (pi for split-step aliasing, 2.83 for RK4 stability); these are
-# where a default sits under them.
-#
-# Split-step stays at 0.1 despite a measured optimum of 0.4 on a smooth beam,
-# because that optimum does not survive a field with spectral content of its
-# own. examples/fig2_turbulence.py carries kp = 2*pi*5e3 and aliases far below
-# the pi-per-step cap: 0.1 rad returns 11% error against a converged run and
-# 0.4 returns 140%, with the peak amplitude and the total power both visibly
-# wrong. The work-precision sweep that found 0.4 varied the distance sixteenfold
-# and never varied the physics, which is the hole it fell through.
-#
-# RK4 is a different story and does move: its truncation error is still falling
-# steeply at 0.02, where it returns 2.3e-6 against 5.6e-4 at 0.1, so the two
-# methods no longer share one number.
+# Phase per step the default aims at, under the limits (pi for split-step, 2.83
+# for RK4). Split-step stays at 0.1: the smooth-beam optimum 0.4 gave 140% error
+# on examples/fig2_turbulence.py. RK4's error still falls at 0.02 (2.3e-6 against
+# 5.6e-4 at 0.1). Both are in docs/optimization-log.md.
 DEFAULT_PHASE_PER_STEP = 0.1
 RK4_PHASE_PER_STEP = 0.02
 
@@ -71,18 +46,10 @@ RK4_PHASE_PER_STEP = 0.02
 # is something a callback can sample and a plot can show rather than one jump.
 DEFAULT_MIN_STEPS = 10
 
-# Most of the intensity, as a fraction, a single real-space step may take out:
-# u = 2*alpha*dz. The kernels solve that step rather than freezing |A|^2 across
-# it, and the iteration they solve it with is a contraction only while u stays
-# small. Measured against a stiff solve of the sub-step, it beats the frozen
-# form by 2.6x at u = 0.1 where the medium does not saturate at all, by five
-# orders where it does, and loses to it by u = 0.3. Half of the crossing point,
-# so that a step at the ceiling is still well inside the useful range.
-#
-# The kernels carry the same number as LOSS_SOLVED_LIMIT and fall back to the
-# frozen form above it, because a kernel called directly does not come through
-# here. This is the ceiling for a propagation, which is the looser job: a step
-# that takes out 5% of the intensity is already a poor step.
+# Largest fraction of the intensity one real-space step may take out,
+# u = 2*alpha*dz: half the kernels' LOSS_SOLVED_LIMIT (0.1), past which their
+# solved step falls back to the frozen one. A kernel called directly does not
+# come through here, which is why they carry their own limit.
 LOSS_PER_STEP_LIMIT = 0.05
 
 # Names _grid_on_device keeps the potential's real part and absorption under.
@@ -601,11 +568,9 @@ class StepSize:
             rates = self._energy_rates(A)
             max_dz = self._rk4_max_dz(A)
             label = "RK4 stability"
-            # Stability is not accuracy. At the edge of the region the scheme
-            # merely stops diverging; a potential is scaled by k/2, so a step
-            # that is stable can still turn a large phase per step into a
-            # large error. Split-step applies V through the exponential and
-            # has no such limit, which is usually the better answer.
+            # Stability is not accuracy: with V scaled by k/2, a stable step can
+            # still be a large phase per step. Split-step applies V exactly and has
+            # no such limit.
             extra = (
                 " This is a stability bound, not an accuracy one: a smaller "
                 "delta_z may still be needed. split_step applies the "

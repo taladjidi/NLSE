@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from NLSE.backends import (
-    _assumed_rank,
+    _ASSUMED_SPEED_ORDER,
     backends_by_speed,
     benchmark,
     list_available_backends,
@@ -17,9 +17,9 @@ from NLSE.utils import get_benchmark_cache_path, get_cache_dir
 # a record that is otherwise accepted.
 CACHED_GRID = [256, 256]
 CACHED_TIME_MS = 1.0  # ms, any positive time
-# Past load_benchmark_cache's 30-day limit (NLSE/backends/benchmark.py:253).
+# Past load_benchmark_cache's 30-day limit (NLSE/backends/benchmark.py:259).
 STALE_AGE_DAYS = 31
-OLD_CACHE_VERSION = "1"
+OLD_CACHE_VERSION = "2"
 CPU_SPEEDUP = 1.0  # the CPU against itself, as benchmark_all_backends computes it
 OTHER_SYSTEM = "Plan9"
 OTHER_PROCESSOR = "pdp11"
@@ -27,7 +27,7 @@ OTHER_GRID = (128, 128)  # not CACHED_GRID
 # Available backends listed against the assumed speed order, slowest first, so
 # that an order kept from this list rather than from the prior shows.
 AGAINST_THE_PRIOR = ["CPU", "CL", "MLX", "CUPY"]
-# The same backends in the prior's order, NLSE/backends/__init__.py:203.
+# The same backends in the prior's order, NLSE/backends/__init__.py:186.
 BY_THE_PRIOR = ["CUPY", "MLX", "CL", "CPU"]
 # A cache timing only the CPU: the CPU first, the others in the prior's order.
 CPU_TIMED_FIRST = ["CPU", "CUPY", "MLX", "CL"]
@@ -347,7 +347,7 @@ class TestCacheLoading:
         write_cache(json.dumps(record))
         assert benchmark.load_benchmark_cache() is None
         assert backends_by_speed(tuple(CACHED_GRID)) == sorted(
-            list_available_backends(), key=_assumed_rank
+            list_available_backends(), key=_ASSUMED_SPEED_ORDER.index
         )
 
     def test_a_cache_at_another_grid_is_not_believed(self, monkeypatch):

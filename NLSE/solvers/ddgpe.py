@@ -92,11 +92,8 @@ class DDGPE(CNLSE):
         "detuning",
         "omega_pump",
     )
-    # g2 belongs to the second component and has storage of its own, so unlike
-    # g and g12 it is not covered by the inherited entries.
-    #
-    # _step_constants passes n2 and n12 rather than g and g12: the kernels want
-    # the NLSE sign convention, which is what the storage holds.
+    # g2 has storage of its own, so it is not covered by the inherited entries.
+    # _step_constants passes n2 and n12, not g and g12 (NLSE sign convention).
     _medium_attrs = (*CNLSE._medium_attrs, "g2")
 
     def __init__(
@@ -232,12 +229,8 @@ class DDGPE(CNLSE):
         for component, gamma in ((0, simu.gamma), (1, simu.gamma2)):
             draw = simu._complex_noise(increment)
             delta = (noise * np.sqrt(gamma / area) * draw).astype(dtype)
-            # Read, add, write back, rather than `A[..., c, :, :] += delta`.
-            # pyopencl accepts the in-place form on a slice and silently
-            # discards it -- no exception, and the field comes out exactly as
-            # if no noise had been asked for -- so this was doing nothing at
-            # all on the CL backend. The noise also has to reach the device
-            # before it can be added to something that lives there.
+            # Read, add, write back: pyopencl silently discards `+=` on a slice. The
+            # noise also has to reach the device before it is added.
             A[..., component, :, :] = A[
                 ..., component, :, :
             ] + simu._backend.from_numpy(delta)
@@ -300,15 +293,8 @@ class DDGPE(CNLSE):
         F_probe_t : np.ndarray
             The temporal profile of the probe field, sampled as F_pump_t.
         """
-        # Read, subtract, write back, and one profile at a time so that the
-        # arithmetic is the two subtractions it always was.
-        #
-        # `A[..., 1, :, :] -= delta` is what this said, and pyopencl takes that
-        # on a slice, raises nothing, and leaves the slice holding zero rather
-        # than the value it should. Since out_field always inserts this
-        # callback, every DDGPE run on CL lost its cavity component on the
-        # first step -- subtracting a pump of exactly zero still zeroed it --
-        # and the exciton then drifted away through the Rabi coupling.
+        # Read, subtract, write back, one profile at a time: pyopencl takes `-=` on
+        # a slice, raises nothing and leaves it zero, which zeroed the cavity on CL.
         dtype = simu._field_dtype(A)
         dt = simu._current_delta_z
         for profile_r, profile_t in ((F_pump_r, F_pump_t), (F_probe_r, F_probe_t)):
@@ -373,12 +359,8 @@ class DDGPE(CNLSE):
             self.omega_cav * np.sqrt(1 + (self.Kxx**2 + self.Kyy**2) / self.k_z**2)
             - self.omega_pump
         )
-        # Broadcast to the grid. The exciton branch is dispersionless, so the
-        # expression for it is a scalar, and np.array of a scalar beside a grid
-        # is an inhomogeneous array rather than the pair it looks like: it
-        # raises, and has since numpy 1.24, so DDGPE could not run RK4 at all.
-        # Nothing covered it. The split step avoided this by writing the same
-        # broadcast as a multiplication by (1 + 0 * Kxx**2).
+        # Broadcast to the grid: the exciton branch is dispersionless, a scalar, and
+        # np.array of a scalar beside a grid raises (numpy >= 1.24).
         prop1 = np.full_like(prop2, -1j * (self.omega_exc - self.omega_pump))
         return np.array([prop1, prop2])
 

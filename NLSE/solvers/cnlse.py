@@ -100,9 +100,6 @@ class CNLSE(NLSE):
         self.k2 = self.k
         # powers
         self.power2 = self.power
-        # waists
-        self.propagator1 = None
-        self.propagator2 = None
 
     @property
     def _norm_target(self) -> np.ndarray:
@@ -302,23 +299,10 @@ class CNLSE(NLSE):
         A1 = A[self._component(0)]
         A2 = A[self._component(1)]
 
-        # Contiguous, whoever is asking, because the kernels need it and
-        # neither of them says so.
-        #
-        # The device backends cannot index an offset array at all. The numba
-        # kernels can, and quietly do the wrong thing: they open with
-        # A1.ravel(), which returns a view of a contiguous array and a COPY of
-        # one that is not, so the step is applied to the copy and thrown away
-        # when the kernel returns the argument it was given. A coupled field
-        # is (2, NX) unbatched and each component is contiguous, so this never
-        # showed. Add a batch and it is (B, 2, NX), each component is a
-        # strided (B, NX), and every batched coupled run on the CPU silently
-        # dropped its whole real-space step -- losses and nonlinear phase --
-        # and propagated the linear equation instead.
-        #
-        # The copy is only made where the view is not already contiguous, so
-        # an unbatched run pays nothing and keeps writing through to A.
-        # _set_components puts the components back either way.
+        # Contiguous components, since the kernels need it: the numba kernels open with
+        # A1.ravel(), which copies a strided batched component, so the step landed on
+        # the copy and was dropped. CUPY and CL always copy, MLX arrays have no .copy,
+        # the CPU copies a view that is not contiguous. _set_components writes back.
         if self._backend.is_device_backend:
             if hasattr(A1, "copy"):
                 A1 = A1.copy()
@@ -421,11 +405,7 @@ class CNLSE(NLSE):
         """
         super()._allocate_rk4_buffers(A, method)
         if method == "RK4":
-            real_dtype = (
-                np.float32
-                if np.dtype(self._field_dtype(A)).itemsize == 8
-                else np.float64
-            )
+            real_dtype = self._real_dtype(self._field_dtype(A))
             self._rk4_A_sq_c = self._backend.allocate_real_field(A.shape, real_dtype)
 
     def _RK4_rhs(
@@ -762,8 +742,7 @@ class CNLSE(NLSE):
         V : np.ndarray
             Potential field (can be None).
         propagator : np.ndarray
-            Propagator matrix for both fields
-            [propagator1, propagator2].
+            Propagators of the two fields, one per component.
         plans : list
             List of FFT plan objects: one plan used in both directions on
             the GPU backends, and the axes to transform over on CPU.
@@ -894,7 +873,7 @@ class CNLSE(NLSE):
                 unnorm_ifft=unnorm,
             )
 
-        # First half-step (double precision only)
+        # First half-step (strang only)
         if splitting == "strang":
             A1, A2 = self._take_components(A)
             A_sq, A_sq_1, A_sq_2 = self._compute_A_sq_components(A, A_sq)
