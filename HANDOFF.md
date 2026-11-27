@@ -54,9 +54,21 @@ threading layer decides (`fix/ci-threading-layer-tests`). Still open:
     `.gitignore`. Reviewer: pass. `pyproject.toml` (task T6 of `repo.md`)
     waits for the two packages below, since two of its ruff ignores depend
     on them.
-  - package (`NLSE/`, six patches, net -364 lines, mostly comments over four
-    lines) and tests (five tasks, about -4000 lines): specs written, in spec
-    review.
+  - `test/debloat-tests`: done. `tests/` goes from 20558 to 17429 lines:
+    duplicated cross-backend cases merged, 32 unread constants deleted,
+    `AVAILABLE_BACKENDS` and the `backend` fixture defined once
+    (`tests/helpers.py`, `tests/conftest.py`), the CuPy send and retrieve
+    pairs merged into one test that skips, docstrings cut to their summary
+    (80 rewritten). Reviewer: pass; its mutants of what the deleted
+    duplicates covered are killed by the survivors. Suites, branch against
+    `main`: Mac 1723 passed, 160 skipped; box CuPy 1796 passed, 68 skipped
+    (1806 and 68); box OpenCL 1700 passed, 153 skipped (1714 and 149). The
+    10 fewer are the merged and deleted tests; without CuPy the four merged
+    ones skip where a half of each pair used to pass on the host.
+  - package (`NLSE/`, six patches, net -357 lines, mostly comments over four
+    lines): spec reviewed and revised, the patches apply on top of the tests
+    branch. Next: six implementers on `refactor/debloat-package`, then step
+    timings at 1024², 2048² and 4096² before and after, and the box suites.
   - Left for the owner, not done: the tutorial notebook's 8 MB of outputs
     (re-render smaller), `paper/` and `img/output.png` (the JOSS record),
     `examples/juliaGPE_vs_NLSE.py` with `vortex_precession.jl`, merging
