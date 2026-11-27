@@ -47,29 +47,10 @@ def _check_double_support(context):
     return True
 
 
-# Broadcasting a batch of simulations over OpenCL.
-#
-# The kernels take scalar physical parameters and address every array with one
-# flat global id, so a batch runs one launch per simulation: the kernel gets
-# that simulation's scalar values, and ``global_offset`` places the launch on
-# its slice of the field.
-#
-# The offset is used rather than a slice of the field because a ``cla.Array``
-# slice starts at an offset from its buffer and ``.data`` refuses to hand such
-# an array to a kernel. ``get_global_id`` therefore still returns the index
-# into the whole batched field, and a grid shared by the batch (the potential,
-# the propagator) is addressed as ``grid[idx - get_global_offset(0)]``.
-#
-# The built-in matters, rather than passing the same number as an argument.
-# ``get_global_id(0) - get_global_offset(0)`` is by definition the zero-based
-# index within this launch, so the compiler can still prove it contiguous and
-# keep its wide loads. The alternatives all defeat that and cost roughly 3x on
-# the bandwidth-bound kernels: an ``int`` argument the compiler cannot see
-# through, an ``idx % n_grid`` wrap, or moving the batch onto a second NDRange
-# dimension. This form is the only one that is free when unbatched.
-#
-# This mirrors ``_broadcast_batch`` in kernels/cpu.py: the loop is over
-# simulations (a handful) and each launch still covers a whole grid.
+# A batch runs one launch per simulation, with that simulation's scalars, and
+# global_offset places it on its slice (a cla.Array slice cannot be passed).
+# Shared grids read grid[idx - get_global_offset(0)], which the compiler still
+# sees as contiguous, unlike an int argument or an idx % n_grid wrap.
 
 
 def _is_batched_param(value):
@@ -322,11 +303,9 @@ def _compile_kernels(context, precision="single"):
     # Compile with aggressive optimizations
     source = _get_kernel_source(precision)
     build_options = [
-        # No unsafe math, and so no -cl-fast-relaxed-math, which implies it:
-        # reassociation is free to round a V-reading kernel and its no-V twin
-        # differently, and on POCL a zero potential then changed the result.
-        # No -cl-finite-math-only either -- Isat defaults to np.inf and
-        # reaches these kernels as one. See docs/optimization-log.md.
+        # No unsafe math (so no -cl-fast-relaxed-math): reassociation rounded a kernel
+        # and its no-V twin differently on POCL. No -cl-finite-math-only: Isat defaults
+        # to np.inf. See docs/optimization-log.md.
         "-cl-mad-enable",
     ]
 

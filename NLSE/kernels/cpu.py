@@ -8,43 +8,19 @@ import numpy as np
 from numba.core import types
 from numba.extending import overload
 
-# Claim the OpenMP runtime before anything else in the process can.
-#
-# A library that vendors its own copy rather than linking the environment's --
-# pyfftw's PyPI wheel is the one that bit us, under pyfftw/.dylibs -- can
-# coexist with numba's, but only if numba's initialized first. The other order
-# segfaults at the first prange, wherever in the process that happens to be,
-# so it surfaces as a crash in whichever kernel ran first. This package no
-# longer imports pyfftw, but it cannot stop a caller from importing one above
-# it, and an environment that had NLSE before this still has pyfftw installed.
-#
-# Initializing here is enough whenever NLSE is imported first. When it is not,
-# the window is already gone and the only safe pool is the one that owns no
-# OpenMP runtime; it measures ~6% slower on these kernels, against not running.
+# Claim the OpenMP runtime first: a vendored copy (pyfftw's wheel) initialized
+# before numba's segfaults at the first prange. If pyfftw is already loaded the
+# window is gone, so use the workqueue pool, which owns no OpenMP runtime.
 if "pyfftw" in sys.modules and not numba.np.ufunc.parallel._is_initialized:
     # numba.config builds its attributes at import, so a type checker sees none of them.
     numba.config.THREADING_LAYER = "workqueue"  # type: ignore[attr-defined]
 numba.get_num_threads()
 
 
-# A sine and cosine the vectorizer can get through.
-#
-# The lossless kernels below rotate each element by an angle, and `np.sin` and
-# `np.cos` lower to a call to ___sincos_stret once per element. An opaque call
-# in the loop body stops LLVM vectorizing it at all, which is why the nonlinear
-# kernels sit near 15% of this machine's bandwidth while every other kernel
-# here reaches 70-100%. Written as arithmetic instead -- Cody-Waite range
-# reduction into [-pi/4, pi/4], then fdlibm's minimax polynomials -- the loop
-# vectorizes and the kernel runs ~1.4x faster, at 1.5 ulp.
-#
-# `reassoc` is deliberately absent from the fast-math set. It is algebraically
-# valid and numerically fatal here: it rewrites `(x - k*P1) - k*P2` into
-# `x - k*(P1+P2)`, collapsing the split into a single rounded pi/2 and
-# reintroducing exactly the cancellation the split exists to avoid. With it on,
-# the error grows with the argument -- 4e-11 by |x| = 1e6 instead of staying at
-# 3e-16. Every kernel that calls _rotate or _mul_cexp must therefore also carry
-# this set rather than fastmath=True, since numba inlines the body into its
-# caller and the caller's flags are what reach LLVM.
+# sin/cos as arithmetic (Cody-Waite reduction, fdlibm polynomials) so LLVM
+# vectorizes the loop: ~1.4x at 1.5 ulp (docs/optimization-log.md). No `reassoc`:
+# it merges the split pi/2 and loses the precision the split exists for. Callers
+# of _rotate/_mul_cexp carry this set: numba inlines them under their flags.
 _SINCOS_FASTMATH = {"nnan", "ninf", "nsz", "arcp", "contract", "afn"}
 
 # Exact in float32, so one constant serves both widths. A Python literal would
@@ -333,25 +309,13 @@ def _mul_cexp_typed(a, scale, w):
     return _mul_cexp32 if w == types.complex64 else _mul_cexp64
 
 
-# How many passes of the iteration in _loss_factor to make. Each one raises the
-# order of the composition built on the sub-step by one: frozen is first order
-# overall, one pass makes it second (all Strang can use), three makes it fourth
-# (all Yoshida can use). Measured against a stiff solve of the sub-step, the
-# relative error falls as u^2, u^3, u^4, u^5 for zero to three passes.
+# Passes of the iteration in _loss_factor: each raises the order of the
+# composition by one, so three gives fourth order, all Yoshida can use.
 _LOSS_PASSES = 3
 
-# Largest |u| = |2*alpha*dz| the iteration is used at. It is a contraction only
-# while the step takes out a small fraction of the intensity, and the fraction
-# it actually sees is sat*u, so the bound has to hold at sat = 1 -- a medium
-# that does not saturate at all, where the iteration is least helped. Measured
-# against a stiff solve there, it beats the frozen step by 2.6x at u = 0.1 and
-# loses to it by u = 0.3; above ~1 it walks away and returns a *larger* field
-# than it was given, which is the failure that has to be impossible.
-#
-# Above this the kernels compute what they computed before. A propagation never
-# reaches it: LOSS_PER_STEP_LIMIT in solvers/step_size.py caps the step at half
-# of it. A caller invoking a kernel directly can, and gets the old answer
-# rather than a diverging one.
+# Largest |u| = |2*alpha*dz| the iteration is used at: it contracts only while
+# a step takes out a small fraction of the intensity. Above it the kernels use
+# the frozen step; a propagation never gets here (LOSS_PER_STEP_LIMIT is half).
 _LOSS_SOLVED_LIMIT = 0.1
 
 # Elements per call of the serial body in the parallel nonlinear kernels: the
@@ -460,11 +424,9 @@ def _nl_prop(
             arg = -alpha * sat + _IMAG * g * A_sq_flat[i] * sat + _IMAG * V_flat[i]
             A_flat[i] = _mul_cexp(A_flat[i], _ONE, dz * arg)
         return A
-    # Lossy: the interaction is evaluated at the saturation the step averages
-    # out to rather than the one it starts at, and the decay comes out of the
-    # exponential. See _loss_factor. The potential's own absorption, if it has
-    # one, is left in the exponential -- the identity behind _loss_factor holds
-    # for one decay channel, and a complex potential is a second.
+    # Lossy: the interaction at the saturation the step averages out to (see
+    # _loss_factor). A complex potential's absorption stays in the exponential:
+    # _loss_factor's identity holds for one decay channel only.
     for i in numba.prange(A_flat.size):
         sat = _ONE / (_ONE + A_sq_flat[i] / Isat)
         P = _loss_factor(sat, u)
@@ -1277,17 +1239,9 @@ def _rk4_nl_rhs_c_v(
 
 
 # ── Broadcasting over a batch of simulations ────────────────────────────────
-# The numba kernels take scalar physical parameters. Running a batch of
-# simulations at once broadcasts a parameter into an array with a leading
-# batch axis, which numba cannot type: it fails with "No implementation of
-# function imul found for signature (complex64, array(complex128, 3d, C))".
-#
-# Loop over the batch and call the compiled kernel once per slice. The loop
-# is over simulations (a handful), and each call still processes a whole
-# grid with the njit kernel, so this costs a few extra dispatches per step
-# rather than giving up numba. It also keeps the fields and the parameters
-# consistently sliced, which matters for apply_propagator: a batched field
-# against a shared propagator must reuse the propagator, not index past it.
+# numba cannot type a parameter with a batch axis, so loop over the batch and
+# call the kernel once per slice: a few extra dispatches per step. A batched
+# field against a shared propagator reuses the propagator, not index past it.
 
 
 def _batch_len(args, scalar_positions):
@@ -1447,11 +1401,8 @@ def apply_propagator(A: np.ndarray, propagator: np.ndarray) -> np.ndarray:
     np.ndarray
         The modified field array A.
     """
-    # numba indexes both with the same loop and checks nothing. Handed a
-    # propagator of another shape or width it reads and writes past the end of
-    # one of them, and what surfaces is a segmentation fault inside the
-    # compiled kernel with no indication of which argument was wrong -- not an
-    # exception anything can catch or a traceback that names the caller.
+    # numba checks no shapes: a propagator of another shape or width reads past the
+    # end and segfaults inside the kernel, with nothing naming the argument.
     if A.ndim > propagator.ndim:
         if A.shape[-propagator.ndim :] != propagator.shape:
             raise ValueError(
