@@ -7,7 +7,6 @@ from NLSE.backends import get_backend, list_available_backends
 from scipy.constants import c, epsilon_0
 
 PRECISION_COMPLEX = np.complex64
-PRECISION_REAL = np.float32
 
 # The non-local response is a product in Fourier space, which every backend
 # has: none of them hands a non-local run to another.

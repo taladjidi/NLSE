@@ -4,12 +4,10 @@ from NLSE import NLSE_1d
 from scipy.constants import c, epsilon_0
 
 PRECISION_COMPLEX = np.complex64
-PRECISION_REAL = np.float32
 
 N = 256
 n2 = -1.6e-9
 waist = 2.23e-3
-waist2 = 70e-6
 window = 4 * waist
 power = 1.05
 Isat = 10e4  # saturation intensity in W/m^2

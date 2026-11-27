@@ -16,7 +16,6 @@ D0 = 1e-16
 vg = 1e-1 * c
 waist = 2.23e-3
 duration = 2e-6
-waist2 = 70e-6
 window = np.array([4 * waist, 8 * duration])  # 4*waist transverse, 10e-6 s temporal
 energy = 1.05 * duration
 Isat = 10e4  # saturation intensity in W/m^2

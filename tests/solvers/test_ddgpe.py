@@ -10,7 +10,6 @@ if DDGPE.__CUPY_AVAILABLE__:
 AVAILABLE_BACKENDS = list_available_backends()
 
 PRECISION_COMPLEX = np.complex64
-PRECISION_REAL = np.float32
 
 N = 256
 T = 1

@@ -65,7 +65,6 @@ pytestmark = pytest.mark.skipif(
 N = 64
 L = 1e-3
 waist = 2.23e-3
-waist2 = 70e-6
 window = 4 * waist
 SOLVERS = [NLSE, NLSE_1d, CNLSE, CNLSE_1d]
 COUPLED = [CNLSE, CNLSE_1d]
