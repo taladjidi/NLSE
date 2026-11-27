@@ -17,6 +17,7 @@ the last one isolates none of them.
 
 Curves are the analytic solutions, markers are what the solver returns. The
 residuals in the titles are what the figure cannot show.
+`python docs/make_validation_figure.py` draws it, from the same closed forms.
 
 ## The equation, and the conventions it fixes
 
@@ -27,8 +28,7 @@ i\frac{\partial A}{\partial z}
 \qquad I = \frac{c\varepsilon_0}{2}|A|^2
 $$
 
-Two conventions follow from it that nothing else in the documentation stated,
-and that the tests now pin:
+Two conventions follow from it, and the tests pin both:
 
 - **$n_2 > 0$ is self-focusing.** A positive nonlinear index raises the index
   where the beam is brightest, which is what makes the bright soliton below
@@ -38,15 +38,21 @@ and that the tests now pin:
 
 ## What each check isolates
 
-| Check | Closed form | Isolates | Agreement |
+| Check | Closed form | Isolates | Asserted to |
 |---|---|---|---|
-| Gaussian diffraction | $w(z) = w_0\sqrt{1 + (z/z_R)^2}$, $z_R = kw_0^2/2$ | the propagator, its normalization, the $k$ grid, the wavelength | exact |
-| Gouy phase | $\varphi(0,z) = -\arctan(z/z_R)$ | the *sign* and scale of the dispersion relation | 5 decimals |
-| Talbot revival | $z_T = kd^2/\pi$ | the propagator at a finite transverse wavenumber | $1.6\times10^{-6}$ |
-| Beer's law | $I(z) = I_0e^{-\alpha z}$ | the loss term, and its convention | 6 decimals |
-| Saturated self-phase modulation | $\varphi = k n_2 I z / (1 + I/I_{sat})$ | the interaction term and the saturation model | $10^{-7}$ |
-| The lossy identity | $\varphi = \dfrac{k n_2}{\alpha}\left(I_0 - I_{end}\right)$ | loss and interaction *together* | $4\times10^{-7}$ |
-| Bright soliton | $x_0^2 = 1/(k g A_0^2)$, $g = kn_2c\varepsilon_0/2$ | nothing separately — only the balance | $6\times10^{-7}$ |
+| Gaussian diffraction | $w(z) = w_0\sqrt{1 + (z/z_R)^2}$, $z_R = kw_0^2/2$ | the propagator, its normalization, the $k$ grid, the wavelength | relative $2\times10^{-3}$ |
+| Gouy phase | $\varphi(0,z) = -\arctan(z/z_R)$ | the *sign* and scale of the dispersion relation | $2\times10^{-3}$ rad |
+| Talbot revival | $z_T = kd^2/\pi$ | the propagator at a finite transverse wavenumber | mismatch $10^{-3}$ |
+| Beer's law | $I(z) = I_0e^{-\alpha z}$ | the loss term, and its convention | relative $10^{-4}$ |
+| Saturated self-phase modulation | $\varphi = k n_2 I z / (1 + I/I_{sat})$ | the interaction term and the saturation model | relative $10^{-3}$ |
+| The lossy identity | $\varphi = \dfrac{k n_2}{\alpha}\left(I_0 - I_{end}\right)$ | loss and interaction *together* | relative $10^{-3}$, $2\times10^{-3}$ rad |
+| Bright soliton | $x_0^2 = 1/(k g A_0^2)$, $g = kn_2c\varepsilon_0/2$ | nothing separately — only the balance | shape $10^{-4}$ |
+
+The same file also checks a uniform complex potential, the potential with loss
+and interaction, a new wavenumber, a chirped pulse in `NLSE_3d`, and the step
+RK4 picks for itself;
+`tests/physics/test_gpe_closed_forms.py` holds the `GPE` closed forms and
+`tests/physics/test_nonlocal_response.py` the non-local response.
 
 ### Why three checks on the propagator
 
