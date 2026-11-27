@@ -42,10 +42,6 @@ class Parameter:
         self.scale = scale
         self.__doc__ = doc
 
-    def __set_name__(self, owner: type, name: str) -> None:
-        """Record the name this parameter was declared under."""
-        self._name = name
-
     def __get__(self, obj: Any, objtype: type | None = None) -> Any:
         """Return the stored value, converted back to this parameter's units."""
         if obj is None:
