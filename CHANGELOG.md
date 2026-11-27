@@ -54,6 +54,15 @@ come first.
 
 ### Fixed
 
+- **A coupled Strang run without a callback keeps its cross coupling.**
+  `CNLSE` and `CNLSE_1d` run with `splitting="strang"` and no callback took
+  the merged path of the scalar solver, whose opening and closing half steps
+  apply neither `n12` nor the second component's loss. 4.0.0 and 4.1.0 both
+  do it: on 4.1.0 a ten-step run at 64² differs by 20% from the same run
+  stepped under a callback. Runs with a callback, a non-local interaction, a
+  Rabi coupling or a complex potential never merged and were right. The
+  coupled solvers no longer merge, so such a run does one more real-space
+  pass per step and still one transform pair.
 - **`backend="auto"` times MLX's transform.** The backend benchmark waited on
   the array it had passed in, and MLX's transforms are lazy and return a new
   one, so MLX was timed computing nothing (under 0.01 ms for a 2048²

@@ -17,6 +17,10 @@ class CNLSE(NLSE):
     _run_state_attrs = (*NLSE._run_state_attrs, "_V2_scaled")
     # Both intra- and inter-component couplings switch off past the medium.
     _medium_attrs = (*NLSE._medium_attrs, "n12", "n22", "alpha2")
+    # A merged Strang run brackets its Lie steps with the scalar
+    # `_nonlinear_step`, which has neither the cross coupling nor the second
+    # loss, so no coupled run merges.
+    _lie_step_is_strang_body = False
 
     def __init__(
         self,
