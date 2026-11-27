@@ -32,9 +32,9 @@ pass, and the two are chosen separately.
 - A half nonlinear step either side of the linear one
 - Error: $\mathcal{O}(\delta z^2)$
 - Cost: 1 transform pair per step, as Lie. Consecutive steps also merge their
-  touching half steps into one real-space pass, except with a non-local
-  interaction, a Rabi coupling, a complex potential, or in `NLSE_3d` and
-  `DDGPE`
+  touching half steps into one real-space pass, except with a callback, a
+  non-local interaction, a Rabi coupling, a complex potential, or in
+  `NLSE_3d` and `DDGPE`
 
 **`splitting="yoshida"`**:
 
@@ -70,9 +70,9 @@ $\ln y + y/I_\text{sat}$ falling by $\alpha\,\delta z$. Each splitting keeps
 its order with loss. The coupled solvers and a complex potential still freeze
 the step (see [Physical validation](physical_validation.md#what-this-does-not-cover)).
 
-A step may take out only a few percent of the intensity
-(`LOSS_PER_STEP_LIMIT`); a coarser one is lowered with a warning, like every
-other step limit here.
+A step may take out only a few percent of the intensity: $2\alpha\,\delta z$
+stays under `LOSS_PER_STEP_LIMIT` = 0.05. A coarser step is lowered with a
+warning, like every other step limit here.
 
 ```python
 # complex64 field: lie is fast, strang is the better constant
@@ -120,12 +120,12 @@ The two methods aim at different phases:
   falling steeply where split-step's has flattened.
 
 Those expectation values are the same quantities the stability and accuracy
-limits below are built from, so the default sits a fixed distance inside them
-rather than at an arbitrary fraction of a length scale. Terms that do not bind
-are left out: split-step applies the linear part exactly in Fourier space, so
-only the real-space terms enter its step, while RK4 approximates the whole
-right-hand side and takes all of them. A default run takes at least
-`DEFAULT_MIN_STEPS` = 10 steps.
+limits below are built from, rather than an arbitrary fraction of a length
+scale. Split-step applies the linear part exactly in Fourier space, so only
+the real-space terms enter its default, while RK4 approximates the whole
+right-hand side and takes all of them. The split-step limit does count
+dispersion, so a default can come out above it, and is then lowered like any
+other step. A default run takes at least `DEFAULT_MIN_STEPS` = 10 steps.
 
 These are defaults, not guarantees. They are written against the phase the
 potential and the interaction imprint, on the reasoning that split-step applies
@@ -150,9 +150,14 @@ E = simu.out_field(E_in, z, delta_z=1e-5)  # in meters (or seconds for GPE/DDGPE
 
 ### Automatic step limit enforcement
 
-A step you pass is used as given, and reduced only if it would leave the
-method's region of convergence — to 90% of the limit, with a warning naming
-which limit bound. A step the solver chose itself is already well inside.
+Every step is checked against the method's limit, whether you passed it or
+the solver chose it. Inside the limit it is used as given. Past it, it is
+lowered to `CAPPED_STEP_FRACTION` = 0.9 of the limit, with a warning naming
+which limit bound.
+
+The default is not exempt. On a fine grid the dispersion limit sits below the
+split-step default: the first run of the [quick start](quick_start.md) is
+lowered that way, and says so.
 
 **Split-step limit**: the smallest of three steps.
 

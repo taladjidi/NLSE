@@ -1,17 +1,23 @@
 """The documentation must not claim things the code does not do."""
 
+import functools
 import inspect
 import pathlib
 import re
+import warnings
+from unittest import mock
 
+import numpy as np
 import pytest
 from helpers import ORDERS
 from NLSE import NLSE
 from NLSE.backends import get_backend, list_available_backends
-from NLSE.solvers.nlse import PROPAGATOR_CACHE_SIZE, SPLITTINGS, YOSHIDA_WEIGHTS
+from NLSE.solvers.nlse import PROPAGATOR_CACHE_SIZE, SPLITTINGS
 from NLSE.solvers.step_size import (
+    CAPPED_STEP_FRACTION,
     DEFAULT_MIN_STEPS,
     DEFAULT_PHASE_PER_STEP,
+    LOSS_PER_STEP_LIMIT,
     RK4_PHASE_PER_STEP,
     RK4_STABILITY_RADIUS,
     SPLIT_STEP_DISPERSION_PHASE_LIMIT,
@@ -37,16 +43,121 @@ PREVIOUS_RELEASE = "4.0.0"
 # it were the current one.
 MIGRATION_FROM, MIGRATION_TO = "3.0.0", "4.0.0"
 
-# The README's splitting table: orders as in helpers.ORDERS; transform pairs
-# per step: one for Lie, one for Strang, whose two real-space halves sit around
-# a single linear step, and one per weight for Yoshida.
-TRANSFORM_PAIRS = {"lie": 1, "strang": 1, "yoshida": len(YOSHIDA_WEIGHTS)}
+# The README's splitting table: orders as in helpers.ORDERS, transform pairs
+# per step as transform_pairs_per_step counts them.
 # A row: `"name"` ... | $\mathcal{O}(\delta z^order)$ | pairs |
 SPLITTING_ROW = (
     r'^\| `"(\w+)"`[^|]*\| \$\\mathcal\{O\}\(\\delta z(?:\^(\d))?\)\$ \| (\d+) \|'
 )
+# numerical_methods.md, a splitting's block: its heading, its error, its cost.
+SPLITTING_BLOCK = (
+    r'\*\*`splitting="(\w+)"`\*\*.*?'
+    r"Error: \$\\mathcal\{O\}\(\\delta z(?:\^(\d))?\)\$.*?"
+    r"Cost: (\d+) transform pair"
+)
+# And its sentence giving RK4's cost beside Lie and Strang's, then Yoshida's.
+RK4_COST = (
+    r"costs (\d+) transform pairs, against (\d+) for Lie\s+and\s+Strang"
+    r"\s+and\s+(\d+)\s+for\s+Yoshida"
+)
+
+# Constants the pages quote as `NAME` = value, against the value the code holds.
+QUOTED_CONSTANTS = {
+    "DEFAULT_PHASE_PER_STEP": DEFAULT_PHASE_PER_STEP,
+    "RK4_PHASE_PER_STEP": RK4_PHASE_PER_STEP,
+    "DEFAULT_MIN_STEPS": DEFAULT_MIN_STEPS,
+    "SPLIT_STEP_DISPERSION_PHASE_LIMIT": SPLIT_STEP_DISPERSION_PHASE_LIMIT,
+    "RK4_STABILITY_RADIUS": RK4_STABILITY_RADIUS,
+    "LOSS_PER_STEP_LIMIT": LOSS_PER_STEP_LIMIT,
+    "CAPPED_STEP_FRACTION": CAPPED_STEP_FRACTION,
+    "PROPAGATOR_CACHE_SIZE": PROPAGATOR_CACHE_SIZE,
+}
+# A quote: the name in backticks, an equals sign, the number. A line break may
+# fall anywhere between them, since prose is rewrapped.
+QUOTE = r"`{name}`\s*=\s*(\d+\.?\d*)"
+
+# The run that counts transforms: no step limit binds on it (a warning there
+# fails the count), so it takes the steps it is asked for.
+COUNT_GRID = 32  # points per axis
+COUNT_WINDOW = 1e-3  # m
+COUNT_STEP = 1e-5  # m
+COUNTED_STEPS = 4  # steps the longer run takes over the shorter one
 # Rows of the capability table every backend has to claim.
 CLAIMED_BY_ALL = ["Broadcasting", "Non-local interactions"]
+
+
+def transforms_in_a_run(splitting, method, steps):
+    """Count the forward transforms a CPU run of ``steps`` steps takes.
+
+    Parameters
+    ----------
+    splitting : str
+        Splitting to run.
+    method : str
+        Integration method ("split_step" or "RK4").
+    steps : int
+        Steps of ``COUNT_STEP`` to propagate over.
+
+    Returns
+    -------
+    int
+        Calls the run made to the backend's forward transform.
+    """
+    simu = NLSE(
+        0.0,
+        1.0,
+        COUNT_WINDOW,
+        -1e-9,
+        V=None,
+        L=1.0,
+        NX=COUNT_GRID,
+        NY=COUNT_GRID,
+        backend="CPU",
+    )
+    # The width each splitting is meant for, so that the run warns of nothing.
+    dtype = np.complex128 if splitting == "yoshida" else np.complex64
+    field = np.ones((COUNT_GRID, COUNT_GRID), dtype=dtype)
+    with (
+        warnings.catch_warnings(),
+        mock.patch.object(simu._backend, "fft", wraps=simu._backend.fft) as fft,
+    ):
+        warnings.simplefilter("error")
+        simu.out_field(
+            field,
+            steps * COUNT_STEP,
+            delta_z=COUNT_STEP,
+            splitting=splitting,
+            method=method,
+            verbose=False,
+        )
+    return fft.call_count
+
+
+@functools.cache
+def transform_pairs_per_step(splitting, method="split_step"):
+    """Measure the transform pairs one more step costs.
+
+    The difference of two runs, so that a transform a run takes once (the one
+    its step limit is computed from) is not charged to the steps.
+
+    Parameters
+    ----------
+    splitting : str
+        Splitting to run.
+    method : str
+        Integration method ("split_step" or "RK4").
+
+    Returns
+    -------
+    int
+        Forward transforms per step, each of which has its inverse.
+    """
+    extra = transforms_in_a_run(
+        splitting, method, 2 * COUNTED_STEPS
+    ) - transforms_in_a_run(splitting, method, COUNTED_STEPS)
+    pairs, rest = divmod(extra, COUNTED_STEPS)
+    assert rest == 0, f"{extra} transforms over {COUNTED_STEPS} steps of {splitting}"
+    return pairs
 
 
 def test_there_are_pages_to_check():
@@ -143,23 +254,25 @@ def test_the_migration_guide_maps_dead_backends_to_live_ones():
 @pytest.mark.parametrize("page", PAGES, ids=IDS)
 def test_quoted_constants_match_the_code(page):
     """A constant quoted in prose drifts silently when the code moves."""
-    facts = {
-        "DEFAULT_PHASE_PER_STEP": DEFAULT_PHASE_PER_STEP,
-        "RK4_PHASE_PER_STEP": RK4_PHASE_PER_STEP,
-        "DEFAULT_MIN_STEPS": DEFAULT_MIN_STEPS,
-        "SPLIT_STEP_DISPERSION_PHASE_LIMIT": SPLIT_STEP_DISPERSION_PHASE_LIMIT,
-        "RK4_STABILITY_RADIUS": RK4_STABILITY_RADIUS,
-        "PROPAGATOR_CACHE_SIZE": PROPAGATOR_CACHE_SIZE,
-    }
     text = page.read_text(encoding="utf-8")
-    wrong = []
-    for name, value in facts.items():
-        # The number on the same line as the name, if there is one.
-        for line in (ln for ln in text.splitlines() if name in ln):
-            for quoted in re.findall(r"(?<![\w.])(\d+\.?\d*)(?![\w])", line):
-                if abs(float(quoted) - value) > 1e-12:
-                    wrong.append(f"{name} quoted as {quoted}, is {value}")
+    wrong = [
+        f"{name} quoted as {quoted}, is {value}"
+        for name, value in QUOTED_CONSTANTS.items()
+        for quoted in re.findall(QUOTE.format(name=name), text)
+        if abs(float(quoted) - value) > 1e-12
+    ]
     assert not wrong, f"{page.name}: " + "; ".join(wrong)
+
+
+def test_every_pinned_constant_is_quoted_somewhere():
+    """A quote reworded out of the form the test reads would pin nothing."""
+    text = "\n".join(page.read_text(encoding="utf-8") for page in PAGES)
+    unquoted = [
+        name
+        for name in QUOTED_CONSTANTS
+        if not re.search(QUOTE.format(name=name), text)
+    ]
+    assert not unquoted, f"no page quotes {unquoted} as `NAME` = value"
 
 
 def test_the_capability_table_matches_the_backends():
@@ -207,7 +320,29 @@ def test_the_splitting_table_matches_the_code():
     orders = {name: int(order or 1) for name, order, _ in rows}
     pairs = {name: int(count) for name, _, count in rows}
     assert orders == {name: ORDERS[name] for name in SPLITTINGS}
-    assert pairs == TRANSFORM_PAIRS
+    assert pairs == {name: transform_pairs_per_step(name) for name in SPLITTINGS}
+
+
+def test_the_methods_page_states_the_measured_order_and_cost():
+    """numerical_methods.md gives each splitting's order and transform pairs."""
+    text = (ROOT / "docs" / "numerical_methods.md").read_text(encoding="utf-8")
+    blocks = re.findall(SPLITTING_BLOCK, text, re.S)
+    assert [name for name, _, _ in blocks] == list(SPLITTINGS), (
+        f"the page's splitting blocks read as {blocks}, the solver has {SPLITTINGS}"
+    )
+    measured = {name: transform_pairs_per_step(name) for name in SPLITTINGS}
+    orders = {name: int(order or 1) for name, order, _ in blocks}
+    assert orders == {name: ORDERS[name] for name in SPLITTINGS}
+    assert {name: int(count) for name, _, count in blocks} == measured
+
+    rk4 = re.search(RK4_COST, text)
+    assert rk4, "the page no longer gives RK4's cost beside the splittings'"
+    assert measured["lie"] == measured["strang"], "the sentence gives them one cost"
+    assert [int(count) for count in rk4.groups()] == [
+        transform_pairs_per_step("lie", "RK4"),
+        measured["lie"],
+        measured["yoshida"],
+    ]
 
 
 def test_the_documented_version_is_the_real_one():
