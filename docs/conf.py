@@ -51,9 +51,9 @@ extensions = [
     "sphinx_gallery.gen_gallery",
 ]
 
-# The gallery runs every example when the docs are built and keeps the figures
-# it produced, so the picture on the page is the one that script makes today
-# rather than one committed months ago.
+# The gallery runs the examples and keeps the figures they produced, rather
+# than figures committed months ago. An example runs again when its source
+# changes; CI's weekly run passes run_stale_examples=True to run them all.
 sphinx_gallery_conf = {
     "examples_dirs": "../examples",
     "gallery_dirs": "auto_examples",

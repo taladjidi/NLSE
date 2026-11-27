@@ -38,9 +38,10 @@ uv run python -m http.server -d docs/_build/html      # then open http://localho
 
 CI runs the same build on every push, and a push to `main` publishes it. `-W`
 makes a warning fail the build: a broken cross-reference, or a page missing
-from a toctree. The build also runs every script in `examples/` but two for
-the gallery, so it takes minutes rather than seconds, and the vortex animation
-needs `ffmpeg`. More in [Contributing](docs/contributing.md#building-the-documentation).
+from a toctree. The gallery runs every script in `examples/` but two, 57
+minutes on a GitHub runner the first time; after that a build runs only the
+scripts that changed, and a weekly CI run executes them all. The vortex
+animation needs `ffmpeg`. More in [Contributing](docs/contributing.md#building-the-documentation).
 
 ## Installation
 
