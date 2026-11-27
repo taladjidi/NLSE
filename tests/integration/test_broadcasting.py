@@ -21,6 +21,7 @@ import numpy as np
 import pytest
 from NLSE import CNLSE, NLSE, CNLSE_1d
 from NLSE.backends import get_backend, list_available_backends
+from NLSE.kernels import cpu as cpu_kernels
 
 PRECISION_COMPLEX = np.complex64
 
@@ -37,6 +38,10 @@ WAIST = 2.23e-3
 WINDOW = 4 * WAIST
 Z = 1e-3
 DELTA_Z = 1e-4
+# V/m. The runs here do not normalize the field, and at an amplitude of 1
+# the ends of N2_VALUES gave the same output to 3e-7, under every tolerance
+# below. At this one they are 0.69 rad apart at the centre of the beam.
+FIELD_AMPLITUDE = 1e4
 
 N2_VALUES = np.linspace(-1.6e-9, -1e-10, COUNT)
 ALPHA_VALUES = np.array([0.0, 5.0, 20.0])
@@ -68,7 +73,8 @@ def grids(backend_name):
     """Return a shared potential and a single-simulation input field."""
     probe = make_solver(backend_name, N2_VALUES[0], 0.0, None)
     V = (-1e-4 * np.exp(-(probe.XX**2 + probe.YY**2) / (70e-6) ** 2)).astype(np.float32)
-    field = np.exp(-(probe.XX**2 + probe.YY**2) / WAIST**2).astype(PRECISION_COMPLEX)
+    profile = np.exp(-(probe.XX**2 + probe.YY**2) / WAIST**2)
+    field = (FIELD_AMPLITUDE * profile).astype(PRECISION_COMPLEX)
     return V, field
 
 
@@ -300,6 +306,83 @@ def test_any_batch_size_matches_individual_runs(backend_name, count, with_potent
             atol=1e-5 * float(np.max(np.abs(expected))),
             err_msg=f"{backend_name}: batch of {count}, slice {index} differs",
         )
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+@pytest.mark.parametrize("method", ["split_step", "RK4"])
+@pytest.mark.parametrize("with_potential", [False, True], ids=["no_V", "shared_V"])
+def test_a_two_axis_batch_matches_the_same_runs_on_one_axis(
+    backend_name, method, with_potential
+):
+    """A grid search over two parameters is the same runs laid out on a grid.
+
+    The README's example: ``n2`` along one batch axis and ``alpha`` along the
+    next. The CPU loop used to peel one axis only and refused the field.
+    """
+    V, field = grids(backend_name)
+    if not with_potential:
+        V = None
+    shape = (COUNT, ALPHA_VALUES.size)
+    n2 = N2_VALUES.reshape(-1, 1, 1, 1)
+    alpha = ALPHA_VALUES.reshape(1, -1, 1, 1)
+
+    on_a_grid = make_solver(backend_name, n2, alpha, V)
+    got = propagate(on_a_grid, np.broadcast_to(field, (*shape, N, N)), method)
+
+    members = COUNT * ALPHA_VALUES.size
+    in_a_row = make_solver(
+        backend_name,
+        np.broadcast_to(n2, (*shape, 1, 1)).reshape(members, 1, 1),
+        np.broadcast_to(alpha, (*shape, 1, 1)).reshape(members, 1, 1),
+        V,
+    )
+    expected = propagate(in_a_row, np.broadcast_to(field, (members, N, N)), method)
+
+    assert got.shape == (*shape, N, N), f"two-axis batch returned {got.shape}"
+    scale = float(np.max(np.abs(expected)))
+    np.testing.assert_allclose(
+        got.reshape(expected.shape),
+        expected,
+        rtol=1e-4,
+        atol=1e-5 * scale,
+        err_msg=f"{backend_name}/{method}: a member got another member's values",
+    )
+    # Both parameters have to reach the kernel, or the grid is a grid of copies.
+    assert np.max(np.abs(got[0, 0] - got[1, 0])) > 1e-2 * scale, "n2 was not swept"
+    assert np.max(np.abs(got[0, 0] - got[0, 1])) > 1e-4 * scale, "alpha was not swept"
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_a_one_value_parameter_reaches_every_member(backend_name):
+    """A ``(1, 1, 1)`` parameter broadcasts against a batch of fields.
+
+    The CPU loop took its length from the parameter and so ran the first
+    field only, handing the others back untouched.
+    """
+    _, field = grids(backend_name)
+    n2 = np.full((1, 1, 1), N2_VALUES[0])
+    batched = make_solver(backend_name, n2, 0.0, None)
+    got = propagate(batched, np.broadcast_to(field, (COUNT, N, N)), "split_step")
+
+    alone = make_solver(backend_name, float(N2_VALUES[0]), 0.0, None)
+    expected = propagate(alone, field, "split_step")
+    for index in range(COUNT):
+        np.testing.assert_allclose(
+            got[index],
+            expected,
+            rtol=1e-4,
+            atol=1e-5 * float(np.max(np.abs(expected))),
+            err_msg=f"{backend_name}: member {index} was not propagated",
+        )
+
+
+def test_the_cpu_loop_refuses_a_parameter_that_does_not_broadcast():
+    """Three values against two fields is an error, not the first two values."""
+    _, field = grids("CPU")
+    fields = np.broadcast_to(field, (COUNT - 1, N, N)).copy()
+    g = np.linspace(1.0, 2.0, COUNT).reshape(COUNT, 1, 1)
+    with pytest.raises(ValueError, match="does not broadcast"):
+        cpu_kernels.square_mod_nl_prop(fields, DELTA_Z, 0.0, g, BASE["Isat"])
 
 
 # ---------------------------------------------------------------------------

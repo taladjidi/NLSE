@@ -54,6 +54,14 @@ come first.
 
 ### Fixed
 
+- **A batch over two parameters runs on CPU.** `n2` along one batch axis and
+  `alpha` along the next, the grid search of the README, raised `ValueError`
+  on CPU while CuPy, OpenCL and MLX ran it: the CPU loop peeled one batch
+  axis. It now follows numpy's broadcasting rules over any number of them.
+  With it, an array parameter holding one value (shape `(1, 1, 1)`) reaches
+  every field of a batch; on CPU it moved the first and returned the others
+  as they came in. A parameter that does not broadcast against the field
+  raises `ValueError`.
 - **The Rabi coupling is applied by every scheme.** `CNLSE`, `CNLSE_1d` and
   `DDGPE` applied it in the `lie` step only: `strang`, `yoshida` and RK4 ran
   as if `omega` were zero.
