@@ -14,6 +14,10 @@ m = 87 * atomic_mass
 
 # Step used wherever a test builds a propagator or takes a step by hand.
 DZ_TEST = 1e-4
+# A batch of saturation densities, at/m^2: any two distinct finite values.
+SATURATION_DENSITIES = np.array([1e10, 2e10])
+# Round trip through the epsilon_0 c / 2 scale and back, float64.
+SAT_RTOL = 1e-12
 
 
 def test_build_propagator(backend) -> None:
@@ -72,6 +76,25 @@ def test_prepare_output_array(backend) -> None:
         atol=1e-6,
         err_msg=f"Output array does not match input array. (Backend {backend})",
     )
+
+
+def test_the_saturation_array_is_left_as_given() -> None:
+    """The constructor converts its own copy, not the caller's array."""
+    sat = SATURATION_DENSITIES.copy()
+    simu = GPE(
+        gamma=0,
+        N=N_at,
+        window=window,
+        g=g,
+        V=None,
+        m=m,
+        NX=N,
+        NY=N,
+        sat=sat,
+        backend="CPU",
+    )
+    np.testing.assert_array_equal(sat, SATURATION_DENSITIES)
+    np.testing.assert_allclose(simu.sat, SATURATION_DENSITIES, rtol=SAT_RTOL)
 
 
 def test_out_field(backend) -> None:
