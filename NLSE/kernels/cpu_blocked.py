@@ -31,9 +31,6 @@ from scipy import fft as scipy_fft
 
 from .cpu import _square_mod_nl_prop_span, _square_mod_nl_prop_v_span
 
-# B, the huge page of x86-64 and of arm64 on 4 KiB pages, where the scratch starts:
-# https://docs.kernel.org/admin-guide/mm/transhuge.html
-HUGE_PAGE = 2**21
 ANONYMOUS = -1  # the fileno mmap takes for memory backed by no file
 
 
@@ -170,10 +167,12 @@ else:
 
 
 def _private_mapping(size: int) -> mmap.mmap:
-    """Return ``size`` B of fresh anonymous memory, in huge pages where granted.
+    """Return ``size`` B of fresh anonymous memory, private to this process.
 
     Private wherever a process forks: mmap's default is shared, and a child
-    would then write the scratch its parent is stepping on.
+    would then write the scratch its parent is stepping on. No huge pages are
+    asked for: on a Ryzen 3 4100 they made a block larger than the L2 2.3x
+    slower and changed nothing for the others (``docs/optimization-log.md``).
 
     Parameters
     ----------
@@ -187,15 +186,7 @@ def _private_mapping(size: int) -> mmap.mmap:
     """
     if sys.platform == "win32":
         return mmap.mmap(ANONYMOUS, size)  # shared, with no fork to share it over
-    mapped = mmap.mmap(ANONYMOUS, size, access=mmap.ACCESS_COPY)
-    if hasattr(mmap, "MADV_HUGEPAGE"):
-        try:
-            mapped.madvise(mmap.MADV_HUGEPAGE)
-        except OSError:
-            pass  # a kernel built without transparent huge pages: plain ones
-    else:
-        pass  # macOS: no huge page to ask for
-    return mapped
+    return mmap.mmap(ANONYMOUS, size, access=mmap.ACCESS_COPY)
 
 
 def _scratch(count: int, shape: tuple, dtype: np.dtype) -> np.ndarray:
@@ -217,14 +208,10 @@ def _scratch(count: int, shape: tuple, dtype: np.dtype) -> np.ndarray:
     Returns
     -------
     np.ndarray
-        ``(count, *shape)`` of zeros, starting on a ``HUGE_PAGE`` boundary.
+        ``(count, *shape)`` of zeros, starting on a page boundary.
     """
     size = count * math.prod(shape) * np.dtype(dtype).itemsize
-    # Whole huge pages, and one more to start on a boundary wherever it lands.
-    mapped = _private_mapping(-(-size // HUGE_PAGE) * HUGE_PAGE + HUGE_PAGE)
-    whole = np.frombuffer(mapped, np.uint8)
-    start = -whole.ctypes.data % HUGE_PAGE
-    return whole[start : start + size].view(dtype).reshape(count, *shape)
+    return np.frombuffer(_private_mapping(size), dtype).reshape(count, *shape)
 
 
 def _forward_rows(field: np.ndarray, start: int, stop: int, rows: int) -> None:
