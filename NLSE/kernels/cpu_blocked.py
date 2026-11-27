@@ -16,7 +16,10 @@ a static share of rows or columns. One step runs at a time per ``BlockedStep``:
 its scratch is its own, and it already takes every thread it was measured on.
 """
 
+import math
+import mmap
 import os
+import sys
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import cache
@@ -27,6 +30,10 @@ import numpy as np
 from scipy import fft as scipy_fft
 
 from .cpu import _square_mod_nl_prop_span, _square_mod_nl_prop_v_span
+
+# B, the huge page of x86-64 and of arm64 on 4 KiB pages, where the scratch starts:
+# https://docs.kernel.org/admin-guide/mm/transhuge.html
+HUGE_PAGE = 2**21
 
 
 @numba.njit(nogil=True, cache=True, boundscheck=False)
@@ -159,6 +166,64 @@ if hasattr(os, "register_at_fork"):
     os.register_at_fork(after_in_child=_thread_pool.cache_clear)
 else:
     pass  # no fork on this platform (Windows), nothing to forget
+
+
+def _private_mapping(size: int) -> mmap.mmap:
+    """Return ``size`` B of fresh anonymous memory, in huge pages where granted.
+
+    Private wherever a process forks: mmap's default is shared, and a child
+    would then write the scratch its parent is stepping on.
+
+    Parameters
+    ----------
+    size : int
+        Bytes to map.
+
+    Returns
+    -------
+    mmap.mmap
+        The mapping, unmapped once nothing views it.
+    """
+    if sys.platform == "win32":
+        return mmap.mmap(-1, size)  # no flags there, and no fork to share over
+    mapped = mmap.mmap(-1, size, access=mmap.ACCESS_COPY)
+    if hasattr(mmap, "MADV_HUGEPAGE"):
+        try:
+            mapped.madvise(mmap.MADV_HUGEPAGE)
+        except OSError:
+            pass  # a kernel built without transparent huge pages: plain ones
+    else:
+        pass  # macOS: no huge page to ask for
+    return mapped
+
+
+def _scratch(count: int, shape: tuple, dtype: np.dtype) -> np.ndarray:
+    """Return ``count`` blocks of ``shape`` in a mapping of their own.
+
+    Not ``np.empty``: malloc hands back pages in the order earlier arrays left
+    them, and a block the size of a cache then misses in it, 27 to 41 ms a step
+    from one process to the next (``docs/optimization-log.md``).
+
+    Parameters
+    ----------
+    count : int
+        Blocks, one per thread.
+    shape : tuple of int
+        Shape of each.
+    dtype : np.dtype
+        Their dtype.
+
+    Returns
+    -------
+    np.ndarray
+        ``(count, *shape)`` of zeros, starting on a ``HUGE_PAGE`` boundary.
+    """
+    size = count * math.prod(shape) * dtype.itemsize
+    # Whole huge pages, and one more to start on a boundary wherever it lands.
+    mapped = _private_mapping(-(-size // HUGE_PAGE) * HUGE_PAGE + HUGE_PAGE)
+    whole = np.frombuffer(mapped, np.uint8)
+    start = -whole.ctypes.data % HUGE_PAGE
+    return whole[start : start + size].view(dtype).reshape(count, *shape)
 
 
 def _forward_rows(field: np.ndarray, start: int, stop: int, rows: int) -> None:
@@ -296,7 +361,7 @@ class BlockedStep:
         self.threads = threads
         self._row_shares = _shares(ny, threads, rows)
         self._column_shares = _shares(nx, threads, rows)
-        self._blocks = [np.empty((rows, ny), dtype) for _ in self._column_shares]
+        self._blocks = list(_scratch(len(self._column_shares), (rows, ny), dtype))
         self._lock = threading.Lock()
 
     def __call__(
