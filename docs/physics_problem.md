@@ -14,16 +14,19 @@ Within the [paraxial approximation](https://en.wikipedia.org/wiki/Paraxial_appro
 $$
 i\partial_{z}E = -\frac{1}{2k_0}\nabla_{\perp}^2 E +
 \frac{D_0}{2}\partial^2_t E
--\frac{k_0}{2}\delta n(r) E - n_2 \frac{k_0}{2n}c\epsilon_0|E|^2E
+-\frac{k_0}{2}\delta n(r) E - \frac{k_0}{2}n_2 c\epsilon_0 s|E|^2E
+- \frac{i\alpha}{2}sE,
+\qquad s = \frac{1}{1 + I/I_\text{sat}},\quad I = \frac{c\epsilon_0}{2}|E|^2
 $$
 
 The constants are:
 
 - $k_0$: electric field [wavenumber](https://en.wikipedia.org/wiki/Wavenumber) in $m^{-1}$
 - $D_0$: [group velocity dispersion](https://en.wikipedia.org/wiki/Group-velocity_dispersion) (GVD) in $s^2/m$
-- $\delta n(\mathbf{r})$: local change in linear index of refraction (the "potential"), dimensionless
-- $n_2$: [nonlinear index of refraction](https://en.wikipedia.org/wiki/Kerr_effect) in $m^2/W$
-- $n$: linear [index of refraction](https://en.wikipedia.org/wiki/Refractive_index) (taken as 1)
+- $\delta n(\mathbf{r})$: local change in linear index of refraction (the "potential"), dimensionless; an imaginary part absorbs, as $|E|^2 \propto e^{-k_0\,\mathrm{Im}\,\delta n\,z}$
+- $n_2$: [nonlinear index of refraction](https://en.wikipedia.org/wiki/Kerr_effect) in $m^2/W$; $n_2 > 0$ is self-focusing
+- $\alpha$: intensity loss in $m^{-1}$, so that $I = I_0e^{-\alpha z}$ when $I \ll I_\text{sat}$
+- $I_\text{sat}$: saturation intensity in $W/m^2$, which saturates the interaction and the loss
 - $c, \epsilon_0$: speed of light and electric permittivity of vacuum
 
 The `NLSE` class solves the 2D transverse equation ($\nabla_\perp^2 = \partial_x^2 + \partial_y^2$), while `NLSE_1d` solves the 1D version and `NLSE_3d` includes the GVD term $D_0$.
@@ -39,14 +42,15 @@ n_2(\mathbf{r})|E|^2(\mathbf{r})=n_2\int_{\mathbb{R}^2}\mathrm{d}\mathbf{r}' K(\
 $$
 
 where $K(\mathbf{r})$ is a non-local kernel, typically the Green function of a diffusion equation. The solvers use that one, of length $\ell$ set by the `nl_length` parameter: $K_0(r/\ell)/(2\pi\ell^2)$ in 2D and $e^{-|x|/\ell}/(2\ell)$ in 1D. The convolution is applied in Fourier space on the periodic grid, as a multiplication by $1/(1+\ell^2 k_\perp^2)$, and runs on every backend. In 3D it acts across the beam only.
+
 ## Coupled NLSE (CNLSE)
 
 The `CNLSE` class solves a system of two coupled nonlinear Schrödinger equations:
 
 $$
 \begin{split}
-i\frac{\partial\psi_1}{\partial z} &= -\frac{1}{2k_1}\nabla^2\psi_1 -\frac{1}{2}n_2^{11} k_1 c\epsilon_0|\psi_1|^2\psi_1 + k_1 n_2^{12}c\epsilon_0|\psi_2|^2\psi_1-\frac{i\alpha_1}{2}\psi_1 + \frac{\Omega}{2} \psi_2  \\
-i\frac{\partial\psi_2}{\partial z} &= -\frac{1}{2k_2}\nabla^2\psi_2 -\frac{1}{2}n_2^{22} k_2 c\epsilon_0|\psi_2|^2\psi_2 + k_2 n_2^{12}c\epsilon_0|\psi_1|^2\psi_2-\frac{i\alpha_2}{2}\psi_2 + \frac{\Omega}{2} \psi_1
+i\frac{\partial\psi_1}{\partial z} &= -\frac{1}{2k_1}\nabla^2\psi_1 -\frac{k_1}{2}\delta n\,\psi_1 -\frac{k_1}{2}c\epsilon_0\left(n_2^{11}|\psi_1|^2 + n_2^{12}|\psi_2|^2\right)s\psi_1-\frac{i\alpha_1}{2}s\psi_1 + \frac{\Omega}{2} \psi_2  \\
+i\frac{\partial\psi_2}{\partial z} &= -\frac{1}{2k_2}\nabla^2\psi_2 -\frac{k_2}{2}\delta n\,\psi_2 -\frac{k_2}{2}c\epsilon_0\left(n_2^{22}|\psi_2|^2 + n_2^{12}|\psi_1|^2\right)s\psi_2-\frac{i\alpha_2}{2}s\psi_2 + \frac{\Omega}{2} \psi_1
 \end{split}
 $$
 
@@ -54,11 +58,15 @@ This describes the coupling between two field components -- two polarizations,
 two frequencies, or a fluid and a defect beam -- with:
 
 - Self-interaction ($n_2^{11}$, $n_2^{22}$) and cross-interaction
-  ($n_2^{12}$) terms, which are `n2`, `n22` and `n12` in the constructor
-- Independent loss coefficients ($\alpha_1$, $\alpha_2$)
-- Rabi coupling ($\Omega$)
+  ($n_2^{12}$) terms. The constructor takes `n2` and `n12`; `n22` is an
+  attribute that starts equal to `n2`
+- Loss coefficients $\alpha_1$, $\alpha_2$: the constructor takes `alpha`, and
+  `alpha2` starts equal to it. `k2` and `I_sat2` likewise start at the first
+  component's values
+- One saturation for both, $s = 1/(1 + I_1/I_\text{sat} + I_2/I_\text{sat2})$
+- Rabi coupling ($\Omega$), `omega`; the default `None` leaves it out
 
-Setting parameters to `None` disables the corresponding term for optimal performance. The `CNLSE_1d` class is the 1D specialization.
+The `CNLSE_1d` class is the 1D specialization.
 
 ## Gross-Pitaevskii Equation (GPE)
 
@@ -91,9 +99,11 @@ The `DDGPE` class extends CNLSE to solve the driven-dissipative Gross-Pitaevskii
 
 - Exciton-photon Rabi coupling ($\Omega$)
 - Cavity and exciton dispersion relations ($\omega_\text{cav}(\mathbf{k})$, $\omega_\text{exc}$)
-- Polariton-polariton interactions ($g$)
-- Cavity losses ($\gamma$)
+- Exciton-exciton interactions ($g$) and an exciton-cavity cross term ($g_{12}$)
+- Losses on both fields ($\gamma$)
 - External laser driving (pump)
 - Detuning from the lower polariton ($\delta$)
 
-The DDGPE evolves in time and uses a rotating frame defined by the pump frequency.
+The DDGPE evolves in time and uses a rotating frame defined by the pump
+frequency. Its equation is in
+[Solvers Overview](solvers_overview.md#the-ddgpe-class).
