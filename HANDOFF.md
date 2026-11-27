@@ -3,54 +3,77 @@
 ## State (2026-11-27)
 
 A full audit of the repo was done at commit `fa7aa59` (v4.1.0 plus six
-commits); its findings are listed under "Findings, ranked" below. All of them
-that were to be fixed are fixed, in eight packages plus two follow-ups, each on
-its own branch and merged into `main` with `--no-ff`:
+commits). Every finding that was to be fixed is fixed and merged into `main`
+with `--no-ff`, one topical branch each. This file was shrunk on 2026-11-27
+to what is still open: the record of the merged work (the ranked findings,
+the measurements, the verification runs) is `git show 5dc5c6a:HANDOFF.md`,
+and the figures that matter are in `docs/optimization-log.md` and
+`CHANGELOG.md`.
 
-| Package | Branch | Merge | Covers |
-|---|---|---|---|
-| p7 | `docs/packaging-ci-cleanup` | `ed00008` | README, docs, sdist, `uv.lock`, CI, examples, unused files |
-| p6 | `test/closed-forms-and-cache` | `3f3b6dd` | `evaluate_delta_n`; benchmark cache isolation; tests that could not fail; NLSE_3d dispersion sign |
-| p5 | `refactor/kernels-cleanup` | `36d952d` | unused CuPy and vortex kernels removed; MLX scalar cache bounded; CUDA built without `--use_fast_math` |
-| p3 | `fix/gpe-units` | `7a5fd6a` | GPE takes `V` and `g` as rates in rad/s with the GPE sign; `adapt_delta_z` on GPE |
-| p1b | `fix/solver-run-state` | `bcda6d8` | state left after a run or a backend switch; asserts become ValueError/TypeError; stale potential grids; NLSE_3d xt panels |
-| p1a | `fix/stepping-loop` | `41f39a4` | medium ends exactly at `L`; backward runs; complex, zero and non-finite `delta_z` raise; CuPy stream race |
-| p4 | `fix/nonlocal-response` | `4eef782` | non-local response applied in Fourier space; `Backend.convolution` and `nl_profile` removed |
-| p2 | `fix/coupled-solvers` | `36bf9e1` | Rabi coupling in strang, yoshida, RK4; DDGPE noise, pump sampling, potential sign |
-| follow-up | `fix/rk4-stability-bound` | last merge on `main` | post-merge test fixes (`6bd77e7`); RK4 step bounded by the grid's fastest linear rate (`10bf834`), in the coupled solvers too (`a53a470`); the timing tool asks a step no run lowers (`4ac2bb2`, then under the split-step limit too) |
-
-The specs and patches of the eight packages are outside the repo, in
-`~/Documents/LKB/NLSE_tangui_fix_specs/`. The worktrees `../NLSE_wt/pN` are no
-longer needed.
+Specs, patches, scripts and logs are outside the repo, in
+`~/Documents/LKB/NLSE_tangui_fix_specs/`.
 
 `CHANGELOG.md` has an `## Unreleased` section with every change, the breaking
 ones first. The next release is a major one (5.0.0 is the suggestion); the
 version is not bumped and nothing is published.
 
-### Resume here (written 2026-11-27, before a `/clear`)
+`main` is pushed after each reviewed merge (owner, 2026-11-27: "No push also
+to main as we go along !"). The auto-mode classifier refused `git push origin
+main` once: when it does, ask the owner to run `! git push origin main`, and
+do not look for another way.
 
-`main` is `083a2d9` plus this note, pushed. Debloat is done but for the
-handoff's own shrink; the docs page review is done. In order:
+### Merged
 
-1. **README headline performance.** Nothing is applied yet. Spec, revision 2,
-   reviewed and revised: `~/Documents/LKB/NLSE_tangui_fix_specs/docs/readme_perf.md`,
-   with `patches/readme-perf-1-roofline.patch` and `-2-test.patch` beside it
-   (base `f8d224e`; the files they touch have not changed since).
-   - Branch `docs/readme-performance`. Implementer T1 (the roofline patch),
-     then T2 (the test patch, `tests/test_benchmarks.py` 14 passed becomes
-     33), each with the spec's acceptance.
-   - Measure on an idle machine, 6 runs, the first discarded, medians of the
-     other 5. Mac (CPU, MLX): the spec's loop, with
-     `UV_PROJECT_ENVIRONMENT=<scratchpad>/perf/venv-perf` (built; rebuild it
-     if the scratchpad is gone) so the repo's `.venv` gets no pyopencl. Box
-     (CPU, CUPY, CL): a fresh `git archive` tree and
-     `~/Documents/nlse_env_both/bin/python`, see "Environment" at the end.
+`git log --merges --oneline fa7aa59..main` is the full list.
+
+| Work | Merge |
+|---|---|
+| Audit fixes: p7 docs, packaging, CI; p6 closed-form tests and cache isolation; p5 kernel cleanup; p3 GPE units; p1b run state; p1a stepping loop; p4 non-local response; p2 coupled solvers | `ed00008`, `3f3b6dd`, `36d952d`, `7a5fd6a`, `bcda6d8`, `41f39a4`, `4eef782`, `36bf9e1` |
+| Post-merge test fixes; RK4 step bounded by the grid's fastest linear rate | `b76f9e5`, `8bce83b` |
+| CPU complex64 kernels in float32 | `71db255` |
+| CuPy: nonlinear step in the inverse cuFFT store callback; separable propagator in the forward one; the 4096² column pass (closed, log only) | `5113580`, `ce290d8`, `6fbb522` |
+| uv, ruff and ty | `62bd2e8` |
+| Batches over several parameter axes: CPU, OpenCL, CuPy without callbacks | `496cd96`, `f26b694`, `083a2d9` |
+| Transform wording and the library re-measure | `c04afd7` |
+| Tests that bite (mutation audit) | `9487346` |
+| CPU blocked step; its scratch from a private mapping; its two tests that numba's threading layer decides | `7518025`, `4bb3432`, `e60e2a4` |
+| Debloat: repo, tests, package, `pyproject.toml` | `5faeb6e`, `fd0e6af`, `f29b585`, `f8d224e` |
+| Benchmark waits on what lazy transforms return (MLX was timed doing nothing) | `3dfc28f` |
+| Docs: gallery cached in CI; page review along Diataxis | `18f4cc7`, `3bd8af5` |
+
+Last full suites: Mac (CPU, MLX) 1723 passed, 160 skipped at `f29b585`; box,
+combined environment (CuPy and OpenCL), 2275 passed, 103 skipped, six times
+and once with `NLSE_FUSE_PROPAGATOR=0`, at `c5a44fb`.
+
+### Resume here (written 2026-11-27)
+
+`main` is `5dc5c6a` plus this shrink, pushed. Order from the owner for the
+night of 2026-11-27: "run independently tonight : debloating, docs, and
+review. Iterate over this. Also when reviewing ignore the previous context to
+be impartial. Look at all aspects of the code, notably complexity and code
+architecture, testability etc ...". So reviewers get the code and no
+conclusions, and do not read this file.
+
+1. **README headline performance** (docs). Spec, revision 2:
+   `docs/readme_perf.md` in the specs directory. Branch
+   `docs/readme-performance`, not merged: the roofline fix (`13345a4`) and
+   its tests (`67d5b6e`) are applied, `tests/test_benchmarks.py` 33 passed.
+   - Box: six runs of the `67d5b6e` tree were started at 23:10, into
+     `~/Documents/nlse_perf_67d5b6e/perf/box_run{1..6}.txt` on the box
+     (`nlse_env_both`). Check they finished and that no run reads "failed".
+   - Mac: not measured. It was on battery (power mode Automatic there, High
+     Power on mains): run the spec's loop on mains, nothing else running,
+     with `UV_PROJECT_ENVIRONMENT=<scratchpad>/perf/venv-perf` so the repo's
+     `.venv` gets no pyopencl.
    - Then the README section (task C) and the log entry (task D), the doc
      tests staying at 187 passed, 2 skipped; reviewer; gate; merge; push.
    - Decisions taken for the owner, to report: the June 2024 figure moves
      into the new section, labelled (O1); Lie rows only, Strang measured as a
      check (O2); measured ceilings only, no rated figures (O3).
-2. **Shrink this file** (debloat B10): one-line pointers to the merge commits.
+2. **Review, then iterate** (debloat, docs, review): fresh reviewers over
+   the solvers, the backends and kernels, the tests, and the docs with the
+   examples and benchmarks; fix what is CRITICAL or MAJOR, list the rest
+   here.
 3. **Afterwards, the owner's earlier order:** the GPU P4 patches (fix their
    spec first), thread counts per machine in the tuner, the increment-form
    linear step for complex64 (recommend only), the fewer-passes lessons on
@@ -81,243 +104,10 @@ and "Still open" list:
 - The owner's to edit: `CLAUDE.md` lines 86-87 (stale ruff ignores) and line
   7 (CuPy uses cuFFT, not VkFFT); the debloat and docs decisions left open.
 
-### In flight (2026-11-27, night session)
+## Open work
 
-`main` is pushed after each reviewed merge (owner, 2026-11-27: "No push also
-to main as we go along !"). The auto-mode classifier refused `git push origin
-main` once: when it does, ask the owner to run `! git push origin main`, and
-do not look for another way. Merged on 2026-11-27: the uv, ruff and ty switch (`62bd2e8`, the
-untracked `CLAUDE.md` and the git hooks follow it), the CPU batch fix
-over several parameter axes (`496cd96`), the transform wording with the
-log entry of the library re-measure (`c04afd7`) and the same batch fix for
-the OpenCL loop (`fix/cl-multi-axis-batch`), the tests that bite
-(`test/tests-that-bite`), the CPU blocked step (`7518025`), the fix of its
-scratch (`fix/cpu-blocked-scratch`) and the two tests of it that numba's
-threading layer decides (`fix/ci-threading-layer-tests`). Still open:
+### Packages not built
 
-- **Order set by the owner (2026-11-27, evening): "work alone tonight on
-  this, first debloat then docs."** It replaces the earlier order: no `/clear`
-  first, and the GPU patches and the thread counts per machine (both
-  described below) come after the docs. Merge each package to `main` as it
-  lands, and push.
-- **Debloat**, in three packages, specs in
-  `~/Documents/LKB/NLSE_tangui_fix_specs/debloat/` (`repo.md`, `package.md`,
-  `tests.md`, with patches and scripts beside them):
-  - `chore/debloat-repo`: done. Dead code in the examples and
-    `benchmarks/roofline.py`, a duplicate image, dead CI and Sphinx settings,
-    `.gitignore`. Reviewer: pass. `pyproject.toml` (task T6 of `repo.md`)
-    followed on `chore/pyproject-noop-settings`: 11 settings that change
-    nothing are gone (ruff, format, ty and the lock clean, 1930 tests
-    collected and `tests/test_packaging.py` 24 passed, before and after),
-    and the coverage pattern `"pass"` is anchored (B8: 4435 statements, 1397
-    missed becomes 4441 and 1400 on the same run). Not reviewed: one config
-    file, checked by those measurements. `CLAUDE.md` lines 86-87 still name
-    the `D100-D104` and `__init__.py` F401 ignores, of which `D101` and the
-    `__init__.py` one no longer exist: the owner's to update.
-  - `test/debloat-tests`: done. `tests/` goes from 20558 to 17429 lines:
-    duplicated cross-backend cases merged, 32 unread constants deleted,
-    `AVAILABLE_BACKENDS` and the `backend` fixture defined once
-    (`tests/helpers.py`, `tests/conftest.py`), the CuPy send and retrieve
-    pairs merged into one test that skips, docstrings cut to their summary
-    (80 rewritten). Reviewer: pass; its mutants of what the deleted
-    duplicates covered are killed by the survivors. Suites, branch against
-    `main`: Mac 1723 passed, 160 skipped; box CuPy 1796 passed, 68 skipped
-    (1806 and 68); box OpenCL 1700 passed, 153 skipped (1714 and 149). The
-    10 fewer are the merged and deleted tests; without CuPy the four merged
-    ones skip where a half of each pair used to pass on the host.
-  - `refactor/debloat-package`: done. `NLSE/` loses 357 lines net, mostly
-    comments over four lines; their measurements that were in no log are in
-    the commit messages. Code: `benchmark._synchronize_backend` and
-    `_assumed_rank` are gone (the benchmark calls `Backend.synchronize`, so
-    a CUPY timing no longer includes a copy to the host, and
-    `CACHE_VERSION` is 3), as are `CNLSE.propagator1/2`, a second
-    `self.V = V` in `GPE` and `Parameter.__set_name__`. Reviewer: pass; the
-    comment-only files have the same AST, the kernel sources the same code
-    with comments stripped. Suites unchanged: Mac 1723 passed, 160 skipped;
-    box CuPy 1796 and 68; box OpenCL 1700 and 153 (the box ran 2416eb3, one
-    docstring before the head). Step time, complex64, before and after in
-    turn, ms per step: Mac CPU 1.94 and 1.91 (1024²), 7.31 and 7.44
-    (2048²), 25.8 and 24.2 (4096²); MLX 0.283 and 0.282, 1.777 and 1.780,
-    7.40 and 7.42; box CUPY 0.388 and 0.386, 1.569 and 1.559, 8.63 and
-    8.58; box CL 0.595 and 0.595, 3.408 and 3.410, 18.56 and 18.57. No
-    difference above the floor. The reviewer's minor notes, not fixed:
-    three shortened comments lost their reason (`kernels.cu:287` why
-    `A_orig` may alias `out`; `ddgpe.py` near 296 why one profile at a
-    time; `cpu.py` near 20 "not `fastmath=True`").
-  - `fix/benchmark-times-lazy-backends`: done, found by the package review.
-    `benchmark_backend` dropped what `fft` and `ifft` return and waited on
-    its input; MLX's transforms are lazy and return a new array, so MLX was
-    timed doing nothing (0.001 to 0.005 ms at 2048² on the M3 Max, 1.4 ms
-    once fixed; CPU 4.4 ms) and `backend="auto"` ranked it first on that
-    figure. A stand-in backend in `tests/backends/test_benchmark.py` fails
-    on the old code and if a trial stops waiting. Reviewer: pass. Box:
-    the benchmark tests pass under CuPy and OpenCL (CUPY 1.82 ms, CL
-    2.6 ms at 2048²).
-  - Left for the owner, not done: the tutorial notebook's 8 MB of outputs
-    (re-render smaller), `paper/` and `img/output.png` (the JOSS record),
-    `examples/juliaGPE_vs_NLSE.py` with `vortex_precession.jl`, merging
-    `examples/benchmarks.py` and `fig1_benchmarks.py`, the `kernels_cpu/gpu/cl`
-    aliases, the `splitting="RK4"` mapping, the `speedup` field of the
-    benchmark cache, `tests/benchmarks/` with the CI benchmark job, and one
-    module for the per-solver legacy tests. `examples/profile_cupy.py`
-    (overlaps `benchmarks/trace_solvers.py`) is decided in the docs pass.
-- **Docs**, after the debloat.
-  - The gallery: done (`ci/cache-docs-gallery`). The CI Documentation job
-    took 58 minutes, 57 of them sphinx-gallery running all 19 examples on
-    each push. Owner: "If these runs are so expensive maybe it's better to
-    store the final states rather than redo them". The job now keeps
-    `docs/auto_examples` in the Actions cache (key: hash of `uv.lock` and
-    `examples/_output.py`, then the run id), and sphinx-gallery skips an
-    example whose source is unchanged. A weekly `schedule` run and "Run
-    workflow" pass `run_stale_examples=True` and execute them all. Accepted
-    trade-off: a change to `NLSE/` that breaks an example passes CI until
-    that run. Design and what to watch on the first runs:
-    `~/Documents/LKB/NLSE_tangui_fix_specs/docs/gallery.md`, section 3.
-    Nothing is cached until one run on `main` finishes cold (about an
-    hour): a push to `main` meanwhile cancels it. Not checked yet: the
-    cache on GitHub itself. For the owner: the weekly run also runs the
-    test matrix and the benchmark job; gate them on the event if unwanted.
-  - The page review: done (`docs/page-review`), 13 pages against the code
-    along Diataxis, one commit a page. Specs, with the decisions left to the
-    owner: `docs/pages_entry.md` (decisions 1-7) and `docs/pages_guide.md`
-    (D1-D5), in the same directory. Two reviewers checked every equation
-    and sign term by term: no CRITICAL. Fixed after review: the methods
-    page said a default step is always inside its limit (it is not, see
-    "Still open"); the README's `gpu` extra and docs build disagreed with
-    the pages it links; `tests/test_doc_claims.py` let 10 of 18 mutants of
-    the pages through and now measures the transform pairs per step from a
-    run and reads a quoted constant across a line break (13 of 13 mutants
-    killed, list in the commit).
-    Not pinned by a test: the equations themselves (LaTeX against the
-    kernels), so a sign flipped on a page is caught by review only.
-    Left as they are, for the owner: the README still carries the install
-    steps and one example (entry decision 1) and its relative links do not
-    resolve on PyPI; the changelog entry does not mention the CuPy wheel
-    correction; `contributing.md` lists the dev group without pytest-cov
-    and pytest-benchmark; no page gives the tests' layout any more;
-    `literature-examples.md` keeps four numbers no script reproduces (Mach
-    0.3 and 2.0 densities, 85 000 singularities, ~30x, 7%); `backends.md`
-    says `NUMBA_THREADING_LAYER` picks the layer, which
-    `NLSE/kernels/cpu.py:14-16` overrides when pyfftw is imported first;
-    the DDGPE equation leaves out `g2`. The CuPy and OpenCL claims of the
-    pages were checked by reading the code, not by a run.
-  - Next: the README's headline performance. Spec revision 2 (after its
-    review) and both patches are in `NLSE_tangui_fix_specs/docs/readme_perf.md`
-    and `docs/patches/readme-perf-{1-roofline,2-test}.patch`; the Mac's
-    measurement environment is `<scratchpad>/perf/venv-perf`
-    (`UV_PROJECT_ENVIRONMENT`, so the repo's `.venv` keeps no pyopencl).
-- **CuPy two-axis batch without the callbacks** (`fix/cupy-two-axis-propagator`,
-  2026-11-27). `CUDAKernels.apply_propagator` walked one batch axis, so a
-  `(B1, B2, N, N)` field read past the shared propagator whenever the cuFFT
-  callbacks were off or refused: NaN or another member's values, no error.
-  Found by putting CuPy and OpenCL in one environment on the box, where a
-  conda NVRTC made cuFFT refuse the callbacks. One launch per propagator-sized
-  block now; the case `two-axis batch` in
-  `tests/backends/test_fft_propagator_fusion.py` is red on the old kernel.
-  Box, combined environment: 6 full suites and one with
-  `NLSE_FUSE_PROPAGATOR=0`, each 2275 passed, 103 skipped.
-  - Reviewer MINORs left: a non-contiguous field would be reshaped to a copy
-    and the multiply lost (no caller passes one; the old code was wrong there
-    too); the branch does not check that the propagator is the field's
-    trailing block; no two-axis case for RK4 or a coupled field in that file
-    (`tests/integration/test_broadcasting.py` covers RK4 with the callbacks
-    off only when run with `NLSE_FUSE_PROPAGATOR=0`); one launch per member.
-  - After a change to the CuPy kernels, run the box suite once more with
-    `NLSE_FUSE_PROPAGATOR=0`: the default never reaches the unfused kernels
-    on a batch, and CI has no GPU.
-- CI on `e60e2a4`: all green, the four macOS jobs on a second try (GitHub
-  cancelled them the first time for lack of a runner).
-- The CPU blocked step, merged (`7518025`): three passes in
-  `NLSE/kernels/cpu_blocked.py`, chosen per machine and grid by
-  `NLSE/backends/cpu_tuning.py` and cached in `cpu_blocking.json`; spec in
-  `NLSE_tangui_fix_specs/cpu_blocked_step_spec.md`. Reviewed twice (second
-  verdict: ship). Changed after the spec, by hand and not through an
-  implementer:
-  - The tuner ranks the blocked candidates (`_fastest`), then times the
-    first against the unblocked step window for window, taking turns
-    (`_duel`, `DUEL_ROUNDS = 5`). The best of ~30 windows against the best
-    of 3 had read 1.13x on a loaded Mac where blocking loses.
-  - `MARGIN = 0.10`. At 0.05 the tuner chose 64 rows x 16 at 1024²
-    complex128 inside the benchmark process (read 1.08x); fresh processes
-    lose 10-18% there (lossless, 2.55-2.57 against 3.01-3.04 ms a step).
-    The plain step's `fft2` at that size has two speeds in a long-lived
-    process (0.84-0.87 or 1.03-1.09 ms a transform; it flips after a tuning
-    at another size, only when interleaved with the numba kernels, and
-    stays). Why is not established. The price of 0.10: the 1.07x at 2048²
-    complex128 on the Mac is not taken.
-  - The hook's `factors` is a zero-argument callable, called only by a step
-    that is taken; a grid another process is tuning is asked for again
-    every `BUSY_RETRY` (3 s) instead of staying unblocked for the life of
-    the process; `_wait` lets every share finish before it raises. These
-    were the first reviewer's two MAJORs and one MINOR.
-  `MARGIN` and measuring on first use (`TUNE_ON_FIRST_RUN`: 0.4-0.9 s at
-  1024², 12.1-12.5 s at 4096² complex128 inside the first `out_field`) are
-  the owner's to confirm.
-  Measured, M3 Max, 16 threads, Spotlight holding one core, median ms a
-  step, `main` against the branch in fresh processes (NLSE lie with loss
-  and saturation): 4096² complex64 30.4-39.1 (two speeds) to 25.4-25.8,
-  complex128 52.3-52.5 to 40.6 (1.29x); 2048² complex128 11.66-11.80 to
-  10.92-11.04 (1.07x, not taken at `MARGIN = 0.10`); 2048² complex64 and
-  both 1024² stay unblocked. `benchmarks/cpu_blocked_step.py`, interleaved
-  in one process: 4096² 1.17x complex64 and 1.25x complex128. With a
-  second core held by a video player the gains read higher (1.10x and
-  1.27x at 2048², 1.45x and 1.53x at 4096²): the blocked step is the
-  steadier of the two under load.
-  Ryzen 3 4100 (8 threads, the benchmark, one process): complex64 1024²
-  8.16 to 7.16 (1.14x), 2048² 35.4 to 27.0 (1.31x), 4096² 145.1 to 109.6
-  (1.32x, rounds 4.4% apart; 106.3-106.5 in fresh processes, 1.37x);
-  complex128 14.9 to 11.2 (1.34x), 60.8 to 45.3 (1.34x), 283.7 to 193.8
-  (1.46x), with the scratch fix below; fresh processes agree. A tuning there takes
-  1.2-2.4 s at 1024², 5-9 s at 2048², 21 s and 40 s at 4096². CuPy suite on
-  the branch: 1802 passed, 68 skipped; the CuPy step did not move (6, 6 and
-  12 alternating pairs at 1024², 2048², 4096² complex64). The box ran the
-  tree at `MARGIN = 0.05`; every cell it blocked read over 1.22x, so the
-  verdicts are those of 0.10.
-  Fixed (`fix/cpu-blocked-scratch`): the Ryzen's 2048² complex64 step at
-  the tuned 32 rows (512 KiB, the L2) ran at 27.0 to 40.0 ms from one fresh
-  process to the next, 35.3-35.8 unblocked. The cause was the scratch, not
-  the block: `np.empty` served it from heap pages recycled in the order
-  earlier arrays left them (glibc's mmap threshold rises to 32 MiB), where
-  the tuner measured on fresh ones. `_scratch` in
-  `NLSE/kernels/cpu_blocked.py` now cuts every thread's block from one
-  fresh private anonymous mapping: 27.0-27.9 ms five times of five, `main`
-  27.1-36.3. The same bug reached 4096² complex64 (16 rows, 512 KiB) after
-  another grid ran in the process (`main` 106.4-115.8 and once 145.8, the
-  fix 106.6-108.2), and made one 1024² complex64 tuning in eight decline to
-  block (now 1.21-1.25x, eight of eight). No other cell, tuning time, first
-  call or peak moved; M3 Max unchanged but 2048² complex128, which sits on
-  the 10% margin (1.07-1.11x) and blocked once in two tunings. Huge pages
-  for the scratch were tried and rejected: no gain for any layout the tuner
-  picks, and blocks above the L2 2.3x slower, 5 s more per 4096² tuning.
-  That the page order is the mechanism is inferred (no counter read). The
-  Windows branch of `_private_mapping` has run nowhere. Reviewed twice
-  (ship); left as it is: a grid with a zero-length axis now raises from
-  `mmap`. Written by hand, not through an implementer. Logs and scripts:
-  `NLSE_tangui_fix_specs/cpu_blocked_step/ryzen/`.
-  Rule from the owner (2026-11-27): hot working buffers come from "a fixed
-  memory stack", a region the library maps and keeps, not from malloc. The
-  factors and the solver's field were not moved there: no cell needs it
-  (measured after another grid ran in the process). My reading, to confirm
-  with the owner, is that the rule asks for it only where a measurement
-  shows a cell moving.
-  The kernel split costs nothing (both trees' `square_mod_nl_prop`
-  interleaved, 0.996-1.004). After 20 steps the blocked field is within
-  6e-6 of the peak of the unblocked one in complex64 and 1e-14 in
-  complex128, and the branch's unblocked field equals `main`'s bit for bit
-  (arm64).
-  Left as they are (MINOR): a declined hook call costs 1.8-3.9 us a step;
-  the cache key leaves out numba's threading layer; timestamps are naive
-  local time; with an unwritable cache directory every process tunes; a
-  process that misses the cache just as the lock holder finishes tunes a
-  grid twice, and two threads of one process see each other as "another
-  process"; an interrupt inside `_wait` releases the step's lock while
-  shares still write; all candidates' scratch stays allocated while
-  tuning; the autouse fixture runs every other test unblocked. Mutants the
-  suite lets through: the row factor without its 1/N, the time not divided
-  by `STEPS`, `DUEL_ROUNDS = 1`, `THREAD_DIVISORS`, the warm-up removed.
-  Open cost: where the blocked step is taken (and on CUPY) the first step
-  of a solver builds the factors, about 0.17 s and 530 MiB transient at
-  4096², repaid in about 14 steps.
 - Thread counts per machine, not built (next package, through the
   pipeline): on the M3 Max (12 P and 4 E cores) numba's `prange` kernels
   are 21-34% faster on 12 threads than on 16 at 1024², 2048² and 4096² in
@@ -353,13 +143,140 @@ threading layer decides (`fix/ci-threading-layer-tests`). Still open:
   13%). Left to the owner, with options in the spec: the CNLSE field
   download and the potential grids rebuilt every call, and VkFFT
   `tune_config` on OpenCL.
-- Tests that bite, merged. Mutation audit: 234 mutants of the package, 52
-  survived the suite; 47 are now killed (`test_audit/crosscheck.py
-  --survivors`, 34 by their own test files, 13 by the suite), 5 are left
-  without a test and the spec `tests_bite_spec.md` says why. The reviewer
-  found three more blind tests (frozen step, `sample`, `norm`); they are
-  rewritten and the mutants it named now fail them. Left by that reviewer, minor,
-  not fixed:
+- **complex64 accuracy is set by the transforms**, not the kernels: a round
+  trip loses 2.8 units of 2^-24 of power, every step. Writing the linear step
+  as `A + ifft((P - 1) fft(A))` cuts the field error 40 to 390 times for 7 to
+  26% of a CPU step (prototype, optimization log, *Open*). The user has not
+  decided: recommend only.
+- Per-call costs from the CUDA-box profile, below: the propagator download,
+  `_energy_rates` twice, the potential grids.
+- MLX and OpenCL: the fewer-passes lessons are not ported.
+- The Mac profiles (CPU and MLX): see "Performance profiles".
+
+### Left open by merged work
+
+- **Debloat.** Specs in `debloat/` (`repo.md`, `package.md`, `tests.md`).
+  The package reviewer's minor notes, not fixed: three shortened comments
+  lost their reason (`kernels.cu:287` why `A_orig` may alias `out`;
+  `ddgpe.py` near 296 why one profile at a time; `cpu.py` near 20 "not
+  `fastmath=True`").
+  - Left for the owner, not done: the tutorial notebook's 8 MB of outputs
+    (re-render smaller), `paper/` and `img/output.png` (the JOSS record),
+    `examples/juliaGPE_vs_NLSE.py` with `vortex_precession.jl`, merging
+    `examples/benchmarks.py` and `fig1_benchmarks.py`, the `kernels_cpu/gpu/cl`
+    aliases, the `splitting="RK4"` mapping, the `speedup` field of the
+    benchmark cache, `tests/benchmarks/` with the CI benchmark job, and one
+    module for the per-solver legacy tests. `examples/profile_cupy.py`
+    (overlaps `benchmarks/trace_solvers.py`) is decided in the docs pass.
+- **Docs gallery** (`18f4cc7`). The Documentation job keeps
+  `docs/auto_examples` in the Actions cache and sphinx-gallery skips an
+  example whose source is unchanged; a weekly `schedule` run and "Run
+  workflow" execute them all. Accepted trade-off: a change to `NLSE/` that
+  breaks an example passes CI until that run. Design and what to watch:
+  `docs/gallery.md`, section 3. Not checked yet: the cache on GitHub
+  itself. For the owner: the weekly run also runs the test matrix and the
+  benchmark job; gate them on the event if unwanted.
+- **Docs page review** (`3bd8af5`). Specs, with the decisions left to the
+  owner: `docs/pages_entry.md` (decisions 1-7) and `docs/pages_guide.md`
+  (D1-D5).
+    Not pinned by a test: the equations themselves (LaTeX against the
+    kernels), so a sign flipped on a page is caught by review only.
+    Left as they are, for the owner: the README still carries the install
+    steps and one example (entry decision 1) and its relative links do not
+    resolve on PyPI; the changelog entry does not mention the CuPy wheel
+    correction; `contributing.md` lists the dev group without pytest-cov
+    and pytest-benchmark; no page gives the tests' layout any more;
+    `literature-examples.md` keeps four numbers no script reproduces (Mach
+    0.3 and 2.0 densities, 85 000 singularities, ~30x, 7%); `backends.md`
+    says `NUMBA_THREADING_LAYER` picks the layer, which
+    `NLSE/kernels/cpu.py:14-16` overrides when pyfftw is imported first;
+    the DDGPE equation leaves out `g2`. The CuPy and OpenCL claims of the
+    pages were checked by reading the code, not by a run.
+- **CuPy two-axis batch without the callbacks** (`083a2d9`).
+  - Reviewer MINORs left: a non-contiguous field would be reshaped to a copy
+    and the multiply lost (no caller passes one; the old code was wrong there
+    too); the branch does not check that the propagator is the field's
+    trailing block; no two-axis case for RK4 or a coupled field in that file
+    (`tests/integration/test_broadcasting.py` covers RK4 with the callbacks
+    off only when run with `NLSE_FUSE_PROPAGATOR=0`); one launch per member.
+  - After a change to the CuPy kernels, run the box suite once more with
+    `NLSE_FUSE_PROPAGATOR=0`: the default never reaches the unfused kernels
+    on a batch, and CI has no GPU.
+- **CPU blocked step** (`7518025`, `4bb3432`). Spec:
+  `cpu_blocked_step_spec.md`; logs and scripts: `cpu_blocked_step/ryzen/`.
+  `MARGIN` and measuring on first use (`TUNE_ON_FIRST_RUN`: 0.4-0.9 s at
+  1024², 12.1-12.5 s at 4096² complex128 inside the first `out_field`) are
+  the owner's to confirm.
+  At `MARGIN = 0.10` the 1.07x at 2048² complex128 on the Mac is not taken.
+  The plain step's `fft2` at 1024² complex128 has two speeds in a long-lived
+  process; why is not established. That the page order is the mechanism of
+  the scratch fix is inferred (no counter read). Huge pages for the scratch
+  were tried and rejected. The Windows branch of `_private_mapping` has run
+  nowhere; a grid with a zero-length axis now raises from `mmap`.
+  Rule from the owner (2026-11-27): hot working buffers come from "a fixed
+  memory stack", a region the library maps and keeps, not from malloc. The
+  factors and the solver's field were not moved there: no cell needs it
+  (measured after another grid ran in the process). My reading, to confirm
+  with the owner, is that the rule asks for it only where a measurement
+  shows a cell moving.
+  Left as they are (MINOR): a declined hook call costs 1.8-3.9 us a step;
+  the cache key leaves out numba's threading layer; timestamps are naive
+  local time; with an unwritable cache directory every process tunes; a
+  process that misses the cache just as the lock holder finishes tunes a
+  grid twice, and two threads of one process see each other as "another
+  process"; an interrupt inside `_wait` releases the step's lock while
+  shares still write; all candidates' scratch stays allocated while
+  tuning; the autouse fixture runs every other test unblocked. Mutants the
+  suite lets through: the row factor without its 1/N, the time not divided
+  by `STEPS`, `DUEL_ROUNDS = 1`, `THREAD_DIVISORS`, the warm-up removed.
+  Open cost: where the blocked step is taken (and on CUPY) the first step
+  of a solver builds the factors, about 0.17 s and 530 MiB transient at
+  4096², repaid in about 14 steps.
+- **CPU float32 kernels** (`71db255`). Left as they are: the float32 angle
+  reduction is exact only below 8192 rad and unbounded past about 3e7;
+  `benchmarks/roofline.py` still measures the double `_sincos` and `_exp` as
+  its transcendental ceiling, which is no longer what a complex64 run calls.
+- **CuPy nonlinear callback** (`5113580`). Scripts: `cuda_fewer_passes/`,
+  copies on the box in `~/Documents/nlse_scratch_scripts/`.
+  - Reviewer, two rounds: no critical or major finding left. Minor, not
+    fixed: no test runs the callback above 64² or at a non-power-of-two size
+    (checked by hand at 13 sizes); `ifft_nonlinear_ready`'s refusals
+    (non-contiguous field, `V` of another shape or width) have no test; the
+    Strang half step handed to the callback is pinned only by the box's
+    bitwise tests; `nonlinear_words` raises `OverflowError` on a finite
+    complex64 scalar above the float32 maximum (direct kernel calls only);
+    a nested `def refuse` in `tests/backends/test_fft_propagator_fusion.py`;
+    bare `2` and `(1,)` in `nlse.py` and `cupy_backend.py` lines the change
+    sits next to; `NLSE_FUSE_PROPAGATOR` now names two callbacks; a cuFFT
+    without LTO callbacks pays three failed builds per plan.
+- **CuPy separable propagator** (`ce290d8`). complex128 runs at 0.97 to
+  0.99x: kept under the one-path decision, for the user to accept or not.
+  - Reviewer: pass, minor findings only, not fixed. With
+    `NLSE_FUSE_PROPAGATOR=0` the solver still builds the factors the plan
+    then refuses (0.1 to 0.2 s and 0.5 GB of host memory at 4096², the
+    reviewer's figures). The axes come from `_compute_propagator_rk4`, so a
+    subclass overriding only `_dispersion_on_device` would get factors that
+    do not describe its propagator (no such subclass exists).
+    `_take_partial_step` swaps the linear state before its `try`, as before
+    the change. `FUSED_TRANSFORM_AXES` is reused as an ndim.
+    `_forget_device_state` does not clear `_propagator_fft` (only
+    `_forget_run_state` does). The fallback `if` in `linear_nonlinear_step`
+    has no `else`. Seven returns in `cupy_backend.py:126`; bare `1j` and `2`
+    in the two test files. A 32-bit divide in the callback, which the
+    reviewer suggested, was measured and changes nothing.
+- **Serial numba kernels**, learned on the blocked-step prototype:
+  - A serial numba loop keeps Python's division check and does not
+    vectorize (15 against 2.5 ns a point on the box): the serial kernels
+    need `error_model="numpy"`. Two dispatchers made from one Python function
+    with `cache=True` share one cache entry on disk, whatever their options:
+    the second loads the first's machine code (reproduced). Serial twins of
+    the parallel kernels cannot be cached that way.
+- **Tests that bite** (`9487346`). 5 mutants are left without a test
+  (`tests_bite_spec.md` says why); `test_audit/crosscheck.py --survivors` is
+  the regression check. A batch and its members run alone differ by 5e-4
+  when the step is left to the solver (the batch takes the strictest
+  member's step): a test comparing the two has to pass `delta_z`. Left by
+  the reviewer, minor, not fixed:
   - `tests/solvers/test_plot_labels.py` draws a field of unit modulus, so
     `|A|` for `|A|**2` in the plotted intensity passes. Modulus 2 and
     `4 * W_PER_CM2` fix it. The `CNLSE` panels have no value check.
@@ -378,6 +295,17 @@ threading layer decides (`fix/ci-threading-layer-tests`). Still open:
     passed in this checkout, 1606 in a clean one); and
     `test_a_wrong_typed_field_is_no_cache` (`tests/backends/test_benchmark.py`)
     carries a timestamp taken at import in its test id.
+- **Packaging and tooling** (`62bd2e8`). ty 0.0.112 checks `NLSE/` against
+  `ty-baseline.json`; a change that moves a recorded diagnostic needs
+  `uv run ty check --update-baseline`, after checking that the diagnostics
+  are the recorded ones.
+  - Not done, for the user to decide: the licence expression
+    (`GPL-3.0-only` or `GPL-3.0-or-later`, with `license-files` and
+    hatchling 1.27), dropping Python 3.10, ruff 0.17.6, ty on `tests/`
+    (456 diagnostics), pinning the actions by hash and bumping their
+    majors, an SBOM artifact and a commit-message hook.
+  - Not checked: the CuPy and OpenCL extras were not synced from the lock
+    on the box.
 - Defects the audit found, none fixed, the first three for the owner:
   - `_loss_max_dz` (`NLSE/solvers/step_size.py`) divides by `2 * alpha` while
     the kernels receive `alpha / 2`: the kernel's `u` at the cap is 0.025,
@@ -431,57 +359,10 @@ threading layer decides (`fix/ci-threading-layer-tests`). Still open:
     args)` would leave the factory pure.
   - Not run by that review: OpenCL, CuPy, DDGPE, complex128, `GPE` with `V`,
     `NLSE_3d` over two axes, strang and yoshida against per-member runs.
-
-### Verification of the final tree
-
-- CI (2026-11-27). The first push with the blocked step (`c503edb`) went red
-  on two of its tests, for what
-  [numba's threading layer](https://numba.readthedocs.io/en/stable/user/threading-layer.html)
-  allows, not for the step. Ubuntu runners get GNU OpenMP, and numba ends a
-  forked child that enters it (`test_a_child_forked_mid_step_steps_blocked`,
-  exit -15, numba's message in the log). The macOS runner aborted in
-  `test_two_threads_step_as_they_would_one_after_the_other` (exit 134), as
-  `workqueue` does when two threads enter it (4 runs in 6 on the box, with
-  numba's message); that the runner is on `workqueue` is inferred, its log
-  does not show the message. Each test now skips on that one layer.
-  Reproduced and checked with `NUMBA_THREADING_LAYER`: Mac `workqueue`
-  1736 passed, 157 skipped (`omp`, vendor Intel as numba names it, is the
-  Mac's default: 1737, 156); box `omp` (GNU) 1805 passed, 69 skipped (`tbb` is its default:
-  1806, 68). The failed log is
-  `~/Documents/LKB/NLSE_tangui_fix_specs/cpu_blocked_step/ryzen/ci_failed_c503edb.log`.
-- Scratch fix (`fix/cpu-blocked-scratch`, 2026-11-27), code as at `3b8113f`
-  (the commit after it changes a comment): Mac 1737 passed, 156 skipped;
-  `ruff check`, `ruff format --check` and `ty check` clean. On the box:
-  CuPy 1806 passed, 68 skipped; OpenCL 1714 passed, 149 skipped. Mutants
-  that fail the two new tests: malloc scratch, a shared mapping.
-- At `7518025` (2026-11-27), Mac (M3 Max, CPU and MLX): `uv run --locked
-  pytest tests/ -q -m "not benchmark"` gives 1735 passed, 156 skipped;
-  `ruff check`, `ruff format --check` and `ty check` are clean. CuPy on the
-  box, on the blocked-step tree before its last edits (`MARGIN` back to
-  0.10, four tests of the tuner): 1802 passed, 68 skipped, one run. OpenCL
-  was not run on this tree; its last full run is the one below. The lines
-  below are from the audit, at `4ac2bb2`.
-- Mac (M3 Max, CPU and MLX, `.venv`), at `4ac2bb2`: `pytest tests/ -q -m "not
-  benchmark" --ignore=tests/test_packaging.py` gives 1404 passed, 126 skipped;
-  `ruff check`, `ruff format --check` and `mypy NLSE/` are clean. Five of
-  those tests exist only while `docs/_build` does (`tests/test_doc_claims.py`
-  reads a file in it), so a clean checkout gives 1399.
-- Sphinx, `-W --keep-going`, in a scratch venv with the `docs` extra: exit 0
-  and no warning at `10bf834` (full build, 25 min) and at `4ac2bb2`
-  (incremental).
-- CuPy on the CUDA box (RTX 3050), at `4ac2bb2`: 1468 passed, 67 skipped, in
-  6 runs of 6.
-- OpenCL on the CUDA box (NVIDIA OpenCL, CPU and CL available), at
-  `4ac2bb2`: 1405 passed, 120 skipped.
-- After `4ac2bb2` only the docs and `benchmarks/profile_backends.py` changed.
-- Step time against 4.1.0 (`38a8704`): no cell slower by more than its own
-  scatter on CuPy (RTX 3050), MLX and CPU (M3 Max), NLSE and CNLSE, split step
-  and RK4, 1024² and 2048². Numbers and configuration in
-  `docs/optimization-log.md`, "The audit fixes cost no step time".
-- OpenCL cannot be run on this Mac any more (macOS 27.2). Apple's driver
-  segfaults inside `pyvkfft`'s `VkFFTApp` for any transform, a bare 64x64 one
-  outside NLSE included, and 4.1.0 crashes the same way. The conda env
-  `poclrepro` (POCL) cannot link its kernels: 96 failures on 4.1.0 too.
+- Scratch to delete. Box: `~/Documents/nlse_cuda_sp2c` (= `main` after the
+  merge of 2b, less the docs), `nlse_cpu32`, `nlse_cuda_fp` (= 5113580, the
+  tree the CPU prototypes import). Mac: `git worktree list` (this session's
+  scratchpad, `~/Documents/LKB/NLSE_wt/`).
 
 ### Review findings left as they are (MINOR)
 
@@ -615,98 +496,9 @@ threading layer decides (`fix/ci-threading-layer-tests`). Still open:
 - `DDGPE(omega=None)` raises TypeError in the constructor, so its
   `omega is None` branches never run.
 
-## Findings, ranked
+### Smaller audit findings, left out of the report
 
-Each was reproduced by a script unless marked *(read)* or *(reviewer)*.
-
-### Wrong results, no error
-
-1. **Rabi coupling is skipped for `strang` and `yoshida`.**
-   `NLSE/solvers/cnlse.py:810`, `NLSE/solvers/ddgpe.py:508` test
-   `splitting == "lie"`. CNLSE, `omega=200`, `z=1e-2`: lie gives
-   P2/P1 = 2.4255 = tan²(ωz/2); strang and yoshida give 0.
-2. **GPE `g` and `V` do nothing in the documented units.** GPE inherits
-   `_g = k/2·n2·c·ε0` and `_k_half = k/2` with `k = m`
-   (`NLSE/solvers/nlse.py:1524-1529`). A run with g·n ≈ 64 kHz equals the
-   `g=0` run exactly; a 100 Hz trap `0.5·m·ω²·r²` equals no trap; uniform
-   `V0=1000` gives 7e-26 rad in 1 ms, `V0=2000/m` gives 1.0 rad. Same formula
-   in commit `9d94782` (2025-06), so not a regression. Units (Hz or rad/s) and
-   sign are a decision to take with the fix.
-3. **The medium runs past `L`.** `NLSE/solvers/nlse.py:2254-2256` rounds the
-   in-medium step count up. `L=1e-2`, `z=2e-2`: phase is 1.20× `k·n2·I·L` for
-   `dz=3e-3`, 1.148× for `4e-3`, 1.000× for `1e-3`.
-4. **Non-local kernel.** `NLSE/solvers/nlse.py:233-244`: `nl_length` is
-   floored to whole pixels (3.0·dx and 3.99·dx give the same kernel), `delta_X`
-   is used for both axes (NX=64, NY=128: 0.78 mm × 0.39 mm), and the
-   convolution is zero-padded on a periodic grid (a plane wave gets 57% of the
-   centre phase at the edge, 32% at the corner). Candidate fix: apply
-   `1/(1 + nl_length²·K²)` in Fourier space; cost not measured.
-5. **`evaluate_delta_n` with a finite `Isat`.** `NLSE/callbacks.py:116`
-   divides `|A|²` (V²/m²) by `I_sat` (W/m²) *(read)*. At I = 3·I_sat the
-   result is 0.0018 of the true value.
-6. **Backward runs.** A negative `delta_z` takes its last partial step forward
-   (`NLSE/solvers/nlse.py:2200-2209`): round-trip error 5e-15 at `z=1e-3`,
-   6.2e-4 at `z=1.05e-3`. `out_field(z<0)` returns the input, no error.
-7. **DDGPE noise scales with `dt`, not `√dt`.** `NLSE/solvers/ddgpe.py:174-179`.
-   Mean |ψ|² at T=0.2: 1.32e-6 (dt=2e-3), 6.60e-7 (1e-3), 3.31e-7 (5e-4).
-   Confirm the intended convention before changing it.
-8. **`plot_field` is upside down.** `imshow` with `extent` and the default
-   origin: a spot at y=+0.5 mm is drawn at −0.52 mm
-   (`NLSE/solvers/nlse.py:1041-1084`, same in `cnlse.py`, `nlse_3d.py`).
-
-### Crashes and blind spots
-
-9. **Imaginary time (complex `delta_z`) is documented and crashes** at
-   `NLSE/solvers/step_size.py:583`, then `NLSE/solvers/nlse.py:1156`, then in
-   the numba kernels. Docs: `NLSE/solvers/nlse.py:290,307`.
-10. **Switching backend after a run** keeps the old propagator:
-    MLX→CPU raises at `NLSE/kernels/cpu.py:1176`. The setter
-    (`NLSE/solvers/nlse.py:267-270`) clears no cache.
-11. **Public `split_step` ignores its `V` after any `out_field`**, and keeps
-    `_g = 0` after a run past `L` (`NLSE/solvers/nlse.py:484-486`).
-12. **Callback lists.** DDGPE `out_field` inserts into the caller's list
-    (`NLSE/solvers/ddgpe.py:562-569`), so the second call raises `TypeError`;
-    `callback=[f, g]` with default `callback_args` raises at
-    `NLSE/solvers/nlse.py:2225`.
-13. **DDGPE pump profile is indexed by step number**
-    (`NLSE/solvers/ddgpe.py:246`): a capped step gives `IndexError`.
-14. **Tests cannot see a scale error.** `"_k_half": self.k` (every `V`
-    doubled) passes 544 tests in solvers, integration, physics and
-    cross-backend. *(reviewer)*: the same holds for three RK4 kernel
-    mutations, the non-local width, 3D dispersion ×2, the `k` entry of the
-    propagator cache key, and the callback return values.
-15. **Tests that cannot fail** *(reviewer)*: unitarity tests on a uniform
-    field (`tests/solvers/test_nlse.py:165-205`, `test_nlse_1d.py:63`,
-    `test_cnlse_1d.py:75`), and env tests in
-    `tests/backends/test_auto_backend.py:60-72,104-176`.
-16. **Benchmark-cache tests use the real cache** (`tests/backends/test_benchmark.py:131,209,231,260`);
-    the audit's own test runs rewrote `~/Library/Caches/NLSE/fft_benchmark.json`
-    for a 64×64 grid. A cache file holding `null` raises `TypeError`
-    (`NLSE/backends/benchmark.py:258`).
-17. **Docs contradict the code.** README builds docs with mkdocs
-    (`README.md:35-41,67`); the docs are Sphinx. `CLAUDE.md:74` and
-    *(reviewer)* `README.md:122-124`, `docs/physics_problem.md:43-46`,
-    `docs/solvers_overview.md:234` say MLX has no convolution; it has.
-18. **Packaging.** `uv.lock` records nlse 2.3.0 with pyfftw and mkdocs.
-    The sdist ships `tests/` without the files they read
-    (`pyproject.toml:82`). CI ignores failures at
-    `.github/workflows/ci.yml:176,286`.
-
-### Speed and size
-
-19. **Fixed cost per `out_field` call**, 2048² complex64: CPU 57–62 ms
-    (about 5 steps at 10.9 ms/step), MLX 49–53 ms (about 20 steps at
-    2.49 ms/step). `_capped_delta_z` is 35 ms even when `delta_z` is given;
-    `_dispersion_operator` is built twice on the host, 14–17 ms.
-20. **Dead and duplicated code.** About 130 unreferenced lines in
-    `NLSE/kernels/cupy.py` (`rabi_coupling`, `apply_propagator`, `rk4_axpy`,
-    `rk4_accumulate`, their `_fused` twins, `vortex_cp`); `vortex` kernels used
-    only by two tests; DDGPE `split_step` (`NLSE/solvers/ddgpe.py:354-512`)
-    repeats CNLSE's, about 110 lines; no-op blocks at `nlse.py:32-33`,
-    `cnlse.py:10-14`, `ddgpe.py:270-274,346-347`; `_SCALAR_CACHE` in
-    `NLSE/kernels/mlx_kernels.py:12-25` never shrinks.
-
-### Smaller, left out of the report
+Status on `main` not re-checked.
 
 - `simu.V` becomes a float32 copy after a device run (`nlse.py:1700-1765`).
 - Real-valued input fails on a bare `assert` (`nlse.py:357-363`).
@@ -720,20 +512,14 @@ Each was reproduced by a script unless marked *(read)* or *(reviewer)*.
   `NLSE/kernels/cupy_kernels.py:124`; benchmark cache written non-atomically;
   7.8 MB `docs/nlse_tutorial.ipynb` and unused images tracked.
 
-## Decisions
+### Decisions of the audit
 
 - Kernels: no wrong-result bug found. CPU, OpenCL and MLX agree to 2e-7
   (float32) over about 2000 cases; CUDA source was read, not run.
 - The "empty parameter set" skips in `tests/integration/test_nonlocality.py`
   are benign here: no backend without convolution is installed.
 
-## Open items
-
-Resume here. Everything above and the performance work below are merged
-into `main` and pushed. Open: the performance profiles, and the
-release (5.0.0 suggested; the version is not bumped and nothing is published).
-
-### Performance work (2026-11-26 and 27)
+## Performance work (2026-11-26 and 27)
 
 Asked, in these words: "Really check at the lowermost level possible, so we
 can see where memory bandwidth is spent. From this point on, we need to
@@ -748,127 +534,8 @@ the good practices in Downloads." (`~/Downloads/Good practices.md`: every
 timing against the hardware peak, with its configuration; docs along Diátaxis;
 facts sourced.)
 
-Done:
+Open in the task list of the closing review pass (asked on 2026-11-27):
 
-- **CPU complex64 kernels in float32** (`perf/cpu-float32-kernels`). numba
-  promoted them to double. Kernels 1.4x (M3 Max) and 1.6 to 2.2x (box), a
-  whole lie step 1.07 to 1.12x and 1.03 to 1.32x; complex128 bit-identical.
-  The lossless rotation is a sum (`_rotate32`), so it rounds as double did up
-  to 0.1 rad a step. `_rabi_coupling` stays in double on purpose. Test:
-  `tests/backends/test_cpu_kernel_precision.py`. Entry in the optimization
-  log, CPU section. Scripts: `~/Documents/LKB/NLSE_tangui_fix_specs/cpu_float32/`.
-  Reviewer: no critical or major finding. Left as they are: the float32
-  angle reduction is exact only below 8192 rad and unbounded past about 3e7;
-  `benchmarks/roofline.py` still measures the double `_sincos` and `_exp` as
-  its transcendental ceiling, which is no longer what a complex64 run calls.
-
-- **CuPy: the nonlinear step inside the inverse transform**
-  (`perf/cuda-fewer-passes`, spec 1). A cuFFT store callback applies
-  `square_mod_nl_prop` as the inverse transform writes; 2D local `NLSE` and
-  `GPE`, every splitting. RTX 3050, complex64, lie: 88 → 72 bytes a point
-  (`ncu`), a step 1.17 to 1.19x faster than `main` at 512² to 3072² (1.12x at
-  2560² and 3000²), 1.34 to 1.38x faster than no callback at all; 0.89x at
-  256²; complex128 unchanged. Still at 87 to 92% of the 208 GB/s ceiling.
-  Entry in the optimization log, CUDA section, with the tables.
-  - The callback calls the step out of line (`__noinline__`,
-    `NLSE/kernels/cuda_source/fft_callbacks.cu`). Inlined, cuFFT's kernel
-    spilled to the stack and the path ran at 0.84x of `main`.
-    `tests/backends/test_kernel_templating.py` pins it.
-  - Box: suite 1556 passed; callback tests six times; 36 runs bit-identical
-    to `main` with callbacks on and off. At 2560, 3000, 3072 and 3600 points a
-    callback plan is another cuFFT plan and differs from the unfused path by
-    rounding. That was already true of the propagator callback in `main`.
-  - Tests: `mutants_spec_1.py` (in `NLSE_tangui_fix_specs/`) kills 14 of 14,
-    0 of 14 before the fix round.
-  - Reviewer, two rounds: no critical or major finding left. Minor, not
-    fixed: no test runs the callback above 64² or at a non-power-of-two size
-    (checked by hand at 13 sizes); `ifft_nonlinear_ready`'s refusals
-    (non-contiguous field, `V` of another shape or width) have no test; the
-    Strang half step handed to the callback is pinned only by the box's
-    bitwise tests; `nonlinear_words` raises `OverflowError` on a finite
-    complex64 scalar above the float32 maximum (direct kernel calls only);
-    a nested `def refuse` in `tests/backends/test_fft_propagator_fusion.py`;
-    bare `2` and `(1,)` in `nlse.py` and `cupy_backend.py` lines the change
-    sits next to; `NLSE_FUSE_PROPAGATOR` now names two callbacks; a cuFFT
-    without LTO callbacks pays three failed builds per plan.
-  - Scripts: `~/Documents/LKB/NLSE_tangui_fix_specs/cuda_fewer_passes/`
-    (`fp_step.py`, `fp_three.py`, `fp_ncu*.py`, `fp_bitwise.py`,
-    `fp_sizes_diff.py`, `fp_variants.py`), copies on the box in
-    `~/Documents/nlse_scratch_scripts/`, `ncu` reports in its `rep/`.
-
-Task list for the closing review pass (asked on 2026-11-27):
-
-- [x] **Tests must bite.** "review thoroughly tests to make sure they
-  actually bite and test": for each test file, break the behaviour it claims
-  to pin (a mutation of the code under test) and see the test fail. Report
-  every test that still passes, that asserts nothing, or whose tolerance is
-  wider than the effect it guards; fix or delete those.
-  - Done: four mutation audits, one per slice of `tests/`, in
-    `~/Documents/LKB/NLSE_tangui_fix_specs/test_audit/` (`mutants_s1.py`
-    solver state, `s2` solver physics, `s3` backends, `s4` integration and
-    docs): 234 mutants, 106 not killed by their own slice's files.
-    `crosscheck.py TREE s1 s2 s3 s4` runs each mutant against its slice and,
-    if it passes, against the whole suite; a mutant is a gap only if the
-    whole suite lets it through. Mac output: `crosscheck_mac_s134.txt` and
-    `crosscheck_mac_s2.txt` there. **52 mutants survive the whole Mac suite**
-    (s1 15, s2 12, s3 10, s4 15), none by timeout.
-  - The 36 of them that do not depend on the backend
-    (`survivors_for_box.txt`) were run against the CuPy and OpenCL tests on
-    the box (tree 8493fe3, `crosscheck.py ../tree s1 s2 s3 s4 -j 2
-    --survivors survivors_for_box.txt -k "CUPY or CL or cupy or opencl or
-    cuda or cufft"`): **35 survive there too** (`crosscheck_box.txt`). The
-    one killed, "s1: split-step limit: pi rad -> 2 pi rad", dies only on
-    `test_propagator_fft_refresh.py::...::test_refreshed_when_step_limiter_clamps_delta_z[CUPY]`,
-    so it still needs a test that runs on every backend.
-  - On the batch fix's branch the two batch mutants of `s4` still survive
-    (`crosscheck_mac_batch2.txt`): `Isat` dropped from the batched positions
-    of `nl_prop` on CPU, and the MLX lossy kernel indexing a shared `V` with
-    the batch's flat id.
-  - Survivors by kind: step-size rates and limits, three callbacks, the
-    CNLSE second component (`n22` at `k` not `k2`, its `I_sat`, its `alpha`),
-    four DDGPE terms, CPU kernel signs and saturation on the lossless and
-    non-local paths, MLX batch and loss modes, the benchmark cache (grid and
-    processor not compared), the docs capability table, the `nsys` parser,
-    the wheel's module list. Kill recipes: a uniform field against
-    `k*n2*I*L`, `k*n2*I/(1+I/Isat)*L`, GPE `-g|psi|²t` and `-Vt`,
-    `exp(-gamma t)`, `exp(-alpha_i z)` per component.
-  - Found on the way and fixed (`fix/cpu-two-axis-batch`): the two-parameter
-    batch of `README.md:285` raised on CPU, and a one-value array parameter
-    moved only the first field of a batch.
-  - A batch and its members run alone differ by 5e-4 when the step is left
-    to the solver: the batch takes the strictest member's step. Not a bug;
-    a test comparing the two has to pass `delta_z`.
-  - Done on `test/tests-that-bite`, from the architect's
-    `NLSE_tangui_fix_specs/tests_bite_spec.md` and `tests_bite_1..14.patch`
-    after its spec review and a review of the diff; the touched files pass
-    on the box under CuPy and under OpenCL. `crosscheck.py --survivors` is
-    the regression check (every listed mutant has to die). What the
-    reviewer left is under "In flight".
-- [x] **Packaging and tooling** ("I also would like you to check packaging
-  and tooling in general. I want something modern based on uv ruff and ty",
-  2026-11-27), which carries the mypy to ty switch ("Let's switch also from
-  mypy to ty at the end"). Done on `build/uv-ruff-ty` from the architect's
-  `NLSE_tangui_fix_specs/tooling_uv_ruff_ty_spec.md` (revision 2, after spec
-  review). What it settles:
-  - dev and docs are dependency groups, the backends stay extras, hatchling
-    stays. Set up with `uv sync --extra opencl --extra mlx`; every later
-    `uv sync` needs the same `--extra` flags, or it removes the backends.
-  - ty 0.0.112, pinned, checks all of `NLSE/` against `ty-baseline.json`
-    (99 diagnostics at the switch). A change that moves a recorded
-    diagnostic needs `uv run ty check --update-baseline`, and only after
-    checking that the diagnostics are the recorded ones.
-  - ruff gains UP and PGH. The hooks and CI run every tool through
-    `uv run --locked`; CI installs uv 0.13.9 with setup-uv v10.4.0. A plain
-    `git commit` or `git push` no longer needs the venv on PATH, but it
-    needs uv.
-  - Not done, for the user to decide: the licence expression
-    (`GPL-3.0-only` or `GPL-3.0-or-later`, with `license-files` and
-    hatchling 1.27), dropping Python 3.10, ruff 0.17.6, ty on `tests/`
-    (456 diagnostics), pinning the actions by hash and bumping their
-    majors, an SBOM artifact and a commit-message hook.
-  - The workflow has run on GitHub since the push of `c503edb`: see the CI
-    entry under "Verification of the final tree". Not checked: the CuPy and
-    OpenCL extras were not synced from the lock on the box.
 - [ ] **Headline performance in the README** (asked on 2026-11-27: "add the
   headline perf numbers in the README of the repo, in % of max flops/s /
   memory bandwidth (highlighting whether we are compute / or bandwidth
@@ -891,124 +558,6 @@ Decisions taken by the user:
 - "Typical sizes are 1024, 2048 and 4096": a change is accepted or rejected
   on those three grids. Other sizes are side information. 4096² needs 12
   rounds or more on the RTX 3050 (8 rounds gave 0.88x and 0.99x for a 1.05x).
-
-In progress, in this order:
-
-- **CuPy, a separable propagator** (`perf/cuda-separable-propagator`, spec
-  2b: `~/Documents/LKB/NLSE_tangui_fix_specs/cuda_fewer_passes_spec_2b.{md,patch}`).
-  Merged. The forward store callback multiplies
-  `rows[iy] * columns[ix]` instead of reading the propagator. RTX 3050,
-  complex64, lie, 12 interleaved rounds: 73 → 65 bytes a point (`ncu`), a step
-  1.04x faster at 1024², 1.05x at 2048², 1.04x at 4096²; 1.10x at 512², 0.90x
-  at 256²; complex128 0.97 to 0.99x (that step is at 18% of the memory peak:
-  arithmetic binds it). Kept under the one-path decision; the complex128 cost
-  is for the user to accept or not. Entry in the optimization log, CUDA
-  section.
-  - The tie between the array the kernel would read and the factors it
-    gets: `_build_propagator` caches `(array, dtype, delta_z)`; `_built_step`
-    finds an array by identity; `_update_propagator_fft` records
-    `_propagator_fft_origin`; `_propagator_fft_factors` returns None unless
-    the origin is that very array and its cache key still holds. Every swap
-    of the linear state goes through `_linear_state` /
-    `_restore_linear_state`. Any doubt gives None and the kernel reads the
-    full array.
-  - Mac: suite 1498 passed, 155 skipped; `mutants_spec_2.py` kills 17 of 17.
-    Box (CuPy 14.2.0): suite 1596 passed, 67 skipped; the fusion file 41
-    passed three times; the five CUDA-only mutants killed
-    (`run_cuda_mutants.py`, same directory as the spec).
-  - Reviewer: pass, minor findings only, not fixed. With
-    `NLSE_FUSE_PROPAGATOR=0` the solver still builds the factors the plan
-    then refuses (0.1 to 0.2 s and 0.5 GB of host memory at 4096², the
-    reviewer's figures). The axes come from `_compute_propagator_rk4`, so a
-    subclass overriding only `_dispersion_on_device` would get factors that
-    do not describe its propagator (no such subclass exists).
-    `_take_partial_step` swaps the linear state before its `try`, as before
-    the change. `FUSED_TRANSFORM_AXES` is reused as an ndim.
-    `_forget_device_state` does not clear `_propagator_fft` (only
-    `_forget_run_state` does). The fallback `if` in `linear_nonlinear_step`
-    has no `else`. Seven returns in `cupy_backend.py:126`; bare `1j` and `2`
-    in the two test files. A 32-bit divide in the callback, which the
-    reviewer suggested, was measured and changes nothing.
-  - Scripts on the box: `fp_sep.py ROUNDS N,N,... [DTYPE]`, `fp_ncu.py`,
-    `fp_ncu_table.py` in `~/Documents/nlse_scratch_scripts/`; reports
-    `rep/fp_sep_2c*.txt` and `rep/ncu_2c_*`.
-- **CuPy at 4096² is at 62% of the memory peak**, against 85% at 1024² and
-  2048², and the gap is inside cuFFT: the pass down the columns costs 0.097
-  ns a point for columns of 2048 and 0.166 for columns of 4096, whatever the
-  stride; rows cost 0.077 at every length. Padding the rows (0.250 to 0.263
-  against 0.240 ns a point) and a transposed layout (the copy costs 0.157 to
-  save 0.089) are measured and rejected. Closed; in the optimization log's
-  CUDA section. Box scripts `fft_axes.py`, `fft_stride.py`,
-  `fft_transpose.py`.
-- Scratch to delete. Box: `~/Documents/nlse_cuda_sp2c` (= `main` after the
-  merge of 2b, less the docs), `nlse_cpu32`, `nlse_cuda_fp` (= 5113580, the
-  tree the CPU prototypes import). Mac: `git worktree list` (this session's
-  scratchpad, `~/Documents/LKB/NLSE_wt/`).
-- **CPU: a step that owns its passes.** Measured as a prototype, not
-  designed or implemented. Three passes a step, each over blocks that fit a
-  core's cache, the field back in real space after each: transform the rows
-  | gather a block of columns, transform, multiply by the `y` factor,
-  transform back, scatter times the `x` factor | transform the rows back and
-  apply the nonlinear kernel. Python threads over static shares; every call
-  inside releases the GIL (scipy.fft 1D with `workers=1`, serial `nogil`
-  numba kernels). It fits the hook spec 2b adds
-  (`linear_nonlinear_step(..., factors=...)`), so it comes after it.
-  - Decided by the user on 2026-11-27: "For this type of optimizations, this
-    should be done by a utility, since this will vary machine from machine /
-    chip to chip", then "Basically the library should keep a cache of best
-    chunk sizes per grid size. Very much like the old API used to cache FFT
-    plans." So no constant and no rule from the cache sizes: the block size,
-    or "do not block", is measured on the machine and kept in a cache the
-    library owns, keyed by grid shape, dtype and thread count, next to the
-    backend benchmark cache (`NLSE/backends/benchmark.py`, `NLSE_CACHE_DIR`).
-    My reading, not confirmed: the first run on an untuned grid measures and
-    stores, and the same routine can be called ahead of time.
-  - Box, 8 rounds (Ryzen 3 4100, 4 threads, lossless Kerr, ms a step,
-    today's step against the best block): complex64 1024² 7.22 / 6.43
-    (1.12x, 32 rows), 2048² 35.14 / 24.75 (1.42x, 16 rows), 4096² 144.66 /
-    98.83 (1.46x, 16 rows; 8 rows 1.26x, 32 rows 0.56x); complex128 13.67 /
-    10.75 (1.27x, 32 rows), 59.45 / 41.00 (1.45x, 16 rows), 277.76 / 178.73
-    (1.55x, 8 rows; 16 rows 0.90x). The best block is 256 to 512 KiB (a
-    core's L2 is 512 KiB) and 1 MiB loses. Reports on the box:
-    `rep/cpu_fused3_bytes8_complex{64,128}.txt`.
-  - The buffer must fit the core's L2 (512 KiB on the box): 1 MiB gives
-    0.58x at 4096² complex64. 128 KiB gives 1.01 to 1.15x. Eight logical
-    threads lose to four (1.17 to 1.30x): a pair shares one L2.
-  - Mac (M3 Max, 12 to 16 threads, machine not idle, the chunk rule not yet
-    run there): complex64 0.77x at 1024², 0.98x at 2048², 1.41x at 4096²;
-    complex128 0.92x, 1.21x, 1.46x. The field fits the 16 MiB L2 at 1024²
-    and three thread dispatches weigh on a 1.6 ms step. The best block there is
-    1 MiB. Whether to block at all on a grid is what the cache records.
-  - The same passes threaded by scipy and numba alone (no Python threads)
-    do not win: 0.79 to 1.03x on the box in complex64. The gain is each
-    thread keeping its block in its own cache across the transform and the
-    kernel.
-  - A serial numba loop keeps Python's division check and does not
-    vectorize (15 against 2.5 ns a point on the box): the serial kernels
-    need `error_model="numpy"`. Two dispatchers made from one Python function
-    with `cache=True` share one cache entry on disk, whatever their options:
-    the second loads the first's machine code (reproduced). Serial twins of
-    the parallel kernels cannot be cached that way.
-  - ducc0 is 5 to 8% faster than scipy's transforms here: not taken, too
-    little for a second transform dependency. Its licence is GPLv2 or
-    later (PyPI classifier), which this GPLv3 project could take.
-  - Scripts and reports: `~/Documents/LKB/NLSE_tangui_fix_specs/cpu_fft/`
-    (`fused_proto.py`, `nl_serial_check.py`, `results_*.txt`), and on the box
-    `~/Documents/nlse_scratch_scripts/rep/cpu_fused*.txt`. The box venv is
-    `~/Documents/nlse_scratch_scripts/fftw_venv`.
-- **The CPU transform libraries**, re-checked on 2026-11-27: nothing taken.
-  The figures and the decision are in `docs/optimization-log.md`, CPU
-  section ("The transform libraries, measured again"). The docs no longer
-  call the transform pocketfft (scipy 1.18 ships ducc), and the log gives
-  the box 4 MiB of L3.
-- **complex64 accuracy is set by the transforms**, not the kernels: a round
-  trip loses 2.8 units of 2^-24 of power, every step. Writing the linear step
-  as `A + ifft((P - 1) fft(A))` cuts the field error 40 to 390 times for 7 to
-  26% of a CPU step (prototype, optimization log, *Open*). The user has not
-  decided.
-- Per-call costs from the CUDA-box profile, below: the propagator download,
-  `_energy_rates` twice, the potential grids.
-- MLX and OpenCL: the fewer-passes lessons are not ported.
 
 ### Performance profiles (started 2026-11-26, not finished)
 
@@ -1116,7 +665,7 @@ Known before the profiles:
 - Open in the optimization log already: a plan callback in 1D, an
   `alpha == 0` branch in `_nl_prop`, the linear step as an increment.
 
-Environment:
+## Environment
 
 - The project `.venv` has CPU and MLX only. CuPy and OpenCL run on the CUDA
   box in one environment, `~/Documents/nlse_env_both`: a clone of the conda
