@@ -77,16 +77,26 @@ threading layer decides (`fix/ci-threading-layer-tests`). Still open:
     benchmark cache, `tests/benchmarks/` with the CI benchmark job, and one
     module for the per-solver legacy tests. `examples/profile_cupy.py`
     (overlaps `benchmarks/trace_solvers.py`) is decided in the docs pass.
-- **Docs**, after the debloat. First the gallery: the CI Documentation job
-  takes 58 minutes, 57 of them sphinx-gallery running every example on each
-  push (run 45898238065: `vortex_shedding.py` 1061 s, `rayleigh_taylor.py`
-  563, `cnlse.py` 543, `callbacks.py` 390, `broadcasting.py` 225). Owner:
-  "If these runs are so expensive maybe it's better to store the final
-  states rather than redo them". Where they are stored is ours to choose;
-  keep one run that proves the examples execute against the current code.
-  Design in `~/Documents/LKB/NLSE_tangui_fix_specs/docs/gallery.md` (being
-  written). Then the page review, the numba threading-layer limits, and the
-  README's headline performance.
+- **Docs**, after the debloat.
+  - The gallery: done (`ci/cache-docs-gallery`). The CI Documentation job
+    took 58 minutes, 57 of them sphinx-gallery running all 19 examples on
+    each push. Owner: "If these runs are so expensive maybe it's better to
+    store the final states rather than redo them". The job now keeps
+    `docs/auto_examples` in the Actions cache (key: hash of `uv.lock` and
+    `examples/_output.py`, then the run id), and sphinx-gallery skips an
+    example whose source is unchanged. A weekly `schedule` run and "Run
+    workflow" pass `run_stale_examples=True` and execute them all. Accepted
+    trade-off: a change to `NLSE/` that breaks an example passes CI until
+    that run. Design and what to watch on the first runs:
+    `~/Documents/LKB/NLSE_tangui_fix_specs/docs/gallery.md`, section 3.
+    Nothing is cached until one run on `main` finishes cold (about an
+    hour): a push to `main` meanwhile cancels it. Not checked yet: the
+    cache on GitHub itself. For the owner: the weekly run also runs the
+    test matrix and the benchmark job; gate them on the event if unwanted.
+  - The page review: two specs, `docs/pages_entry.md` (README, index,
+    installation, quick start, contributing, changelog; six patches) and
+    `docs/pages_guide.md` (the guide pages), in the same directory; in spec
+    review. Then the README's headline performance.
 - CI on `e60e2a4`: all green, the four macOS jobs on a second try (GitHub
   cancelled them the first time for lack of a runner).
 - The CPU blocked step, merged (`7518025`): three passes in
