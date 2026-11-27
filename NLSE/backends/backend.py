@@ -85,9 +85,11 @@ class Backend(ABC):
 
     # kernels.linear_nonlinear_step(
     #     A, propagator, plan, V_scaled, dz, alpha, g, Isat, factors=None) -> bool
-    # The linear step, then the nonlinear step run as the inverse transform
-    # stores its output. False, with A untouched, where it cannot.
-    has_nonlinear_store_callback = False
+    # The linear step then the nonlinear step, in fewer passes over the field:
+    # a cuFFT store callback on CUPY, blocked passes on CPU. False, with A
+    # untouched, where it cannot. factors() returns the propagator as
+    # (rows, columns) or None, and is called only by a step that is taken.
+    has_linear_nonlinear_step = False
 
     # kernels.rk4_rhs_fused(
     #     A_in, k, V_scaled, propagator, plan, alpha, g, Isat,
@@ -295,7 +297,7 @@ class Backend(ABC):
         built once and reused. Planning is expensive where there is planning
         to do: VkFFT compiles its own kernels, and cuFFT allocates a work
         area. The CPU backend has none -- scipy plans per call from a cache
-        of its own -- and returns the axes.
+        of its own -- and returns the axes, with the way to its blocked step.
 
         The cache lives on the backend, and backends are shared per name, so
         a parameter sweep that builds a solver per point plans once rather

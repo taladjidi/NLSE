@@ -65,7 +65,9 @@ simu.backend = "CL"
 | `NLSE_BACKEND` | Force a specific backend (e.g., `"CPU"`, `"CUPY"`, `"CL"`, `"MLX"`) |
 | `NLSE_QUIET` | Suppress backend auto-selection messages when set |
 | `NLSE_FORCE_BENCHMARK` | Re-run FFT benchmarks even if cache exists |
-| `NLSE_CACHE_DIR` | Directory for the benchmark cache, instead of the platform's cache directory |
+| `NLSE_CACHE_DIR` | Directory for the backend benchmark and the CPU step's tuning, instead of the platform's cache directory |
+| `NLSE_CPU_BLOCKING` | Set to `0` to never block the CPU split step, and never measure it |
+| `NLSE_FORCE_TUNING` | Set to `1` to measure the CPU blocked step again, once per grid per process, whatever the cache holds |
 | `NLSE_FUSE_PROPAGATOR` | Set to `0` to stop CUPY running the propagator and the nonlinear step from cuFFT callbacks |
 
 `NLSE_FUSE_PROPAGATOR` is an escape hatch rather than a tuning knob. On CUPY
@@ -74,6 +76,20 @@ nonlinear step that follows the linear one into the inverse transform, which
 computes the same thing in two passes fewer; setting it to `0` puts both back
 in kernels of their own. It is read when an FFT plan is built, so a session
 that changes it also has to call `simu._backend.clear_fft_plans()`.
+
+`cpu_blocking.json`, beside `fft_benchmark.json`, is
+`{"version": "1", "entries": {key: entry}}`. The key is
+`system/machine/cpu/NYxNX/dtype/threads/scipy-x.y/numba-x.y`, for example
+`Darwin/arm64/apple-m3/4096x4096/complex64/16/scipy-1.18/numba-0.66`, where
+`cpu` is LLVM's name for the processor and `threads` the fewer of the CPUs
+the process may use and `NUMBA_NUM_THREADS`. An entry is
+`{"rows": int | null, "threads": int | null, "unblocked_ms": float,
+"blocked_ms": float | null, "timestamp": ISO 8601}`; null rows and threads
+mean the usual step. Entries older than 30 days, dated in the future, of
+another version, or not of that form are measured again. The blocked step
+must win by 10% to be chosen. `cpu_blocking.lock` exists while a process
+measures; one older than 5 minutes is taken over. A process that finds the
+lock held runs the usual step and looks again every 3 s.
 
 Example:
 
@@ -109,9 +125,44 @@ Use grid sizes that are powers of 2 (e.g., 256, 512, 1024, 2048) or have low pri
 `scipy.fft`, multithreaded over every core with `workers=-1`: pocketfft up to
 scipy 1.17 and its successor ducc from
 [1.18](https://docs.scipy.org/doc/scipy/release/1.18.0-notes.html#scipy-fft-improvements).
-It plans per call from a cache of its own, so there is no wisdom file, no warm-up
-run and nothing to invalidate. It replaced PyFFTW, which is faster only where
-FFTW is vectorized and on arm64 no prebuilt build is.
+It plans per call from a cache of its own, so there is no wisdom file. The 2D
+split step built on it is measured once per grid, as below. It replaced PyFFTW,
+which is faster only where FFTW is vectorized and on arm64 no prebuilt build is.
+
+### Tuning the CPU step
+
+On CPU, a 2D split step can run in blocks sized to the processor's caches.
+Whether that is faster, and at which block size, depends on the processor,
+so it is measured: the first run on a grid times the usual step against
+blocked ones (under 1 s at 1024², 7 to 12 s at 4096² on an M3 Max) and keeps
+the answer in `cpu_blocking.json` in the cache directory. While one process
+measures, the others take the usual step and do not wait.
+
+To measure ahead of time, for example before a batch of runs:
+
+```python
+from NLSE.backends import tune_cpu_step
+
+for n in (1024, 2048, 4096):
+    print(tune_cpu_step((n, n), "complex64"))
+```
+
+Each call returns the entry it keeps: `rows` and `threads` of the blocked
+step, or `None` where the usual step was faster, with both timings; or
+`None` while another process is measuring.
+
+- After a hardware or library change, the key changes and the grid is
+  measured again. To measure again anyway, call
+  `tune_cpu_step(shape, dtype, force=True)` or set `NLSE_FORCE_TUNING=1`.
+- To never block or measure, set `NLSE_CPU_BLOCKING=0`.
+- To stop runs from measuring, set
+  `NLSE.backends.cpu_tuning.TUNE_ON_FIRST_RUN = False` before the first
+  run; unmeasured grids then take the usual step until `tune_cpu_step`
+  measures them.
+- `NUMBA_NUM_THREADS` caps the threads the blocked step uses, as it caps
+  numba's.
+- `python benchmarks/cpu_blocked_step.py` shows what the tuning gains end
+  to end on this machine.
 
 ### CUPY
 

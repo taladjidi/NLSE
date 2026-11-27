@@ -6,7 +6,7 @@ from collections.abc import Callable
 
 from ..utils import say
 from .backend import Backend
-from .cpu import CPUBackend
+from .cpu import CPUBackend, tune_cpu_step
 
 __all__ = [
     "Backend",
@@ -17,6 +17,7 @@ __all__ = [
     "get_backend",
     "get_optimal_backend",
     "list_available_backends",
+    "tune_cpu_step",
 ]
 
 # Conditional imports

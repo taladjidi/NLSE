@@ -21,7 +21,7 @@ from scipy.constants import c, epsilon_0
 CAPABILITY_METHODS = {
     "has_linear_step": ["linear_step"],
     "has_fused_split_step": ["split_step_fused"],
-    "has_nonlinear_store_callback": ["linear_nonlinear_step"],
+    "has_linear_nonlinear_step": ["linear_nonlinear_step"],
     "has_fused_rk4_rhs": ["rk4_rhs_fused"],
     "has_fused_rk4_step": ["split_step_rk4_fused"],
     "has_fused_rk4_stage_update": ["rk4_set_and_axpy", "rk4_acc_and_axpy"],

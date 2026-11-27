@@ -52,7 +52,7 @@ def test_build_fft_plan(backend) -> None:
     plans = simu._build_fft_plan(A)
     if backend == "CPU":
         assert len(plans) == 1, f"Number of plans is wrong. (Backend {backend})"
-        assert plans[0] == (-2, -1), f"Plan axes are wrong. (Backend {backend})"
+        assert plans[0].axes == (-2, -1), f"Plan axes are wrong. (Backend {backend})"
     elif backend == "CUPY" and NLSE.__CUPY_AVAILABLE__:
         assert len(plans) == 1, f"Number of plans is wrong. (Backend {backend})"
         assert isinstance(plans[0], _CuFFTPlan), (

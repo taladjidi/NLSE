@@ -7,7 +7,58 @@ import numpy.typing as npt
 from scipy import fft as scipy_fft
 
 from ..kernels import cpu as kernels_cpu
+from ..kernels.cpu_blocked import BlockedStep
+from . import cpu_tuning
 from .backend import Backend
+
+# The axes of a 2D transform, the only one the blocked step takes.
+BLOCKED_AXES = (-2, -1)
+
+# Points along an axis of the smallest grid tune_cpu_step measures.
+MIN_GRID_SIZE = 1
+
+
+class CPUPlan:
+    """What the CPU backend builds for a transform: its axes, and a blocked step.
+
+    scipy plans per call, so the axes are all the transform needs. The plan
+    also carries the way to the grid's blocked step, which is how
+    ``kernels.linear_nonlinear_step`` reaches it.
+
+    Parameters
+    ----------
+    backend : CPUBackend
+        The backend, whose unblocked step the blocked one is measured against.
+    shape : tuple
+        Array shape.
+    axes : tuple
+        Axes to transform over.
+    dtype : np.dtype
+        Array dtype.
+    """
+
+    def __init__(self, backend: Backend, shape: tuple, axes: tuple, dtype: np.dtype):
+        self.backend = backend
+        self.shape = tuple(shape)
+        self.axes = axes
+        self.dtype = np.dtype(dtype)
+
+    def blocked_step(self) -> BlockedStep | None:
+        """Return the blocked step for this grid, or None to take the unblocked one.
+
+        Returns
+        -------
+        BlockedStep or None
+            None for anything but one complex 2D field transformed over both
+            axes, and wherever ``cpu_tuning.blocked_step`` says so.
+        """
+        if (
+            len(self.shape) != len(BLOCKED_AXES)
+            or tuple(self.axes) != BLOCKED_AXES
+            or self.dtype.kind != "c"
+        ):
+            return None
+        return cpu_tuning.blocked_step(self.backend, self.shape, self.dtype)
 
 
 class CPUBackend(Backend):
@@ -35,6 +86,9 @@ class CPUBackend(Backend):
     """
 
     supports_unnormalized_ifft = True
+
+    # Taken where the grid was measured to gain from it (cpu_tuning).
+    has_linear_nonlinear_step = True
 
     @property
     def name(self) -> str:
@@ -87,13 +141,13 @@ class CPUBackend(Backend):
         Returns
         -------
         list
-            The axes, in the one-element list every backend returns.
+            A ``CPUPlan``, in the one-element list every backend returns.
         """
-        return [axes]
+        return [CPUPlan(self, shape, axes, dtype)]
 
     def fft(self, array: np.ndarray, plan: list) -> np.ndarray:
         """Transform forward, reusing the input buffer where scipy can."""
-        return scipy_fft.fftn(array, axes=plan[0], overwrite_x=True, workers=-1)
+        return scipy_fft.fftn(array, axes=plan[0].axes, overwrite_x=True, workers=-1)
 
     def ifft(self, array: np.ndarray, plan: list, normalize: bool = True) -> np.ndarray:
         """Transform back, with the 1/N left to the propagator if asked.
@@ -104,7 +158,7 @@ class CPUBackend(Backend):
         """
         return scipy_fft.ifftn(
             array,
-            axes=plan[0],
+            axes=plan[0].axes,
             overwrite_x=True,
             workers=-1,
             norm="backward" if normalize else "forward",
@@ -126,3 +180,44 @@ class CPUBackend(Backend):
     def supports_double_precision(self) -> bool:
         """CPU always supports double precision."""
         return True
+
+
+def tune_cpu_step(
+    shape: tuple, dtype: npt.DTypeLike = np.complex64, force: bool = False
+) -> dict | None:
+    """Measure whether, and how, the CPU step should be blocked on a grid.
+
+    What a run does the first time it meets a grid, callable ahead of it:
+    the unblocked step is timed against blocked ones and the fastest kept in
+    the cache directory, for every later run on this machine.
+
+    Parameters
+    ----------
+    shape : tuple
+        ``(NY, NX)`` of the field.
+    dtype : npt.DTypeLike
+        complex64 or complex128.
+    force : bool
+        Measure again even where the cache holds a fresh entry.
+
+    Returns
+    -------
+    dict or None
+        ``rows`` and ``threads`` of the blocked step, both None where the
+        unblocked one is faster; ``unblocked_ms`` and ``blocked_ms``, the
+        best per-step times; ``timestamp``. None, measuring nothing, while
+        another process tunes (it holds ``cpu_blocking.lock`` in the cache
+        directory): call again once it is done.
+
+    Raises
+    ------
+    ValueError
+        If ``shape`` is not two positive sizes or ``dtype`` not complex.
+    """
+    grid = tuple(int(n) for n in shape)
+    width = np.dtype(dtype)
+    if len(grid) != len(BLOCKED_AXES) or min(grid) < MIN_GRID_SIZE:
+        raise ValueError(f"shape must be (NY, NX), got {shape}")
+    if width not in (np.complex64, np.complex128):
+        raise ValueError(f"dtype must be complex64 or complex128, got {width}")
+    return cpu_tuning.tune(CPUBackend(), grid, width, force)

@@ -37,27 +37,121 @@ log entry of the library re-measure (`c04afd7`) and the same batch fix for
 the OpenCL loop (`fix/cl-multi-axis-batch`), and the tests that bite
 (`test/tests-that-bite`). Still open:
 
-- The CPU blocked step: spec and patches `cpu_blocked_step_spec.md`,
-  `cpu_blocked_step_T1..T5.patch` in `NLSE_tangui_fix_specs/`, regenerated
-  at `c04afd7` after the spec review blocked the first set (two threads
-  shared the scratch blocks, a forked child hung on the thread pool, the
-  cache key lacked the CPU model and the numba thread count, parallel tuners
-  timed each other, the cost of a declined step was never measured). The
-  second set is the architect's word only: not yet applied or reviewed.
-  Next: apply on `perf/cpu-blocked-step`, reviewer, timings at 1024², 2048²,
-  4096² in both dtypes on the Mac and the Ryzen
-  (`benchmarks/cpu_blocked_step.py [--double]`, machine idle), the CuPy
-  suite for the flag rename (`has_nonlinear_store_callback` becomes
-  `has_linear_nonlinear_step`), the docs (task T6 of the spec). Architect's
-  figures, M3 Max under load, one process, alternating: 4096² 1.34x
-  complex64 and 1.38x complex128, 2048² complex128 1.18x, the rest not
-  blocked; a declined step costs about 5 µs per call. Measuring on first
-  use (`TUNE_ON_FIRST_RUN`, up to 12.5 s inside the first `out_field` at
-  4096² complex128) is not confirmed by the owner.
-- GPU fixed costs and the coupled runs that leave the fused step (section 8
-  of `NLSE_tangui_fix_specs/perf_profile_cuda_box.md`): an architect is
-  measuring on the box and writing `gpu_p4_spec.md` with `gpu_p4_T<n>.patch`
-  at base `f26b694`. Nothing applied.
+- **Order set by the owner (2026-11-27), all after a `/clear`:** first the
+  GPU patches, then the thread counts per machine (both described below),
+  then the debloat. Merge each to `main` as it lands.
+- **Debloat the codebase**, third: "Clean up, make it as lean as
+  possible." Not started. Start
+  from an audit of what can be deleted, merged or split (package, tests,
+  benchmarks, examples, docs, this file), then go through the pipeline per
+  package and merge each to `main` as it lands. A cleanup must not cost step
+  time: interleaved timings at 1024², 2048², 4096² before and after. The
+  kernel modules were already audited for duplication (nothing to merge
+  there).
+- The CPU blocked step (`perf/cpu-blocked-step`): three passes in
+  `NLSE/kernels/cpu_blocked.py`, chosen per machine and grid by
+  `NLSE/backends/cpu_tuning.py` and cached in `cpu_blocking.json`; spec in
+  `NLSE_tangui_fix_specs/cpu_blocked_step_spec.md`. Reviewed twice (second
+  verdict: ship). Changed after the spec, by hand and not through an
+  implementer:
+  - The tuner ranks the blocked candidates (`_fastest`), then times the
+    first against the unblocked step window for window, taking turns
+    (`_duel`, `DUEL_ROUNDS = 5`). The best of ~30 windows against the best
+    of 3 had read 1.13x on a loaded Mac where blocking loses.
+  - `MARGIN = 0.10`. At 0.05 the tuner chose 64 rows x 16 at 1024²
+    complex128 inside the benchmark process (read 1.08x); fresh processes
+    lose 10-18% there (lossless, 2.55-2.57 against 3.01-3.04 ms a step).
+    The plain step's `fft2` at that size has two speeds in a long-lived
+    process (0.84-0.87 or 1.03-1.09 ms a transform; it flips after a tuning
+    at another size, only when interleaved with the numba kernels, and
+    stays). Why is not established. The price of 0.10: the 1.07x at 2048²
+    complex128 on the Mac is not taken.
+  - The hook's `factors` is a zero-argument callable, called only by a step
+    that is taken; a grid another process is tuning is asked for again
+    every `BUSY_RETRY` (3 s) instead of staying unblocked for the life of
+    the process; `_wait` lets every share finish before it raises. These
+    were the first reviewer's two MAJORs and one MINOR.
+  `MARGIN` and measuring on first use (`TUNE_ON_FIRST_RUN`: 0.4-0.9 s at
+  1024², 12.1-12.5 s at 4096² complex128 inside the first `out_field`) are
+  the owner's to confirm.
+  Measured, M3 Max, 16 threads, Spotlight holding one core, median ms a
+  step, `main` against the branch in fresh processes (NLSE lie with loss
+  and saturation): 4096² complex64 30.4-39.1 (two speeds) to 25.4-25.8,
+  complex128 52.3-52.5 to 40.6 (1.29x); 2048² complex128 11.66-11.80 to
+  10.92-11.04 (1.07x, not taken at `MARGIN = 0.10`); 2048² complex64 and
+  both 1024² stay unblocked. `benchmarks/cpu_blocked_step.py`, interleaved
+  in one process: 4096² 1.17x complex64 and 1.25x complex128. With a
+  second core held by a video player the gains read higher (1.10x and
+  1.27x at 2048², 1.45x and 1.53x at 4096²): the blocked step is the
+  steadier of the two under load.
+  Ryzen 3 4100 (8 threads, the benchmark, one process): complex64 1024²
+  8.26 to 7.19 (1.15x), 2048² 35.3 to 34.6 (1.02x, see below), 4096² 145.5
+  to 106.5 (1.37x); complex128 15.2 to 11.5 (1.31x), 60.3 to 44.8 (1.35x),
+  281.3 to 195.3 (1.44x); fresh processes agree. A tuning there takes
+  1.2-2.4 s at 1024², 5-9 s at 2048², 21 s and 40 s at 4096². CuPy suite on
+  the branch: 1802 passed, 68 skipped; the CuPy step did not move (6, 6 and
+  12 alternating pairs at 1024², 2048², 4096² complex64). The box ran the
+  tree at `MARGIN = 0.05`; every cell it blocked read over 1.22x, so the
+  verdicts are those of 0.10.
+  Open, tuner: at 2048² complex64 on the Ryzen one tuning in seven chose 32
+  rows, a block the size of the L2 (512 KiB), on a 1.39x reading; that
+  layout then ran at 1.02x in the same process and 27.4-36.1 ms in fresh
+  ones against 35.3-35.5 unblocked (16 rows: 1.41-1.42x, six of six).
+  Candidate fix: the smaller block among near ties. Goes with the thread
+  count package below.
+  The kernel split costs nothing (both trees' `square_mod_nl_prop`
+  interleaved, 0.996-1.004). After 20 steps the blocked field is within
+  6e-6 of the peak of the unblocked one in complex64 and 1e-14 in
+  complex128, and the branch's unblocked field equals `main`'s bit for bit
+  (arm64).
+  Left as they are (MINOR): a declined hook call costs 1.8-3.9 us a step;
+  the cache key leaves out numba's threading layer; timestamps are naive
+  local time; with an unwritable cache directory every process tunes; a
+  process that misses the cache just as the lock holder finishes tunes a
+  grid twice, and two threads of one process see each other as "another
+  process"; an interrupt inside `_wait` releases the step's lock while
+  shares still write; all candidates' scratch stays allocated while
+  tuning; the autouse fixture runs every other test unblocked. Mutants the
+  suite lets through: the row factor without its 1/N, the time not divided
+  by `STEPS`, `DUEL_ROUNDS = 1`, `THREAD_DIVISORS`, the warm-up removed.
+  Open cost: where the blocked step is taken (and on CUPY) the first step
+  of a solver builds the factors, about 0.17 s and 530 MiB transient at
+  4096², repaid in about 14 steps.
+- Thread counts per machine, not built (next package, through the
+  pipeline): on the M3 Max (12 P and 4 E cores) numba's `prange` kernels
+  are 21-34% faster on 12 threads than on 16 at 1024², 2048² and 4096² in
+  both dtypes, and the whole unblocked step on 12 against 16 threads is
+  1.18 against 1.54 ms at 1024² complex64, 2.12 against 2.40 at complex128,
+  5.85 against 5.58 at 2048² complex64, 27.8 against 26.0 at 4096²
+  complex64, 43.3 against 45.9 at 4096² complex128 (lossless, best of the
+  interleaved rounds). `fft2` alone prefers 12 at 1024² (0.404 against
+  0.533 ms complex64) and 16 at 2048² and 4096² complex64 (9.6 against
+  11.4 ms). So kernel threads and transform workers want separate counts,
+  measured by the tuner and cached with the block; the blocked step's
+  candidates (`THREAD_DIVISORS`: 16 and 8 here) should include the P-core
+  count too.
+- GPU fixed costs and the coupled runs that leave the fused step:
+  `NLSE_tangui_fix_specs/gpu_p4_spec.md` with `gpu_p4_T1..T4.patch` (base
+  `f26b694`), written and measured by an architect, nothing applied. Spec
+  review: the patches apply stacked on `main` and on the blocked step with
+  line offsets only, and pass the Mac suite (1171 passed, 137 skipped in
+  `tests/backends` and `tests/solvers`), but fix the spec first: every
+  expected count was measured at `f26b694` and is stale (re-measure on
+  `main`, on the box too, where `main`'s newer Rabi and DDGPE tests have
+  never run against T1; T4 has no OpenCL baseline); the box commands lack
+  directory and environment; no task writes the CHANGELOG and the log, and
+  `ab.py` and `calls.py` exist only in `~/Documents/nlse_scratch_scripts/p4/`
+  on the box. Minor: DDGPE takes the fused kernels for the first time and
+  the spec does not say so; the Rabi angle now comes from the double `dz`,
+  so complex64 equality to the bit is observed, not guaranteed; bare `1`
+  and `2` for the mode in `kernels.cu`; nothing fails if T4's flag is
+  reverted. The reviewer's stage-by-stage local counts are in the session
+  transcript; re-measure rather than trust them. T1 Rabi coupling in the fused step (CuPy CNLSE 2048² strang
+  8.43 to 4.55 ms, RK4 43.9 to 20.0), T2 `_energy_rates` once a call, T3
+  the propagator stays on the GPU, T4 a fused RK4 stage on OpenCL (8 to
+  13%). Left to the owner, with options in the spec: the CNLSE field
+  download and the potential grids rebuilt every call, and VkFFT
+  `tune_config` on OpenCL.
 - Tests that bite, merged. Mutation audit: 234 mutants of the package, 52
   survived the suite; 47 are now killed (`test_audit/crosscheck.py
   --survivors`, 34 by their own test files, 13 by the suite), 5 are left
