@@ -37,6 +37,8 @@ RK4_BYTES = 624  # docs/optimization-log.md, "What the machine allows"
 RK4_FLOPS_1024 = 872.0  # 4 slopes of 2 transforms (200), 6 and 12
 # A step far past the split-step limit of a 64x64 grid, 1.3e-2 m (m).
 OVERSIZED_STEP = 1.0
+# What both run lengths are made to take, so that the slope is zero (s).
+DISTURBED_RUN_SECONDS = 1.0
 # A made-up step for ceiling_shares, each share a different fraction by hand:
 # memory 100 B x 1000 / 1 GB/s = 1e-4 s, flops 5e-5 s, sin+cos+exp 2.5e-5 s,
 # dispatch 2e-5 s, each over the 2e-4 s measured.
@@ -142,6 +144,13 @@ def test_a_lowered_step_fails_the_timing(monkeypatch):
         pytest.warns(UserWarning, match="exceeds"),
         pytest.raises(RuntimeError, match="lowered the step"),
     ):
+        roofline.time_step("CPU", 64, "split_step", "lie")
+
+
+def test_a_timing_that_is_not_a_slope_fails(monkeypatch):
+    """Twice the steps in no more time is a disturbed machine, not a step time."""
+    monkeypatch.setattr(roofline, "fastest_run", lambda *run: DISTURBED_RUN_SECONDS)
+    with pytest.raises(RuntimeError, match="disturbed"):
         roofline.time_step("CPU", 64, "split_step", "lie")
 
 

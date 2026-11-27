@@ -495,8 +495,9 @@ def time_step(backend_name, n, method, splitting, steps=12):
     Raises
     ------
     RuntimeError
-        If the solver lowered the step, which the slope cannot divide out, or
-        if the path changed while the step was timed.
+        If the solver lowered the step, which the slope cannot divide out, if
+        the path changed while the step was timed, or if twice the steps took
+        no longer, which is a disturbed machine and not a step time.
     """
     simu, E = build_solver(backend_name, n)
     propagate(simu, E, WARMUP_STEPS, method, splitting)
@@ -508,7 +509,13 @@ def time_step(backend_name, n, method, splitting, steps=12):
         )
     path = step_path(simu, method)
     longer = fastest_run(simu, E, 2 * steps, method, splitting)
-    seconds = (longer - fastest_run(simu, E, steps, method, splitting)) / steps
+    shorter = fastest_run(simu, E, steps, method, splitting)
+    if longer <= shorter:
+        raise RuntimeError(
+            f"{2 * steps} steps took {longer:.3g} s and {steps} took {shorter:.3g} s "
+            f"at {n}x{n}: the timing was disturbed"
+        )
+    seconds = (longer - shorter) / steps
     if step_path(simu, method) != path:
         raise RuntimeError(f"the step left the {path} path while it was timed")
     return seconds, path
