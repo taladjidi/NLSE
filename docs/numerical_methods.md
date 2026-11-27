@@ -33,8 +33,8 @@ pass, and the two are chosen separately.
 - Error: $\mathcal{O}(\delta z^2)$
 - Cost: 1 transform pair per step, as Lie. Consecutive steps also merge their
   touching half steps into one real-space pass, except with a callback, a
-  non-local interaction, a Rabi coupling, a complex potential, or in
-  `NLSE_3d` and `DDGPE`
+  non-local interaction, a complex potential, or in `NLSE_3d` and the
+  coupled solvers (`CNLSE`, `CNLSE_1d`, `DDGPE`)
 
 **`splitting="yoshida"`**:
 
