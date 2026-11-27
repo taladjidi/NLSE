@@ -1358,11 +1358,43 @@ max|A| in complex64 and 1.4e-14 in complex128.
 full array, and `tests/solvers/test_nonlinear_in_transform.py` the factors
 against a closed form.
 
-**4096² is not at the ceiling.** The step moves 130 GB/s there, 62% of the
-peak, against 85% at 1024² and 2048². In the `ncu` table the first pass of
-each transform (`regular_fft`) takes 2.89 ms for 16.6 bytes per point, 96
-GB/s, where the same pass runs at 161 GB/s at 2048²; the last pass with its
-callback runs at 188 GB/s. Two launches a step: 5.8 of its 8.9 ms. See *Open*.
+**4096² is not at the ceiling, and the gap is inside cuFFT.** The step moves
+130 GB/s there, 62% of the peak, against 85% at 1024² and 2048². In the `ncu`
+table the first pass of each transform (`regular_fft`) takes 2.89 ms for 16.6
+bytes per point, 96 GB/s, where the same pass runs at 161 GB/s at 2048²; the
+last pass with its callback runs at 188 GB/s. Two launches a step: 5.8 of its
+8.9 ms.
+
+That pass is the transform down the columns, the strided axis, and its cost
+follows the length of a column, not the stride between its elements. Each axis
+alone, in place, complex64, ns per point (RTX 3050, CuPy 14.2.0, best of 8
+rounds of 20 transforms, `fft_axes.py`):
+
+| rows x columns | both axes | along rows | down columns |
+|---|---|---|---|
+| 1024 x 1024 | 0.173 | 0.079 | 0.095 |
+| 2048 x 2048 | 0.176 | 0.077 | 0.097 |
+| 2048 x 4096 | 0.177 | 0.077 | 0.100 |
+| 2048 x 8192 | 0.177 | 0.077 | 0.100 |
+| 4096 x 2048 | 0.238 | 0.077 | 0.161 |
+| 4096 x 4096 | 0.242 | 0.077 | 0.166 |
+| 8192 x 2048 | 0.349 | 0.077 | 0.272 |
+
+A row costs the same at every length. A column of 4096 costs 1.7 times a
+column of 2048 whether its elements are 16 or 32 KiB apart.
+
+**Rejected: padding the rows at 4096².** The same transform inside rows padded
+by 1 to 512 columns (cuFFT's advanced layout, `inembed`), so that the stride
+is no longer a power of two: 0.250 to 0.263 ns per point against 0.240
+unpadded (`fft_stride.py`). The stride was not the cause.
+
+**Rejected: a transposed layout at 4096².** Transforming rows, transposing and
+transforming rows again would replace the pass down the columns, 0.166 ns per
+point, by a pass along rows, 0.077, plus one transposing copy. That copy takes
+0.157 ns per point (`cp.copyto(out, a.T)`, `fft_transpose.py`), more than the
+0.089 it would save. Nothing in cuFFT's interface reaches the column pass
+itself.
+
 
 ## Open
 
@@ -1372,12 +1404,6 @@ complex potential adds a second, and the coupled solvers have one per component,
 and in neither case is `dphi/dy` constant, so both still freeze `|A|^2` and both
 are still first order. The coupled case is the one worth measuring first: it is
 where DDGPE lives, and DDGPE is driven and dissipative by construction.
-
-**The first transform pass at 4096² on CuPy.** `regular_fft` streams 96 GB/s
-at 4096² and 161 GB/s at 2048² (CUDA entry above), and is two thirds of the
-step. Were it as fast per byte as at 2048², the step would take about 6.5 ms
-instead of 8.7. Not explained and nothing tried: the pass that walks the grid
-across rows has a stride of 32 KiB there, a power of two.
 
 **Whether a 1D plan can be made to take a callback.** `NLSE_1d` and `CNLSE_1d`
 cannot fuse, because CuPy's one-dimensional plan path raises on the way into
