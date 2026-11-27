@@ -148,11 +148,17 @@ class TestBenchmarkBackend:
     def test_benchmark_times_what_the_transforms_return(self, monkeypatch):
         """Each transform is fed, and each trial waits on, the last result."""
         lazy = LazyBackend()
-        monkeypatch.setattr("NLSE.backends.get_backend", lambda name: lazy)
+        monkeypatch.setattr("NLSE.backends._installed_backend", lambda name: lazy)
         time_ms = benchmark.benchmark_backend("LAZY", LAZY_GRID, LAZY_TRIALS)
         assert time_ms is not None
         assert lazy.stale == 0
         assert lazy.waits >= LAZY_TRIALS
+
+    def test_benchmark_times_the_backend_it_names(self, monkeypatch):
+        """NLSE_BACKEND does not change the backend a timing is recorded under."""
+        monkeypatch.setattr("NLSE.backends._ENV_BACKEND", NOT_A_BACKEND)
+        time_ms = benchmark.benchmark_backend("CPU", LAZY_GRID, LAZY_TRIALS)
+        assert time_ms is not None, "the override replaced the CPU being timed"
 
     def test_benchmark_invalid_backend(self):
         """Test that invalid backend returns None."""

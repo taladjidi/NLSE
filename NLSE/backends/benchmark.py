@@ -71,9 +71,9 @@ def benchmark_backend(
     """
     try:
         # Import here to avoid circular dependency
-        from . import get_backend
+        from . import _installed_backend
 
-        backend = get_backend(backend_name)
+        backend = _installed_backend(backend_name)
 
         # Allocate test array (initialized to zeros)
         dtype = np.dtype(np.complex64)

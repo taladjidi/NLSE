@@ -4,6 +4,7 @@ import importlib
 from unittest.mock import Mock
 
 import NLSE.backends as backends
+import pytest
 from NLSE import NLSE
 from NLSE.backends import benchmark, list_available_backends
 
@@ -109,6 +110,14 @@ class TestEnvironmentVariables:
         finally:
             monkeypatch.delenv("NLSE_BACKEND")
             importlib.reload(backends)
+
+    def test_env_backend_not_installed_falls_back_once(self, monkeypatch):
+        """NLSE_BACKEND naming a missing backend falls back, not recurses."""
+        monkeypatch.setattr(backends, "_ENV_BACKEND", "CUPY")
+        monkeypatch.setattr(backends, "_CUPY_AVAILABLE", False)
+        with pytest.warns(UserWarning, match="CUPY backend is not installed"):
+            backend = backends.get_backend("CPU", (N, N))
+        assert backend.name == backends.backends_by_speed((N, N))[0]
 
     def test_env_force_benchmark(self, monkeypatch):
         """NLSE_FORCE_BENCHMARK=1 measures again although a cache fits."""
