@@ -72,7 +72,8 @@ where
   $\omega_{LP} = \frac{\omega_X + \omega_C}{2}
   - \frac{1}{2}\sqrt{(\omega_X - \omega_C)^2 + \Omega^2}$ the lower polariton
 - $\Omega$ is `omega`, the Rabi coupling
-- $g$ and $g_{12}$ are `g` and `g12`; $\gamma$ is `gamma`, the loss of both fields
+- $g$ and $g_{12}$ are `g` and `g12`; $\gamma$ is the loss: `gamma` the exciton's,
+  `gamma2` the cavity's (an alias of `alpha2`), both starting at the constructor's `gamma`
 - $V$ is the potential, on both fields
 - $s = 1/(1 + |\psi_X|^2/I_\text{sat} + |\psi_C|^2/I_\text{sat})$, 1 by default
 - $F_p$ is the pump, applied by the `laser_excitation` argument of `out_field`

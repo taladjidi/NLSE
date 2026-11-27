@@ -63,6 +63,27 @@ come first.
   Rabi coupling or a complex potential never merged and were right. The
   coupled solvers no longer merge, so such a run does one more real-space
   pass per step and still one transform pair.
+- **An RK4 run ignores `splitting`.** Given `splitting="strang"`, no callback
+  and a real potential, the fast loop bracketed the RK4 steps with the merged
+  split step's opening and closing half nonlinear steps, which nothing
+  closes: the field differed from the same run under `splitting="lie"`.
+  4.1.0 does it too. An RK4 run is no longer warned about a splitting it does
+  not use either.
+- **The second component's loss counts wherever the first's does.** The step
+  ceiling (`alpha2`, DDGPE's `gamma2`), RK4's stability bound and the
+  "Yoshida with loss" warning read `alpha` alone. A `CNLSE` lossy on its
+  second component stepped past the ceiling (4% off the closed-form decay
+  where the capped run is 0.2% off), and its RK4 bound was about 550 times
+  looser than with the same loss on the first.
+- **`adapt_delta_z` returns a step everywhere.** Past the medium, or with no
+  interaction, the peak phase rate is zero and the callback divided by it;
+  it now keeps the step in force. It also never asks for a step past the
+  split-step limit (it asked for 8.6e-5 m where a lossy medium is solved to
+  2.5e-5 m), and in the coupled solvers it counts the cross coupling.
+- **DDGPE's cavity loss stops at the end of the medium**, like the exciton's:
+  it kept damping to the end of the run. See "Changed" for `alpha2`.
+- **GPE leaves a saturation array alone.** A `sat` array passed to the
+  constructor was rescaled in place, so the caller's array changed.
 - **`backend="auto"` times MLX's transform.** The backend benchmark waited on
   the array it had passed in, and MLX's transforms are lazy and return a new
   one, so MLX was timed computing nothing (under 0.01 ms for a 2048²
@@ -138,6 +159,14 @@ come first.
 
 ### Changed
 
+- **`DDGPE.gamma2` and `DDGPE.alpha2` are one value, the cavity loss.**
+  `alpha2` was inherited from `CNLSE` and read by nothing; setting it now
+  sets the cavity loss, and the cavity noise of `add_noise` stops past `T`
+  with it.
+- **`adapt_delta_z` may return a smaller step than before**, in a lossy or
+  dispersive medium where the split-step limit is the tighter, and in a
+  coupled run with `n12`. Each call now costs about one step (it measures
+  the rates the limit needs, one transform).
 - **Backend benchmark caches are measured again, once.** The CuPy timing now
   waits on the stream instead of copying the result to the host, so a cached
   timing no longer compares with a new one; `CACHE_VERSION` 3 discards it.
