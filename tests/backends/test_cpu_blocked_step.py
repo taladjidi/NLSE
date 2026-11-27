@@ -1,12 +1,4 @@
-"""The CPU's blocked split step, the gate to it, and the cache of its tuning.
-
-The step is checked against the unblocked one in complex128 and against two
-closed forms; the gate against every call it must decline; the cache against
-entries for another key and against corrupt files and locks; the step against
-two threads and a fork. Each test names the mistake it is there to catch.
-Nothing here times anything: the measurement is replaced by ``fixed_entry``
-wherever it is not the subject.
-"""
+"""The CPU's blocked split step, the gate to it, and the cache of its tuning."""
 
 import json
 import mmap
@@ -141,11 +133,7 @@ NONLINEAR = {
 @pytest.mark.parametrize("split", SPLITS, ids=[f"{r}x{t}" for r, t in SPLITS])
 @pytest.mark.parametrize("case", sorted(NONLINEAR))
 def test_the_blocked_step_is_the_unblocked_step(dtype, split, case):
-    """Every element, to the rounding of its width, at every block and share.
-
-    Catches a block skipped, a boundary off by one, the factors swapped or
-    one left out, the 1/N applied twice, and the nonlinear step missed.
-    """
+    """Blocked and unblocked steps agree to rounding at every block and share."""
     potential, nonlinear = NONLINEAR[case]
     field, rows, columns, V = problem(dtype, potential)
     expected = unblocked_step(field, rows, columns, V, nonlinear)
@@ -157,12 +145,7 @@ def test_the_blocked_step_is_the_unblocked_step(dtype, split, case):
 
 
 def test_a_plane_wave_turns_by_its_factors_and_its_intensity():
-    """One Fourier mode in, the same mode out, at the closed form's amplitude.
-
-    ``c e^{2 pi i (p y / NY + q x / NX)}`` is multiplied by
-    ``N rows[p] columns[q]`` and then turned by ``dz g |A|^2``: catches the
-    factors read at the wrong index.
-    """
+    """A Fourier mode comes out the same mode, at the closed form's amplitude."""
     rng = np.random.default_rng(1)
     p, q = 5, 3
     y, x = np.mgrid[:NY, :NX]
@@ -286,12 +269,7 @@ def declined_arguments(case):
     ],
 )
 def test_the_hook_declines_and_leaves_the_field(case):
-    """False, with A as it was, for each call the blocked step cannot take.
-
-    Catches the gate taking a batch, a broadcast potential, constants per
-    member, a field it would read with the wrong strides, a grid whose
-    factors do not fit, or a field of another grid than the step's.
-    """
+    """The hook declines, leaving A as it was, when the blocked step cannot run."""
     A, plan, V, alpha, factors = declined_arguments(case)
     before = A.copy()
     taken = kernels.linear_nonlinear_step(
@@ -490,11 +468,7 @@ OTHER_KEYS = {
 
 @pytest.mark.parametrize("other", sorted(OTHER_KEYS))
 def test_an_entry_for_another_key_is_not_read(blocking, other):
-    """Measured, and the other entry kept beside the new one.
-
-    Catches a key missing the grid, the dtype, the thread count, the
-    processor or a library release, and a write that drops the other entries.
-    """
+    """An entry under another key is kept, and the grid is measured anew."""
     others = key_of(**OTHER_KEYS[other])
     assert others != key_of()
     write_cache(cached(entry_with(rows=None, threads=None), others))
@@ -582,11 +556,7 @@ def test_while_another_process_tunes_this_one_runs_unblocked(blocking):
 
 
 def test_a_grid_another_process_was_tuning_is_asked_for_again(blocking):
-    """Unblocked until BUSY_RETRY has passed, then settled: not unblocked for good.
-
-    Catches a process that met a lock at its first step never blocking, and
-    one that reads the cache and the lock at every step meanwhile.
-    """
+    """A grid tuned elsewhere runs unblocked until BUSY_RETRY, then settles."""
     lock_file().touch()
     assert settle() is None
     lock_file().unlink()
@@ -645,11 +615,7 @@ def test_a_stale_lock_is_taken_over(blocking):
 def test_an_unwritable_cache_warns_and_measures(
     blocking, monkeypatch, tmp_path, capsys
 ):
-    """Measured all the same, with a warning naming NLSE_CACHE_DIR.
-
-    Catches every process re-tuning without a word, and the directory's
-    failure reported as a corrupt cache.
-    """
+    """An unwritable cache warns, naming NLSE_CACHE_DIR; the grid is still tuned."""
     blocker = tmp_path / "a file"
     blocker.write_text("")
     monkeypatch.setenv("NLSE_CACHE_DIR", str(blocker / "cache"))
@@ -743,11 +709,7 @@ def recorded_time(order, run, arguments):
 
 
 def test_the_duel_times_both_runs_as_often_and_in_turn(monkeypatch):
-    """DUEL_ROUNDS windows each, the one going first changing every round.
-
-    Catches many windows of one run read against a few of the other, and one
-    of them always timed on the warmer machine.
-    """
+    """The duel times each side DUEL_ROUNDS times, alternating who goes first."""
     order = []
     monkeypatch.setattr(cpu_tuning, "_time_per_step", partial(recorded_time, order))
     cpu_tuning._duel(("plain", ()), ("blocked", ()))
@@ -901,11 +863,7 @@ def child_steps(expected):
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="no fork on this platform")
 @pytest.mark.filterwarnings("ignore:This process")  # fork of a threaded process
 def test_a_child_forked_mid_step_steps_blocked(blocking):
-    """Forked while a thread is inside the settled step, its pool started.
-
-    Catches the child waiting on the parent's held lock, or on a pool whose
-    threads it did not inherit.
-    """
+    """A child forked while a thread is mid-step still steps blocked."""
     expected = run("NLSE", np.complex64, "lie")
     if openmp_vendor() == "GNU":
         # https://numba.readthedocs.io/en/stable/user/threading-layer.html
@@ -950,11 +908,7 @@ def linear_solver(**overrides):
 
 @pytest.mark.filterwarnings("ignore:delta_z=")  # the default step, capped
 def test_a_blocked_gaussian_beam_diffracts_as_theory_says(blocking):
-    """``w(z) = w0 sqrt(2)`` at one Rayleigh length, as in tests/physics/.
-
-    Catches the propagator applied along the wrong axis or with the wrong
-    sign, which the step-for-step comparison would share with the reference.
-    """
+    """A blocked Gaussian beam has ``w = w0 sqrt(2)`` at one Rayleigh length."""
     simu = linear_solver()
     field = np.exp(-(simu.XX**2 + simu.YY**2) / PHYSICAL_WAIST**2)
     z_rayleigh = simu.k * PHYSICAL_WAIST**2 / 2

@@ -1,23 +1,4 @@
-"""The non-local response, against the closed form of a diffusive non-locality.
-
-The interaction reads the intensity smoothed by the Green function of a
-diffusion equation. On a periodic grid that is a multiplication by
-``R(K) = 1 / (1 + l^2 K^2)`` in Fourier space, so two answers are known
-without running anything else:
-
-- a uniform intensity has only ``K = 0``, where ``R = 1``: the non-local phase
-  is the local one, the same at every point;
-- ``I = I0 (1 + eps cos(q x))`` is smoothed to ``I0 (1 + eps R(q) cos(q x))``,
-  so the modulation of the nonlinear phase shrinks by exactly ``R(q)``.
-
-Both integrators are checked, as the rate of nonlinear phase each one puts on
-the field: the split step's nonlinear step, and RK4's right-hand side with the
-dispersion left out. They reach the response through different call sites.
-
-The grids have ``NX != NY`` and ``delta_X != delta_Y`` on purpose, so a length
-measured in the wrong axis's cells, or in cells at all, shows up as a wrong
-factor along one of the two axes.
-"""
+"""The non-local response, against the closed form of a diffusive non-locality."""
 
 import numpy as np
 import pytest
@@ -51,10 +32,6 @@ def to_host(simu, array):
 
 def nonlinear_phase(simu, field, method):
     """Return the nonlinear phase one integrator puts on a real field over DZ.
-
-    The split step returns the phase of one nonlinear step of length DZ. RK4
-    returns ``DZ Im(f / A)``, f its right-hand side with a zero propagator:
-    the same phase, to first order, read off the rate.
 
     Parameters
     ----------

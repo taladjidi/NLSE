@@ -1,12 +1,4 @@
-"""The Rabi coupling, under every splitting and RK4.
-
-Two components coupled by ``i dA1/dz = (omega / 2) A2`` and its mirror
-exchange their power as ``P2 / P1 = tan(omega z / 2)**2`` when nothing else
-acts. With dispersion that differs between the components, a plane wave stays
-a plane wave and its two amplitudes follow ``expm(-i z H)``, H the 2x2 matrix
-of the two dispersions and the coupling: a closed form each method has to
-converge to at its own order.
-"""
+"""The Rabi coupling, under every splitting and RK4."""
 
 import warnings
 
@@ -193,11 +185,7 @@ def cnlse_reference(simu, mode):
 
 @pytest.mark.parametrize("splitting, method", METHODS)
 def test_coupled_order_against_closed_form(backend, splitting, method):
-    """Halving the step divides the error by 2**order.
-
-    The components get different wavenumbers, so their dispersions differ and
-    do not commute with the coupling: that is the splitting error measured.
-    """
+    """Halving the step divides the error by 2**order."""
     name = "RK4" if method == "RK4" else splitting
     errors = []
     for steps in STEPS[name]:
@@ -244,14 +232,7 @@ def test_ddgpe_order_against_closed_form(backend, splitting):
 
 
 def test_the_lower_polariton_is_at_rest_in_the_pump_frame(backend):
-    """At zero detuning the pump turns at the lower polariton's frequency.
-
-    With equal exciton and cavity energies W that frequency is
-    ``W - omega / 2``, its mode ``(1, -1) / sqrt(2)``, uniform. In the frame
-    of the pump such a field must not move. The order tests above detune by
-    omega / 2 and take the frame from ``simu.omega_pump``, so they agree with
-    any value of it.
-    """
+    """At zero detuning the pump turns at the lower polariton's frequency."""
     simu = ddgpe(backend, detuning=0.0)
     mode = plane_wave(simu.NX, 0)
     field = (np.stack([mode, -mode]) / np.sqrt(2)).astype(field_dtype(simu))

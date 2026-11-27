@@ -1,13 +1,4 @@
-"""Tests that the rates reduced on the device are the rates.
-
-The step comes from these, and the host version is what every step size in the
-project was tuned against, so the device one has to agree with it rather than
-merely look plausible: a rate wrong by a factor would change the step and
-nothing would fail, it would just integrate something else.
-
-The host path is kept for that reason -- it is the reference these are checked
-against, and the fallback wherever the device one cannot apply.
-"""
+"""Tests that the rates reduced on the device are the rates."""
 
 import numpy as np
 import pytest
@@ -85,12 +76,7 @@ def test_the_device_rates_are_the_host_rates(backend_name, cls, kind):
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_the_device_path_leaves_the_field_alone(backend_name):
-    """It transforms a copy: the transform is in place and the field is live.
-
-    The rates are read partway through a propagation, so a transform applied
-    to the field itself would leave the run in the Fourier domain and produce
-    no error at all -- just a different answer.
-    """
+    """The device path transforms a copy and leaves the field alone."""
     solver, field = prepared(NLSE, backend_name)
     before = np.asarray(solver._backend.to_numpy(field)).copy()
     NLSE._energy_rates_on_device(solver, field)
@@ -100,11 +86,7 @@ def test_the_device_path_leaves_the_field_alone(backend_name):
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_a_batched_parameter_takes_the_host_path(backend_name):
-    """The device path indexes one shape, so a value per simulation declines.
-
-    Only CUPY broadcasts a batched parameter natively and pyopencl does not
-    broadcast at all, so this is a correctness gate rather than a preference.
-    """
+    """A batched parameter takes the host path."""
     solver, field = prepared(NLSE, backend_name)
     assert solver._can_rate_on_device(field)
     solver._g = np.array([1.0, 2.0, 3.0])

@@ -1,12 +1,4 @@
-"""Tests for the pre-normalized propagator used by the fused linear step.
-
-CUPY and CL absorb the inverse-FFT 1/N into a separate ``_propagator_fft``
-array, and their fused kernels read it in preference to ``propagator``. Any
-code path that rebuilds ``propagator`` therefore has to refresh
-``_propagator_fft`` too, or the linear step keeps using the old one.
-
-These only exercise a real code path on CUPY/CL, so they skip elsewhere.
-"""
+"""Tests for the pre-normalized propagator used by the fused linear step."""
 
 import numpy as np
 import pytest
@@ -37,13 +29,7 @@ def to_numpy(simu, array):
 
 
 def record_propagators(simu, A, z, i, seen):
-    """Keep the twin, the propagator and the step in force as the run holds them.
-
-    All three are run state, cleared when out_field returns, so a callback
-    reads them while the run is still going. Each call overwrites the last.
-    The step is the one in force, which the propagator is built from: after
-    a cut last step _current_delta_z holds the shorter one.
-    """
+    """Keep the twin, the propagator and the step in force as the run holds them."""
     seen[:] = [
         to_numpy(simu, simu._propagator_fft),
         to_numpy(simu, simu.propagator),
@@ -84,14 +70,7 @@ class TestPropagatorFFTRefresh:
         )
 
     def test_refreshed_when_step_limiter_clamps_delta_z(self, backend):
-        """A clamped delta_z must refresh _propagator_fft, not just propagator.
-
-        _enforce_step_limit rebuilds propagator when it reduces delta_z, but
-        runs after _precompute_step_constants has already derived
-        _propagator_fft. Without an explicit refresh the fused linear step
-        would advance by the pre-clamp dz while the nonlinear step used the
-        clamped one.
-        """
+        """A clamped delta_z must refresh _propagator_fft, not just propagator."""
         simu = make_solver(backend)
         # 1000x a reasonable step reliably exceeds the split-step accuracy
         # limit. Keep z tied to the reasonable one, not to the inflated one,
@@ -139,11 +118,7 @@ class TestPropagatorFFTRefresh:
         )
 
     def test_clamped_run_matches_cpu(self, backend):
-        """A clamped run must agree with the CPU reference.
-
-        This is the end-to-end version: if _propagator_fft were stale, the
-        GPU linear step would use a different dz from the CPU one.
-        """
+        """A clamped run must agree with the CPU reference."""
         reference = make_solver("CPU")
         E = np.exp(-(reference.XX**2 + reference.YY**2) / waist**2).astype(
             PRECISION_COMPLEX

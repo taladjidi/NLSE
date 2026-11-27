@@ -1,12 +1,4 @@
-"""What drives a DDGPE run: its noise, its lasers, and the callbacks it takes.
-
-The noise is a Wiener increment, so the intensity it adds per unit time is a
-constant of the physics, ``noise**2 * gamma / (2 dX dY)`` per component, and
-must not depend on the step. A temporal drive profile holds one sample per
-asked step, ``F[j]`` acting during ``[j dt, (j + 1) dt)``, and each step takes
-the sample at its midpoint: with no coupling and no dispersion, the cavity
-field is exactly ``-i F0`` times the integral of that piecewise-constant drive.
-"""
+"""What drives a DDGPE run: its noise, its lasers, and the callbacks it takes."""
 
 import warnings
 
@@ -185,13 +177,7 @@ def step_up(simu, A, t, i, factor):
 
 
 def test_default_step_is_the_drive_step(backend):
-    """With no step asked, the profile is sampled by the solver's default.
-
-    The default is T / DEFAULT_MIN_STEPS here (no potential, no interaction),
-    and a callback triples it after the first step: the remaining steps span
-    [1, 4), [4, 7) and [7, 10) defaults, so with F[j] = j they take samples
-    2, 5 and 8.
-    """
+    """With no step asked, the profile is sampled by the solver's default."""
     simu = pump_solver(backend)
     default = T / DEFAULT_MIN_STEPS
     profile = np.arange(DEFAULT_MIN_STEPS, dtype=float)

@@ -1,13 +1,4 @@
-"""Naming a backend is a preference; naming a wrong one is a typo.
-
-A backend decides how a run goes, not what it computes, so a script that asks
-for one that is not installed here is answered with the fastest one that is.
-Every example in this repository names a backend, and most name CUPY, which
-means the alternative is that most of them fail everywhere but one machine.
-
-A name that is not a backend at all still raises: that is a typo, and guessing
-at it would hide it.
-"""
+"""Naming a backend is a preference; naming a wrong one is a typo."""
 
 import warnings
 
@@ -36,12 +27,7 @@ def test_an_uninstalled_backend_falls_back_and_says_so(name):
 
 @pytest.mark.skipif(not MISSING, reason="every backend is installed here")
 def test_the_fallback_is_the_fastest_available():
-    """Falling back to the slowest would be a poor way to keep a promise.
-
-    Self-consistent on purpose -- it pins the fallback to the ranking. What the
-    ranking itself has to get right is below, because this passes either way:
-    when the ranking opened with CPU, so did the fallback, and this agreed.
-    """
+    """The fallback is the fastest available backend, in the ranking's order."""
     with pytest.warns(UserWarning):
         backend = get_backend(MISSING[0], grid_size=(64, 64))
     assert backend.name == backends_by_speed((64, 64))[0]
@@ -60,13 +46,7 @@ def unmeasured(monkeypatch):
 
 @pytest.mark.skipif(not DEVICES, reason="no device backend installed here")
 def test_the_host_is_ranked_last_when_nothing_is_measured(unmeasured):
-    """A device backend outranks the host, measurement or none.
-
-    The bug this is here for: the ranking used to be the availability list,
-    which opens with CPU, so a fallback with no cache to read landed on the
-    host -- on a CUDA box, asking for MLX ran on the CPU past two device
-    backends that were installed and faster.
-    """
+    """A device backend outranks the host, measurement or none."""
     ranked = backends_by_speed((64, 64))
     assert ranked[-1] == "CPU", (
         f"the host should be the last resort, and this ranking is {ranked}"
@@ -75,11 +55,7 @@ def test_the_host_is_ranked_last_when_nothing_is_measured(unmeasured):
 
 @pytest.mark.skipif(not DEVICES, reason="no device backend installed here")
 def test_an_untimed_device_is_not_stranded_behind_a_timed_host(monkeypatch):
-    """A half-filled cache must not rank the host above an untimed device.
-
-    Backends the cache has no time for sort together, and whatever breaks that
-    tie decides the fallback. Left to the availability list it was the host.
-    """
+    """A half-filled cache must not rank the host above an untimed device."""
     monkeypatch.setattr(
         "NLSE.backends.benchmark.load_benchmark_cache",
         lambda *args, **kwargs: {

@@ -1,10 +1,4 @@
-"""A run gives back the arrays it was given, and refuses a bad field plainly.
-
-A device run sent ``V`` at the field's width and converted that copy back, so
-a float64 potential came back as a float32 copy; a batched parameter came
-back the same way. A field of the wrong type or shape failed on a bare
-``assert``, which ``python -O`` removes.
-"""
+"""A run gives back the arrays it was given, and refuses a bad field plainly."""
 
 import numpy as np
 import pytest

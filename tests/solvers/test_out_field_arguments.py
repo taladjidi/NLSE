@@ -1,12 +1,4 @@
-"""What out_field accepts for its step and its callbacks.
-
-A complex delta_z (imaginary time) was documented and crashed deep in the step
-limits, the propagator cache or the kernels; it is now refused up front. A list
-of callbacks with callback_args left at its default raised from zip(strict=True)
-although a single callback runs with it. A zero step with a callback never
-returned, and a NaN one returned the input; both are refused, from out_field
-and from a callback.
-"""
+"""What out_field accepts for its step and its callbacks."""
 
 import math
 from unittest import mock

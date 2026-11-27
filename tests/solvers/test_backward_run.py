@@ -1,11 +1,4 @@
-"""A negative delta_z propagates backwards over the whole of z.
-
-The last, partial step of a backward run used to go forward, so a forward run
-followed by a backward one did not return the input unless the step divided z.
-Checked against the closed form of a linear medium, where propagation is the
-unitary exp(-i K^2 z / 2k) and a backward run over the same z is its exact
-inverse, for every splitting and RK4.
-"""
+"""A negative delta_z propagates backwards over the whole of z."""
 
 import warnings
 
@@ -152,12 +145,7 @@ def step_history(backend, delta_z, callback, args):
 
 
 def assert_mirrors_the_forward_run(backend, callback, args):
-    """Check that a backward run takes the forward run's steps, negated.
-
-    From a real field, the backward solution is the complex conjugate of the
-    forward one, so a callback that reads |A| or a norm sees the same values
-    and must ask for the same step sizes.
-    """
+    """Check that a backward run takes the forward run's steps, negated."""
     forward = step_history(backend, STEP, callback, args)
     backward = step_history(backend, -STEP, callback, args)
     name = callback.__name__

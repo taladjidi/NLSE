@@ -1,15 +1,4 @@
-"""The documentation must not claim things the code does not do.
-
-`test_docs.py` runs the self-contained code blocks, which catches a doc whose
-*example* stopped working. It does not catch prose, and prose is where the
-documentation had drifted furthest: a capability table said broadcasting was
-CUPY-only four paragraphs below a section describing how CPU and OpenCL do it,
-and both had been served to readers.
-
-So the checkable claims are checked here. Not every sentence can be, but names,
-keywords, capabilities and quoted constants can, and those are what go stale
-when the code moves under them.
-"""
+"""The documentation must not claim things the code does not do."""
 
 import inspect
 import pathlib
@@ -79,11 +68,7 @@ def test_imported_symbols_exist(page):
 
 @pytest.mark.parametrize("page", PAGES, ids=IDS)
 def test_out_field_keywords_exist(page):
-    """A keyword shown in a call has to be one `out_field` takes.
-
-    Except on the migration guide, whose left-hand column is keywords it no
-    longer takes. Kept honest by the test below.
-    """
+    """A keyword shown in a call has to be one `out_field` takes."""
     if page.name == "migration.md":
         pytest.skip("shows removed keywords on purpose; see the test below")
     allowed = set(inspect.signature(NLSE.out_field).parameters)
@@ -111,12 +96,7 @@ def test_named_splittings_and_methods_are_real(page):
 
 @pytest.mark.parametrize("page", PAGES, ids=IDS)
 def test_named_backends_are_real(page):
-    """A page naming a backend must name one that exists.
-
-    The migration guide is the exception, and has to be: it exists to show
-    the names that stopped working beside the ones that replaced them. The
-    test below keeps that exemption honest.
-    """
+    """A page naming a backend must name one that exists."""
     if page.name == "migration.md":
         pytest.skip("names dead backends on purpose; see the test below")
     text = page.read_text(encoding="utf-8")
@@ -202,11 +182,7 @@ def test_the_capability_table_matches_the_backends():
 
 @pytest.mark.parametrize("feature", CLAIMED_BY_ALL)
 def test_every_backend_is_claimed_to_have(feature):
-    """Each works on all four; the table once said Broadcasting was CUPY's only.
-
-    Non-locality is held to it by
-    tests/integration/test_nonlocality.py::test_a_non_local_run_stays_on_the_backend_asked_for.
-    """
+    """docs/backends.md marks each of these features yes for every backend."""
     table = (ROOT / "docs" / "backends.md").read_text(encoding="utf-8")
     row = re.search(rf"^\| {feature} \|([^\n]+)\|$", table, re.M)
     assert row, f"no {feature} row in the capability table"
@@ -230,18 +206,7 @@ def test_the_splitting_table_matches_the_code():
 
 
 def test_the_documented_version_is_the_real_one():
-    """A version quoted on a page goes stale the moment one is released.
-
-    index.md tells the reader which version the site documents, because the
-    site is built from main and describes code they may not have installed.
-    It is prose, so nothing but this stops it naming an old release forever.
-
-    migration.md is held to a weaker rule on purpose. It documents one
-    transition, and the pair of versions it names is a property of that
-    transition rather than of the current release: a minor version with
-    nothing to migrate does not earn a section there, and demanding it name
-    the current version would force a fictional one.
-    """
+    """The version index.md names is the package's real version."""
     from NLSE import __version__
 
     allowed = {__version__, PREVIOUS_RELEASE, MIGRATION_FROM, MIGRATION_TO}

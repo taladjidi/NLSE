@@ -1,10 +1,4 @@
-"""The default step follows the potential of the run that takes it.
-
-The step estimate keeps the potential's grids where the field is, under a key
-that names the grid and not the potential. A second run with another ``V``
-took the step the first one's allowed: 2.4e-6 m where a solver that had never
-seen the first potential took 1.7e-4 m.
-"""
+"""The default step follows the potential of the run that takes it."""
 
 import numpy as np
 import pytest

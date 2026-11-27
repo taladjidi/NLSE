@@ -1,12 +1,4 @@
-"""Where the nonlinear step may run inside the linear step, and the rest.
-
-CUPY runs the nonlinear step as cuFFT stores the inverse transform's output,
-and CPU in the last of its blocked passes. Which runs ask for it is decided in
-the solver, from a backend flag, so it is checked here on CPU with the flag
-set by hand and the kernel replaced; the callback itself is checked on a CUDA
-machine, in tests/backends/test_fft_propagator_fusion.py, and the blocked
-step in tests/backends/test_cpu_blocked_step.py.
-"""
+"""Where the nonlinear step may run inside the linear step's transforms."""
 
 from functools import partial
 
@@ -82,11 +74,7 @@ def flagged(monkeypatch, simu):
     ids=["NLSE", "GPE", "1D", "nonlocal"],
 )
 def test_the_gate(monkeypatch, cls, overrides, expected):
-    """2D and local only, and only where the backend says it can.
-
-    cuFFT links callbacks into 2D plans, and a non-local response smooths the
-    intensity between the transform and the step.
-    """
+    """Only a 2D local run on a capable backend steps inside the transform."""
     simu = flagged(monkeypatch, make(cls, "CPU", n=N, **overrides))
     assert simu._fuses_nonlinear_into_transform() is expected
 
@@ -116,11 +104,7 @@ def step_once(simu, V):
     "V", [None, np.ones((N, N), np.float32)], ids=["no V", "real V"]
 )
 def test_the_callback_is_handed_the_step_owed(monkeypatch, V):
-    """Each argument is the one the solver's own two steps would have used.
-
-    The propagator is the one carrying 1/N, because the callback's inverse
-    transform does not normalize.
-    """
+    """Each argument is the one the solver's own two steps would have used."""
     simu = flagged(monkeypatch, make(NLSE, "CPU", n=N))
     simu.propagator = np.ones((N, N), np.complex64)
     simu._update_propagator_fft()
@@ -193,9 +177,6 @@ def exact(simu, delta_z):
 def tolerance(simu, dtype, delta_z):
     """Return how far factors may sit from the twin they stand for.
 
-    ROUNDINGS eps of the 1/N every element has, and the twin's exponential
-    is of an argument rounded to the field's width, which adds its phase.
-
     Parameters
     ----------
     simu : NLSE
@@ -264,11 +245,7 @@ def sub_steps(splitting, steps):
 def test_each_step_is_offered_the_factors_of_its_propagator(
     monkeypatch, splitting, shape
 ):
-    """Every call, partial step and Yoshida sub-step alike, gets its own.
-
-    The factors must stand for the twin the call is handed, over every field
-    of a batch, and for the propagator of the step it takes.
-    """
+    """Each step, partial or Yoshida sub-step, gets its own propagator's factors."""
     simu = flagged(monkeypatch, make(NLSE, "CPU", n=N, NY=NY))
     records = asked(monkeypatch, simu, accepts=False)
     simu.out_field(
@@ -380,11 +357,7 @@ def trial_steps(simu, A, A_sq, plans):
     ids=["yoshida", "partial step", "trial"],
 )
 def test_a_step_on_its_own_propagator_puts_the_origin_back(monkeypatch, detour):
-    """After one, the run's own twin is offered its factors again.
-
-    Each swaps the propagator, its twin and the twin's origin, and the steps
-    taken in between are each offered factors of their own.
-    """
+    """After a step on its own propagator the run's twin gets its factors again."""
     simu = flagged(monkeypatch, make(NLSE, "CPU", n=N, NY=NY))
     simu.propagator = simu._build_propagator(np.complex64, DELTA_Z)
     simu._send_propagator_to_gpu()
@@ -524,11 +497,7 @@ def test_without_a_known_origin_no_factors_are_offered(monkeypatch, cls, setup):
 
 
 def test_the_factors_are_of_the_propagator_not_of_the_step(monkeypatch):
-    """A propagator built for one step and used for another keeps its own.
-
-    The kernel reads the twin, so the factors must describe it whatever the
-    step the caller says it is taking.
-    """
+    """A propagator built for one step and used for another keeps its own."""
     simu = flagged(monkeypatch, make(NLSE, "CPU", n=N, NY=NY))
     simu.propagator = simu._build_propagator(np.complex64, OTHER_STEP)
     simu._send_propagator_to_gpu()

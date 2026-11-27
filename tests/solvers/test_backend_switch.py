@@ -1,12 +1,4 @@
-"""Switching a solver's backend keeps nothing the old one built.
-
-The setter used to swap the backend alone. The propagators and dispersion
-operators a run caches are arrays of the backend that built them, so MLX to
-CPU raised in the CPU kernels, and CPU to MLX propagated with a propagator
-built on the host instead of the one MLX builds. The RK4 scratch buffers
-outlived a switch the same way, and CNLSE's scaled second potential outlived
-the run itself.
-"""
+"""Switching a solver's backend keeps nothing the old one built."""
 
 import numpy as np
 import pytest

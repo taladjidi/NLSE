@@ -1,8 +1,4 @@
-"""Cross-backend correctness tests.
-
-CPU is the reference backend. All other backends are compared against it.
-Also validates CPU backend internals (FFT plans, propagator, conservation laws).
-"""
+"""Cross-backend correctness tests."""
 
 import matplotlib
 from helpers import AVAILABLE_BACKENDS
@@ -172,11 +168,7 @@ CNLSE_VS_CPU = {
 @pytest.mark.parametrize("backend", GPU_BACKENDS)
 @pytest.mark.parametrize("case", sorted(CNLSE_VS_CPU))
 def test_cnlse_matches_the_cpu(backend, case):
-    """CNLSE on each backend matches the CPU reference.
-
-    A complex128 propagator under a complex64 field reads back NaN on the GPU
-    kernels, hence the NaN check before the comparison.
-    """
+    """CNLSE on each backend matches the CPU reference."""
     overrides, run, with_V = CNLSE_VS_CPU[case]
     if with_V:
         overrides = {**overrides, "V": bump(S)}
@@ -329,13 +321,7 @@ class TestNLSEPropagator:
         assert prop1 is prop2  # same object from cache
 
     def test_propagator_double_precision(self):
-        """Double precision propagator has complex128 dtype.
-
-        This one really is about the dtype asked for, unlike the split-step
-        tests nearby, which passed complex128 here and a complex64 field to
-        the kernel: splitting="strang" is the order of the splitting, not the
-        width of anything.
-        """
+        """Double precision propagator has complex128 dtype."""
         simu = make_nlse("CPU", n=S)
         prop = as_numpy(simu, simu._build_propagator(np.complex128, DZ_TEST))
         assert prop.dtype == np.complex128
@@ -639,15 +625,6 @@ RK4_SOLVERS = {
 def test_rk4_agrees_with_the_cpu(solver_name, backend_name):
     """RK4 must integrate the same equation on every backend.
 
-    Nothing compared RK4 across backends for the coupled 1d solver, and the
-    fused-path tests skip MLX for RK4, so CNLSE_1d on MLX ran 5% away from the
-    CPU without anything noticing. The cause was a shape test: the whole-step
-    fused kernel is for a single component and asked `A.ndim == 2`, which a
-    coupled 1d field (2, NX) also satisfies.
-
-    Every solver here, not only that one, because the guard it got wrong is
-    shared by all of them and each has a different field shape.
-
     Parameters
     ----------
     solver_name : str
@@ -744,13 +721,6 @@ PLOTTABLE = {
 def test_plot_field_accepts_the_field_the_backend_holds(solver_name, backend_name):
     """plot_field is handed the running field, not a numpy copy of it.
 
-    The tests above pass a numpy array and run on the CPU, so they never saw
-    what plot_field is actually called with during a run: whatever array type
-    the backend keeps. NLSE_1d was the one solver not routing its argument
-    through _to_plot_array first, and called np.abs and np.angle straight on
-    it -- fine on the CPU and on MLX, "setting an array element with a
-    sequence" on CL.
-
     Parameters
     ----------
     solver_name : str
@@ -795,19 +765,7 @@ class TestPlotField:
 
 
 class TestPropagatorMatchesFieldDtype:
-    """The propagator must carry the same dtype as the field it multiplies.
-
-    The GPU kernels select their single- or double-precision variant from the
-    *field*, then index the propagator with that same variant. A complex128
-    propagator against a complex64 field is therefore read as pairs of
-    float32: CUPY returned NaN and it was written off as a driver limitation,
-    and Apple OpenCL, which has no fp64 at all, could not even build the
-    propagator.
-
-    The cause was `splitting`, which meant two things at once: the split-step
-    order (what the docstring documents) and the propagator's float width.
-    Only the first is `splitting` now; the width follows the input field.
-    """
+    """The propagator must carry the same dtype as the field it multiplies."""
 
     def test_propagator_follows_a_single_precision_field(self, backend):
         """A complex64 field must not produce a complex128 propagator."""
@@ -823,11 +781,7 @@ class TestPropagatorMatchesFieldDtype:
         )
 
     def test_precision_double_needs_no_fp64(self, backend):
-        """The double-order split step must run on a device without fp64.
-
-        splitting="strang" is the splitting order, not float64. Requiring
-        fp64 for it made every fp64-less backend skip tests it could run.
-        """
+        """The double-order split step must run on a device without fp64."""
         simu = make_nlse(backend, n=64)
         E = np.exp(-(simu.XX**2 + simu.YY**2) / (2.23e-3) ** 2).astype(np.complex64)
         out = simu.out_field(E.copy(), L, verbose=False, plot=False, splitting="strang")

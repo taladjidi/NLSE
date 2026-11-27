@@ -1,21 +1,4 @@
-"""Broadcasting a batch of simulations must agree with running them one by one.
-
-Broadcasting is what makes a parameter sweep cheap, so a batched run has to
-be equivalent to the individual runs, not merely finite and correctly shaped.
-This file previously asserted only the output shape, which is what let two
-silent out-of-bounds reads survive: a shared propagator indexed with the
-batched field's flat index, and a shared potential indexed the same way when
-no parameter was batched at all.
-
-Every backend runs the same matrix. A backend that cannot broadcast fails
-here rather than skipping, so the four implementations cannot drift apart:
-
-- CPU loops over the batch and calls the numba kernel per slice.
-- CUPY falls back to its cp.fuse kernels, which broadcast natively.
-- MLX broadcasts inside the traced graph.
-- CL wraps a shared grid with ``idx % N_grid`` and places a per-simulation
-  launch with ``global_offset``.
-"""
+"""Broadcasting a batch of simulations must agree with running them one by one."""
 
 import numpy as np
 import pytest
@@ -169,12 +152,7 @@ def test_batch_matches_individual_runs(backend_name, method, case, with_potentia
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_double_precision_batch_matches_individual_runs(backend_name):
-    """Broadcasting must hold in double precision too, where supported.
-
-    The shared-grid wrap and the per-simulation launch are indexing, not
-    arithmetic, so they must be splitting-agnostic. CL compiles a separate
-    double-precision program, which is a second copy of every kernel.
-    """
+    """Broadcasting must hold in double precision too, where supported."""
     backend = get_backend(backend_name)
     if not backend.supports_double_precision():
         pytest.skip(f"{backend_name} does not support double precision")
@@ -201,14 +179,7 @@ def test_double_precision_batch_matches_individual_runs(backend_name):
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_a_shared_grid_is_not_indexed_past_its_end(backend_name):
-    """Pin the failure mode directly: the batch must not read stale memory.
-
-    A field of ones against a potential of zeros must come back with every
-    slice identical. Reading past the end of the potential returns whatever
-    the allocator left there, so the first slice is right and the rest are
-    not — which is why this looked like flaky test ordering rather than an
-    out-of-bounds read.
-    """
+    """A batch on a shared grid must not index past its end into stale memory."""
     V, field = grids(backend_name)
     V = np.zeros_like(V)
     batched = make_solver(backend_name, N2_VALUES[0], 0.0, V)
@@ -227,18 +198,7 @@ def test_a_shared_grid_is_not_indexed_past_its_end(backend_name):
 
 @pytest.mark.parametrize("backend_name", NONLOCAL_BACKENDS)
 def test_a_batch_convolves_against_the_shared_kernel(backend_name):
-    """A batched run must reach the non-local kernels too.
-
-    Every case above runs local, and every non-local test fixes a single
-    alpha, so the pair was never run together -- which matters because a
-    non-local step takes a different route: it computes the intensity into an
-    array of its own and calls ``nl_prop``, where a local step calls the fused
-    ``square_mod_nl_prop``. The two bind their batched parameters separately.
-
-    It did not merely go untested. Both convolutions require their arguments
-    to have equal rank even with ``axes`` given, so a batched intensity
-    against a two-dimensional profile raised out of scipy.
-    """
+    """A batched run must reach the non-local kernels too."""
     _, field = grids(backend_name)
     alpha_batched = np.asarray(ALPHA_VALUES).reshape(COUNT, 1, 1)
 
@@ -277,11 +237,7 @@ def test_a_batch_convolves_against_the_shared_kernel(backend_name):
 
 
 def test_every_available_backend_is_covered():
-    """No backend may quietly drop out of the matrix above.
-
-    A skipped backend hides both a backend that works and one that reads out
-    of bounds, so absence of coverage is itself the failure.
-    """
+    """No available backend may quietly drop out of the broadcasting matrix."""
     assert AVAILABLE_BACKENDS, "no backends available to test"
     for backend_name in AVAILABLE_BACKENDS:
         V, field = grids(backend_name)
@@ -296,16 +252,7 @@ def test_every_available_backend_is_covered():
 @pytest.mark.parametrize("count", BATCH_SIZES)
 @pytest.mark.parametrize("with_potential", [False, True], ids=["no_V", "shared_V"])
 def test_any_batch_size_matches_individual_runs(backend_name, count, with_potential):
-    """Every batch size must work, including one.
-
-    A batch of one is not a curiosity: it is what a sweep degenerates to at
-    the ends of a scan, and what a caller writes when parametrising code that
-    sometimes has a single value.
-
-    The no-potential case is the one that matters. With a shared V the batch
-    is inferred from the grid being smaller than the field, which hides a
-    broken parameter test; with V=None only the parameter can reveal it.
-    """
+    """Every batch size must work, including one."""
     V, field = grids(backend_name)
     if not with_potential:
         V = None
@@ -332,11 +279,7 @@ def test_any_batch_size_matches_individual_runs(backend_name, count, with_potent
 def test_a_two_axis_batch_matches_the_same_runs_on_one_axis(
     backend_name, method, with_potential
 ):
-    """A grid search over two parameters is the same runs laid out on a grid.
-
-    The README's example: ``n2`` along one batch axis and ``alpha`` along the
-    next. The CPU loop used to peel one axis only and refused the field.
-    """
+    """A grid search over two parameters is the same runs laid out on a grid."""
     V, field = grids(backend_name)
     if not with_potential:
         V = None
@@ -379,11 +322,7 @@ def test_a_two_axis_batch_matches_the_same_runs_on_one_axis(
 def test_one_parameter_on_a_two_axis_batch_keeps_every_value(
     backend_name, second_axis, with_potential
 ):
-    """One parameter may span both batch axes, or only the first of them.
-
-    The OpenCL loop read a parameter along its leading axis only, and with a
-    shared potential it launched once per value, not once per field.
-    """
+    """One parameter may span both batch axes, or only the first of them."""
     V, field = grids(backend_name)
     if not with_potential:
         V = None
@@ -415,12 +354,7 @@ def test_one_parameter_on_a_two_axis_batch_keeps_every_value(
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("with_potential", [False, True], ids=["no_V", "shared_V"])
 def test_a_one_value_parameter_reaches_every_member(backend_name, with_potential):
-    """A ``(1, 1, 1)`` parameter broadcasts against a batch of fields.
-
-    The CPU loop took its length from the parameter and so ran the first
-    field only, handing the others back untouched. With a shared potential
-    the OpenCL loop ran one launch over the batch, past the potential's end.
-    """
+    """A ``(1, 1, 1)`` parameter broadcasts against a batch of fields."""
     V, field = grids(backend_name)
     if not with_potential:
         V = None
@@ -514,11 +448,8 @@ def test_opencl_refuses_a_potential_per_member_with_a_parameter_per_member(
 
 
 # ---------------------------------------------------------------------------
-# Coupled solvers
-# ---------------------------------------------------------------------------
-# A coupled field carries a component axis before the grid axes, so a batch of
-# them is one axis further out. Nothing above tests this: make_solver builds
-# NLSE, so every check so far runs on a single-component field.
+# Coupled solvers: the component axis precedes the grid axes, so the batch
+# axis is one further out. The tests above only build single-component NLSE.
 
 COUPLED_BASE = {
     "power": 1.05,
@@ -595,22 +526,6 @@ def test_coupled_batch_matches_individual_runs(backend_name, method, cls, grid):
 def test_a_coupled_batch_still_loses_light(backend_name, cls, grid):
     """A batched coupled run must apply the real-space step, not skip it.
 
-    It skipped it. A component of a batched coupled field is strided --
-    (B, NX) out of (B, 2, NX) -- and the numba kernels open with A1.ravel(),
-    which copies rather than views when the input is not contiguous. The step
-    was applied to that copy and dropped when the kernel returned the argument
-    it had been handed, so every batched coupled run on the CPU propagated the
-    linear equation with its losses and its nonlinear phase missing.
-
-    The test above this one uses alpha=0, and a nonlinearity weak enough to
-    stay inside its tolerance, so it passed throughout. Losses are what makes
-    the omission impossible to miss: with alpha > 0 the amplitude has to fall
-    by exp(-alpha z / 2), and a run that skips the step comes back at exactly
-    the amplitude it started with.
-
-    A flat field, so the linear step is the identity and the only thing that
-    can change the amplitude is the step being tested.
-
     Parameters
     ----------
     backend_name : str
@@ -647,12 +562,7 @@ def test_a_coupled_batch_still_loses_light(backend_name, cls, grid):
 @pytest.mark.parametrize("backend_name", COUPLED_BATCH_BACKENDS)
 @pytest.mark.parametrize("cls,grid", COUPLED, ids=COUPLED_IDS)
 def test_a_coupled_batch_keeps_the_components_apart(backend_name, cls, grid):
-    """The batch axis must not be mistaken for the component axis.
-
-    Indexing a coupled array at axis 0 selects a component when there is no
-    batch and a simulation when there is. With equal components a swap is
-    invisible, so the two here differ by a factor of two.
-    """
+    """The batch axis must not be mistaken for the component axis."""
     probe = make_coupled(cls, backend_name, N2_VALUES[0])
     field = coupled_field(probe, cls)
     batched = make_coupled(
@@ -674,12 +584,7 @@ def test_a_coupled_batch_keeps_the_components_apart(backend_name, cls, grid):
 @pytest.mark.parametrize("backend_name", COUPLED_NO_BATCH)
 @pytest.mark.parametrize("cls,grid", COUPLED, ids=COUPLED_IDS)
 def test_backends_without_coupled_batching_fall_back(backend_name, cls, grid):
-    """The batch is the run; the backend is how it is run, so the batch wins.
-
-    What must not happen is a reshaped array coming back silently.
-    ``CNLSE._no_coupled_batch_backends`` is what keeps the tests above off
-    these backends, so it has to match what the solvers do.
-    """
+    """Without coupled batching a backend warns and hands the batch to another."""
     probe = make_coupled(cls, backend_name, N2_VALUES[0])
     field = coupled_field(probe, cls)
     batched = make_coupled(
@@ -705,17 +610,7 @@ def test_an_unbatched_coupled_run_is_never_refused(backend_name, cls, grid):
 @pytest.mark.parametrize("cls,grid", COUPLED, ids=COUPLED_IDS)
 @pytest.mark.parametrize("rank", ["coupled", "component"], ids=["coupled", "component"])
 def test_batched_constants_are_reduced_to_component_rank(cls, grid, rank):
-    """The kernels are handed one component, so the constants must match it.
-
-    A caller shapes a batched parameter against the field, which for a coupled
-    solver includes the component axis -- n2 of (count, 1, 1, 1) against a
-    field of (count, 2, NY, NX). ``_take_components`` then hands the kernels a
-    (count, NY, NX) component, one axis short of it.
-
-    CPU slices the batch itself and tolerates the extra axis; CuPy broadcasts
-    for real and produces (count, count, NY, NX). This runs on CPU and pins
-    the shape CuPy needs, so the mismatch does not have to be found on a GPU.
-    """
+    """Batched constants drop to the rank of the one component a kernel gets."""
     shape = (
         (COUNT, 1, *(1,) * len(grid))
         if rank == "coupled"
@@ -759,12 +654,7 @@ def test_a_parameter_varying_over_components_is_refused(cls, grid):
 )
 @pytest.mark.parametrize("cls,grid", COUPLED, ids=COUPLED_IDS)
 def test_a_coupled_batch_convolves_against_the_shared_kernel(backend_name, cls, grid):
-    """The coupled solvers convolve twice a step, once per component.
-
-    Both call sites take the shared kernel, so both need the batch's rank.
-    Covered separately from the scalar case because the coupled intensities
-    are taken out of a field that carries a component axis as well.
-    """
+    """A coupled batch convolves with the shared kernel, once per component."""
     probe = make_coupled(cls, backend_name, N2_VALUES[0])
     field = coupled_field(probe, cls)
 
@@ -828,12 +718,7 @@ def assert_members_match(backend_name, got, expected, label):
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_a_lossy_field_batch_reads_its_shared_potential(backend_name):
-    """A batch of fields under one scalar loss and one shared potential.
-
-    The batched-alpha cases above take MLX's general graph, and the lossless
-    ones its lossless kernel, so neither reaches the solved-loss kernel, which
-    indexes the potential with the field's flat id unless told otherwise.
-    """
+    """A batch of fields runs under one scalar loss and one shared potential."""
     V, field = grids(backend_name)
     alpha = float(ALPHA_VALUES[-1])
     batched = make_solver(backend_name, N2_VALUES[0], alpha, V)
@@ -847,11 +732,7 @@ def test_a_lossy_field_batch_reads_its_shared_potential(backend_name):
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_a_batched_saturation_reaches_the_non_local_kernel(backend_name):
-    """Each member saturates at its own Isat, through ``nl_prop``.
-
-    A non-local step with a potential calls ``nl_prop`` with the intensity it
-    smoothed, and no other test batches ``Isat`` at all.
-    """
+    """Each member saturates at its own Isat, through ``nl_prop``."""
     V, field = grids(backend_name)
     params = {"n2": N2_VALUES[0], "V": V, "nl_length": NONLOCAL_LENGTH, **BASE}
     isat = ISAT_VALUES.reshape(COUNT, 1, 1)

@@ -255,12 +255,8 @@ def turn_on(
     F_laser_t[time >= t_up] = 1
 
 
-# Every backend, which this did not do. It ran on CPU and CUPY only, excluded
-# with "CL backend is too slow for DDGPE propagation (unoptimized
-# array-expression kernels)" -- true when written and not since the native
-# kernels landed: this run takes 0.08 s on CL against 0.09 on the CPU. What
-# the exclusion cost was that laser_excitation destroyed the cavity component
-# on CL, in every DDGPE run, with nothing to notice it.
+# Every backend: excluding CL as too slow once hid laser_excitation
+# destroying the cavity component there.
 @pytest.mark.parametrize("ddgpe_backend", AVAILABLE_BACKENDS)
 def test_out_field(ddgpe_backend) -> None:
     backend = ddgpe_backend
@@ -317,14 +313,7 @@ def test_out_field(ddgpe_backend) -> None:
 
 
 def test_the_dispersion_operator_is_a_pair_of_grids(backend) -> None:
-    """Both branches must be grids, even the one with no dispersion in it.
-
-    The exciton branch does not depend on k, so the expression for it is a
-    scalar. Paired with the cavity grid by np.array that is an inhomogeneous
-    array, not the (2, NY, NX) it looks like, and numpy has raised on it since
-    1.24. It was unreachable while only RK4 read it and DDGPE exposes no RK4,
-    but the split step's propagator is built from it now.
-    """
+    """Both branches of the dispersion operator are grids, the flat one too."""
     simu = make_solver(backend)
     operator = as_numpy(simu, simu._build_propagator_rk4(PRECISION_COMPLEX))
     assert operator.shape == (2, N, N), (
@@ -339,18 +328,7 @@ def test_the_dispersion_operator_is_a_pair_of_grids(backend) -> None:
 
 
 def test_the_propagator_is_the_exponential_of_the_operator(backend) -> None:
-    """One statement of the linear physics, exponentiated for the step.
-
-    If these two ever disagree, the split step and anything built on the
-    operator are integrating different equations -- which is exactly what had
-    happened in NLSE_3d, where the split step left the step out of its
-    temporal dispersion entirely.
-
-    At the precision every backend has, like its neighbour above: this asks
-    whether two expressions agree, which is not a question about float width,
-    and asking it in double excluded CL and MLX from an identity that holds
-    for them too.
-    """
+    """The propagator is the exponential of the dispersion operator."""
     simu = make_solver(backend)
     operator = as_numpy(simu, simu._build_propagator_rk4(PRECISION_COMPLEX))
     propagator = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
@@ -361,17 +339,6 @@ def test_the_propagator_is_the_exponential_of_the_operator(backend) -> None:
 
 def test_add_noise_reaches_the_field(backend) -> None:
     """The noise callback must actually perturb the field on every backend.
-
-    It wrote ``A[..., component, :, :] += delta``, and pyopencl accepts that
-    on a slice and silently discards it -- no exception raised, and the field
-    came back untouched. One call added 5e-20 on CL against 7.9e-5 on the CPU
-    and MLX, which is to say nothing at all.
-
-    One call rather than a propagation, because a propagation hides it: the
-    coupled solvers hand a callback a host copy at some steps, so a little of
-    the noise lands anyway and the run merely comes out quieter than it should
-    -- which is the harder failure to notice and the reason this is pinned at
-    the level where the write either happens or does not.
 
     Parameters
     ----------
@@ -400,16 +367,6 @@ def test_add_noise_reaches_the_field(backend) -> None:
 def test_laser_excitation_of_zero_leaves_the_field_alone(backend) -> None:
     """Subtracting a pump of zero must not change anything.
 
-    ``A[..., 1, :, :] -= delta`` is what this did, and pyopencl takes that on
-    a slice, raises nothing, and leaves the slice holding zero instead of the
-    value. Since ``out_field`` always inserts this callback, every DDGPE run
-    on CL lost its whole cavity component on the first step -- a pump of
-    exactly zero still zeroed it -- and the exciton then drifted away through
-    the Rabi coupling, ending 87% off the CPU's answer after ten steps.
-
-    Zero profiles rather than real ones, because then the correct answer is
-    known exactly and needs no tolerance: the field must come back untouched.
-
     Parameters
     ----------
     backend : str
@@ -436,17 +393,7 @@ def test_laser_excitation_of_zero_leaves_the_field_alone(backend) -> None:
 
 
 def test_the_total_density_decays_at_the_damping_rate(backend) -> None:
-    """Against the analytic answer, not against another backend.
-
-    With no pump and equal damping on both components, the Rabi coupling
-    exchanges density between them but conserves the sum, so the total has to
-    fall as exp(-gamma t) whatever the coupling does. Neither component alone
-    does -- the exciton here even grows slightly, because the coupling is
-    feeding it -- which is why this is the quantity to check.
-
-    It is also the check that would have caught laser_excitation destroying
-    the cavity component on CL: the total would have collapsed rather than
-    decayed by a tenth of a percent.
+    """The total density decays at the damping rate of the analytic answer.
 
     Parameters
     ----------
@@ -519,11 +466,7 @@ def uniform_run(backend, **overrides):
 
 
 def test_the_cross_interaction_is_mutual(backend) -> None:
-    """Each component is phased by g12 times the other's density.
-
-    The exciton turns by ``g12 n_C T`` and the cavity by ``g12 n_X T``, with
-    one sign for both: the coupling is one energy, shared.
-    """
+    """Each component is phased by g12 times the other's density."""
     exciton, cavity = uniform_run(backend, g12=CROSS_G)
     per_density = (
         np.angle(exciton) / CAVITY_DENSITY,
@@ -538,11 +481,7 @@ def test_the_cross_interaction_is_mutual(backend) -> None:
 
 
 def test_each_component_decays_at_its_own_rate(backend) -> None:
-    """The exciton density falls as exp(-gamma t), the cavity's as exp(-gamma2 t).
-
-    The total-density test above damps both at one rate, where reading the
-    wrong one of the pair changes nothing.
-    """
+    """The exciton density falls as exp(-gamma t), the cavity's as exp(-gamma2 t)."""
     out = uniform_run(backend, gamma=EXCITON_GAMMA, gamma2=CAVITY_GAMMA)
     densities = np.abs(out) ** 2 / np.array([EXCITON_DENSITY, CAVITY_DENSITY])
     for density, rate in zip(densities, (EXCITON_GAMMA, CAVITY_GAMMA), strict=True):

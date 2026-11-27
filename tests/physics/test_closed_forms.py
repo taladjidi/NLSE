@@ -1,32 +1,4 @@
-"""The answers, against solutions that are known rather than computed here.
-
-Everything else in this suite is self-referential. The cross-backend tests say
-the four implementations agree; the order tests say the error falls at the rate
-the method promises; the propagator tests write the package's own formula out a
-second time and compare. All of them pass if the formula is wrong and both
-copies of it are wrong together, and none reads what the solver returns against
-anything from outside the package.
-
-These do. Each one isolates one term of the equation against a closed form:
-
-- the propagator, against Gaussian diffraction, the Gouy phase and the Talbot
-  distance -- the last at a transverse wavenumber the first two never reach;
-- the loss, against Beer's law;
-- the interaction, against the self-phase modulation of a plane wave, which
-  has no diffraction to confuse it, with and without saturation;
-- the two of them together, against the identity the solved lossy step is
-  built on -- the one place the recent work can be checked as physics rather
-  than as convergence;
-- and finally all of them at once, against a bright soliton, which exists only
-  because diffraction and self-focusing cancel and so cannot be passed by
-  getting either one separately right.
-
-The conventions these pin down, which nothing else did:
-
-    i dA/dz = -(1/2k) grad^2 A - k*n2*I/(1 + I/Isat) * A,  I = c*eps0*|A|^2/2
-
-so ``n2 > 0`` focuses, and ``alpha`` attenuates the *intensity*: I ~ exp(-alpha z).
-"""
+"""The answers, against solutions that are known rather than computed here."""
 
 import numpy as np
 import pytest
@@ -173,8 +145,6 @@ def to_host(simu, array):
 def waist_of(intensity, xx, yy):
     """Return the 1/e^2 radius of a round beam from its second moment.
 
-    For ``I = exp(-2 r^2 / w^2)`` in two dimensions ``<r^2> = w^2/2``.
-
     Parameters
     ----------
     intensity : np.ndarray
@@ -197,18 +167,7 @@ def waist_of(intensity, xx, yy):
 def test_a_gaussian_beam_diffracts_at_the_rate_diffraction_theory_gives(
     backend, z_over_zr
 ):
-    """``w(z) = w0 sqrt(1 + (z/zR)^2)``, exactly, for the paraxial equation.
-
-    One assertion covering the transform pair, its normalization, the k grid
-    and the wavelength together: any of them wrong by a factor moves the
-    waist.
-
-    Other tests do check the propagator, but by writing the same expression a
-    second time and comparing -- which catches a typo in one of the two and
-    cannot catch the expression itself being wrong. This is scored against
-    diffraction theory instead, which is not a restatement of anything in the
-    package.
-    """
+    """A Gaussian beam's radius is ``w(z) = w0 sqrt(1 + (z/zR)^2)``."""
     simu = solver(backend)
     field = np.exp(-(simu.XX**2 + simu.YY**2) / WAIST**2).astype(np.complex64)
     z_rayleigh = simu.k * WAIST**2 / 2
@@ -232,12 +191,7 @@ def test_a_gaussian_beam_diffracts_at_the_rate_diffraction_theory_gives(
 
 
 def test_the_on_axis_phase_is_the_gouy_phase(backend):
-    """``-arctan(z/zR)``, which the intensity above cannot see.
-
-    A propagator with the wrong sign, or with the dispersion relation off by
-    a factor, still diffracts a beam -- it diffracts it wrongly, and the
-    second moment is a weak witness. The phase is the sharp one.
-    """
+    """The on-axis phase is the Gouy phase ``-arctan(z/zR)``."""
     simu = solver(backend)
     field = np.exp(-(simu.XX**2 + simu.YY**2) / WAIST**2).astype(np.complex64)
     z_rayleigh = simu.k * WAIST**2 / 2
@@ -261,17 +215,7 @@ def test_the_on_axis_phase_is_the_gouy_phase(backend):
 
 
 def test_a_grating_revives_at_the_talbot_distance(backend):
-    """Self-imaging at ``z_T = k d^2 / pi``, and not before it.
-
-    The Gaussian tests probe the propagator near ``K = 0``, where a wrong
-    dispersion relation is hardest to see. A grating puts all its power at one
-    finite ``K``, and the revival is periodic in the phase that mode accrues,
-    so the distance is a direct reading of ``K^2/2k``.
-
-    The half-distance is asserted too: at ``z_T/2`` the image is displaced by
-    half a period, so a solver that simply left the field alone -- which would
-    pass the revival on its own -- fails here.
-    """
+    """A grating images itself at ``z_T = k d^2 / pi``, and not before."""
     simu = solver(backend)
     period = WINDOW / 16
     grating = (1 + 0.5 * np.cos(2 * np.pi * simu.XX / period)).astype(np.complex64)
@@ -300,16 +244,7 @@ def test_a_grating_revives_at_the_talbot_distance(backend):
 @pytest.mark.parametrize("alpha", [5.0, 20.0])
 @pytest.mark.parametrize("path", sorted(PATHS))
 def test_the_intensity_follows_beer_law(backend, alpha, path):
-    """``I(z) = I0 exp(-alpha z)``: alpha attenuates intensity, not amplitude.
-
-    A uniform field has no transverse structure, so the propagator is the
-    identity and this is the loss term alone. It also pins the convention,
-    which a factor of two in either direction would otherwise leave open.
-
-    ``L`` covers the whole distance, as everywhere in this file: absorption
-    is a property of the medium and stops at the end of it, so a run that
-    leaves the medium follows Beer's law only as far as ``L``.
-    """
+    """Intensity decays as ``I0 exp(-alpha z)``: alpha is an intensity rate."""
     distances = (1e-2, 5e-2)
     simu, method = plane_wave_solver(backend, path, alpha=alpha, L=max(distances))
     field = np.ones((PLANE_N, PLANE_N), dtype=np.complex64)
@@ -337,12 +272,7 @@ def test_the_intensity_follows_beer_law(backend, alpha, path):
 @pytest.mark.parametrize("saturation", [1.0, 0.25], ids=["I_sat=I", "I_sat=I/4"])
 @pytest.mark.parametrize("path", sorted(PATHS))
 def test_self_phase_modulation_saturates_as_the_model_says(backend, saturation, path):
-    """``phi = k n2 I z / (1 + I/Isat)`` on a plane wave.
-
-    The interaction term alone, again with no diffraction to hide in, and the
-    only test that reads the saturation as a physical law rather than as an
-    expression the kernels happen to share.
-    """
+    """A plane wave's self-phase is ``phi = k n2 I z / (1 + I/Isat)``."""
     n2, z = -1e-9, 5e-3
     probe = solver(backend, NX=PLANE_N, NY=PLANE_N)
     intensity = 1.0 / (probe.k * abs(n2) * z)  # about one radian of phase
@@ -373,13 +303,7 @@ def test_self_phase_modulation_saturates_as_the_model_says(backend, saturation, 
 
 @pytest.mark.parametrize("path", sorted(PATHS))
 def test_a_uniform_potential_turns_and_absorbs_a_plane_wave(backend, path):
-    """``A(z) = exp(i k V z / 2)``: the potential enters as ``-(k/2) V``.
-
-    So ``Re V`` turns the phase by ``k Re(V) z / 2`` and ``Im V`` absorbs,
-    ``I(z) = exp(-k Im(V) z)`` (docs/physics_problem.md:17). A plane wave
-    leaves the potential alone to act, and both parts are read at once: a
-    factor on ``V`` moves both, a sign turns the loss into gain.
-    """
+    """A uniform potential gives a plane wave ``A(z) = exp(i k V z / 2)``."""
     z = POTENTIAL_DISTANCE
     probe = solver(backend, NX=PLANE_N, NY=PLANE_N)
     potential = (2 * POTENTIAL_PHASE + 1j * POTENTIAL_ABSORPTION) / (probe.k * z)
@@ -418,14 +342,7 @@ def test_a_uniform_potential_turns_and_absorbs_a_plane_wave(backend, path):
 
 @pytest.mark.parametrize("path", sorted(PATHS))
 def test_loss_interaction_and_potential_act_together_on_a_plane_wave(backend, path):
-    """``I = I0 exp(-gamma z)`` and the phase its self-phase plus ``k Re(V) z / 2``.
-
-    ``alpha`` and ``k Im(V)`` add up to one decay rate ``gamma``, and the
-    self-phase is that of the decaying intensity,
-    ``k n2 I0 (1 - exp(-gamma z)) / gamma``. The tests above take each term
-    alone, so the kernels that carry loss and a potential together, which a
-    run takes only when both are there, are read here.
-    """
+    """Loss, interaction and potential together match their closed form."""
     z = POTENTIAL_DISTANCE
     probe = solver(backend, NX=PLANE_N, NY=PLANE_N)
     intensity = MIXED_KERR_PHASE / (probe.k * abs(MIXED_N2) * z)
@@ -468,13 +385,7 @@ def test_loss_interaction_and_potential_act_together_on_a_plane_wave(backend, pa
 
 @pytest.mark.parametrize("method", ["split_step", "RK4"])
 def test_a_new_wavenumber_diffracts_at_its_own_rate(backend, method):
-    """A solver keeps its propagators, so the key has to hold ``k``.
-
-    The second run asks for the same step on the same grid as the first, at
-    another wavenumber, and must diffract as that wavenumber says,
-    ``w0 sqrt(1 + (z/zR)^2)`` with ``zR = k w0^2 / 2``. A key without ``k``
-    hands it the first run's propagator, and the waist of the first run.
-    """
+    """A new wavenumber diffracts at its own rate: the cache key holds ``k``."""
     simu = solver(backend, NX=CACHE_TEST_N, NY=CACHE_TEST_N)
     field = np.exp(-(simu.XX**2 + simu.YY**2) / WAIST**2).astype(np.complex64)
     z = CACHE_TEST_DISTANCE * simu.k * WAIST**2 / 2
@@ -501,13 +412,7 @@ def test_a_new_wavenumber_diffracts_at_its_own_rate(backend, method):
 
 
 def test_rk4_left_to_choose_its_step_diffracts_at_the_closed_form_rate(backend):
-    """RK4 bounds its step by the grid's fastest mode, not by the beam's.
-
-    Outside its stability region RK4 amplifies whatever a mode holds, and
-    round-off puts something in every mode. A step sized by the rates the
-    field weighs is far too long for the grid's shortest wave: that run
-    returned NaN. Here it has to return ``w0 sqrt(1 + (z/zR)^2)``.
-    """
+    """RK4 bounds its step by the grid's fastest mode, not by the beam's."""
     simu = solver(backend)
     field = np.exp(-(simu.XX**2 + simu.YY**2) / WAIST**2).astype(np.complex64)
     z = RK4_DEFAULT_STEP_DISTANCE * simu.k * WAIST**2 / 2
@@ -528,14 +433,7 @@ def test_rk4_left_to_choose_its_step_diffracts_at_the_closed_form_rate(backend):
 
 
 def test_a_pulse_disperses_as_the_chirped_gaussian(backend):
-    """The documented ``i dA/dz = (D0/2) d^2A/dt^2``, as a chirped Gaussian.
-
-    In Fourier space it reads ``dA/dz = +i (D0/2) w^2 A``, diffraction's
-    ``-i w^2 / (2k)`` with ``1/k`` replaced by ``-D0``. So the pulse is the
-    Gaussian beam of wavenumber ``-1/D0`` along time: width
-    ``tau0 sqrt(1 + (z/zD)^2)`` with ``zD = tau0^2 / (2 |D0|)``, and a chirp
-    whose sign is the sign of ``D0``, which the complex field carries.
-    """
+    """A pulse disperses as the chirped Gaussian of the documented equation."""
     simu = NLSE_3d(
         alpha=0,
         energy=1,
@@ -567,27 +465,7 @@ def test_a_pulse_disperses_as_the_chirped_gaussian(backend):
 
 
 def test_a_lossy_saturable_step_obeys_the_identity_it_is_solved_from(backend):
-    """The physics behind the solved real-space step, not its convergence.
-
-    With ``y = |A|^2``, ``s = 1/(1 + y/Isat)``, ``dy/dz = -alpha s y`` and
-    ``dphi/dz = k n2 y s`` give ``dphi/dy = -k n2 / alpha``, so over any
-    distance::
-
-        phi = (k n2 / alpha) (y0 - y_end)
-
-    whatever the saturation does in between -- and ``y_end`` is fixed by
-    ``ln y + y/Isat`` falling by ``alpha z``. Both are asserted. This is what
-    ``test_lossy_substep.py`` measures the *order* of; here it is measured
-    against the closed form, so a step that converged beautifully to the wrong
-    answer would fail.
-
-    ``L`` is set to the whole distance deliberately. Past the medium length
-    the solver zeroes ``n2`` and keeps ``alpha``, so a run that leaves the
-    medium goes on losing intensity while it stops accruing phase -- and the
-    identity, which ties the two together, no longer holds. Written first with
-    the default ``L`` an eighth of the distance, this asserted the intensity
-    correctly and missed the phase by 3.2 radians.
-    """
+    """A lossy saturable step obeys the identity it is solved from."""
     n2, alpha, z = -1e-9, 20.0, 5e-2
     probe = solver(backend, NX=64, NY=64)
     intensity = 1.0 / (probe.k * abs(n2) * 5e-3)
@@ -623,18 +501,7 @@ def test_a_lossy_saturable_step_obeys_the_identity_it_is_solved_from(backend):
 
 
 def test_a_bright_soliton_keeps_its_shape(backend):
-    """Diffraction and self-focusing cancel, or they do not.
-
-    ``A0 sech(x/x0)`` propagates unchanged when ``x0^2 = 1/(k g A0^2)``, with
-    ``g = k n2 c eps0 / 2`` and ``n2 > 0``. Both terms are pinned separately
-    above; this is the one that fails if they are individually right and
-    jointly wrong -- a sign, or a factor of two between them, leaves every
-    other test here passing.
-
-    A detuned width is propagated as a control, because "the shape barely
-    changed" is only worth something next to an initial condition that is not
-    a soliton and does change.
-    """
+    """A bright soliton keeps its shape: diffraction and self-focusing cancel."""
     if not get_backend(backend).supports_double_precision():
         pytest.skip(f"{backend} has no double precision to hold the balance in")
 

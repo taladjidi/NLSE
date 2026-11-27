@@ -249,20 +249,7 @@ class TestOptimizedKernelPerformance:
 
 
 class TestSharedGridBroadcast:
-    """A grid shared by a batch is addressed with the launch's global offset.
-
-    The kernels index the field with a flat global id, so a batched run
-    launches once per simulation and places each launch with global_offset.
-    A shared potential or propagator is then read at
-    ``idx - get_global_offset(0)``.
-
-    The built-in is load-bearing: it is by definition the zero-based index
-    within the launch, so the compiler keeps the wide loads it would use for
-    a plain ``grid[idx]``. Passing the same number as an int argument defeats
-    that and costs several times the runtime on the bandwidth-bound kernels,
-    which shows up as a regression on unbatched propagations. These tests
-    exist so that a future edit cannot quietly swap it back.
-    """
+    """A grid shared by a batch is addressed with the launch's global offset."""
 
     # Named by their V-reading base; every twin of each is checked, since the
     # twins are generated from one body and must all carry the offset.
@@ -295,11 +282,7 @@ class TestSharedGridBroadcast:
             )
 
     def test_no_kernel_takes_an_offset_argument(self):
-        """The offset must come from the built-in, never from an argument.
-
-        An int argument the compiler cannot see through costs the wide loads,
-        which slows the unbatched path down substantially.
-        """
+        """The offset must come from the built-in, never from an argument."""
         from NLSE.kernels.cl import _get_kernel_source
 
         source = _get_kernel_source("single")

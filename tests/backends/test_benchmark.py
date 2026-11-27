@@ -195,14 +195,7 @@ class TestCachePersistence:
         assert cache["grid_size"] == [256, 256]
 
     def test_cache_reuse(self, monkeypatch):
-        """A cached call answers without benchmarking again.
-
-        Asserted by watching for the benchmark rather than by timing it. The
-        timed version wanted the cached call to be ten times faster than the
-        benchmarked one, which on a runner with only the CPU backend meant
-        clearing 0.27 ms -- under what the clock there can resolve, so it
-        failed intermittently on a claim its own name does not make.
-        """
+        """A cached call answers without benchmarking again."""
         fastest1 = benchmark.get_fastest_backend((256, 256), force_benchmark=True)
 
         ran = []
@@ -358,11 +351,7 @@ class TestCacheLoading:
         )
 
     def test_a_cache_at_another_grid_is_not_believed(self, monkeypatch):
-        """A time measured at one grid says nothing about another one.
-
-        The cache times only the CPU, last in the prior; believed, it would
-        put it first.
-        """
+        """A cache entry measured at another grid is not believed."""
         monkeypatch.setattr(
             "NLSE.backends.list_available_backends", lambda: AGAINST_THE_PRIOR
         )
@@ -395,12 +384,7 @@ class TestCacheLoading:
         assert blocker.read_text() == ""
 
     def test_a_failed_write_keeps_the_previous_cache(self):
-        """The cache is replaced whole or not at all.
-
-        A value json cannot serialize stops the write part-way. Written in
-        place, that left a truncated file; renamed over it, the old cache
-        stays, and nothing else is left in the directory.
-        """
+        """The cache is replaced whole or not at all."""
         record = valid_cache_record()
         write_cache(json.dumps(record))
         benchmark.save_benchmark_cache({**record, "fastest": object()})

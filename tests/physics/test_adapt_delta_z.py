@@ -1,10 +1,4 @@
-"""``adapt_delta_z`` against the nonlinear length, in each solver's own units.
-
-The callback returns a twelfth of ``1 / max(rate)``, with the rate the phase
-the nonlinearity turns per unit of the propagation variable: ``k |n2| I /
-(1 + I / Isat)`` per metre for NLSE, ``|g| n`` per second for GPE. A uniform
-field makes the maximum the value everywhere, so the step has a closed form.
-"""
+"""``adapt_delta_z`` against the nonlinear length, in each solver's own units."""
 
 import numpy as np
 import pytest

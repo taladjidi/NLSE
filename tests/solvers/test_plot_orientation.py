@@ -1,11 +1,4 @@
-"""Plots draw a spot where it is.
-
-``imshow`` puts row 0 on top unless told otherwise, and a solver's row 0 is
-its smallest ``y``: with an ``extent`` labelling the axes in mm, a spot at
-``y > 0`` was drawn at ``y < 0``. Each panel is read back as matplotlib draws
-it, through ``AxesImage.get_cursor_data`` at the spot's coordinates, which
-must give the panel's largest value.
-"""
+"""Plots draw a spot where it is."""
 
 import matplotlib
 import numpy as np
@@ -127,9 +120,6 @@ def nlse_3d(backend, NX=N, NY=N):
 def spot(simu):
     """Return the spot's position in m and a field peaked there.
 
-    Both the intensity and the phase peak at the spot, so every real-space
-    panel has its largest value there.
-
     Parameters
     ----------
     simu : NLSE
@@ -217,12 +207,7 @@ def test_a_tilt_is_drawn_at_its_wavevector(backend):
 
 
 def test_a_pulse_is_drawn_where_it_is_in_the_xt_panels(backend):
-    """Both NLSE_3d ``xt`` panels show a pulse at its position and time.
-
-    The field is a ridge along ``x = r0`` plus one along ``y = r0``, times a
-    pulse at ``t0``: whichever transverse axis a panel holds fixed, its largest
-    value is at ``(t0, r0)``.
-    """
+    """Both NLSE_3d ``xt`` panels show a pulse at its position and time."""
     simu = nlse_3d(backend)
     r0, t0 = simu.Y[PULSE[0]], simu.T[PULSE[1]]
     width, duration = 2 * simu.delta_X, 2 * simu.delta_T
@@ -241,12 +226,7 @@ def test_a_pulse_is_drawn_where_it_is_in_the_xt_panels(backend):
 
 @pytest.mark.parametrize("NX,NY", OBLONG)
 def test_the_xt_panels_hold_x_and_t_on_a_grid_that_is_not_square(backend, NX, NY):
-    """Both NLSE_3d ``xt`` panels are ``x`` by ``t``, cut at the middle row.
-
-    A square grid cannot tell: the cut along the other axis has the same
-    shape, and the test above draws the same ridge along both. Here the pulse
-    lives on the row the panels cut and nowhere else.
-    """
+    """Both NLSE_3d ``xt`` panels are ``x`` by ``t``, cut at the middle row."""
     simu = nlse_3d(backend, NX, NY)
     x0, y0, t0 = simu.X[3 * NX // 4], simu.Y[NY // 2], simu.T[PULSE[1]]
     width, duration = 2 * simu.delta_X, 2 * simu.delta_T

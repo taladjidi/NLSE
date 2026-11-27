@@ -1,9 +1,4 @@
-"""Backend-agnostic helpers for the solver tests.
-
-The solver tests run against every available backend. Assertions therefore
-have to avoid numpy-only APIs and hand-rolled ``backend == "..."`` chains,
-which is what previously left the MLX paths uncovered.
-"""
+"""Backend-agnostic helpers for the solver tests."""
 
 import numpy as np
 from NLSE.backends import list_available_backends
@@ -39,9 +34,6 @@ def as_numpy(simu, array):
 def assert_c_contiguous(array, message):
     """Assert C-contiguity for array types that expose the concept.
 
-    MLX arrays have no ``.flags``; they are contiguous by construction, so
-    there is nothing to check.
-
     Parameters
     ----------
     array : Any
@@ -55,9 +47,6 @@ def assert_c_contiguous(array, message):
 
 def random_field(shape, dtype=PRECISION_COMPLEX):
     """Return a random complex field as numpy.
-
-    Solvers accept numpy input on every backend and convert internally, so
-    tests do not need to build backend-specific arrays.
 
     Parameters
     ----------
@@ -76,17 +65,8 @@ def random_field(shape, dtype=PRECISION_COMPLEX):
 
 
 # ── Building a solver ────────────────────────────────────────────────────────
-#
-# Eleven modules used to carry their own factory around the same nine
-# parameters: the same function, differing in the class it built and whether it
-# passed NY. The physics is stated once here, and a module states only what
-# makes it different.
-#
-# Not every solver shares it. NLSE_3d propagates a pulse and takes an energy, a
-# dispersion and a group velocity over a window that is part length and part
-# time; GPE takes a chemical coupling and an atomic mass; DDGPE a pump and a
-# detuning. Those keep their own parameters, because theirs really are
-# different rather than restated.
+# The physics is stated once here; a module states only what differs.
+# NLSE_3d, GPE and DDGPE keep their own parameters, which really differ.
 
 WAIST = 2.23e-3
 WAIST2 = 70e-6  # the second component's, deliberately not the first's
@@ -113,9 +93,6 @@ WAVELENGTH2 = 795e-9
 
 def make(cls, backend="CPU", n=None, symmetric=True, **overrides):
     """Return a solver of this class with the shared optical parameters.
-
-    Only the arguments the class's own signature accepts are passed, so one
-    call serves the one- and two-dimensional solvers and the coupled ones.
 
     Parameters
     ----------
@@ -160,10 +137,6 @@ def make(cls, backend="CPU", n=None, symmetric=True, **overrides):
 def gaussian_beam(r_sq, waist, k, z, dims):
     """Return the paraxial Gaussian beam, the closed form of free diffraction.
 
-    ``dA/dz = (i/2k) grad^2 A`` takes ``exp(-r^2/w0^2)`` at ``z = 0`` to
-    ``q^(-dims/2) exp(-r^2 / (w0^2 q))`` with ``q = 1 + i z/zR`` and
-    ``zR = k w0^2 / 2``.
-
     Parameters
     ----------
     r_sq : np.ndarray
@@ -188,12 +161,6 @@ def gaussian_beam(r_sq, waist, k, z, dims):
 
 def gaussian(shape, waists=(WAIST, WAIST2), window=WINDOW, dtype=PRECISION_COMPLEX):
     """Return a smooth field of this shape, one Gaussian per component.
-
-    A beam rather than noise: a nonlinear run amplifies a last-bit difference
-    into a visible one, so an adversarial field measures the chaos rather than
-    whatever is under test. The components are given different widths, or
-    ``|A1|**2`` equals ``|A2|**2`` and a kernel reading the wrong one of the
-    pair produces no difference at all.
 
     Parameters
     ----------

@@ -29,15 +29,7 @@ def test_get_backend_returns_the_same_instance(backend_name):
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_solvers_share_one_backend(backend_name):
-    """Building many solvers must not open a device connection each time.
-
-    A backend owns a device context, not per-simulation state. Handing out a
-    fresh one per solver leaked an OpenCL context and command queue that are
-    never released, and a parameter sweep — or a long test session — then ran
-    the process out of file descriptors. That surfaces as unrelated later
-    work failing in setup with "Too many open files", so it has to be pinned
-    here rather than left to be rediscovered.
-    """
+    """Building many solvers must not open a device connection each time."""
     solvers = [NLSE(backend=backend_name, **BASE) for _ in range(25)]
     backends = {id(solver._backend) for solver in solvers}
     assert len(backends) == 1, (

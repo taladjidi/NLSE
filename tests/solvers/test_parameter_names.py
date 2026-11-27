@@ -1,11 +1,4 @@
-"""GPE and DDGPE name their parameters as their own physics does.
-
-Both solve NLSE's equation with different physics attached to each term, so
-they reuse its storage: a mass in the wavenumber slot, an interaction energy in
-n2, a total time in L. The physical names are ``Parameter`` views onto that one
-storage, so reading and assigning either name reaches the same value, and the
-scaled ones (DDGPE's ``g``, GPE's ``sat``) round-trip.
-"""
+"""GPE and DDGPE name their parameters as their own physics does."""
 
 import numpy as np
 import pytest
@@ -79,12 +72,7 @@ def test_gpe_names_write_through(name, slot):
 
 @pytest.mark.parametrize("name", ["gamma", "g", "g12", "T"])
 def test_ddgpe_reports_what_it_was_given(name):
-    """Each physical name must read back the constructor argument.
-
-    ``g`` is the one that did not: the kernels want the opposite sign, the
-    constructor stores it negated, and the old copy was taken from the negated
-    storage.
-    """
+    """Each physical name must read back the constructor argument."""
     simu = DDGPE(**DDGPE_PARAMS)
     assert getattr(simu, name) == DDGPE_PARAMS[name], (
         f"DDGPE was given {name}={DDGPE_PARAMS[name]} but reports {getattr(simu, name)}"
@@ -114,15 +102,7 @@ def test_ddgpe_names_write_through(name, slot, sign):
 
 
 def test_ddgpe_interaction_rate_is_its_own_coupling():
-    """The step limits must read DDGPE's coupling, not an optical conversion.
-
-    DDGPE hands its couplings to the kernels as they are. CNLSE's precompute
-    scales them by ``k / 2 * c * epsilon_0``, and DDGPE's ``k`` comes from a
-    wavelength it only supplies to keep the base class happy -- 1e-30 m, so
-    ``k`` is 6e30. Left at CNLSE's, the interaction rate came out around 1e26
-    times too large, the accuracy limit collapsed to 1e-26, and a run over any
-    field of order one turned into 1e23 steps.
-    """
+    """The step limits must read DDGPE's coupling, not an optical conversion."""
     simu = DDGPE(**DDGPE_PARAMS)
     A, _ = simu._prepare_output_array(np.ones((2, N, N), dtype=np.complex64), False)
     simu._precompute_step_constants(simu.V, np.complex64)
@@ -138,11 +118,7 @@ def test_ddgpe_interaction_rate_is_its_own_coupling():
 
 
 def test_ddgpe_keeps_a_reasonable_step():
-    """A step a caller passes must survive the limiter.
-
-    The end-to-end form of the above: with the rate wrong, every DDGPE run
-    was clamped to a step that would take 1e23 of them.
-    """
+    """A step a caller passes must survive the limiter."""
     simu = DDGPE(**DDGPE_PARAMS)
     A, _ = simu._prepare_output_array(np.ones((2, N, N), dtype=np.complex64), False)
     simu._precompute_step_constants(simu.V, np.complex64)
@@ -152,11 +128,7 @@ def test_ddgpe_keeps_a_reasonable_step():
 
 
 def test_ddgpe_propagates_with_the_sign_it_was_given():
-    """End to end: the coupling the kernels use must not have flipped.
-
-    The names being views rather than copies moved which attribute the step
-    reads. This pins the value that actually reaches it.
-    """
+    """End to end: the coupling the kernels use must not have flipped."""
     simu = DDGPE(**DDGPE_PARAMS)
     E = np.ones((2, N, N), dtype=np.complex64)
     out = simu.out_field(

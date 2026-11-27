@@ -1,10 +1,4 @@
-"""The dispersion eigenvalues are built once, not on every call.
-
-The step limiters read them on every ``out_field`` call and built them twice
-per call on the host, 4.8 ms each at 2048x2048: a large part of the fixed
-cost of a short run. They depend only on the grid and the wavenumber, the
-key they are kept under.
-"""
+"""The dispersion eigenvalues are built once, not on every call."""
 
 import numpy as np
 import pytest

@@ -125,11 +125,7 @@ def test_retrieve_arrays_from_gpu() -> None:
 
 
 def test_split_step(backend) -> None:
-    """One linear step of a Rayleigh length lands on the Gaussian beam.
-
-    Lossless and linear, so the step is diffraction alone and exact. The
-    complex field is compared, so a propagator of the wrong sign fails too.
-    """
+    """One linear step of a Rayleigh length lands on the Gaussian beam."""
     simu = make_solver(backend, n2=0, alpha=0)
     r_sq = simu.XX**2 + simu.YY**2
     z_rayleigh = simu.k * BEAM_WAIST**2 / 2
@@ -203,13 +199,7 @@ def test_cuda_graph() -> None:
 
 
 def test_lossless_kernels_match_the_general_formula():
-    """Alpha == 0 takes a branch that drops the exponential.
-
-    exp(0) is 1, so the lossless step is a pure rotation and the branch is
-    exact rather than an approximation. It is worth ~1.5x on the CPU kernels,
-    which is only worth having if it computes the same thing: this checks the
-    branch against the formula it replaces, evaluated in double precision.
-    """
+    """The lossless kernel branch (alpha == 0) matches the general formula."""
     from NLSE.kernels import cpu as cpu_kernels
 
     n = 128
@@ -260,16 +250,7 @@ def test_a_lossy_run_still_loses_power():
 
 
 def test_a_field_with_no_power_survives_normalization(backend) -> None:
-    """Normalizing a zero field must leave it zero, not make it NaN.
-
-    There is no factor that scales an empty field to a target power, and
-    dividing anyway gives infinity, which multiplies the zeros it came from
-    into NaN. Nothing downstream notices: the run completes and returns a
-    field of NaN, having said no more than "divide by zero encountered".
-
-    It is a legitimate initial condition -- a driven cavity starts from one --
-    so the field is left as it is.
-    """
+    """Normalizing a zero field must leave it zero, not make it NaN."""
     import warnings
 
     simu = make_solver(backend, n=32)

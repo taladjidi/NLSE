@@ -1,13 +1,4 @@
-"""Each solver plots its own quantity, in its own units.
-
-``plot_field`` is shared; the differences are declared per solver as
-``_plot_density_scale`` and friends. An optical intensity in W/cm^2 for NLSE
-and CNLSE, a particle density for GPE and DDGPE; distance in metres, or time
-in seconds for GPE and picoseconds for DDGPE; psi_1/psi_2 against psi_x/psi_c.
-
-Asserting only that ``plot_field`` runs would pass a solver drawing the wrong
-quantity under the wrong label, so these check the declarations.
-"""
+"""Each solver plots its own quantity, in its own units."""
 
 import matplotlib
 import numpy as np
@@ -155,11 +146,7 @@ def test_coupled_components_are_named(build, expected):
 
 
 def test_the_optical_density_is_converted_and_the_quantum_one_is_not():
-    """The scale is the substantive difference, not just the wording.
-
-    NLSE draws |E|^2 in W/cm^2; GPE draws |psi|^2 as it stands. Getting this
-    wrong misstates the plotted values by 1e-4 * c * eps0 / 2, about 1.3e-7.
-    """
+    """The optical density is drawn in W/cm^2, the quantum one as it stands."""
     assert nlse()._plot_density_scale == pytest.approx(c * epsilon_0 / 2 * 1e-4)
     assert gpe()._plot_density_scale == 1.0
     assert cnlse()._plot_density_scale == pytest.approx(c * epsilon_0 / 2 * 1e-4)
@@ -167,24 +154,14 @@ def test_the_optical_density_is_converted_and_the_quantum_one_is_not():
 
 
 def test_the_optical_intensity_panel_is_drawn_in_w_per_cm2():
-    """The panel's values carry the scale, not only the declaration above.
-
-    ``draw`` plots a field of unit modulus, so the intensity panel holds
-    ``W_PER_CM2`` everywhere; unconverted, it would hold 1.
-    """
+    """The panel's values carry the scale, not only the declaration above."""
     draw(nlse(), 1)
     panel = plt.gcf().axes[0].images[0].get_array()
     np.testing.assert_allclose(panel, W_PER_CM2, rtol=PANEL_RTOL)
 
 
 def test_a_figure_is_shown_where_it_can_be(monkeypatch):
-    """The guard must skip only the backends that cannot show anything.
-
-    plt.show() on a file-rendering backend does nothing except warn, and a
-    library should not warn a user for the backend matplotlib picked. But a
-    guard drawn too widely would silently stop showing figures to everyone,
-    and no plotting test would notice: they read the figure, not the screen.
-    """
+    """The guard must skip only the backends that cannot show anything."""
     from NLSE.solvers import nlse as nlse_module
 
     shown = []

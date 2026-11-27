@@ -71,12 +71,7 @@ def test_prepare_output_array(backend) -> None:
 
 
 def test_split_step(backend) -> None:
-    """One linear step lands each component on its own Gaussian beam.
-
-    Lossless and linear, so the step is diffraction alone and exact. The two
-    components have different wavelengths, so swapping them fails, and the
-    complex field is compared, so a propagator of the wrong sign fails too.
-    """
+    """One linear step lands each component on its own Gaussian beam."""
     simu = make_solver(backend, symmetric=False, n2=0, n12=0, alpha=0)
     r_sq = simu.X**2
     z_rayleigh = simu.k * BEAM_WAIST**2 / 2

@@ -1,30 +1,4 @@
-"""The step folded into the transforms: same answer, and actually folded.
-
-The CUPY backend can apply the propagator from a cuFFT store callback as the
-forward transform writes each element, and the nonlinear step from another as
-the inverse transform does, instead of in passes of their own. The arithmetic
-is meant to be untouched -- the callbacks in fft_callbacks.cu are the
-apply_propagator kernel's expression and the nonlinear kernels' shared
-nlse_nonlinear_element, in their order -- so these compare **bit for bit**
-rather than to a tolerance. A difference would mean a re-association, which is
-how a fused kernel usually goes wrong.
-
-Two of these tests are about the machinery rather than the answer, and neither
-is optional.
-
-``test_a_second_propagator_is_seen`` guards the indirection the design rests
-on. cuFFT binds the callback's argument when the plan is created, so the
-callback is handed a *pointer to a pointer* and one plan serves the whole run.
-Bound straight to a propagator instead, a Yoshida step -- three propagators,
-cycling -- would need a new plan per sub-step, and the version of this that
-looks correct on a single-propagator run would be far slower on that one.
-
-``test_the_fused_path_is_taken`` fails the run if apply_propagator is called at
-all. Without it this file passes just as happily when nothing fuses, which is
-what it did on every case until the plan cache was cleared between the two
-sides: the fallback is silent by design, so comparing answers cannot tell the
-two paths apart.
-"""
+"""The step folded into the transforms: same answer, and actually folded."""
 
 import os
 from functools import partialmethod
@@ -82,11 +56,6 @@ def propagate(
     **kw,
 ):
     """Propagate with the fusion allowed or not, and report what fused.
-
-    ``NLSE_FUSE_PROPAGATOR`` is read when a plan is built and plans outlive the
-    solver that built them, so the cache has to go for the variable to mean
-    anything -- before, so this run gets its own plan, and after, so the next
-    test does.
 
     Parameters
     ----------
@@ -176,13 +145,7 @@ def test_a_batch_shares_one_propagator():
 
 
 def test_yoshida_cycles_three_propagators():
-    """Three propagators within one step, through one plan, unchanged.
-
-    The case the indirection exists for. Double precision and lossless because
-    Yoshida warns about both, for reasons that have nothing to do with this:
-    its middle sub-step runs backwards, which amplifies a lossy field, and its
-    fourth order is below single-precision round-off anyway.
-    """
+    """Yoshida's three propagators in one step pass through one plan unchanged."""
     kw = {
         "splitting": "yoshida",
         "dtype": np.complex128,
@@ -270,12 +233,7 @@ def test_a_refused_callback_leaves_the_others_fused(monkeypatch):
 
 
 def test_a_second_propagator_is_seen():
-    """A plan must answer to whichever propagator it is handed.
-
-    Straight at the indirection: a plan that captured the propagator it was
-    built with would pass every other test in this file and still return the
-    first propagator's answer for the second's.
-    """
+    """A plan must answer to whichever propagator it is handed."""
     cp = pytest.importorskip("cupy")
     from NLSE.backends.cupy_backend import _CuFFTPlan
 
@@ -306,13 +264,7 @@ def test_a_second_propagator_is_seen():
 
 
 def test_one_dimension_still_propagates():
-    """A 1D run must come out right whether or not it can fuse.
-
-    CuPy reaches the callback machinery for multi-dimensional plans only, and
-    its one-dimensional path raises on the way in. Which of the two happens is
-    CuPy's business and not asserted here; that the answer survives either is
-    this project's.
-    """
+    """A 1D run must come out right whether or not it can fuse."""
     unfused, _ = propagate(False, NLSE_1d, (N,))
     fused, _ = propagate(True, NLSE_1d, (N,))
     assert np.array_equal(fused, unfused), (
@@ -386,15 +338,7 @@ def test_the_nonlinear_callback_is_the_kernel(monkeypatch, dtype, kind):
     ids=["lie", "yoshida"],
 )
 def test_the_separable_propagator_is_as_accurate(kw):
-    """One factor per axis must cost no accuracy against a complex128 run.
-
-    Not bitwise: the factors are rounded on their own and multiplied per
-    element. Measured in a numpy emulation of this step, 5 to 50 steps at 64
-    to 1024 points, its error against complex128 was 0.92 to 1.10 times the
-    full propagator's; 1.5 leaves room and still catches a wrong factor.
-    Yoshida's sub-steps take factors of their own, at weight * delta_z, so
-    a factor built for the wrong sub-step fails it too.
-    """
+    """One propagator factor per axis costs no accuracy against complex128."""
     reference, _ = propagate(True, dtype=np.complex128, **kw)
     full, _ = propagate(True, **kw)
     separable, kinds = propagate(True, separable=True, **kw)

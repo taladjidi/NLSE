@@ -65,11 +65,7 @@ def test_prepare_output_array(backend) -> None:
 
 
 def test_split_step(backend) -> None:
-    """One linear step of a Rayleigh length lands on the Gaussian beam.
-
-    Lossless and linear, so the step is diffraction alone and exact. The
-    complex field is compared, so a propagator of the wrong sign fails too.
-    """
+    """One linear step of a Rayleigh length lands on the Gaussian beam."""
     simu = make_solver(backend, n2=0, alpha=0)
     r_sq = simu.X**2
     z_rayleigh = simu.k * BEAM_WAIST**2 / 2

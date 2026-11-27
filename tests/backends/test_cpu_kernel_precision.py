@@ -1,9 +1,4 @@
-"""The complex64 CPU kernels compute in float32, vectorized, and round like double.
-
-numba widens a float32 that meets a Python float, a float64 argument or an int
-literal. A kernel typed that way still returns complex64, so nothing downstream
-notices that it ran in double on half as many lanes: the IR is read here.
-"""
+"""The complex64 CPU kernels compute in float32, vectorized, and round like double."""
 
 import re
 
@@ -151,11 +146,7 @@ def test_complex64_kernel_is_float32_and_vectorized(name, kinds):
 
 @pytest.mark.parametrize("rotated", [_rotated_fused, _rotated_split])
 def test_lossless_rotation_rounds_once_and_keeps_the_modulus(rotated):
-    """A * exp(i g |A|^2 dz) in float32 is the double result, rounded once.
-
-    Up to the phase the solver takes per step by default: a larger one adds the
-    rounding of its own reduction (2.1 UNIT at 1 rad).
-    """
+    """A * exp(i g |A|^2 dz) in float32 is the double result, rounded once."""
     field = _unit_disc_field(seed=0)
     out = rotated(field)
     assert out.dtype == np.complex64

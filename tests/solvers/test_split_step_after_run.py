@@ -1,15 +1,4 @@
-"""A ``split_step`` taken by hand after ``out_field`` uses what it is given.
-
-``out_field`` stores the step constants, the scaled potential and the
-pre-normalized propagator for its run. They used to outlive it, so a later
-``split_step`` applied the run's potential instead of its own ``V``, and kept
-a zero coupling after a run past ``L``.
-
-Each test reads the phase one step writes on a plane wave, which the linear
-step leaves alone, against the nonlinear step's ``(k n2 I + k V / 2) dz``,
-with ``I = c eps0 |A|^2 / 2``: the coupling ``g = k n2 c eps0 / 2`` and the
-potential scale ``k / 2`` of ``NLSE._step_constants``.
-"""
+"""A ``split_step`` taken by hand after ``out_field`` uses what it is given."""
 
 import numpy as np
 import pytest

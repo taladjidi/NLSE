@@ -1,10 +1,4 @@
-"""The documentation's code examples have to work.
-
-Two checks, because the blocks are not all the same kind. A block a reader
-could copy and run is executed. A block that illustrates an API shape, and
-leans on names defined around it, is only scanned for API that no longer
-exists.
-"""
+"""The documentation's code examples have to work."""
 
 import ast
 import json
@@ -18,11 +12,8 @@ DOC_FILES = [
     *sorted((ROOT / "docs").glob("*.md")),
     ROOT / "README.md",
 ]
-# Notebooks are documentation too, and the tutorial is a page in the nav.
-# Everything under these is written by a build, not by a person: sphinx-gallery
-# emits a notebook beside every example it renders, and myst-nb and autoapi
-# leave their own trees. Checking a generated copy reports the same finding
-# twice, against a file nobody can edit.
+# Notebooks are documentation too. Generated trees (sphinx-gallery, myst-nb,
+# autoapi) are skipped: a finding there repeats one in a file nobody edits.
 GENERATED = (
     ".ipynb_checkpoints",
     ".cache",
@@ -78,12 +69,7 @@ def blocks(path):
 
 
 def notebook_sources(path):
-    """Return every cell's text from a notebook, code and markdown alike.
-
-    Markdown cells included: the tutorial quotes source in prose, and a quoted
-    signature that no longer exists misleads exactly as much as a code cell
-    that no longer runs.
-    """
+    """Return every cell's text from a notebook, code and markdown alike."""
     cells = json.loads(path.read_text(encoding="utf-8")).get("cells", [])
     out = []
     for cell in cells:
@@ -179,13 +165,7 @@ def test_inline_code_uses_current_api(path):
 
 
 def test_the_migration_guide_shows_the_api_it_migrates_from():
-    """The exemption above has to be earned, or it is just a hole.
-
-    migration.md is skipped by the check because showing the removed call
-    beside its replacement is the whole point of the page. That is only
-    defensible while it actually shows them, so this asserts the same patterns
-    the other pages are forbidden.
-    """
+    """The migration guide still shows the removed calls it migrates from."""
     text = MIGRATION_GUIDE.read_text(encoding="utf-8")
     unmentioned = [
         why for pattern, why in REMOVED_API.items() if re.search(pattern, text) is None
@@ -208,17 +188,8 @@ def test_self_contained_examples_run(block):
 
 
 # ── Maths, and where MathJax comes from ─────────────────────────────────────
-#
-# Under mkdocs this needed real machinery. Two renderers fed the site and
-# handed MathJax different things: .md went through pymdownx.arithmatex, the
-# tutorial through nbconvert, and the configuration served only the first, so
-# every formula in the tutorial was published as its own LaTeX source for as
-# long as the page existed. A first fix changed nothing while a test said it
-# had, because the failure was in how the classes nested.
-#
-# Sphinx renders both through MyST, so the delimiters and the markup are the
-# same on every page and there is no class to get wrong. What is left to hold
-# is the pair of settings that keeps it that way.
+# Sphinx renders .md and notebooks alike through MyST (under mkdocs the
+# tutorial's formulas shipped as raw LaTeX); these hold the two settings.
 
 CONF = ROOT / "docs" / "conf.py"
 
@@ -233,13 +204,7 @@ def test_dollar_maths_is_enabled():
 
 
 def test_mathjax_is_served_from_here():
-    """Not from a CDN, which is the whole reason it is vendored.
-
-    Sphinx loads MathJax from jsdelivr unless told otherwise. A script tag
-    pointed at someone else's host runs whatever that host serves in the
-    browser of every reader; the entry this replaced was polyfill.io, which
-    was sold in 2024 and began serving malware.
-    """
+    """MathJax is served from the vendored copy, not from a CDN."""
     text = CONF.read_text(encoding="utf-8")
     assert 'mathjax_path = "mathjax/' in text, (
         "mathjax_path does not point at the vendored copy, so Sphinx will "
@@ -253,14 +218,7 @@ def test_mathjax_is_served_from_here():
     "path", NOTEBOOKS, ids=lambda p: p.name if hasattr(p, "name") else str(p)
 )
 def test_notebook_images_exist(path):
-    """A notebook's images have to be files, or the page shows a broken icon.
-
-    ``mkdocs build --strict`` fails on a broken *link* and says nothing about
-    an ``<img>`` inside rendered notebook HTML, so the tutorial asked for
-    assets/equations.png and assets/tur.png -- neither of which has ever
-    existed in this repository -- and every build passed. The 404s only showed
-    up in the server log of someone who happened to be looking.
-    """
+    """A notebook's images have to be files, or the page shows a broken icon."""
     referenced = [
         target
         for source in notebook_sources(path)

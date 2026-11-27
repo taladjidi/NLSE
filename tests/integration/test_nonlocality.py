@@ -10,11 +10,8 @@ from scipy.constants import c, epsilon_0
 PRECISION_COMPLEX = np.complex64
 
 
-# The medium of the non-local runs below: about a radian of nonlinear phase
-# over the cell. Enough that the smoothing changes the answer, little enough
-# that the run is not chaotic: at the couple of hundred radians these
-# parameters reach if the power is left at 1 W, two backends disagree by 100%
-# on a LOCAL run and a comparison says nothing about either smoothing.
+# About a radian of nonlinear phase over the cell: enough for the smoothing to
+# matter, not so much that backends diverge (at 1 W they differ by 100%).
 RESPONSE_WINDOW = 1e-3  # m
 RESPONSE_N = 64
 RESPONSE_PARAMS = {
@@ -60,12 +57,7 @@ def test_a_non_local_run_stays_on_the_backend_asked_for(backend):
 
 
 def test_a_length_below_one_cell_is_kept(backend):
-    """The response is exact at any length, so a sub-cell one is not dropped.
-
-    The old real-space kernel was a whole number of cells wide and collapsed
-    to the identity below one, so the solver warned and ran local. The
-    response ``1 / (1 + l^2 K^2)`` has no such floor: it smooths a little.
-    """
+    """The response is exact at any length, so a sub-cell one is not dropped."""
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         simu = NLSE(
@@ -247,11 +239,7 @@ def test_nonlocality():
 
 
 def test_a_three_dimensional_run_can_be_non_local(backend):
-    """NLSE_3d smooths across the beam and runs to the end.
-
-    The closed form of the transverse response is checked in
-    tests/physics/test_nonlocal_response.py; this is the whole run.
-    """
+    """NLSE_3d smooths across the beam and runs to the end."""
     simu = NLSE_3d(
         alpha=0,
         energy=1e-6,
@@ -283,11 +271,7 @@ def test_a_three_dimensional_run_can_be_non_local(backend):
 @pytest.mark.parametrize("splitting", ["lie", "RK4"])
 @pytest.mark.parametrize("backend", [b for b in AVAILABLE_BACKENDS if b != "CPU"])
 def test_a_non_local_run_agrees_with_the_cpu(backend, splitting):
-    """Each backend's smoothing has to be the same smoothing.
-
-    The closed-form tests check one nonlinear step. This runs the physics,
-    split-step and RK4 alike, and compares the field.
-    """
+    """Each backend's smoothing has to be the same smoothing."""
     fields = [
         smoothed_run(
             NLSE(backend=name, nl_length=LONG_LENGTH, **RESPONSE_PARAMS), splitting
@@ -325,11 +309,7 @@ def smoothed_run(simu, splitting="lie"):
 
 
 def test_a_new_length_is_a_new_response(backend):
-    """Changing ``nl_length`` between runs smooths at the new length.
-
-    The response is cached with the solver's dispersion; a cache that did not
-    key it on the length would hand the second run the first run's response.
-    """
+    """Changing ``nl_length`` between runs smooths at the new length."""
     simu = NLSE(backend=backend, nl_length=SHORT_LENGTH, **RESPONSE_PARAMS)
     smoothed_run(simu)
     simu.nl_length = LONG_LENGTH

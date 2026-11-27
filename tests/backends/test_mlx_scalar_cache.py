@@ -1,8 +1,4 @@
-"""The MLX scalar cache stays bounded however many distinct values it sees.
-
-An adaptive step hands the kernels a new delta_z every step, and each value
-converted to an mx.array used to stay alive for the life of the process.
-"""
+"""The MLX scalar cache stays bounded however many distinct values it sees."""
 
 import gc
 import weakref

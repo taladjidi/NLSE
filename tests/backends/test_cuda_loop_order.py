@@ -1,11 +1,4 @@
-"""The captured CuPy loop runs after the work queued before it.
-
-``execute_loop`` replays its steps on a non-blocking stream, and such a stream
-does not wait for the null stream. The half step a merged Strang run applies
-before the loop was still running when the loop's first step read the field.
-The loop with callbacks takes the same steps one at a time on one stream, so
-it is the reference here.
-"""
+"""The captured CuPy loop runs after the work queued before it."""
 
 import numpy as np
 import pytest
