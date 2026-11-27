@@ -113,13 +113,14 @@ changes only its columns and a new one adds an entry.
 
 ```bash
 uv sync --group docs
-uv run python -m sphinx -b html docs docs/_build/html -W
+uv run python -m sphinx -b html docs docs/_build/html -W --keep-going
 uv run python -m http.server -d docs/_build/html      # then open http://localhost:8000
 ```
 
 `-W` turns warnings into errors, which is what CI does: a broken
 cross-reference or a page missing from a toctree fails the build rather than
-shipping. The API section is generated from the source by sphinx-autoapi, so
+shipping. `--keep-going` reports them all before failing. The API section is
+generated from the source by sphinx-autoapi, so
 there is nothing to write by hand for a new class -- give it a numpy
 docstring and it appears.
 

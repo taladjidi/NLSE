@@ -25,12 +25,10 @@ uv run python -m sphinx -b html docs docs/_build/html -W --keep-going
 uv run python -m http.server -d docs/_build/html      # then open http://localhost:8000
 ```
 
-CI runs the same build on every push, and a push to `main` publishes it. `-W`
-makes a warning fail the build: a broken cross-reference, or a page missing
-from a toctree. The gallery runs every script in `examples/` but two, 57
-minutes on a GitHub runner the first time; after that a build runs only the
-scripts that changed, and a weekly CI run executes them all. The vortex
-animation needs `ffmpeg`. More in [Contributing](docs/contributing.md#building-the-documentation).
+CI runs the same build on every push, and a push to `main` publishes it. The
+first build also runs the gallery of `examples/`, which is slow:
+[Contributing](docs/contributing.md#building-the-documentation) says what it
+runs and what later builds skip.
 
 ## Installation
 
@@ -56,10 +54,13 @@ or `.venv\Scripts\activate` on Windows.
 Optional extras pull in the accelerated backends:
 
 ```bash
-uv pip install ".[gpu]"      # CuPy, for Nvidia GPUs
+uv pip install ".[gpu]"      # CuPy built from source, for Nvidia GPUs
 uv pip install ".[opencl]"   # PyOpenCL + pyvkfft, for OpenCL devices
 uv pip install ".[mlx]"      # MLX, for Apple silicon
 ```
+
+For CuPy, the prebuilt wheel for your CUDA version (`cupy-cuda13x` or
+`cupy-cuda12x`) saves the build: see [Installation](docs/installation.md).
 
 To work on the package itself, follow [Contributing](docs/contributing.md#development-setup).
 
@@ -148,7 +149,7 @@ The cache now lives outside the package, so this cannot recur.
 The tests run with [`pytest`](https://docs.pytest.org/) from the root of the
 repository, on every backend installed, and the full suite takes a while.
 [Contributing](docs/contributing.md#development-setup) sets up the environment
-they need and lists the commands.
+they need and [lists the commands](docs/contributing.md#running-tests).
 
 The benchmarks can be run using [`examples/benchmarks.py`](examples/benchmarks.py) and compare a "naive" numpy implementation of the main solver loop to our solver.
 We also compare for the example of the vortex precession presented in [`FourierGPE.jl`](https://github.com/AshtonSBradley/FourierGPE.jl/blob/master/examples/2dvortexprecession.jl) to our solver.
