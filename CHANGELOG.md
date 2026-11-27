@@ -158,6 +158,29 @@ come first.
   per-step time is unchanged.
 - The test suite keeps its benchmark cache in each test's own directory and
   no longer touches the user's.
+- **The CPU split step runs in blocked passes where that is faster on this
+  machine.** A 2D local `NLSE` or `GPE` step transformed the rows and columns
+  over the whole field, then applied the nonlinear step in a pass of its own.
+  It now transforms blocks of rows and bands of columns sized to stay in
+  cache, and applies the nonlinear step to each block as its inverse transform
+  finishes. Whether to block, and how, is measured the first time a grid runs
+  (under 1 s at 1024², 7 to 12 s at 4096² on an M3 Max; 1 to 2 s and 21 to
+  40 s on a Ryzen 3 4100) and kept in `cpu_blocking.json` in the cache
+  directory, as the backend benchmark is. On a Ryzen 3 4100 a step is 1.15x
+  faster at 1024² and 1.37x at 4096² in complex64, and 1.31x, 1.35x and 1.44x
+  at 1024², 2048² and 4096² in complex128. On an idle M3 Max it is 1.17x
+  faster at 4096² in complex64 and 1.25x in complex128; 1024² and 2048² do
+  not win by the 10% asked for there and stay as they were. Results move at
+  the rounding level only: 6e-6 of the peak in complex64 and 1e-14 in
+  complex128 over 20 steps.
+  `NLSE_CPU_BLOCKING=0` turns it off, `NLSE_FORCE_TUNING=1` re-measures, and
+  `NLSE.backends.tune_cpu_step(shape, dtype)` measures ahead of a run.
+  Batches, array-valued parameters, non-local responses, 1D and 3D grids,
+  coupled solvers and RK4 run as before. Figures in `docs/optimization-log.md`.
+- `Backend.has_nonlinear_store_callback` is renamed
+  `has_linear_nonlinear_step`; it is now set on CPU as well as CUPY. The CPU
+  backend's FFT plan is a `CPUPlan` with an `axes` attribute instead of the
+  bare axes tuple.
 
 ## 4.1.0 — 2026-08-05
 

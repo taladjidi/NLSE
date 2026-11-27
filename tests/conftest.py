@@ -28,3 +28,13 @@ def private_benchmark_cache(tmp_path, monkeypatch):
     one, as the audit's runs did with a 64x64 grid.
     """
     monkeypatch.setenv("NLSE_CACHE_DIR", str(tmp_path / "nlse_cache"))
+
+
+@pytest.fixture(autouse=True)
+def unblocked_cpu_step(monkeypatch):
+    """Keep the CPU step unblocked, so that no test measures a grid by accident.
+
+    The tests of the blocked step, in tests/backends/test_cpu_blocked_step.py,
+    set NLSE_CPU_BLOCKING back themselves.
+    """
+    monkeypatch.setenv("NLSE_CPU_BLOCKING", "0")

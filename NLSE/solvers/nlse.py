@@ -7,6 +7,7 @@ import math
 import warnings
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
+from functools import partial
 from typing import Any
 
 import matplotlib.pyplot as plt
@@ -67,9 +68,9 @@ SPLITTINGS = ("lie", "strang", "yoshida")
 # steps comes to 237.00000000000003, which must still be 237 whole steps.
 STEP_ROUNDOFF = 1e-9
 
-# Transformed axes the nonlinear step is folded into the inverse transform at:
-# 2D, the plans cuFFT links store callbacks into here and the only ones the
-# callback is checked against (tests/backends/test_fft_propagator_fusion.py).
+# Transformed axes the nonlinear step is folded into the linear step at: 2D,
+# the plans cuFFT links store callbacks into here, checked against in
+# tests/backends/test_fft_propagator_fusion.py, and the CPU's blocked step.
 FUSED_TRANSFORM_AXES = 2
 
 
@@ -562,11 +563,11 @@ class NLSE(StepSize):
         return kernels.square_mod_nl_prop_v(A, V_scaled, dz, alpha_half, g, Isat_conv)
 
     def _fuses_nonlinear_into_transform(self) -> bool:
-        """Whether the nonlinear step may run inside the inverse transform.
+        """Whether the nonlinear step may run inside the linear step's last pass.
 
-        Only where the backend has a store callback for it, the response is
-        local (a non-local one smooths |A|^2 between the transform and the
-        step), and the transform is 2D, the one cuFFT links callbacks into.
+        Only where the backend has a step for it (a store callback on CUPY,
+        blocked passes on CPU), the response is local (a non-local one smooths
+        |A|^2 between the transform and the step), and the transform is 2D.
 
         Returns
         -------
@@ -574,7 +575,7 @@ class NLSE(StepSize):
             True to try ``kernels.linear_nonlinear_step``.
         """
         return (
-            self._backend.has_nonlinear_store_callback
+            self._backend.has_linear_nonlinear_step
             and self.nl_length == 0
             and len(self._last_axes) == FUSED_TRANSFORM_AXES
         )
@@ -606,24 +607,50 @@ class NLSE(StepSize):
         np.ndarray
             The field.
         """
-        if self._fuses_nonlinear_into_transform():
-            prop, unnorm = self._fused_propagator(propagator)
-            # The callback's inverse transform does not normalize, so it needs
-            # the propagator that carries 1/N.
-            if unnorm and self._backend.kernels.linear_nonlinear_step(
-                A,
-                prop,
-                plans[0],
-                V_scaled,
-                dz,
-                self._constant("_alpha_half"),
-                self._constant("_g"),
-                self._constant("_Isat_conv"),
-                factors=self._propagator_fft_factors(prop, A.size // A.shape[-1]),
-            ):
-                return A
+        if self._linear_nonlinear_step(A, V_scaled, propagator, plans, dz):
+            return A
         A = self._apply_linear_step(A, propagator, plans)
         return self._nonlinear_step(A, A_sq, V_scaled, dz)
+
+    def _linear_nonlinear_step(self, A, V_scaled, propagator, plans, dz) -> bool:
+        """Take both steps in the backend's own step for them, where it takes them.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            Field, stepped in place if the step is taken.
+        V_scaled : np.ndarray or None
+            Pre-scaled potential, or None.
+        propagator : np.ndarray
+            Propagator matrix.
+        plans : list
+            List of FFT plan objects from backend.
+        dz : float
+            Distance the nonlinear step advances by.
+
+        Returns
+        -------
+        bool
+            True if taken; False, with A untouched, where the backend has no
+            such step or declines this call.
+        """
+        if not self._fuses_nonlinear_into_transform():
+            return False
+        prop, unnorm = self._fused_propagator(propagator)
+        # The callback's inverse transform does not normalize, so it needs
+        # the propagator that carries 1/N. The factors are built when the
+        # kernel asks: a step it declines costs no pass over the dispersion.
+        return unnorm and self._backend.kernels.linear_nonlinear_step(
+            A,
+            prop,
+            plans[0],
+            V_scaled,
+            dz,
+            self._constant("_alpha_half"),
+            self._constant("_g"),
+            self._constant("_Isat_conv"),
+            factors=partial(self._propagator_fft_factors, prop, A.size // A.shape[-1]),
+        )
 
     def _require_backend(self, supports: Callable, what: str) -> None:
         """Move to the fastest backend that can serve this run, and say so.

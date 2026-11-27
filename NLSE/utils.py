@@ -1,7 +1,11 @@
+import json
 import os
+import platform
 import sys
+import threading
 import warnings
 from pathlib import Path
+from typing import Any
 
 __BACKEND__ = "CUPY"
 
@@ -120,3 +124,49 @@ def get_cache_dir() -> Path:
 def get_benchmark_cache_path() -> Path:
     """Get path to FFT benchmark cache file."""
     return get_cache_dir() / "fft_benchmark.json"
+
+
+def get_blocking_cache_path() -> Path:
+    """Get path to the cache of the CPU step's measured blocks."""
+    return get_cache_dir() / "cpu_blocking.json"
+
+
+def machine_identity() -> tuple[str, str]:
+    """Return what a cached timing is a statement about: OS and processor type.
+
+    Returns
+    -------
+    tuple of str
+        ``(platform.system(), platform.machine())``.
+    """
+    return (platform.system(), platform.machine())
+
+
+def write_json_atomically(path: Path, data: Any) -> None:
+    """Write ``data`` as JSON to ``path``, all of it or none of it.
+
+    Written beside the file and renamed over it, so a reader never sees a
+    half-written file and a failed write leaves the previous one whole.
+
+    Parameters
+    ----------
+    path : Path
+        File to write.
+    data : Any
+        What ``json.dump`` can write.
+
+    Raises
+    ------
+    OSError, TypeError, ValueError
+        As ``open`` and ``json.dump`` raise them, after removing the partial
+        file.
+    """
+    # Per process and thread: two writers never share a partial file.
+    partial = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        with open(partial, "w") as f:
+            json.dump(data, f, indent=2)
+        os.replace(partial, path)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise

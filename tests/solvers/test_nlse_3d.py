@@ -158,7 +158,9 @@ def test_build_fft_plan(backend) -> None:
         )
     elif backend == "CPU":
         assert len(plans) == 1, f"Number of plans is wrong. (Backend {backend})"
-        assert plans[0] == (-3, -2, -1), f"Plan axes are wrong. (Backend {backend})"
+        assert plans[0].axes == (-3, -2, -1), (
+            f"Plan axes are wrong. (Backend {backend})"
+        )
 
 
 def test_prepare_output_array(backend) -> None:

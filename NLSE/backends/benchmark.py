@@ -6,7 +6,6 @@ cached for quick subsequent access.
 """
 
 import json
-import os
 import platform
 import time
 from datetime import datetime, timedelta
@@ -14,7 +13,7 @@ from typing import Any, TypedDict
 
 import numpy as np
 
-from ..utils import say
+from ..utils import machine_identity, say, write_json_atomically
 
 # Bumped whenever a cached timing stops meaning what it meant, so that a cache
 # written before the change is discarded rather than believed. It was written
@@ -271,7 +270,7 @@ def load_benchmark_cache() -> BenchmarkResults | None:
         # directory that a lab machine and a laptop may well share, and the
         # answer it holds is a statement about one machine's hardware.
         cached_platform = cache["platform"]
-        here = (platform.system(), platform.machine())
+        here = machine_identity()
         there = (cached_platform.get("system"), cached_platform.get("processor"))
         if there != here:
             say(
@@ -310,17 +309,10 @@ def save_benchmark_cache(results: BenchmarkResults) -> None:
     except OSError as e:
         say(f"Warning: Failed to save benchmark cache: {e}")
         return
-    # Written beside the cache and renamed over it, so a reader never sees a
-    # half-written file and a failed write leaves the previous cache whole.
-    partial = cache_path.with_name(f"{cache_path.name}.{os.getpid()}.tmp")
-
     try:
-        with open(partial, "w") as f:
-            json.dump(results, f, indent=2)
-        os.replace(partial, cache_path)
+        write_json_atomically(cache_path, results)
         say(f"Benchmark results cached to {cache_path}")
     except Exception as e:
-        partial.unlink(missing_ok=True)
         say(f"Warning: Failed to save benchmark cache: {e}")
 
 

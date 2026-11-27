@@ -1,5 +1,6 @@
 import functools
 import sys
+from collections.abc import Callable
 
 import numba
 import numba.np.ufunc.parallel
@@ -352,6 +353,11 @@ _LOSS_PASSES = 3
 # of it. A caller invoking a kernel directly can, and gets the old answer
 # rather than a diverging one.
 _LOSS_SOLVED_LIMIT = 0.1
+
+# Elements per call of the serial body in the parallel nonlinear kernels: the
+# call is lost against 4096 elements at ~1.5 ns each, and a 256x256 field still
+# splits into 16 spans. Same speed as one loop, to the bit (M3 Max, measured).
+_SPAN = 4096
 
 
 @numba.njit(inline="always", fastmath=_SINCOS_FASTMATH, cache=True)
@@ -710,7 +716,82 @@ def square_mod(A: np.ndarray, A_sq: np.ndarray) -> np.ndarray:
     return A_sq
 
 
-@numba.njit(parallel=True, fastmath=_SINCOS_FASTMATH, cache=True, boundscheck=False)
+@numba.njit(
+    nogil=True,
+    error_model="numpy",
+    fastmath=_SINCOS_FASTMATH,
+    cache=True,
+    boundscheck=False,
+)
+def _square_mod_nl_prop_span(
+    A_flat: np.ndarray,
+    start: int,
+    stop: int,
+    dz: float,
+    alpha: float,
+    g: float,
+    Isat: float,
+) -> None:
+    """Apply the nonlinear step to ``A_flat[start:stop]``, on the calling thread.
+
+    The body ``_square_mod_nl_prop`` runs on each thread's share, and the one
+    the blocked step runs on each block. ``error_model="numpy"`` drops the
+    division check that stops a serial loop vectorizing (15 against 2.5 ns a
+    point on a Ryzen 3 4100; ``prange`` drops it by itself).
+
+    Parameters
+    ----------
+    A_flat : np.ndarray
+        The field, flattened, modified in place.
+    start : int
+        First element to step.
+    stop : int
+        One past the last element to step.
+    dz : float
+        Propagation step in m
+    alpha : float
+        Losses
+    g : float
+        Interactions
+    Isat : float
+        Saturation
+    """
+    # A slice, not range(start, stop): an index that may start anywhere keeps
+    # numba's negative-index wraparound in the loop, and that stops LLVM
+    # vectorizing it (4.1 against 1.6 ns a point, complex64, M3 Max).
+    part = A_flat[start:stop]
+    ft = part.real.dtype.type
+    dz, alpha, g, Isat = ft(dz), ft(alpha), ft(g), ft(Isat)
+    if alpha == 0:
+        # See _nl_prop_without_V: lossless is a rotation, not an exponential.
+        for i in range(part.size):
+            a = part[i]
+            A_sq_val = a.real * a.real + a.imag * a.imag
+            sat = _ONE / (_ONE + A_sq_val / Isat)
+            theta = dz * g * A_sq_val * sat
+            part[i] = _rotate(a, theta)
+        return
+    u = _TWO * alpha * dz
+    if abs(u) > _LOSS_SOLVED_LIMIT:
+        # See _LOSS_SOLVED_LIMIT: the frozen step, as before.
+        for i in range(part.size):
+            a = part[i]
+            A_sq_val = a.real * a.real + a.imag * a.imag
+            sat = _ONE / (_ONE + A_sq_val / Isat)
+            arg = -alpha * sat + _IMAG * g * A_sq_val * sat
+            part[i] = _mul_cexp(part[i], _ONE, dz * arg)
+        return
+    # Lossy: see _loss_factor, and _nl_prop_without_V for why sincos.
+    for i in range(part.size):
+        a = part[i]
+        A_sq_val = a.real * a.real + a.imag * a.imag
+        sat = _ONE / (_ONE + A_sq_val / Isat)
+        P = _loss_factor(sat, u)
+        decay = np.sqrt(_ONE - P * u)
+        part[i] = decay * _rotate(a, dz * g * A_sq_val * P)
+
+
+@numba.njit(parallel=True, cache=True, boundscheck=False)
 def _square_mod_nl_prop(
     A: np.ndarray,
     dz: float,
@@ -719,6 +800,9 @@ def _square_mod_nl_prop(
     Isat: float,
 ) -> np.ndarray:
     """Compute |A|^2 inline and apply nonlinear propagation in a single pass.
+
+    One share of the field per thread, each stepped by
+    ``_square_mod_nl_prop_span``.
 
     Parameters
     ----------
@@ -734,39 +818,84 @@ def _square_mod_nl_prop(
         Saturation
     """
     A_flat = A.ravel()
-    ft = A_flat.real.dtype.type
-    dz, alpha, g, Isat = ft(dz), ft(alpha), ft(g), ft(Isat)
-    if alpha == 0:
-        # See _nl_prop_without_V: lossless is a rotation, not an exponential.
-        for i in numba.prange(A_flat.size):
-            a = A_flat[i]
-            A_sq_val = a.real * a.real + a.imag * a.imag
-            sat = _ONE / (_ONE + A_sq_val / Isat)
-            theta = dz * g * A_sq_val * sat
-            A_flat[i] = _rotate(a, theta)
-        return A
-    u = _TWO * alpha * dz
-    if abs(u) > _LOSS_SOLVED_LIMIT:
-        # See _LOSS_SOLVED_LIMIT: the frozen step, as before.
-        for i in numba.prange(A_flat.size):
-            a = A_flat[i]
-            A_sq_val = a.real * a.real + a.imag * a.imag
-            sat = _ONE / (_ONE + A_sq_val / Isat)
-            arg = -alpha * sat + _IMAG * g * A_sq_val * sat
-            A_flat[i] = _mul_cexp(A_flat[i], _ONE, dz * arg)
-        return A
-    # Lossy: see _loss_factor, and _nl_prop_without_V for why sincos.
-    for i in numba.prange(A_flat.size):
-        a = A_flat[i]
-        A_sq_val = a.real * a.real + a.imag * a.imag
-        sat = _ONE / (_ONE + A_sq_val / Isat)
-        P = _loss_factor(sat, u)
-        decay = np.sqrt(_ONE - P * u)
-        A_flat[i] = decay * _rotate(a, dz * g * A_sq_val * P)
+    for span in numba.prange((A_flat.size + _SPAN - 1) // _SPAN):
+        _square_mod_nl_prop_span(
+            A_flat,
+            span * _SPAN,
+            min((span + 1) * _SPAN, A_flat.size),
+            dz,
+            alpha,
+            g,
+            Isat,
+        )
     return A
 
 
-@numba.njit(parallel=True, fastmath=_SINCOS_FASTMATH, cache=True, boundscheck=False)
+@numba.njit(
+    nogil=True,
+    error_model="numpy",
+    fastmath=_SINCOS_FASTMATH,
+    cache=True,
+    boundscheck=False,
+)
+def _square_mod_nl_prop_v_span(
+    A_flat: np.ndarray,
+    V_flat: np.ndarray,
+    start: int,
+    stop: int,
+    dz: float,
+    alpha: float,
+    g: float,
+    Isat: float,
+) -> None:
+    """Apply the nonlinear step with potential to ``A_flat[start:stop]``.
+
+    The body of ``_square_mod_nl_prop_v``, as ``_square_mod_nl_prop_span`` is
+    of ``_square_mod_nl_prop``.
+
+    Parameters
+    ----------
+    A_flat : np.ndarray
+        The field, flattened, modified in place.
+    V_flat : np.ndarray
+        Potential, flattened, indexed as ``A_flat``.
+    start : int
+        First element to step.
+    stop : int
+        One past the last element to step.
+    dz : float
+        Propagation step in m
+    alpha : float
+        Losses
+    g : float
+        Interactions
+    Isat : float
+        Saturation
+    """
+    # Sliced for the reason given in _square_mod_nl_prop_span.
+    part = A_flat[start:stop]
+    V_part = V_flat[start:stop]
+    ft = part.real.dtype.type
+    dz, alpha, g, Isat = ft(dz), ft(alpha), ft(g), ft(Isat)
+    u = _TWO * alpha * dz
+    if abs(u) > _LOSS_SOLVED_LIMIT:
+        # Lossless, or too lossy to solve. See _LOSS_SOLVED_LIMIT.
+        for i in range(part.size):
+            A_sq_val = part[i].real * part[i].real + part[i].imag * part[i].imag
+            sat = _ONE / (_ONE + A_sq_val / Isat)
+            arg = -alpha * sat + _IMAG * g * A_sq_val * sat + _IMAG * V_part[i]
+            part[i] = _mul_cexp(part[i], _ONE, dz * arg)
+        return
+    # Lossy: see _loss_factor, and _nl_prop for what stays in the exponential.
+    for i in range(part.size):
+        A_sq_val = part[i].real * part[i].real + part[i].imag * part[i].imag
+        sat = _ONE / (_ONE + A_sq_val / Isat)
+        P = _loss_factor(sat, u)
+        arg = _IMAG * g * A_sq_val * P + _IMAG * V_part[i]
+        part[i] = _mul_cexp(part[i], np.sqrt(_ONE - P * u), dz * arg)
+
+
+@numba.njit(parallel=True, cache=True, boundscheck=False)
 def _square_mod_nl_prop_v(
     A: np.ndarray,
     V: np.ndarray,
@@ -776,6 +905,9 @@ def _square_mod_nl_prop_v(
     Isat: float,
 ) -> np.ndarray:
     """Compute |A|^2 inline and apply nonlinear propagation with potential.
+
+    One share of the field per thread, each stepped by
+    ``_square_mod_nl_prop_v_span``.
 
     Parameters
     ----------
@@ -794,24 +926,17 @@ def _square_mod_nl_prop_v(
     """
     A_flat = A.ravel()
     V_flat = V.ravel()
-    ft = A_flat.real.dtype.type
-    dz, alpha, g, Isat = ft(dz), ft(alpha), ft(g), ft(Isat)
-    u = _TWO * alpha * dz
-    if abs(u) > _LOSS_SOLVED_LIMIT:
-        # Lossless, or too lossy to solve. See _LOSS_SOLVED_LIMIT.
-        for i in numba.prange(A_flat.size):
-            A_sq_val = A_flat[i].real * A_flat[i].real + A_flat[i].imag * A_flat[i].imag
-            sat = _ONE / (_ONE + A_sq_val / Isat)
-            arg = -alpha * sat + _IMAG * g * A_sq_val * sat + _IMAG * V_flat[i]
-            A_flat[i] = _mul_cexp(A_flat[i], _ONE, dz * arg)
-        return A
-    # Lossy: see _loss_factor, and _nl_prop for what stays in the exponential.
-    for i in numba.prange(A_flat.size):
-        A_sq_val = A_flat[i].real * A_flat[i].real + A_flat[i].imag * A_flat[i].imag
-        sat = _ONE / (_ONE + A_sq_val / Isat)
-        P = _loss_factor(sat, u)
-        arg = _IMAG * g * A_sq_val * P + _IMAG * V_flat[i]
-        A_flat[i] = _mul_cexp(A_flat[i], np.sqrt(_ONE - P * u), dz * arg)
+    for span in numba.prange((A_flat.size + _SPAN - 1) // _SPAN):
+        _square_mod_nl_prop_v_span(
+            A_flat,
+            V_flat,
+            span * _SPAN,
+            min((span + 1) * _SPAN, A_flat.size),
+            dz,
+            alpha,
+            g,
+            Isat,
+        )
     return A
 
 
@@ -1354,6 +1479,99 @@ def apply_propagator(A: np.ndarray, propagator: np.ndarray) -> np.ndarray:
         )
     _require_contiguous("apply_propagator", (A,))
     return _apply_propagator(A, propagator)
+
+
+def _takes_blocked_step(A, shape, V_scaled, scalars) -> bool:
+    """Whether the blocked step can take this call, all of it as given.
+
+    One C-contiguous 2D field of the plan's grid, writable, with scalar
+    constants, and no potential or one of the field's shape. A batch, or
+    constants per member, is left to the step in two.
+
+    Parameters
+    ----------
+    A : np.ndarray
+        Field.
+    shape : tuple
+        The grid the plan, and so its step, was built for.
+    V_scaled : np.ndarray or None
+        Pre-scaled potential.
+    scalars : tuple
+        ``(alpha, g, Isat)``.
+
+    Returns
+    -------
+    bool
+        True if ``BlockedStep`` computes what was asked.
+    """
+    # The step's kernels skip bounds checks: a field of another grid than the
+    # step's is declined here, and with it a field of other than two axes.
+    return (
+        A.shape == tuple(shape)
+        and A.flags.c_contiguous
+        and A.flags.writeable
+        and all(np.ndim(value) == 0 for value in scalars)
+        and (
+            V_scaled is None
+            or (V_scaled.shape == A.shape and V_scaled.flags.c_contiguous)
+        )
+    )
+
+
+def linear_nonlinear_step(
+    A: np.ndarray,
+    propagator: np.ndarray,
+    plan,
+    V_scaled: np.ndarray | None,
+    dz: float,
+    alpha,
+    g,
+    Isat,
+    factors: Callable | None = None,
+) -> bool:
+    """Take the linear step then the nonlinear step, in three blocked passes.
+
+    The hook ``Backend.has_linear_nonlinear_step`` documents. Taken where the
+    grid was measured to gain from it (``plan.blocked_step()``); declined,
+    with A untouched, everywhere else.
+
+    Parameters
+    ----------
+    A : np.ndarray
+        Field, modified in place when the step is taken.
+    propagator : np.ndarray
+        The twin carrying 1/N. Unused: the step reads ``factors``.
+    plan : CPUPlan
+        The plan the solver built for A.
+    V_scaled : np.ndarray or None
+        Pre-scaled potential, or None.
+    dz : float
+        Step of the nonlinear part.
+    alpha, g, Isat : float
+        The solver's constants.
+    factors : callable or None
+        Returns ``(rows, columns)`` of the propagator, the rows carrying 1/N,
+        or None. Called last: building them costs a pass over the dispersion.
+
+    Returns
+    -------
+    bool
+        True if the step was taken.
+    """
+    if factors is None or not _takes_blocked_step(
+        A, plan.shape, V_scaled, (alpha, g, Isat)
+    ):
+        return False
+    step = plan.blocked_step()
+    if step is None:
+        return False
+    built = factors()
+    # The kernels skip bounds checks here too: one factor per row and column.
+    if built is None or (built[0].shape, built[1].shape) != (A.shape[:1], A.shape[1:]):
+        return False
+    nonlinear = (float(dz), float(alpha), float(g), float(Isat))
+    step(A, built[0], built[1], V_scaled, nonlinear)
+    return True
 
 
 nl_prop = _broadcast_batch(2, 3, 5, 6)(_nl_prop)

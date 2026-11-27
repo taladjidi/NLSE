@@ -42,7 +42,8 @@ MODULUS_BIAS_MAX = 0.01
 RABI_ANGLE = 1.11
 RABI_POWER_BIAS_MAX = 0.01
 
-# Kernel, then its arguments: c a complex field, r a real one, s a scalar.
+# Kernel, then its arguments: c a complex field, r a real one, s a scalar; f and
+# g a flat complex and real field, i an index into them.
 KERNELS = (
     ("_nl_prop", "crssrss"),
     ("_nl_prop", "crsscss"),
@@ -51,9 +52,9 @@ KERNELS = (
     ("_nl_prop_without_V_c", "crrssssss"),
     ("_rabi_coupling", "ccss"),
     ("square_mod", "cr"),
-    ("_square_mod_nl_prop", "cssss"),
-    ("_square_mod_nl_prop_v", "crssss"),
-    ("_square_mod_nl_prop_v", "ccssss"),
+    ("_square_mod_nl_prop_span", "fiissss"),
+    ("_square_mod_nl_prop_v_span", "fgiissss"),
+    ("_square_mod_nl_prop_v_span", "ffiissss"),
     ("_apply_propagator", "cc"),
     ("rk4_axpy", "ccsc"),
     ("rk4_accumulate", "csc"),
@@ -78,11 +79,24 @@ def _ir_argument(kind):
         return np.ones((IR_GRID, IR_GRID), dtype=np.complex64)
     if kind == "r":
         return np.ones((IR_GRID, IR_GRID), dtype=np.float32)
+    if kind == "f":
+        return np.ones(IR_GRID**2, dtype=np.complex64)
+    if kind == "g":
+        return np.ones(IR_GRID**2, dtype=np.float32)
+    if kind == "i":
+        return IR_GRID
     return IR_SCALAR
 
 
+def _is_loop_body(function, parallel):
+    """Whether an LLVM function is a loop body: a parfor's, or a serial kernel's own."""
+    if parallel:
+        return "parfor_gufunc" in function
+    return function.startswith("_ZN4NLSE")  # not its cpython or cfunc wrapper
+
+
 def _loop_bodies(name, kinds):
-    """Return the IR of each parallel loop body of a kernel compiled for complex64.
+    """Return the IR of each loop body of a kernel compiled for complex64.
 
     A twin is compiled without the cache: code loaded from it carries no IR.
     """
@@ -95,7 +109,7 @@ def _loop_bodies(name, kinds):
     return [
         match.group(0)
         for match in functions
-        if "parfor_gufunc" in match.group(1)
+        if _is_loop_body(match.group(1), "parallel" in options)
         and "numba_gil_ensure" not in match.group(0)
     ]
 
@@ -126,7 +140,7 @@ def _rotated_split(field):
 
 @pytest.mark.parametrize(("name", "kinds"), KERNELS)
 def test_complex64_kernel_is_float32_and_vectorized(name, kinds):
-    """Every parallel loop is taken by the vectorizer and stays in float32."""
+    """Every loop body is taken by the vectorizer and stays in float32."""
     bodies = _loop_bodies(name, kinds)
     assert bodies, "no parallel loop found: the IR pattern no longer matches"
     for body in bodies:

@@ -61,14 +61,14 @@ class TestCPUCorrectness:
     """Tests that validate CPU backend internals."""
 
     def test_build_fft_plan(self):
-        """The plan is the axes to transform over, and nothing else."""
+        """The plan carries the axes to transform over."""
         simu = make_nlse()
         A = np.random.random((N, N)) + 1j * np.random.random((N, N))
         A = A.astype(PRECISION_COMPLEX)
         plans = simu._build_fft_plan(A)
 
         assert len(plans) == 1, "Number of plans is wrong"
-        assert plans[0] == (-2, -1), "Plan axes are wrong"
+        assert plans[0].axes == (-2, -1), "Plan axes are wrong"
 
     def test_fft_roundtrip(self):
         """FFT then IFFT returns the original array."""

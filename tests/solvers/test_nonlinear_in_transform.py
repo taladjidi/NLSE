@@ -1,9 +1,11 @@
-"""Where the nonlinear step may run inside the inverse transform, and the rest.
+"""Where the nonlinear step may run inside the linear step, and the rest.
 
-CUPY runs the nonlinear step as cuFFT stores the inverse transform's output.
-Which runs ask for it is decided in the solver, from a backend flag, so it is
-checked here on CPU with the flag set by hand; the callback itself is checked
-on a CUDA machine, in tests/backends/test_fft_propagator_fusion.py.
+CUPY runs the nonlinear step as cuFFT stores the inverse transform's output,
+and CPU in the last of its blocked passes. Which runs ask for it is decided in
+the solver, from a backend flag, so it is checked here on CPU with the flag
+set by hand and the kernel replaced; the callback itself is checked on a CUDA
+machine, in tests/backends/test_fft_propagator_fusion.py, and the blocked
+step in tests/backends/test_cpu_blocked_step.py.
 """
 
 from functools import partial
@@ -49,7 +51,8 @@ class Records:
 
     def __call__(self, A, propagator, plan, V_scaled, dz, alpha, g, Isat, factors=None):
         """Record the arguments; take the step, or leave both to the caller."""
-        self.calls.append((A, propagator, plan, V_scaled, dz, alpha, g, Isat, factors))
+        built = None if factors is None else factors()  # as a kernel taking it
+        self.calls.append((A, propagator, plan, V_scaled, dz, alpha, g, Isat, built))
         return self.accepts
 
 
@@ -63,8 +66,8 @@ def asked(monkeypatch, simu, accepts):
 
 
 def flagged(monkeypatch, simu):
-    """Return the solver with its backend claiming the store callback."""
-    monkeypatch.setattr(simu._backend, "has_nonlinear_store_callback", True)
+    """Return the solver with its backend claiming the step."""
+    monkeypatch.setattr(simu._backend, "has_linear_nonlinear_step", True)
     return simu
 
 
@@ -88,9 +91,11 @@ def test_the_gate(monkeypatch, cls, overrides, expected):
     assert simu._fuses_nonlinear_into_transform() is expected
 
 
-def test_a_backend_without_the_callback_is_not_asked():
-    """The flag defaults to False, and so does the gate."""
-    assert make(NLSE, "CPU", n=N)._fuses_nonlinear_into_transform() is False
+def test_a_backend_without_the_step_is_not_asked(monkeypatch):
+    """Without the flag the gate is closed, for a solver it would open for."""
+    simu = make(NLSE, "CPU", n=N)
+    monkeypatch.setattr(simu._backend, "has_linear_nonlinear_step", False)
+    assert simu._fuses_nonlinear_into_transform() is False
 
 
 def beam(simu):

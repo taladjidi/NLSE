@@ -393,7 +393,7 @@ class CUPYBackend(Backend):
 
     has_linear_step = True
     supports_unnormalized_ifft = True
-    has_nonlinear_store_callback = True
+    has_linear_nonlinear_step = True
     broadcasts_parameters_natively = True
     has_fused_rk4_rhs = True
     has_fused_rk4_stage_update = True

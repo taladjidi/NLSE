@@ -962,6 +962,112 @@ parallel loop of every kernel vectorized and free of double arithmetic for
 complex64 with Python-float scalars, the rotation's rounding and modulus, and
 the Rabi power. The scripts are in `~/Documents/LKB/NLSE_tangui_fix_specs/cpu_float32/`.
 
+**Three-pass blocked split step — deployed, tuned per machine** (2026-11-27).
+The unblocked step reads the field five times: row FFTs, column FFTs, the
+propagator, the inverse, the nonlinear step. The blocked step
+(`NLSE/kernels/cpu_blocked.py`) makes three passes over blocks that stay in
+cache: forward row FFTs; column bands gathered, transformed, multiplied by the
+y factor, transformed back and scattered times the x factor; inverse row FFTs
+with the nonlinear step on each block. Python threads take static shares, and
+everything inside runs without the GIL (`scipy.fft` with `workers=1`, `nogil`
+numba kernels). It covers the 2D `NLSE` and `GPE` split step without a batch.
+
+The best block is not a property of the code. On the Ryzen 3 4100 (lossless
+Kerr, 8 rounds, before the tuner existed) the best block is 256 to 512 KiB, a
+core's L2 (512 KiB): at 4096² complex64 16 rows give 1.46x, 8 rows 1.26x and
+32 rows (1 MiB) 0.56x, and eight logical threads lose to four by 1.17 to
+1.30x, a pair sharing one L2. On the M3 Max the best block is 1 MiB and 1024²
+loses at every block. So the block (`BLOCK_BYTES`, 128 KiB to 2 MiB), the
+threads (all, or half) and whether to block at all are measured per machine,
+grid and dtype by `NLSE/backends/cpu_tuning.py` the first time a grid runs,
+and kept in `cpu_blocking.json`.
+
+`benchmarks/cpu_blocked_step.py`, NLSE lie with loss and saturation, 3 rounds
+interleaved in one process, ms a step from the 10 to 60 step slope:
+
+| machine | grid | dtype | chosen | unblocked | as tuned | gain |
+|---|---|---|---|---|---|---|
+| Ryzen 3 4100 | 1024² | complex64 | 64 rows x 4 | 8.263 | 7.186 | 1.15x |
+| | 2048² | complex64 | 32 rows x 4 | 35.345 | 34.597 | 1.02x |
+| | 4096² | complex64 | 16 rows x 4 | 145.509 | 106.536 | 1.37x |
+| | 1024² | complex128 | 16 rows x 4 | 15.161 | 11.546 | 1.31x |
+| | 2048² | complex128 | 16 rows x 4 | 60.330 | 44.826 | 1.35x |
+| | 4096² | complex128 | 8 rows x 4 | 281.260 | 195.321 | 1.44x |
+| M3 Max | 4096² | complex64 | 32 rows x 16 | 29.727 | 25.399 | 1.17x |
+| | 4096² | complex128 | 32 rows x 16 | 50.917 | 40.770 | 1.25x |
+
+Ryzen: 8 threads, numpy 2.5.5, scipy 1.18.1, numba 0.68.1. M3 Max: 16
+threads, numpy 2.4.6, scipy 1.18.0, numba 0.66.0, Spotlight holding one core;
+1024² and 2048² stay unblocked there. `main` against the branch in alternating
+fresh processes agrees, median ms a step: Ryzen 1024² 7.64-8.61 to 7.19-7.68
+(complex64) and 14.07-16.05 to 11.93-12.25 (complex128), 2048² complex128
+60.76-61.26 to 45.14-45.24, 4096² 145.1-145.6 to 106.6-107.6 and 286.3-287.4
+to 197.1-197.2; M3 Max 4096² 30.4-39.1 to 25.4-25.8 and 52.3-52.5 to 40.6. The
+gain grows with background load: with a second core of the Mac held by a
+video player the same cells read 1.45x and 1.53x, and 2048² 1.10x and 1.27x.
+
+After 20 steps (lie, strang, yoshida, 2048² and 4096²) the blocked field is
+within 6e-6 of the peak of the unblocked one in complex64 and 1e-14 in
+complex128, and the unblocked field equals the previous one bit for bit, on
+both machines. The CuPy step, which shares the hook, did not move: medians
+over 6, 6 and 12 alternating pairs on the RTX 3050, complex64, 0.387-0.391
+against 0.385-0.393 ms at 1024², 1.565-1.583 against 1.560-1.576 at 2048²,
+8.45-8.67 against 8.49-8.69 at 4096².
+
+The nonlinear kernels became a serial span body and a `prange` driver over
+4096-element spans, so the blocked pass and the unblocked kernel run one body:
+bit-identical to the previous kernel. Both trees' `square_mod_nl_prop`
+interleaved in one process on the M3 Max read 0.996-1.004, and with blocking
+off the whole step on the Ryzen, `main` against the branch in four alternating
+fresh processes each, takes 35.41-35.58 against 35.44-35.60 ms at 2048²
+complex64 and 61.03-61.21 against 60.69-61.03 at complex128 (at 1024² the
+processes spread by 5-9% and the two overlap). A
+span indexed `range(start, stop)` did not vectorize (4.1 against 1.6 ns a
+point); slicing first did.
+
+*The tuner.* It ranks the blocked candidates by the best of 3 interleaved
+rounds of 4 steps, then times the first against the unblocked step in 5
+rounds, taking turns, and blocks only for a win over 10% (`MARGIN`). Ranking
+about 10 candidates and reading the winner against 3 windows of the unblocked
+step compared the best of 30 with the best of 3, and chose a losing layout on
+a loaded Mac. A 5% margin was tried and withdrawn: at 1024² complex128 on the
+M3 Max the tuner read 1.08x inside the benchmark process for a layout that
+loses 10-18% in fresh processes (lossless, 2.55-2.57 against 3.01-3.04 ms).
+The plain step's `fft2` at that size has two speeds in a long-lived process,
+0.84-0.87 or 1.03-1.09 ms a transform: it flips after a tuning at another
+size, only when interleaved with the numba kernels, and stays. The cause is
+not established (thread placement over the P and E clusters is a guess). The
+10% margin gives up a real 1.07x at 2048² complex128 on the Mac (11.66-11.80
+to 10.92-11.04 ms). Eight tunings per cell on the Ryzen: 1.04-1.29x at 1024²
+complex64 (64 rows six times, 32 rows once, unblocked once), 1.34-1.55x and
+one choice everywhere else. A tuning takes 0.4-0.9 s at 1024² and 12.1-12.5 s
+at 4096² complex128 on the M3 Max; 1.2-2.4 s and 21-40 s on the Ryzen.
+
+*Open: a block the size of the L2.* The benchmark's own tuning on the Ryzen
+chose 32 rows at 2048² complex64 (512 KiB, the whole L2) on a 1.39x reading.
+The solver's step with that block then ran at 1.02x in the same process and
+at 27.4, 31.7 and 36.1 ms in three fresh ones, against 35.3-35.5 unblocked;
+six other tunings chose 16 rows at 1.41-1.42x. The time of a block that only
+just fits depends on where its scratch lands. Taking the smaller block among
+near ties would avoid it; not built.
+
+*Open: the first step.* Where the blocked step is taken (and on CUPY) the
+first step of a solver builds the separable factors: 4096² complex64, 1.86-2.03
+to 2.09-2.12 s for the first call and 1736 to 2124 MiB peak on the Ryzen,
+about 0.17 s and 530 MiB on the M3 Max. A declined call of the hook costs
+1.8-3.9 us on the M3 Max and 2.4 us on the Ryzen.
+
+*Open: thread counts.* On the M3 Max (12 P and 4 E cores) the numba kernels
+are 21-34% faster on 12 threads than on 16 at every size and dtype (4096²
+complex64: 2.36 against 3.60 ms), and the unblocked step on 12 against 16
+threads takes 1.18 against 1.54 ms at 1024² complex64 and 2.12 against 2.40 at
+complex128, while 2048² and 4096² complex64 prefer 16 (5.85 against 5.58,
+27.8 against 26.0), because `fft2` alone does (11.4 against 9.6 ms at 4096²).
+Kernel threads and transform workers want separate counts per machine and
+grid, and the blocked candidates only try all and half the threads. The
+scripts and the box log are in
+`~/Documents/LKB/NLSE_tangui_fix_specs/cpu_blocked_step/`.
+
 ## OpenCL (PyOpenCL + VkFFT)
 
 **Native OpenCL C kernels instead of PyOpenCL array expressions — deployed.**
