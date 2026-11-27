@@ -9,7 +9,6 @@ import numpy as np
 from NLSE import CNLSE
 
 PRECISION_COMPLEX = np.complex64
-PRECISION_REAL = np.float32
 
 N = 2048
 n2 = -1.6e-9
@@ -39,7 +38,6 @@ def main():
         omega=None,
         backend="CL",
     )
-    simu_c.puiss2 = 10e-3
     simu_c.n22 = 1e-10
     simu_c.I_sat2 = Isat2
     simu_c.k2 = 2 * np.pi / 795e-9

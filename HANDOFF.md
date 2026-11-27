@@ -41,20 +41,42 @@ the OpenCL loop (`fix/cl-multi-axis-batch`), the tests that bite
 scratch (`fix/cpu-blocked-scratch`) and the two tests of it that numba's
 threading layer decides (`fix/ci-threading-layer-tests`). Still open:
 
-- **Order set by the owner (2026-11-27), all after a `/clear`:** first the
-  GPU patches, then the thread counts per machine (both described below),
-  then the debloat. Merge each to `main` as it lands, and push. The owner
-  asked to be pinged for the `/clear` before any of them ("notably docs").
-  After it, the docs pass can run in a parallel agent on a branch of its own
-  beside the code packages; only the measurements on the box stay serial.
-- **Debloat the codebase**, third: "Clean up, make it as lean as
-  possible." Not started. Start
-  from an audit of what can be deleted, merged or split (package, tests,
-  benchmarks, examples, docs, this file), then go through the pipeline per
-  package and merge each to `main` as it lands. A cleanup must not cost step
-  time: interleaved timings at 1024², 2048², 4096² before and after. The
-  kernel modules were already audited for duplication (nothing to merge
-  there).
+- **Order set by the owner (2026-11-27, evening): "work alone tonight on
+  this, first debloat then docs."** It replaces the earlier order: no `/clear`
+  first, and the GPU patches and the thread counts per machine (both
+  described below) come after the docs. Merge each package to `main` as it
+  lands, and push.
+- **Debloat**, in three packages, specs in
+  `~/Documents/LKB/NLSE_tangui_fix_specs/debloat/` (`repo.md`, `package.md`,
+  `tests.md`, with patches and scripts beside them):
+  - `chore/debloat-repo`: done. Dead code in the examples and
+    `benchmarks/roofline.py`, a duplicate image, dead CI and Sphinx settings,
+    `.gitignore`. Reviewer: pass. `pyproject.toml` (task T6 of `repo.md`)
+    waits for the two packages below, since two of its ruff ignores depend
+    on them.
+  - package (`NLSE/`, six patches, net -364 lines, mostly comments over four
+    lines) and tests (five tasks, about -4000 lines): specs written, in spec
+    review.
+  - Left for the owner, not done: the tutorial notebook's 8 MB of outputs
+    (re-render smaller), `paper/` and `img/output.png` (the JOSS record),
+    `examples/juliaGPE_vs_NLSE.py` with `vortex_precession.jl`, merging
+    `examples/benchmarks.py` and `fig1_benchmarks.py`, the `kernels_cpu/gpu/cl`
+    aliases, the `splitting="RK4"` mapping, the `speedup` field of the
+    benchmark cache, `tests/benchmarks/` with the CI benchmark job, and one
+    module for the per-solver legacy tests. `examples/profile_cupy.py`
+    (overlaps `benchmarks/trace_solvers.py`) is decided in the docs pass.
+- **Docs**, after the debloat. First the gallery: the CI Documentation job
+  takes 58 minutes, 57 of them sphinx-gallery running every example on each
+  push (run 45898238065: `vortex_shedding.py` 1061 s, `rayleigh_taylor.py`
+  563, `cnlse.py` 543, `callbacks.py` 390, `broadcasting.py` 225). Owner:
+  "If these runs are so expensive maybe it's better to store the final
+  states rather than redo them". Where they are stored is ours to choose;
+  keep one run that proves the examples execute against the current code.
+  Design in `~/Documents/LKB/NLSE_tangui_fix_specs/docs/gallery.md` (being
+  written). Then the page review, the numba threading-layer limits, and the
+  README's headline performance.
+- CI on `e60e2a4`: all green, the four macOS jobs on a second try (GitHub
+  cancelled them the first time for lack of a runner).
 - The CPU blocked step, merged (`7518025`): three passes in
   `NLSE/kernels/cpu_blocked.py`, chosen per machine and grid by
   `NLSE/backends/cpu_tuning.py` and cached in `cpu_blocking.json`; spec in
@@ -411,8 +433,6 @@ threading layer decides (`fix/ci-threading-layer-tests`). Still open:
 - `omega=0` (not None) still pays two identity rotations in strang.
 - `DDGPE(omega=None)` raises TypeError in the constructor, so its
   `omega is None` branches never run.
-- `ci.yml:162` caches the backend benchmarks between runs; the tests now keep
-  theirs in each test's own directory, so check the step still saves anything.
 
 ## Findings, ranked
 

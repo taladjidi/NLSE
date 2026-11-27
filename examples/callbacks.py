@@ -9,7 +9,6 @@ import numpy as np
 from NLSE import NLSE, callbacks
 
 PRECISION_COMPLEX = np.complex64
-PRECISION_REAL = np.float32
 
 N = 2048
 n2 = -1.6e-9

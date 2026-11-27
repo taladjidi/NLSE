@@ -12,7 +12,6 @@ from NLSE import GPE
 from scipy.constants import atomic_mass
 
 PRECISION_COMPLEX = np.complex64
-PRECISION_REAL = np.float32
 
 N = 2048
 N_at = 1e6

@@ -9,7 +9,6 @@ import numpy as np
 from NLSE import NLSE_1d
 
 PRECISION_COMPLEX = np.complex64
-PRECISION_REAL = np.float32
 N = 2048
 n2 = -1.6e-9
 waist = 2.23e-3
@@ -22,9 +21,6 @@ alpha = 20
 
 def main() -> None:
     simu = NLSE_1d(alpha, puiss, window, n2, None, L, NX=N, Isat=Isat, backend="CUPY")
-    simu.puiss2 = 10e-3
-    simu.n22 = 1e-10
-    simu.k2 = 2 * np.pi / 795e-9
     E_0 = np.exp(-(simu.X**2) / waist**2).astype(PRECISION_COMPLEX)
     simu.out_field(E_0, L, verbose=True, plot=True, splitting="lie")
 

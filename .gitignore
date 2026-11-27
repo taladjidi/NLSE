@@ -3,19 +3,7 @@ __pycache__/
 *$py.class
 *.so
 .vscode/settings.json
-tex/benchmarks.pdf
-tex/output.png
-tex/paper.aux
-tex/paper.bbl
-tex/paper.bib
-tex/paper.blg
-tex/paper.fdb_latexmk
-tex/paper.fls
-tex/paper.log
-tex/paper.pdf
-tex/paper.synctex.gz
-tex/paper.tex
-tex/paperNotes.bib
+/tex/
 .DS_Store
 build/*
 NLSE.egg-info/*
@@ -28,7 +16,6 @@ docs/jupyter_execute/
 examples/output/
 
 
-Archive.zip
 .git-session-note.txt
 
 # Metal backend (work in progress, not included in main branch)

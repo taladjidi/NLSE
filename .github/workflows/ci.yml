@@ -1,8 +1,6 @@
 name: CI
 
 env:
-    # Keep the cache off the installed package; see NLSE.utils.get_cache_dir.
-    NLSE_CACHE_DIR: ${{ github.workspace }}/.nlse-cache
     # The uv every job installs; setup-uv would otherwise take the latest.
     SETUP_UV_VERSION: "0.13.9"
 
@@ -68,8 +66,7 @@ jobs:
             - id: choose
               run: |
                   if [ "${{ github.event_name }}" = "pull_request" ] \
-                     || [ "${{ github.ref }}" = "refs/heads/main" ] \
-                     || [ "${{ github.ref }}" = "refs/heads/develop" ]; then
+                     || [ "${{ github.ref }}" = "refs/heads/main" ]; then
                       echo 'matrix={"os":["ubuntu-latest","macos-latest","windows-latest"],"python-version":["3.10","3.11","3.12","3.13"]}' >> "$GITHUB_OUTPUT"
                   else
                       echo 'matrix={"os":["ubuntu-latest"],"python-version":["3.13"]}' >> "$GITHUB_OUTPUT"
@@ -123,7 +120,7 @@ jobs:
         name: Performance Benchmarks
         # Only where the history is comparable: the action tracks results
         # against previous runs, and a working branch is not that history.
-        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+        if: github.ref == 'refs/heads/main'
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v5
@@ -142,12 +139,6 @@ jobs:
 
             - name: Install dependencies
               run: uv sync --locked --extra opencl
-
-            - name: Cache backend benchmarks
-              uses: actions/cache@v4
-              with:
-                  path: ${{ github.workspace }}/.nlse-cache
-                  key: ${{ runner.os }}-benchmark-nlse-cache
 
             - name: Run benchmarks
               run: |
