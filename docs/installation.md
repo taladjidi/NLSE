@@ -10,10 +10,12 @@ cd NLSE
 pip install .
 ```
 
-For development (includes pytest, ruff, mypy, etc.):
+For development, [uv](https://docs.astral.sh/uv/) creates `.venv` with the
+package in editable mode and the `dev` group (pytest, ruff, ty, etc.), pinned by
+`uv.lock`:
 
 ```bash
-pip install -e ".[dev]"
+uv sync
 ```
 
 ## Optional extras
@@ -23,10 +25,17 @@ pip install -e ".[dev]"
 | `gpu` | `cupy` | the CUPY backend, on NVIDIA GPUs (see below) |
 | `opencl` | `pyopencl`, `pyvkfft`, `mako` | the CL backend |
 | `mlx` | `mlx` | the MLX backend, on Apple silicon |
-| `dev` | `pytest`, `pytest-cov`, `pytest-benchmark`, `ruff`, `mypy`, `pre-commit`, `hatchling` | the tests and the linters |
-| `docs` | `sphinx`, `furo`, `myst-nb`, `sphinx-autoapi`, `sphinx-copybutton`, `sphinx-gallery` | building this documentation |
 
-Combine them in one install: `pip install -e ".[dev,opencl]"`.
+Combine them in one install: `pip install ".[opencl,mlx]"`, or in the
+development environment `uv sync --extra opencl --extra mlx`.
+
+The development tools are dependency groups rather than extras, so they are
+not part of the published package:
+
+| Group | Installs | For |
+|---|---|---|
+| `dev` | `pytest`, `pytest-cov`, `pytest-benchmark`, `ruff`, `ty`, `pre-commit`, `hatchling` | the tests and the linters; `uv sync` installs it by default |
+| `docs` | `sphinx`, `furo`, `myst-nb`, `sphinx-autoapi`, `sphinx-copybutton`, `sphinx-gallery` | building this documentation: `uv sync --group docs` |
 
 ## Requirements
 
@@ -107,6 +116,6 @@ with scipy.fft.set_workers(4):
 ## Running Tests
 
 ```bash
-pytest tests/               # run all tests
-pytest tests/ -v --tb=short  # verbose with short tracebacks
+uv run pytest tests/               # run all tests
+uv run pytest tests/ -v --tb=short  # verbose with short tracebacks
 ```

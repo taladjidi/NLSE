@@ -35,7 +35,6 @@ Archive.zip
 NLSE/kernels/metal/
 NLSE/kernels/metal_native/
 .coverage
-.mypy_cache/
 .ruff_cache/
 .pytest_cache/
 .cache/

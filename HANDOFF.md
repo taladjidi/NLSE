@@ -140,8 +140,6 @@ version is not bumped and nothing is published.
 - `omega=0` (not None) still pays two identity rotations in strang.
 - `DDGPE(omega=None)` raises TypeError in the constructor, so its
   `omega is None` branches never run.
-- The `yaml-parses` pre-commit hook needs PyYAML, which the `dev` extra does
-  not list.
 - `ci.yml:162` caches the backend benchmarks between runs; the tests now keep
   theirs in each test's own directory, so check the step still saves anything.
 
@@ -351,19 +349,30 @@ Task list for the closing review pass (asked on 2026-11-27):
   - Left: read the cross-check, run its survivors on the box (the CuPy and
     OpenCL tests may kill some), rank, then an architect spec for the
     missing closed-form tests, and implement it.
-- [ ] **Packaging and tooling** ("I also would like you to check packaging
+- [x] **Packaging and tooling** ("I also would like you to check packaging
   and tooling in general. I want something modern based on uv ruff and ty",
   2026-11-27), which carries the mypy to ty switch ("Let's switch also from
-  mypy to ty at the end"). Architect's spec and patch:
-  `NLSE_tangui_fix_specs/tooling_uv_ruff_ty_spec.md` and
-  `tooling_uv_ruff_ty.patch`, in spec review when this was written. Its
-  decisions: dev and docs become dependency groups and the backends stay
-  extras; hatchling stays; ty 0.0.112, pinned, on `NLSE/` with a baseline of
-  the 99 diagnostics it finds today; ruff gains UP and PGH; the hooks run
-  through `uv run --locked`, so the pre-push hook no longer depends on PATH;
-  CI installs with `uv sync --locked`. For the user to decide: the licence
-  (`GPL-3.0-only` or `GPL-3.0-or-later`), dropping Python 3.10, ruff 0.17,
-  pinning the actions by hash.
+  mypy to ty at the end"). Done on `build/uv-ruff-ty` from the architect's
+  `NLSE_tangui_fix_specs/tooling_uv_ruff_ty_spec.md` (revision 2, after spec
+  review). What it settles:
+  - dev and docs are dependency groups, the backends stay extras, hatchling
+    stays. Set up with `uv sync --extra opencl --extra mlx`; every later
+    `uv sync` needs the same `--extra` flags, or it removes the backends.
+  - ty 0.0.112, pinned, checks all of `NLSE/` against `ty-baseline.json`
+    (99 diagnostics at the switch). A change that moves a recorded
+    diagnostic needs `uv run ty check --update-baseline`, and only after
+    checking that the diagnostics are the recorded ones.
+  - ruff gains UP and PGH. The hooks and CI run every tool through
+    `uv run --locked`; CI installs uv 0.13.9 with setup-uv v10.4.0. A plain
+    `git commit` or `git push` no longer needs the venv on PATH, but it
+    needs uv.
+  - Not done, for the user to decide: the licence expression
+    (`GPL-3.0-only` or `GPL-3.0-or-later`, with `license-files` and
+    hatchling 1.27), dropping Python 3.10, ruff 0.17.6, ty on `tests/`
+    (456 diagnostics), pinning the actions by hash and bumping their
+    majors, an SBOM artifact and a commit-message hook.
+  - Not checked: the workflow has not run on GitHub (nothing is pushed), and
+    the CuPy and OpenCL extras were not synced from the lock on the box.
 - [ ] Review of the architecture, the tests and the docs (docs page by page
   against Diátaxis), fix what is critical or major, then push.
 
@@ -615,7 +624,7 @@ Environment:
 - The project `.venv` has CPU and MLX only. CuPy and OpenCL run on the CUDA
   box, each in its own environment; OpenCL no longer runs on this Mac (see
   "Verification of the final tree").
-- Sphinx is in no project environment: build the docs from a scratch venv
-  with `uv pip install -e ".[docs]"`. `paper/` was not read.
+- Sphinx comes with `uv sync --group docs` (repeat the `--extra` flags of the
+  backends in use). `paper/` was not read.
 - Running `docs/make_validation_figure.py` with any argument rewrites
   `docs/img/validation.png`.

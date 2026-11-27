@@ -3,6 +3,8 @@ name: CI
 env:
     # Keep the cache off the installed package; see NLSE.utils.get_cache_dir.
     NLSE_CACHE_DIR: ${{ github.workspace }}/.nlse-cache
+    # The uv every job installs; setup-uv would otherwise take the latest.
+    SETUP_UV_VERSION: "0.13.9"
 
 on:
     push:
@@ -21,25 +23,22 @@ jobs:
         steps:
             - uses: actions/checkout@v5
 
-            - name: Set up uv
-              uses: astral-sh/setup-uv@v9.0.0
+            - name: Set up uv and Python
+              uses: astral-sh/setup-uv@v10.4.0
               with:
-                  enable-cache: true
-                  cache-dependency-glob: "pyproject.toml"
-
-            - name: Set up Python
-              uses: actions/setup-python@v6
-              with:
+                  version: ${{ env.SETUP_UV_VERSION }}
                   python-version: "3.13"
+                  enable-cache: true
 
-            - name: Install dependencies
-              run: uv pip install --system ruff
+            # Fails when pyproject.toml changed and uv.lock was not regenerated.
+            - name: Check uv.lock is up to date
+              run: uv lock --check
 
             - name: Run ruff linter
-              run: ruff check NLSE/ tests/ examples/
+              run: uv run --locked --only-group dev ruff check NLSE/ tests/ examples/
 
             - name: Check code formatting with ruff
-              run: ruff format --check NLSE/ tests/ examples/
+              run: uv run --locked --only-group dev ruff format --check NLSE/ tests/ examples/
 
     type-check:
         name: Type Checking
@@ -47,22 +46,15 @@ jobs:
         steps:
             - uses: actions/checkout@v5
 
-            - name: Set up uv
-              uses: astral-sh/setup-uv@v9.0.0
+            - name: Set up uv and Python
+              uses: astral-sh/setup-uv@v10.4.0
               with:
-                  enable-cache: true
-                  cache-dependency-glob: "pyproject.toml"
-
-            - name: Set up Python
-              uses: actions/setup-python@v6
-              with:
+                  version: ${{ env.SETUP_UV_VERSION }}
                   python-version: "3.13"
+                  enable-cache: true
 
-            - name: Install dependencies
-              run: uv pip install --system mypy -e .
-
-            - name: Run mypy
-              run: mypy NLSE/ --install-types --non-interactive
+            - name: Run ty
+              run: uv run --locked ty check
 
     # The full matrix is twelve jobs, which is worth it before a merge and not
     # on every push to a working branch. Branches get one representative
@@ -94,16 +86,12 @@ jobs:
         steps:
             - uses: actions/checkout@v5
 
-            - name: Set up uv
-              uses: astral-sh/setup-uv@v9.0.0
+            - name: Set up uv and Python ${{ matrix.python-version }}
+              uses: astral-sh/setup-uv@v10.4.0
               with:
-                  enable-cache: true
-                  cache-dependency-glob: "pyproject.toml"
-
-            - name: Set up Python ${{ matrix.python-version }}
-              uses: actions/setup-python@v6
-              with:
+                  version: ${{ env.SETUP_UV_VERSION }}
                   python-version: ${{ matrix.python-version }}
+                  enable-cache: true
 
             - name: Install system dependencies (Linux)
               if: runner.os == 'Linux'
@@ -113,16 +101,16 @@ jobs:
 
             - name: Install dependencies (with OpenCL)
               if: runner.os != 'Windows'
-              run: uv pip install --system -e ".[dev,opencl]"
+              run: uv sync --locked --extra opencl
 
             # Windows has no OpenCL SDK on the runners.
             - name: Install dependencies (without OpenCL)
               if: runner.os == 'Windows'
-              run: uv pip install --system -e ".[dev]"
+              run: uv sync --locked
 
             - name: Run tests with coverage
               run: |
-                  pytest tests/ -v --cov=NLSE --cov-report=xml --cov-report=term -m "not benchmark"
+                  uv run --no-sync pytest tests/ -v --cov=NLSE --cov-report=xml --cov-report=term -m "not benchmark"
 
             - name: Upload coverage to Codecov
               uses: codecov/codecov-action@v5
@@ -140,16 +128,12 @@ jobs:
         steps:
             - uses: actions/checkout@v5
 
-            - name: Set up uv
-              uses: astral-sh/setup-uv@v9.0.0
+            - name: Set up uv and Python
+              uses: astral-sh/setup-uv@v10.4.0
               with:
-                  enable-cache: true
-                  cache-dependency-glob: "pyproject.toml"
-
-            - name: Set up Python
-              uses: actions/setup-python@v6
-              with:
+                  version: ${{ env.SETUP_UV_VERSION }}
                   python-version: "3.13"
+                  enable-cache: true
 
             - name: Install system dependencies
               run: |
@@ -157,7 +141,7 @@ jobs:
                   sudo apt-get install -y ocl-icd-opencl-dev pocl-opencl-icd
 
             - name: Install dependencies
-              run: uv pip install --system -e ".[dev,opencl]"
+              run: uv sync --locked --extra opencl
 
             - name: Cache backend benchmarks
               uses: actions/cache@v4
@@ -167,7 +151,7 @@ jobs:
 
             - name: Run benchmarks
               run: |
-                  pytest tests/ -m benchmark --benchmark-json=benchmark.json
+                  uv run --no-sync pytest tests/ -m benchmark --benchmark-json=benchmark.json
 
             # The key must be unique per run, and the prefix must not be one
             # another cache in this job also matches.
@@ -206,7 +190,7 @@ jobs:
                   # Every alert this has ever raised was runner noise. The
                   # proof is 22c239d1, which changed mlx_kernels.py, one doc
                   # and one MLX test -- and MLX is not installed on this
-                  # runner, which builds ".[dev,opencl]". It cannot have moved
+                  # runner, which installs only the opencl extra. It cannot have moved
                   # a CPU or CL timing by any amount. It alerted on 38
                   # benchmarks, ratios 1.41 to 2.31, across both backends: the
                   # whole run was slow. b600d117 added only test files and
@@ -242,16 +226,12 @@ jobs:
         steps:
             - uses: actions/checkout@v5
 
-            - name: Set up uv
-              uses: astral-sh/setup-uv@v9.0.0
+            - name: Set up uv and Python
+              uses: astral-sh/setup-uv@v10.4.0
               with:
-                  enable-cache: true
-                  cache-dependency-glob: "pyproject.toml"
-
-            - name: Set up Python
-              uses: actions/setup-python@v6
-              with:
+                  version: ${{ env.SETUP_UV_VERSION }}
                   python-version: "3.13"
+                  enable-cache: true
 
             # The vortex precession example is an animation, and the gallery
             # writes it as an mp4 through ffmpeg -- a hundredth the size of the
@@ -261,7 +241,7 @@ jobs:
               run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
             - name: Install dependencies
-              run: uv pip install --system -e ".[docs]"
+              run: uv sync --locked --no-default-groups --group docs
 
             # -W turns warnings into errors, which is what --strict was doing
             # before: a broken cross-reference or a page missing from a
@@ -272,7 +252,7 @@ jobs:
             # early without a GPU or without data a benchmark run produces
             # (filename_pattern in docs/conf.py).
             - name: Build the site
-              run: python -m sphinx -b html docs docs/_build/html -W --keep-going
+              run: uv run --no-sync python -m sphinx -b html docs docs/_build/html -W --keep-going
 
             # A broken internal link is caught above; a link to a file in the
             # repository is not, and the examples gallery had one for months.
@@ -281,7 +261,7 @@ jobs:
             - name: Check external-facing links resolve
               run: |
                   status=0
-                  python -m sphinx -b linkcheck docs docs/_build/linkcheck || status=$?
+                  uv run --no-sync python -m sphinx -b linkcheck docs docs/_build/linkcheck || status=$?
                   if [ "$status" -eq 1 ]; then
                       echo "::warning title=Links did not resolve::listed in this step's log"
                       cat docs/_build/linkcheck/output.txt

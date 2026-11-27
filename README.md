@@ -31,9 +31,9 @@ this repository whether or not you have the site open.
 To read the docs as a site rather than as files:
 
 ```bash
-uv pip install -e ".[docs]"
-python -m sphinx -b html docs docs/_build/html -W --keep-going
-python -m http.server -d docs/_build/html      # then open http://localhost:8000
+uv sync --group docs
+uv run python -m sphinx -b html docs docs/_build/html -W --keep-going
+uv run python -m http.server -d docs/_build/html      # then open http://localhost:8000
 ```
 
 CI runs the same build on every push, and a push to `main` publishes it. `-W`
@@ -59,15 +59,18 @@ uv pip install .
 
 `pip install .` works just as well if you prefer it.
 
-Optional extras pull in the accelerated backends and the development tooling:
+Optional extras pull in the accelerated backends:
 
 ```bash
 uv pip install ".[gpu]"      # CuPy, for Nvidia GPUs
 uv pip install ".[opencl]"   # PyOpenCL + pyvkfft, for OpenCL devices
-uv pip install -e ".[dev]"   # pytest, ruff, mypy
 uv pip install ".[mlx]"      # MLX, for Apple silicon
-uv pip install ".[docs]"     # Sphinx, to build the documentation
 ```
+
+To work on the package itself, `uv sync` creates `.venv` with the package in
+editable mode and the `dev` group (pytest, ruff, ty, pre-commit), at the
+versions pinned in `uv.lock`. Add `--group docs` for Sphinx, and `--extra`
+for a backend: `uv sync --extra opencl`.
 
 ## Basic usage
 
@@ -206,13 +209,16 @@ You can run all tests by using [`pytest`](https://docs.pytest.org/en/8.2.x/) at 
 It tests every backend it finds installed.
 This can take some time !
 
-Install the dev extra first, and re-run it after pulling: the build backend
-moved to hatchling, and without it the packaging tests skip rather than fail,
-so a green run may be hiding them.
+Sync the environment first, and again after pulling: the packaging tests need
+hatchling from the `dev` group, and fail without it. Repeat the `--extra` flags
+of the backends you have every time: `uv sync` makes `.venv` match exactly what
+it is asked for, so a plain `uv sync` uninstalls them, and their tests then
+skip while the run still passes.
 
 ```bash
-uv pip install -e ".[dev]"
-pre-commit install          # ruff + mypy on commit, tests on push
+uv sync --extra opencl --extra mlx   # the backends this machine can run
+uv run pre-commit install            # ruff + ty on commit, tests on push
+uv run pytest tests/ -q -m "not benchmark"
 ```
 
 `pre-commit install` is optional but recommended: it runs the same checks CI

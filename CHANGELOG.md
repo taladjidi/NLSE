@@ -101,6 +101,17 @@ come first.
 
 ### Changed
 
+- **Development tooling runs from the lock.** The `dev` and `docs` extras are
+  now dependency groups, so they no longer appear in the published metadata.
+  `uv sync` installs the package with the dev tools on the Python in
+  `.python-version`, and `uv sync --group docs` adds Sphinx. ty replaces mypy
+  and checks all of `NLSE/`, where mypy skipped the solvers and kernels. The
+  99 diagnostics present at the switch are recorded in `ty-baseline.json`,
+  and only new ones fail. The pre-commit hooks and CI run every tool through
+  `uv run --locked`, so they use the versions in `uv.lock` from the project's
+  `.venv`. A push no longer runs another Python's pytest against an older
+  installed NLSE, and a `pyproject.toml` change without `uv lock` fails both
+  the hooks and CI.
 - `adapt_delta_z_to_error` is exported from the package.
 - **The CPU complex64 kernels compute in float32.** They ran in double: numba
   widened the float32 field next to `dz`, `alpha`, `g` and `Isat`, which the

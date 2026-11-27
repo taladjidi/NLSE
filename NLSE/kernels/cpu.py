@@ -21,7 +21,7 @@ from numba.extending import overload
 # the window is already gone and the only safe pool is the one that owns no
 # OpenMP runtime; it measures ~6% slower on these kernels, against not running.
 if "pyfftw" in sys.modules and not numba.np.ufunc.parallel._is_initialized:
-    # numba.config builds its attributes at import, so mypy sees none of them.
+    # numba.config builds its attributes at import, so a type checker sees none of them.
     numba.config.THREADING_LAYER = "workqueue"  # type: ignore[attr-defined]
 numba.get_num_threads()
 
