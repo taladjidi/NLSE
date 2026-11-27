@@ -27,6 +27,60 @@ longer needed.
 ones first. The next release is a major one (5.0.0 is the suggestion); the
 version is not bumped and nothing is published.
 
+### Resume here (written 2026-11-27, before a `/clear`)
+
+`main` is `083a2d9` plus this note, pushed. Debloat is done but for the
+handoff's own shrink; the docs page review is done. In order:
+
+1. **README headline performance.** Nothing is applied yet. Spec, revision 2,
+   reviewed and revised: `~/Documents/LKB/NLSE_tangui_fix_specs/docs/readme_perf.md`,
+   with `patches/readme-perf-1-roofline.patch` and `-2-test.patch` beside it
+   (base `f8d224e`; the files they touch have not changed since).
+   - Branch `docs/readme-performance`. Implementer T1 (the roofline patch),
+     then T2 (the test patch, `tests/test_benchmarks.py` 14 passed becomes
+     33), each with the spec's acceptance.
+   - Measure on an idle machine, 6 runs, the first discarded, medians of the
+     other 5. Mac (CPU, MLX): the spec's loop, with
+     `UV_PROJECT_ENVIRONMENT=<scratchpad>/perf/venv-perf` (built; rebuild it
+     if the scratchpad is gone) so the repo's `.venv` gets no pyopencl. Box
+     (CPU, CUPY, CL): a fresh `git archive` tree and
+     `~/Documents/nlse_env_both/bin/python`, see "Environment" at the end.
+   - Then the README section (task C) and the log entry (task D), the doc
+     tests staying at 187 passed, 2 skipped; reviewer; gate; merge; push.
+   - Decisions taken for the owner, to report: the June 2024 figure moves
+     into the new section, labelled (O1); Lie rows only, Strang measured as a
+     check (O2); measured ceilings only, no rated figures (O3).
+2. **Shrink this file** (debloat B10): one-line pointers to the merge commits.
+3. **Afterwards, the owner's earlier order:** the GPU P4 patches (fix their
+   spec first), thread counts per machine in the tuner, the increment-form
+   linear step for complex64 (recommend only), the fewer-passes lessons on
+   MLX and OpenCL, the Mac profiles, a closing review pass and the final
+   report. Version 5.0.0 is neither bumped nor published.
+
+The final report has to say, beyond what "Review findings left as they are"
+and "Still open" list:
+
+- Not reviewed: the `pyproject.toml` cleanup (T6, B8), the docs review's fix
+  round (no second reviewer), my own edits to architect assets and the
+  re-cut of entry 6, the scratch fix written inline.
+- Not run or not seen: the Windows mmap branch; the fork test outside CI on
+  macOS; the deployed docs site by eye; CuPy and OpenCL claims of the docs
+  pages (read, not run); the benchmark reviewer could not run CuPy or OpenCL;
+  `examples/` edits covered by ruff and grep only; implementers ran ruff on
+  their own files only.
+- Inferred, not measured: the page-colouring mechanism behind the blocked
+  step's scatter; the batched-`n2` Strang merge was not traced.
+- Loose ends: an unreproduced one-off P4 failure; the zero-length-axis MINOR;
+  four unsourced numbers in the guide pages; the docs equations are not
+  pinned by a test; the pins brief counted 88 against 93; the CI watcher was
+  restarted once; gallery cache entries accumulate, one per run, and a stale
+  one is a trade-off the reviewer noted; the box's verification commits; the
+  architect's 64² smoke run may have left an entry in the default NLSE cache;
+  an architect deleted a scratch directory named `r2` by mistake (only its
+  own transcript names it).
+- The owner's to edit: `CLAUDE.md` lines 86-87 (stale ruff ignores) and line
+  7 (CuPy uses cuFFT, not VkFFT); the debloat and docs decisions left open.
+
 ### In flight (2026-11-27, night session)
 
 `main` is pushed after each reviewed merge (owner, 2026-11-27: "No push also
