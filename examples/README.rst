@@ -1,17 +1,18 @@
 Example gallery
 ===============
 
-Every script here is run when the documentation is built, and the figures
-below are the ones it produced. Each page carries the source, so the code you
-read is the code that made the plot.
+Every script here is run by the documentation build, and the figures below
+are the ones it produced. A script runs again when it changes and every week,
+so a figure can predate the latest change to the NLSE package itself. Each
+page carries the source, so the code you read is the code that made the plot.
 
-The benchmark sweeps run over a short range of grid sizes here, so the graph
-below is one this build drew; run them yourself and they cover the full range.
+The benchmark sweeps run over a short range of grid sizes here; run them
+yourself and they cover the full range.
 
-They are also drawn on the machine that built these pages, which is a GitHub
-runner with no GPU: it has the CPU backend and nothing else, so a comparison
-between backends has nothing to compare. Run them on your own hardware for
-that -- the figures say which backends they found.
+They are also drawn on a GitHub runner with no GPU: it has the CPU backend
+and nothing else, so a comparison between backends has nothing to compare.
+Run them on your own hardware for that -- the figures say which backends
+they found.
 
 Two are listed with their source but not executed, because both exit early
 without what they need: ``profile_cupy.py`` wants a CUDA device, and

@@ -183,6 +183,13 @@ come first.
   `has_linear_nonlinear_step`; it is now set on CPU as well as CUPY. The CPU
   backend's FFT plan is a `CPUPlan` with an `axes` attribute instead of the
   bare axes tuple.
+- **The documentation build keeps the gallery it executed.** CI restores
+  `docs/auto_examples/` from its last run and sphinx-gallery runs only the
+  examples whose source changed, so a push that changes no example executes
+  none, where every push spent 57 of the job's 58 minutes running all of them.
+  A weekly run, or one started by hand, executes every example against the
+  current code, and so does a push that changes `uv.lock` or
+  `examples/_output.py`.
 
 ## 4.1.0 — 2026-08-05
 

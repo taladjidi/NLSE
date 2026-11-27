@@ -7,11 +7,15 @@ env:
 on:
     push:
     pull_request:
+    # Weekly, and on demand, the docs job executes every example again.
+    schedule:
+        - cron: "17 4 * * 1"
+    workflow_dispatch:
 
-# A branch that is also open as a PR fires both events. Keep the newest run
-# and cancel the rest, rather than pay for the same commit twice.
+# A newer run of the same ref and event cancels the older one. The event is in
+# the group so that the weekly run and a push to main never cancel each other.
 concurrency:
-    group: ${{ github.workflow }}-${{ github.ref }}
+    group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
     cancel-in-progress: true
 
 jobs:
@@ -234,16 +238,36 @@ jobs:
             - name: Install dependencies
               run: uv sync --locked --no-default-groups --group docs
 
-            # -W turns warnings into errors, which is what --strict was doing
-            # before: a broken cross-reference or a page missing from a
-            # toctree fails the build rather than shipping.
-            # The gallery runs every example while it builds, so this job is
-            # also what checks they still work -- sphinx-gallery fails the
-            # build on an example that raises. Two are not executed: they exit
-            # early without a GPU or without data a benchmark run produces
-            # (filename_pattern in docs/conf.py).
+            # The gallery pages the last run executed: sphinx-gallery re-runs only
+            # the examples whose source changed since (md5). The run id makes every
+            # run save; restore-keys brings back the newest made with the same
+            # uv.lock and examples/_output.py, so a change to either runs them all.
+            - name: Restore the executed gallery
+              uses: actions/cache@v4
+              with:
+                  path: docs/auto_examples
+                  key: docs-gallery-${{ hashFiles('uv.lock', 'examples/_output.py') }}-${{ github.run_id }}
+                  restore-keys: docs-gallery-${{ hashFiles('uv.lock', 'examples/_output.py') }}-
+
+            # The page of an example deleted or renamed since would fail -W as a
+            # document in no toctree.
+            - name: Drop cached pages of deleted examples
+              run: |
+                  shopt -s nullglob
+                  for page in docs/auto_examples/*.py; do
+                      [ -e "examples/${page##*/}" ] || rm -v "${page%.py}".*
+                  done
+
+            # -W turns warnings into errors: a broken cross-reference or a page
+            # missing from a toctree fails the build rather than shipping.
+            # sphinx-gallery fails the build on an example that raises; the two it
+            # never executes are excluded by filename_pattern in docs/conf.py.
             - name: Build the site
-              run: uv run --no-sync python -m sphinx -b html docs docs/_build/html -W --keep-going
+              env:
+                  # True on the weekly and manual runs: every example executes, which
+                  # proves they all still run against the current code.
+                  RERUN_ALL: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'True' || 'False' }}
+              run: uv run --no-sync python -m sphinx -b html docs docs/_build/html -W --keep-going -D sphinx_gallery_conf.run_stale_examples=$RERUN_ALL
 
             # A broken internal link is caught above; a link to a file in the
             # repository is not, and the examples gallery had one for months.

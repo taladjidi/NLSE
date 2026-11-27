@@ -143,3 +143,21 @@ cross-reference or a page missing from a toctree fails the build rather than
 shipping. The API section is generated from the source by sphinx-autoapi, so
 there is nothing to write by hand for a new class -- give it a numpy
 docstring and it appears.
+
+The gallery runs every script in `examples/` but two, 57 minutes on a GitHub
+runner. sphinx-gallery keeps what it ran in `docs/auto_examples/` and runs a
+script again only when its source changes, so a second build runs none, and
+neither does a change to `NLSE/` or to `sphinx_gallery_conf` alone. CI keeps
+that directory between runs, so a push runs only the examples it changed; a
+push that changes `uv.lock` or `examples/_output.py` starts without it and
+runs them all. A change to `NLSE/` that breaks an example therefore passes
+CI, and the weekly run is the first to fail on it. That run, and one started
+with **Run workflow** on the Actions page, run every example against the
+current code and fail if one raises. To do that locally:
+
+```bash
+uv run python -m sphinx -b html docs docs/_build/html -W -D sphinx_gallery_conf.run_stale_examples=True
+```
+
+After deleting or renaming an example, delete `docs/auto_examples/` too: the
+old page is otherwise still there, in no toctree, and `-W` fails on it.
