@@ -14,12 +14,19 @@ import numpy as np
 import pytest
 from helpers import make
 from NLSE import NLSE
-from NLSE.solvers.nlse import YOSHIDA_WEIGHTS
+from NLSE.solvers.nlse import YOSHIDA_SPAN, YOSHIDA_WEIGHTS
 
 N = 64
 WAIST = 2.23e-3
 WINDOW = 4 * WAIST
 L = 2e-3
+# Absorbing potential, as an index change: (k/2) Im V is 0.04 1/m of amplitude
+# loss, negligible over L but not zero, which is all the warning reads.
+ABSORBING_V = 1e-8j
+# Step of the warning tests, in m: any step does, the warnings read the medium.
+WARNING_STEP = L / 8
+# Relative round-off allowed on a step that lands exactly on its limit.
+LIMIT_RTOL = 1e-12
 
 
 def beam(dtype=np.complex128):
@@ -114,6 +121,43 @@ def test_it_warns_when_a_backwards_step_would_amplify():
         simu.out_field(
             beam(), L, delta_z=L / 8, verbose=False, plot=False, splitting="yoshida"
         )
+
+
+def test_an_absorbing_potential_warns_like_a_loss():
+    """Im V removes norm as alpha does, so the backwards sub-step amplifies it."""
+    simu = solver(V=np.full((N, N), ABSORBING_V, dtype=np.complex128))
+    with pytest.warns(UserWarning, match="backwards"):
+        simu.out_field(
+            beam(),
+            L,
+            delta_z=WARNING_STEP,
+            verbose=False,
+            plot=False,
+            splitting="yoshida",
+        )
+
+
+def test_the_longest_sub_step_stays_inside_the_split_step_limit():
+    """A step far past the limit is lowered until ``YOSHIDA_SPAN`` of it fits.
+
+    The limit holds per real-space application, and Yoshida's middle one is
+    ``YOSHIDA_SPAN`` (1.70) times the step: the ordinary cap alone would leave
+    it at 1.53 times the limit.
+    """
+    simu = solver()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        simu.out_field(
+            beam(), L, delta_z=L, verbose=False, plot=False, splitting="yoshida"
+        )
+    simu._precompute_step_constants(simu.V, np.complex128)
+    A, _ = simu._prepare_output_array(beam(), True)
+    longest = simu._current_delta_z * YOSHIDA_SPAN
+    limit = simu._split_step_max_dz(A)
+    assert longest <= limit * (1 + LIMIT_RTOL), (
+        f"the longest sub-step is {longest:.4e} m against a split-step limit "
+        f"of {limit:.4e} m"
+    )
 
 
 @pytest.mark.parametrize("splitting", ["lie", "strang"])

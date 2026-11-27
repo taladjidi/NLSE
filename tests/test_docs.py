@@ -147,6 +147,37 @@ def test_blocks_use_current_api(block):
         assert found is None, f"{found.group(0).strip()!r}: {why}"
 
 
+def inline_code(path):
+    """Return the inline code spans of a markdown file, fenced blocks left out.
+
+    Parameters
+    ----------
+    path : Path
+        Markdown file.
+
+    Returns
+    -------
+    list of str
+        The text between each pair of single backticks.
+    """
+    prose = re.sub(r"```.*?```", "", path.read_text(encoding="utf-8"), flags=re.S)
+    return re.findall(r"`([^`\n]+)`", prose)
+
+
+@pytest.mark.parametrize(
+    "path", [p for p in DOC_FILES if p != MIGRATION_GUIDE], ids=lambda p: p.name
+)
+def test_inline_code_uses_current_api(path):
+    """Prose quotes code too, and a removed call quoted there misleads as much."""
+    stale = [
+        f"{span!r}: {why}"
+        for span in inline_code(path)
+        for pattern, why in REMOVED_API.items()
+        if re.search(pattern, span)
+    ]
+    assert not stale, f"{path.name}: " + "; ".join(stale)
+
+
 def test_the_migration_guide_shows_the_api_it_migrates_from():
     """The exemption above has to be earned, or it is just a hole.
 

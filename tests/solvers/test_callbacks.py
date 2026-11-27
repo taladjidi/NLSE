@@ -18,6 +18,7 @@ the CPU across backends -- a callback that ran but recorded the wrong thing
 would be worse than one that raised.
 """
 
+import functools
 import warnings
 
 import numpy as np
@@ -78,6 +79,20 @@ CEILING_MARGIN = 4
 DELTA_N_RTOL = 1e-5
 STEP_RTOL = 1e-5
 RULE_RTOL = 1e-4
+# Relative tolerance of norm against N**2 |A|^2: float32 sum of N**2 equal
+# terms, measured 9.3e-8 on CPU and MLX. Dropping a quadrature misses by 0.2.
+NORM_RTOL = 1e-6
+# Unequal real and imaginary parts: a callback that keeps one of them, swaps
+# them or conjugates the field gives another value.
+QUADRATURES = 1 + 2j
+# adapt_delta_z_to_error's default floor, as a fraction of L (callbacks.py
+# docstring: "a hundred thousandth of the medium length").
+DEFAULT_FLOOR_FRACTION = 1e-5
+# The step in force, in units of that floor: its BOUNDS[0] shrink lands below
+# the floor, so the floor is what comes back.
+ABOVE_FLOOR = 1.5
+# Relative error a trial reports to shrink by BOUNDS[0]: far above TOLERANCE.
+LARGE_ERROR = 1.0
 
 
 def _buffers():
@@ -352,4 +367,117 @@ def test_adapt_delta_z_to_error_follows_the_step_rule(backend_name, monkeypatch)
     assert got == pytest.approx(expected, rel=RULE_RTOL), (
         f"adapt_delta_z_to_error asked for {got / step:.4f} times the step on "
         f"{backend_name}, against the {expected / step:.4f} its rule gives"
+    )
+
+
+def scaled_trial(simu, A, step, count, error):
+    """Return a whole step ``error`` away from its halves, as the trial does.
+
+    Stands in for ``callbacks._trial_propagation`` through ``functools.partial``.
+
+    Parameters
+    ----------
+    simu : NLSE
+        Solver of the run; unused.
+    A : Any
+        Field the trial starts from, on the solver's backend.
+    step : float
+        Trial step in m; unused.
+    count : int
+        Number of steps: 1 for the whole step, 2 for its halves.
+    error : float
+        Relative error of the whole step against the halves.
+
+    Returns
+    -------
+    Any
+        ``A * (1 + error)`` for the whole step, ``A`` for the halves.
+    """
+    return A * (1 + error) if count == 1 else A
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_sample_records_the_field_as_it_is(backend_name):
+    """The slot holds the field passed in, value for value.
+
+    Every point differs and none is real, so a transposed, conjugated or
+    real-part copy fails.
+    """
+    simu = NLSE(backend=backend_name, **BASE)
+    ramp = np.arange(N * N).reshape(N, N)
+    field = (QUADRATURES * ramp).astype(np.complex64)
+    recorded = np.zeros((1, N, N), dtype=np.complex64)
+    sample(simu, simu._backend.from_numpy(field), 0.0, 0, 1, recorded)
+    np.testing.assert_array_equal(recorded[0], field)
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_norm_sums_both_quadratures(backend_name):
+    """``sum |A|^2`` of a uniform field with both quadratures is ``N**2 |A|^2``."""
+    simu = NLSE(backend=backend_name, **BASE)
+    field = (QUADRATURES * uniform_field(INTENSITY)).astype(np.complex64)
+    recorded = np.zeros(1)
+    norm(simu, simu._backend.from_numpy(field), 0.0, 0, 1, recorded)
+    expected = N * N * float(np.abs(field[0, 0])) ** 2
+    assert recorded[0] == pytest.approx(expected, rel=NORM_RTOL)
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_adapt_delta_z_waits_for_its_cadence(backend_name):
+    """Between updates it asks for nothing, so the step in force is kept."""
+    simu = NLSE(backend=backend_name, **BASE)
+    simu._current_delta_z = DELTA_Z
+    field = simu._backend.from_numpy(uniform_field(INTENSITY))
+    assert adapt_delta_z(simu, field, 0.0, 1, 2, []) is None
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_a_zero_error_grows_the_step_no_further_than_the_cap(backend_name, monkeypatch):
+    """At the split-step limit already, a step with no error stays there.
+
+    Parameters
+    ----------
+    backend_name : str
+        Backend to run on.
+    monkeypatch : pytest.MonkeyPatch
+        Replaces the trial propagation by one with no error.
+    """
+    simu = NLSE(backend=backend_name, **BASE)
+    field = simu._backend.from_numpy(uniform_field(INTENSITY))
+    cap = simu._split_step_max_dz(field)
+    simu._step_in_force = cap
+    monkeypatch.setattr(
+        callbacks,
+        "_trial_propagation",
+        functools.partial(scaled_trial, error=0.0),
+    )
+    got = adapt_delta_z_to_error(simu, field, 0.0, 0, TOLERANCE, 1, BOUNDS, SAFETY)
+    assert got == pytest.approx(cap, rel=STEP_RTOL), (
+        f"a zero error at the cap asked for {got / cap:.3f} times the cap"
+    )
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_the_default_floor_is_a_hundred_thousandth_of_l(backend_name, monkeypatch):
+    """A large error shrinks the step to ``L / 1e5`` and not below.
+
+    Parameters
+    ----------
+    backend_name : str
+        Backend to run on.
+    monkeypatch : pytest.MonkeyPatch
+        Replaces the trial propagation by one with a large error.
+    """
+    simu = NLSE(backend=backend_name, **BASE)
+    field = simu._backend.from_numpy(uniform_field(INTENSITY))
+    floor = DEFAULT_FLOOR_FRACTION * L
+    simu._step_in_force = ABOVE_FLOOR * floor
+    monkeypatch.setattr(
+        callbacks,
+        "_trial_propagation",
+        functools.partial(scaled_trial, error=LARGE_ERROR),
+    )
+    got = adapt_delta_z_to_error(simu, field, 0.0, 0, TOLERANCE, 1, BOUNDS, SAFETY)
+    assert got == pytest.approx(floor, rel=STEP_RTOL), (
+        f"the default floor is {got / L:.1e} L, not {DEFAULT_FLOOR_FRACTION:.0e} L"
     )

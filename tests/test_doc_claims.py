@@ -16,9 +16,10 @@ import pathlib
 import re
 
 import pytest
+from helpers import ORDERS
 from NLSE import NLSE
 from NLSE.backends import get_backend, list_available_backends
-from NLSE.solvers.nlse import SPLITTINGS
+from NLSE.solvers.nlse import SPLITTINGS, YOSHIDA_WEIGHTS
 from NLSE.solvers.step_size import (
     DEFAULT_MIN_STEPS,
     DEFAULT_PHASE_PER_STEP,
@@ -44,6 +45,17 @@ PREVIOUS_RELEASE = "4.0.0"
 # forever. Those two numbers are not staleness, unlike a version quoted as if
 # it were the current one.
 MIGRATION_FROM, MIGRATION_TO = "3.0.0", "4.0.0"
+
+# The README's splitting table: orders as in helpers.ORDERS; transform pairs
+# per step: Strang's half steps merge into a Lie body
+# (tests/solvers/test_strang_merge.py), Yoshida takes one per weight.
+TRANSFORM_PAIRS = {"lie": 1, "strang": 1, "yoshida": len(YOSHIDA_WEIGHTS)}
+# A row: `"name"` ... | $\mathcal{O}(\delta z^order)$ | pairs |
+SPLITTING_ROW = (
+    r'^\| `"(\w+)"`[^|]*\| \$\\mathcal\{O\}\(\\delta z(?:\^(\d))?\)\$ \| (\d+) \|'
+)
+# Rows of the capability table every backend has to claim.
+CLAIMED_BY_ALL = ["Broadcasting", "Non-local interactions"]
 
 
 def test_there_are_pages_to_check():
@@ -188,15 +200,33 @@ def test_the_capability_table_matches_the_backends():
     assert not wrong, "; ".join(wrong)
 
 
-def test_every_backend_is_claimed_to_broadcast():
-    """It does, on all four, and the table said otherwise for three of them."""
+@pytest.mark.parametrize("feature", CLAIMED_BY_ALL)
+def test_every_backend_is_claimed_to_have(feature):
+    """Each works on all four; the table once said Broadcasting was CUPY's only.
+
+    Non-locality is held to it by
+    tests/integration/test_nonlocality.py::test_a_non_local_run_stays_on_the_backend_asked_for.
+    """
     table = (ROOT / "docs" / "backends.md").read_text(encoding="utf-8")
-    row = re.search(r"^\| Broadcasting \|([^\n]+)\|$", table, re.M)
-    assert row, "no Broadcasting row in the capability table"
+    row = re.search(rf"^\| {feature} \|([^\n]+)\|$", table, re.M)
+    assert row, f"no {feature} row in the capability table"
     cells = [c.strip().lower() for c in row.group(1).split("|") if c.strip()]
     assert all(c == "yes" for c in cells), (
-        f"broadcasting works on every backend; table says {cells}"
+        f"{feature} works on every backend; table says {cells}"
     )
+
+
+def test_the_splitting_table_matches_the_code():
+    """The README's order and cost per splitting are claims the tests measure."""
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    rows = re.findall(SPLITTING_ROW, text, re.M)
+    assert [name for name, _, _ in rows] == list(SPLITTINGS), (
+        f"the README's splitting table lists {rows}, the solver {SPLITTINGS}"
+    )
+    orders = {name: int(order or 1) for name, order, _ in rows}
+    pairs = {name: int(count) for name, _, count in rows}
+    assert orders == {name: ORDERS[name] for name in SPLITTINGS}
+    assert pairs == TRANSFORM_PAIRS
 
 
 def test_the_documented_version_is_the_real_one():

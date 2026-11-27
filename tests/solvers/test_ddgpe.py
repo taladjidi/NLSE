@@ -29,6 +29,41 @@ puiss = detuning / g
 # Step used wherever a test builds a propagator or takes a step by hand.
 DZ_TEST = 1e-4
 
+# Uniform runs with no Rabi coupling and the pump at both components' energy,
+# so only the interaction or the damping acts. Units of time and density.
+UNIFORM_N = 16
+UNIFORM_W = 2.0  # exciton and cavity energy, rad per unit time
+UNIFORM_T = 1.0
+# Steps of 0.04: the cavity's kernel loss u = 2 (CAVITY_GAMMA / 2) 0.04 = 0.024,
+# inside the solved range (u < 0.1); float32 error grows with the step count,
+# measured 1.5e-6 at 25 steps and 1.4e-5 at 100 (MLX).
+UNIFORM_STEPS = 25
+EXCITON_DENSITY = 1.0
+CAVITY_DENSITY = 2.0
+# Cross coupling, rad per unit time and density: phases of 0.5 and 1 rad.
+CROSS_G = 0.5
+# Damping rates, per unit time, distinct so each component's own is checked.
+EXCITON_GAMMA = 0.2
+CAVITY_GAMMA = 0.6
+# Measured worst case 1.5e-6 (float32, CPU and MLX). Smallest effects guarded:
+# the cavity damped at the exciton's rate, 49% of its density, and a cross
+# phase of the wrong sign on one component, 2 in relative terms.
+UNIFORM_RTOL = 1e-5
+UNIFORM_PARAMS = {
+    "window": UNIFORM_N,
+    "gamma": 0,
+    "g": 0,
+    "omega": 0,
+    "T": UNIFORM_T,
+    "omega_exc": UNIFORM_W,
+    "omega_cav": UNIFORM_W,
+    "detuning": 0,
+    "k_z": 1.0,
+}
+# Probe amplitude, field per unit time, and the step it is applied over.
+PROBE = 3.0
+PROBE_DT = 1e-3
+
 
 def make_solver(backend="CPU", n=N, **overrides):
     """Return a DDGPE with this module's parameters.
@@ -527,3 +562,97 @@ def test_the_total_density_decays_at_the_damping_rate(backend) -> None:
         f"total density fell to {after / before:.8f} of its value where "
         f"{np.exp(-gamma * total_time):.8f} was due. (Backend {backend})"
     )
+
+
+def uniform_run(backend, **overrides):
+    """Run two uniform components over UNIFORM_T and return them on the host.
+
+    Parameters
+    ----------
+    backend : str
+        Backend name.
+    **overrides
+        Constructor arguments; ``gamma2`` is set after construction.
+
+    Returns
+    -------
+    np.ndarray
+        The exciton and cavity values at one point.
+    """
+    gamma2 = overrides.pop("gamma2", None)
+    simu = make_solver(backend, n=UNIFORM_N, **(UNIFORM_PARAMS | overrides))
+    if gamma2 is not None:
+        simu.gamma2 = gamma2
+    field = np.empty((2, UNIFORM_N, UNIFORM_N), dtype=PRECISION_COMPLEX)
+    field[0] = np.sqrt(EXCITON_DENSITY)
+    field[1] = np.sqrt(CAVITY_DENSITY)
+    zero_r = np.zeros((UNIFORM_N, UNIFORM_N), dtype=PRECISION_COMPLEX)
+    zero_t = np.zeros(UNIFORM_STEPS, dtype=PRECISION_COMPLEX)
+    out = simu.out_field(
+        field,
+        UNIFORM_T,
+        None,
+        delta_z=UNIFORM_T / UNIFORM_STEPS,
+        verbose=False,
+        callback_args=[(zero_r, zero_t, zero_r, zero_t)],
+    )
+    return np.asarray(as_numpy(simu, out))[:, 0, 0]
+
+
+def test_the_cross_interaction_is_mutual(backend) -> None:
+    """Each component is phased by g12 times the other's density.
+
+    The exciton turns by ``g12 n_C T`` and the cavity by ``g12 n_X T``, with
+    one sign for both: the coupling is one energy, shared.
+    """
+    exciton, cavity = uniform_run(backend, g12=CROSS_G)
+    per_density = (
+        np.angle(exciton) / CAVITY_DENSITY,
+        np.angle(cavity) / EXCITON_DENSITY,
+    )
+    assert per_density[0] == pytest.approx(per_density[1], rel=UNIFORM_RTOL), (
+        f"the exciton turns by {per_density[0]:+.6f} and the cavity by "
+        f"{per_density[1]:+.6f} rad per unit of the other's density over T. "
+        f"(Backend {backend})"
+    )
+    assert abs(per_density[0]) == pytest.approx(CROSS_G * UNIFORM_T, rel=UNIFORM_RTOL)
+
+
+def test_each_component_decays_at_its_own_rate(backend) -> None:
+    """The exciton density falls as exp(-gamma t), the cavity's as exp(-gamma2 t).
+
+    The total-density test above damps both at one rate, where reading the
+    wrong one of the pair changes nothing.
+    """
+    out = uniform_run(backend, gamma=EXCITON_GAMMA, gamma2=CAVITY_GAMMA)
+    densities = np.abs(out) ** 2 / np.array([EXCITON_DENSITY, CAVITY_DENSITY])
+    for density, rate in zip(densities, (EXCITON_GAMMA, CAVITY_GAMMA), strict=True):
+        assert density == pytest.approx(np.exp(-rate * UNIFORM_T), rel=UNIFORM_RTOL), (
+            f"a component damped at {rate} kept {density:.6f} of its density. "
+            f"(Backend {backend})"
+        )
+
+
+def test_the_probe_reaches_the_cavity(backend) -> None:
+    """A probe and no pump adds ``-i F dt`` to the cavity, nothing to the exciton.
+
+    Parameters
+    ----------
+    backend : str
+        Backend to run on.
+    """
+    simu = make_solver(backend, n=UNIFORM_N)
+    simu._current_delta_z = PROBE_DT
+    shape = (UNIFORM_N, UNIFORM_N)
+    field = simu._backend.from_numpy(np.zeros((2, *shape), dtype=PRECISION_COMPLEX))
+    zero_r = np.zeros(shape, dtype=PRECISION_COMPLEX)
+    probe_r = np.full(shape, PROBE, dtype=PRECISION_COMPLEX)
+    profile_t = np.ones(1, dtype=PRECISION_COMPLEX)
+
+    DDGPE.laser_excitation(
+        simu, field, 0.0, 0, zero_r, 0 * profile_t, probe_r, profile_t
+    )
+
+    after = np.asarray(as_numpy(simu, field))
+    expected = np.stack([zero_r, -1j * PROBE * PROBE_DT * np.ones(shape)])
+    np.testing.assert_allclose(after, expected, rtol=UNIFORM_RTOL, atol=0)

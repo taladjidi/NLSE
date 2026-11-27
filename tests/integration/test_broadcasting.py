@@ -65,6 +65,15 @@ BASE = {
     "Isat": 10e4,
 }
 
+# Saturation intensities, W/m^2, around the beam's peak of 1.3e5 W/m^2 at
+# FIELD_AMPLITUDE: from deep saturation to almost none.
+ISAT_VALUES = np.array([1e4, 1e5, 1e6])
+# A non-local length of a few cells, so the grid resolves it, in m.
+NONLOCAL_LENGTH = 4 * WINDOW / N
+# Same tolerance as the batch tests below: float32 runs of the same graph.
+MEMBER_RTOL = 1e-4
+MEMBER_ATOL_FRACTION = 1e-5
+
 
 def as_numpy(simu, array):
     """Return a backend array as numpy, whatever backend produced it."""
@@ -231,7 +240,6 @@ def test_a_batch_convolves_against_the_shared_kernel(backend_name):
     against a two-dimensional profile raised out of scipy.
     """
     _, field = grids(backend_name)
-    nl_length = 4 * WINDOW / N  # a few cells, so the grid resolves it
     alpha_batched = np.asarray(ALPHA_VALUES).reshape(COUNT, 1, 1)
 
     batched = NLSE(
@@ -239,7 +247,7 @@ def test_a_batch_convolves_against_the_shared_kernel(backend_name):
         n2=N2_VALUES[0],
         V=None,
         backend=backend_name,
-        nl_length=nl_length,
+        nl_length=NONLOCAL_LENGTH,
         **BASE,
     )
     got = propagate(batched, np.broadcast_to(field, (COUNT, N, N)), "split_step")
@@ -251,7 +259,7 @@ def test_a_batch_convolves_against_the_shared_kernel(backend_name):
             n2=N2_VALUES[0],
             V=None,
             backend=backend_name,
-            nl_length=nl_length,
+            nl_length=NONLOCAL_LENGTH,
             **BASE,
         )
         expected = propagate(alone, field, "split_step")
@@ -757,7 +765,6 @@ def test_a_coupled_batch_convolves_against_the_shared_kernel(backend_name, cls, 
     Covered separately from the scalar case because the coupled intensities
     are taken out of a field that carries a component axis as well.
     """
-    nl_length = 4 * WINDOW / N
     probe = make_coupled(cls, backend_name, N2_VALUES[0])
     field = coupled_field(probe, cls)
 
@@ -769,7 +776,7 @@ def test_a_coupled_batch_convolves_against_the_shared_kernel(backend_name, cls, 
             V=None,
             NX=N,
             backend=backend_name,
-            nl_length=nl_length,
+            nl_length=NONLOCAL_LENGTH,
         )
         if cls is CNLSE:
             kwargs["NY"] = N
@@ -793,3 +800,70 @@ def test_a_coupled_batch_convolves_against_the_shared_kernel(backend_name, cls, 
                 f"{index} differs from the same simulation run on its own"
             ),
         )
+
+
+def assert_members_match(backend_name, got, expected, label):
+    """Assert each member of a batched run equals its own single run.
+
+    Parameters
+    ----------
+    backend_name : str
+        Backend, for the message.
+    got : np.ndarray
+        The batched output, members along the first axis.
+    expected : list of np.ndarray
+        Each member's output when run alone.
+    label : str
+        What varies across members, for the message.
+    """
+    for index, alone in enumerate(expected):
+        np.testing.assert_allclose(
+            got[index],
+            alone,
+            rtol=MEMBER_RTOL,
+            atol=MEMBER_ATOL_FRACTION * float(np.max(np.abs(alone))),
+            err_msg=f"{backend_name}: {label}, member {index} differs from its own run",
+        )
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_a_lossy_field_batch_reads_its_shared_potential(backend_name):
+    """A batch of fields under one scalar loss and one shared potential.
+
+    The batched-alpha cases above take MLX's general graph, and the lossless
+    ones its lossless kernel, so neither reaches the solved-loss kernel, which
+    indexes the potential with the field's flat id unless told otherwise.
+    """
+    V, field = grids(backend_name)
+    alpha = float(ALPHA_VALUES[-1])
+    batched = make_solver(backend_name, N2_VALUES[0], alpha, V)
+    got = propagate(batched, np.broadcast_to(field, (COUNT, N, N)), "split_step")
+
+    alone = propagate(
+        make_solver(backend_name, N2_VALUES[0], alpha, V), field, "split_step"
+    )
+    assert_members_match(backend_name, got, [alone] * COUNT, "lossy, shared V")
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_a_batched_saturation_reaches_the_non_local_kernel(backend_name):
+    """Each member saturates at its own Isat, through ``nl_prop``.
+
+    A non-local step with a potential calls ``nl_prop`` with the intensity it
+    smoothed, and no other test batches ``Isat`` at all.
+    """
+    V, field = grids(backend_name)
+    params = {"n2": N2_VALUES[0], "V": V, "nl_length": NONLOCAL_LENGTH, **BASE}
+    isat = ISAT_VALUES.reshape(COUNT, 1, 1)
+    batched = NLSE(alpha=0.0, backend=backend_name, **{**params, "Isat": isat})
+    got = propagate(batched, np.broadcast_to(field, (COUNT, N, N)), "split_step")
+
+    expected = [
+        propagate(
+            NLSE(alpha=0.0, backend=backend_name, **{**params, "Isat": float(value)}),
+            field,
+            "split_step",
+        )
+        for value in ISAT_VALUES
+    ]
+    assert_members_match(backend_name, got, expected, "batched Isat, non-local")

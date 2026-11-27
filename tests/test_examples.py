@@ -18,17 +18,22 @@ SCRIPTS = sorted(EXAMPLES.glob("*.py"))
 
 # Calls that put a file on disk at a caller-chosen path.
 WRITERS = {"save", "savez", "savez_compressed", "savefig", "to_csv", "write_image"}
+# The keywords those calls name their path by, when it is not passed first.
+PATH_KEYWORDS = {"fname", "file", "path_or_buf"}
 
 
 def writes_in_module(tree: ast.Module) -> list[tuple[int, str, ast.expr]]:
     """Return ``(line, func_name, path_argument)`` for each writing call."""
     found = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not node.args:
+        if not isinstance(node, ast.Call):
             continue
         name = node.func.attr if isinstance(node.func, ast.Attribute) else None
-        if name in WRITERS:
-            found.append((node.lineno, name, node.args[0]))
+        paths = node.args[:1] + [
+            k.value for k in node.keywords if k.arg in PATH_KEYWORDS
+        ]
+        if name in WRITERS and paths:
+            found.append((node.lineno, name, paths[0]))
     return found
 
 

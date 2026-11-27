@@ -55,6 +55,8 @@ def test_a_table_that_is_not_there_is_not_invented():
         ("void nlse_rk4_axpy<float2>(float2*)", "RK4 stage"),
         ("void nlse_rk4_nl_rhs<float2>(float2*)", "RK4 rhs"),
         ("void nlse_split_step_coupled_fused<float2>(float2*)", "whole step (fused)"),
+        # extern "C" in kernels.cu, so unmangled; it runs in the real-space half.
+        ("rabi_coupling", "nonlinear"),
         ("some_unrelated_kernel", "other"),
     ],
 )

@@ -34,33 +34,55 @@ review pass. Merged tonight: the uv, ruff and ty switch (`62bd2e8`, the
 untracked `CLAUDE.md` and the git hooks follow it), the CPU batch fix
 over several parameter axes (`496cd96`), the transform wording with the
 log entry of the library re-measure (`c04afd7`) and the same batch fix for
-the OpenCL loop (`fix/cl-multi-axis-batch`). Still open:
+the OpenCL loop (`fix/cl-multi-axis-batch`), and the tests that bite
+(`test/tests-that-bite`). Still open:
 
 - The CPU blocked step: spec and patches `cpu_blocked_step_spec.md`,
-  `cpu_blocked_step_T1..T5.patch` in `NLSE_tangui_fix_specs/`. The spec
-  review blocked them and the architect is regenerating at `c04afd7`: two
-  runs in two threads shared the scratch blocks (wrong results), a forked
-  child hung on the thread pool, the cache key lacked the CPU model and the
-  numba thread count, parallel tuners timed each other, and the cost of a
-  declined step against the old path was never measured. Next: apply on
-  `perf/cpu-blocked-step`, reviewer, timings at 1024², 2048², 4096² in both
-  dtypes on the Mac and the Ryzen (`benchmarks/cpu_blocked_step.py
-  [--double]`, machine idle), the CuPy suite for the flag rename
-  (`has_nonlinear_store_callback` becomes `has_linear_nonlinear_step`), the
-  docs (task T6 of the spec). First figures, M3 Max, one process,
-  alternating, not yet redone on a quiet machine: 4096² 1.44x complex64 and
-  1.28x complex128; 1024² and 2048² complex64 not blocked. Measuring on
-  first use (`TUNE_ON_FIRST_RUN`, up to 12.5 s inside the first `out_field`
-  at 4096² complex128) is not confirmed by the owner.
-- Tests that bite: `tests_bite_spec.md` and `tests_bite_1..13.patch` in
-  `NLSE_tangui_fix_specs/` (mutation audit: 234 mutants, 52 survivors, 47
-  killed by the patches). The spec review asked for fixes (expected values
-  taken from the code under test, constants at the bottom of four files);
-  the architect is regenerating. Next: apply on `test/tests-that-bite`,
-  crosscheck (`test_audit/crosscheck.py --survivors`), reviewer, the box
-  (CuPy venv and the OpenCL env) for two tolerances: the frozen-step test of
-  `test_lossy_substep` (rtol 1e-6) and the mixed plane-wave phase of
-  `test_closed_forms` (atol 2e-3 rad).
+  `cpu_blocked_step_T1..T5.patch` in `NLSE_tangui_fix_specs/`, regenerated
+  at `c04afd7` after the spec review blocked the first set (two threads
+  shared the scratch blocks, a forked child hung on the thread pool, the
+  cache key lacked the CPU model and the numba thread count, parallel tuners
+  timed each other, the cost of a declined step was never measured). The
+  second set is the architect's word only: not yet applied or reviewed.
+  Next: apply on `perf/cpu-blocked-step`, reviewer, timings at 1024², 2048²,
+  4096² in both dtypes on the Mac and the Ryzen
+  (`benchmarks/cpu_blocked_step.py [--double]`, machine idle), the CuPy
+  suite for the flag rename (`has_nonlinear_store_callback` becomes
+  `has_linear_nonlinear_step`), the docs (task T6 of the spec). Architect's
+  figures, M3 Max under load, one process, alternating: 4096² 1.34x
+  complex64 and 1.38x complex128, 2048² complex128 1.18x, the rest not
+  blocked; a declined step costs about 5 µs per call. Measuring on first
+  use (`TUNE_ON_FIRST_RUN`, up to 12.5 s inside the first `out_field` at
+  4096² complex128) is not confirmed by the owner.
+- GPU fixed costs and the coupled runs that leave the fused step (section 8
+  of `NLSE_tangui_fix_specs/perf_profile_cuda_box.md`): an architect is
+  measuring on the box and writing `gpu_p4_spec.md` with `gpu_p4_T<n>.patch`
+  at base `f26b694`. Nothing applied.
+- Tests that bite, merged. Mutation audit: 234 mutants of the package, 52
+  survived the suite; 47 are now killed (`test_audit/crosscheck.py
+  --survivors`, 34 by their own test files, 13 by the suite), 5 are left
+  without a test and the spec `tests_bite_spec.md` says why. The reviewer
+  found three more blind tests (frozen step, `sample`, `norm`); they are
+  rewritten and the mutants it named now fail them. Left by that reviewer, minor,
+  not fixed:
+  - `tests/solvers/test_plot_labels.py` draws a field of unit modulus, so
+    `|A|` for `|A|**2` in the plotted intensity passes. Modulus 2 and
+    `4 * W_PER_CM2` fix it. The `CNLSE` panels have no value check.
+  - `test_a_capped_step_lands_inside_the_limit`
+    (`tests/solvers/test_solver_state.py`) asserts `0 < capped < bound`
+    only: `CAPPED_STEP_FRACTION = 0.3` passes. Compare with the constant.
+  - `WAVENUMBER_CHANGE` is defined in `test_dispersion_built_once.py` and in
+    `test_closed_forms.py`; `MIXED_N2` restates a literal of the same file.
+  - `tests/solvers/test_cnlse.py` relies on `helpers.make(symmetric=False)`
+    giving the second component other constants and does not assert it.
+  - The docstring in `tests/test_doc_claims.py` says the orders and costs
+    are measured; only `yoshida` is tied to the code.
+  - Older than this work, seen while merging it: `tests/test_doc_claims.py`
+    globs `docs/**/*.md`, so a local Sphinx build adds
+    `docs/_build/html/_static/mathjax/VENDORED.md` and five cases (1611
+    passed in this checkout, 1606 in a clean one); and
+    `test_a_wrong_typed_field_is_no_cache` (`tests/backends/test_benchmark.py`)
+    carries a timestamp taken at import in its test id.
 - Defects the audit found, none fixed, the first three for the owner:
   - `_loss_max_dz` (`NLSE/solvers/step_size.py`) divides by `2 * alpha` while
     the kernels receive `alpha / 2`: the kernel's `u` at the cap is 0.025,
@@ -415,7 +437,7 @@ Done:
 
 Task list for the closing review pass (asked on 2026-11-27):
 
-- [ ] **Tests must bite.** "review thoroughly tests to make sure they
+- [x] **Tests must bite.** "review thoroughly tests to make sure they
   actually bite and test": for each test file, break the behaviour it claims
   to pin (a mutation of the code under test) and see the test fail. Report
   every test that still passes, that asserts nothing, or whose tolerance is
@@ -455,12 +477,12 @@ Task list for the closing review pass (asked on 2026-11-27):
   - A batch and its members run alone differ by 5e-4 when the step is left
     to the solver: the batch takes the strictest member's step. Not a bug;
     a test comparing the two has to pass `delta_z`.
-  - Left: the architect's spec for the missing closed-form tests
-    (`NLSE_tangui_fix_specs/tests_bite_spec.md` and `tests_bite_<n>.patch`,
-    being written when this was), its spec review, the implementation, a
-    review; the backend-parametrized tests then run on the box.
-    `crosscheck.py --survivors` is the regression check (every listed mutant
-    has to die).
+  - Done on `test/tests-that-bite`, from the architect's
+    `NLSE_tangui_fix_specs/tests_bite_spec.md` and `tests_bite_1..14.patch`
+    after its spec review and a review of the diff; the touched files pass
+    on the box under CuPy and under OpenCL. `crosscheck.py --survivors` is
+    the regression check (every listed mutant has to die). What the
+    reviewer left is under "In flight".
 - [x] **Packaging and tooling** ("I also would like you to check packaging
   and tooling in general. I want something modern based on uv ruff and ty",
   2026-11-27), which carries the mypy to ty switch ("Let's switch also from

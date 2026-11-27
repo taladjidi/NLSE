@@ -13,6 +13,33 @@ PRECISION_REAL = np.float32
 # has: none of them hands a non-local run to another.
 AVAILABLE_BACKENDS = list_available_backends()
 
+# The medium of the non-local runs below: about a radian of nonlinear phase
+# over the cell. Enough that the smoothing changes the answer, little enough
+# that the run is not chaotic: at the couple of hundred radians these
+# parameters reach if the power is left at 1 W, two backends disagree by 100%
+# on a LOCAL run and a comparison says nothing about either smoothing.
+RESPONSE_WINDOW = 1e-3  # m
+RESPONSE_N = 64
+RESPONSE_PARAMS = {
+    "alpha": 0,
+    "power": 1e-3,
+    "window": RESPONSE_WINDOW,
+    "n2": -5e-9,
+    "V": None,
+    "L": 1e-3,
+    "NX": RESPONSE_N,
+    "NY": RESPONSE_N,
+    "Isat": 1e10,
+}
+# The input Gaussian's waist, in m: well inside the window.
+RESPONSE_WAIST = RESPONSE_WINDOW / 6
+# Non-local lengths of one and five cells, in m: 0.41 of the peak apart in the
+# output (measured, CPU and MLX), so the smoothing changes the answer.
+SHORT_LENGTH = RESPONSE_WINDOW / RESPONSE_N
+LONG_LENGTH = 5 * RESPONSE_WINDOW / RESPONSE_N
+# One backend run twice at one length: measured 0 apart.
+RESPONSE_ATOL_FRACTION = 1e-6
+
 
 @pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_a_non_local_run_stays_on_the_backend_asked_for(backend):
@@ -267,40 +294,57 @@ def test_a_non_local_run_agrees_with_the_cpu(backend, splitting):
     The closed-form tests check one nonlinear step. This runs the physics,
     split-step and RK4 alike, and compares the field.
     """
-    # About a radian of nonlinear phase over the cell. Enough that the
-    # smoothing changes the answer, little enough that the run is not
-    # chaotic: at the couple of hundred radians these parameters reach if the
-    # power is left at 1 W, two backends disagree by 100% on a LOCAL run and
-    # the comparison says nothing about either smoothing.
-    window, n, nl = 1e-3, 64, 5 * 1e-3 / 64
-    kwargs = {
-        "alpha": 0,
-        "power": 1e-3,
-        "window": window,
-        "n2": -5e-9,
-        "V": None,
-        "L": 1e-3,
-        "NX": n,
-        "NY": n,
-        "Isat": 1e10,
-        "nl_length": nl,
-    }
-    fields = []
-    for name in ("CPU", backend):
-        simu = NLSE(backend=name, **kwargs)
-        E = np.exp(-(simu.XX**2 + simu.YY**2) / (window / 6) ** 2).astype(
-            PRECISION_COMPLEX
+    fields = [
+        smoothed_run(
+            NLSE(backend=name, nl_length=LONG_LENGTH, **RESPONSE_PARAMS), splitting
         )
-        fields.append(
-            np.asarray(
-                simu._backend.to_numpy(
-                    simu.out_field(E, 1e-3, verbose=False, splitting=splitting)
-                )
-            )
-        )
+        for name in ("CPU", backend)
+    ]
     cpu, other = fields
     difference = np.max(np.abs(other - cpu)) / np.max(np.abs(cpu))
     assert difference < 2e-4, (
         f"{backend} non-local run differs from the CPU by {difference:.2e}, "
         f"which is more than single precision explains"
+    )
+
+
+def smoothed_run(simu, splitting="lie"):
+    """Propagate a Gaussian over L and return the field on the host.
+
+    Parameters
+    ----------
+    simu : NLSE
+        Solver built from RESPONSE_PARAMS.
+    splitting : str
+        ``splitting`` for ``out_field``.
+
+    Returns
+    -------
+    np.ndarray
+        The output field.
+    """
+    E = np.exp(-(simu.XX**2 + simu.YY**2) / RESPONSE_WAIST**2)
+    out = simu.out_field(
+        E.astype(PRECISION_COMPLEX), simu.L, verbose=False, splitting=splitting
+    )
+    return np.asarray(simu._backend.to_numpy(out))
+
+
+@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
+def test_a_new_length_is_a_new_response(backend):
+    """Changing ``nl_length`` between runs smooths at the new length.
+
+    The response is cached with the solver's dispersion; a cache that did not
+    key it on the length would hand the second run the first run's response.
+    """
+    simu = NLSE(backend=backend, nl_length=SHORT_LENGTH, **RESPONSE_PARAMS)
+    smoothed_run(simu)
+    simu.nl_length = LONG_LENGTH
+    got = smoothed_run(simu)
+
+    expected = smoothed_run(
+        NLSE(backend=backend, nl_length=LONG_LENGTH, **RESPONSE_PARAMS)
+    )
+    np.testing.assert_allclose(
+        got, expected, rtol=0, atol=RESPONSE_ATOL_FRACTION * np.abs(expected).max()
     )

@@ -30,6 +30,19 @@ BEAM_WAIST = window / 16
 # Absolute tolerance of the one-step Gaussian beam check, unit peak; the
 # step lands within 3.6e-7 on CPU and MLX (float32).
 BEAM_ATOL = 1e-5
+# Second wavelength for the per-component tests, in m: half the solver's
+# default 780 nm, so k2 = 2 k. helpers.WAVELENGTH2, 795 nm, is within 2% of
+# 780 nm, too close for a test to tell k2 from k.
+SHORT_WAVELENGTH = 390e-9
+# A uniform field on this grid: nothing diffracts, so any size will do.
+UNIFORM_N = 32
+# Loss of the per-component decay test, in 1/m: alpha L = 0.2, and the helper's
+# asymmetry gives component 2 half of it.
+DECAY_ALPHA = 200.0
+# Float32 phases and intensities after ten steps: measured worst case 1.6e-6
+# (MLX split-step decay) over the two per-component tests, CPU and MLX. Smallest
+# effect guarded: component 2 losing at alpha, 10% of its intensity.
+COMPONENT_RTOL = 1e-5
 
 
 def make_solver(backend="CPU", n=N, **overrides):
@@ -367,4 +380,86 @@ def test_each_component_cross_phases_at_its_own_wavenumber(backend, method) -> N
             f"component {i + 1} cross-phases at the wrong wavenumber: got "
             f"{np.angle(out[i]).mean():.6e}, expected {expected:.6e} from "
             f"component {other + 1}. (Backend {backend}, {method})"
+        )
+
+
+def uniform_run(simu, method, normalize=True):
+    """Propagate two uniform components over L and return them on the host.
+
+    Parameters
+    ----------
+    simu : CNLSE
+        Solver, UNIFORM_N points a side.
+    method : str
+        ``method`` for ``out_field``.
+    normalize : bool
+        Whether to normalize each component to its power first.
+
+    Returns
+    -------
+    np.ndarray
+        The two components, shape (2, UNIFORM_N, UNIFORM_N).
+    """
+    E = np.ones((2, UNIFORM_N, UNIFORM_N), dtype=PRECISION_COMPLEX)
+    out = simu.out_field(
+        E,
+        L,
+        delta_z=DZ_TEST,
+        method=method,
+        normalize=normalize,
+        verbose=False,
+        plot=False,
+    )
+    return as_numpy(simu, out)
+
+
+@pytest.mark.parametrize("method", ["split_step", "RK4"])
+def test_each_component_self_phases_at_its_own_constants(backend, method) -> None:
+    """Component i's self-phase is ``k_i n_ii I_i L / (1 + I1/I_sat + I2/I_sat2)``.
+
+    Both components saturate on the same sum. The asymmetric factory gives
+    component 2 its own ``n22`` and ``I_sat2``, and a wavenumber twice the
+    first's, so reading ``k``, ``n2`` or ``I_sat`` in their place moves a phase
+    by a fifth or more. Lossless and uncoupled, a uniform field keeps its
+    intensity, read off the output.
+    """
+    simu = make_solver(backend, n=UNIFORM_N, symmetric=False, n12=0.0, alpha=0.0)
+    simu.alpha2 = 0.0
+    simu.k2 = 2 * np.pi / SHORT_WAVELENGTH
+    out = uniform_run(simu, method)
+
+    intensity = 0.5 * c * epsilon_0 * np.abs(out[:, 0, 0]) ** 2
+    sat = 1 / (1 + intensity[0] / simu.I_sat + intensity[1] / simu.I_sat2)
+    for i, (k, n) in enumerate(((simu.k, simu.n2), (simu.k2, simu.n22))):
+        expected = k * n * intensity[i] * L * sat
+        assert np.angle(out[i, 0, 0]) == pytest.approx(expected, rel=COMPONENT_RTOL), (
+            f"component {i + 1} self-phases by {np.angle(out[i, 0, 0]):.6e} "
+            f"rad, not {expected:.6e}. (Backend {backend}, {method})"
+        )
+
+
+@pytest.mark.parametrize("method", ["split_step", "RK4"])
+def test_each_component_decays_at_its_own_rate(backend, method) -> None:
+    """Each component's intensity falls as ``exp(-alpha_i L)``, linear medium.
+
+    The asymmetric factory halves ``alpha2``, so component 2 reading ``alpha``
+    loses e^-0.1 = 10% too much.
+    """
+    simu = make_solver(
+        backend,
+        n=UNIFORM_N,
+        symmetric=False,
+        n2=0.0,
+        n12=0.0,
+        alpha=DECAY_ALPHA,
+    )
+    simu.n22 = 0.0
+    out = uniform_run(simu, method, normalize=False)
+
+    for i, alpha_i in enumerate((simu.alpha, simu.alpha2)):
+        expected = np.exp(-alpha_i * L)
+        got = np.abs(out[i, 0, 0]) ** 2
+        assert got == pytest.approx(expected, rel=COMPONENT_RTOL), (
+            f"component {i + 1} kept {got:.6f} of its intensity, not "
+            f"{expected:.6f}. (Backend {backend}, {method})"
         )

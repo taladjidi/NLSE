@@ -9,6 +9,10 @@ import numpy as np
 
 PRECISION_COMPLEX = np.complex64
 
+# Convergence order of each splitting and of RK4: the slope
+# tests/solvers/test_rabi_coupling.py measures and the README's table states.
+ORDERS = {"lie": 1, "strang": 2, "yoshida": 4, "RK4": 4}
+
 
 def as_numpy(simu, array):
     """Return a backend array as numpy so assertions can be backend-agnostic.

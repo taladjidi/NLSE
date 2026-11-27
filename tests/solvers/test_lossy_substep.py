@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 from helpers import make
 from NLSE import NLSE
-from NLSE.backends import list_available_backends
+from NLSE.backends import get_backend, list_available_backends
 from NLSE.kernels.cpu import _LOSS_SOLVED_LIMIT
 
 AVAILABLE_BACKENDS = list_available_backends()
@@ -41,6 +41,19 @@ PHYSICS = {
 # fine enough that it is well below saturation. Halved twice: a first-order
 # method quarters its drift over the pair, a second-order one divides it by 16.
 PHASES = (0.8, 0.4, 0.2)
+# A step past the solved range, in kernel units: u = 2 * alpha * dz = 0.6,
+# six times _LOSS_SOLVED_LIMIT. No input is 1 or equals another, so a kernel
+# that drops or inverts one lands elsewhere: |A|^2 = 2.5, sat = 4/9, the
+# frozen step decays by exp(-2/15) and turns by 2 (1/3 + 1/2) = 1.67 rad.
+FROZEN_DZ = 2.0
+FROZEN_ALPHA = 0.15
+FROZEN_G = 0.3
+FROZEN_V = 0.5
+FROZEN_ISAT = 2.0
+FROZEN_FIELD = 1.5 + 0.5j
+FROZEN_N = 8
+# Float32 exponentials of order-one arguments: measured 2.5e-8 (CPU), 1.2e-7 (MLX).
+FROZEN_RTOL = 1e-6
 
 
 def solver(alpha, backend="CPU"):
@@ -220,4 +233,34 @@ def test_a_lossless_run_is_not_capped_by_the_loss_ceiling():
     assert np.isinf(simu._loss_max_dz()), (
         "a lossless medium reported a finite loss ceiling, which would shorten "
         "the step of every run that has no loss at all"
+    )
+
+
+def test_a_frozen_step_applies_loss_interaction_and_potential(backend):
+    """Past the solved range the step is ``exp(dz (-alpha s + i g |A|^2 s + i V))``.
+
+    Every propagation stays inside the range, capped by the loss ceiling, so
+    only a direct kernel call reaches this arm, with ``s = 1 / (1 + |A|^2 /
+    Isat)`` read once entering. ``test_a_step_too_lossy_to_solve_still_decays``
+    bounds its amplitude; this checks its value, phase included.
+
+    Parameters
+    ----------
+    backend : str
+        Backend to run on.
+    """
+    implementation = get_backend(backend)
+    shape = (FROZEN_N, FROZEN_N)
+    field = implementation.from_numpy(np.full(shape, FROZEN_FIELD, dtype=np.complex64))
+    V = implementation.from_numpy(np.full(shape, FROZEN_V, dtype=np.float32))
+    out = implementation.kernels.square_mod_nl_prop_v(
+        field, V, FROZEN_DZ, FROZEN_ALPHA, FROZEN_G, FROZEN_ISAT
+    )
+
+    intensity = abs(FROZEN_FIELD) ** 2
+    sat = 1 / (1 + intensity / FROZEN_ISAT)
+    exponent = -FROZEN_ALPHA * sat + 1j * (FROZEN_G * intensity * sat + FROZEN_V)
+    expected = np.full(shape, FROZEN_FIELD * np.exp(FROZEN_DZ * exponent))
+    np.testing.assert_allclose(
+        np.asarray(implementation.to_numpy(out)), expected, rtol=FROZEN_RTOL
     )
