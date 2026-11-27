@@ -309,9 +309,11 @@ class NLSE(StepSize):
               warning it raises otherwise.
 
             The floating-point width comes from ``E_in``: pass a complex128
-            field for float64 arithmetic, on a device that supports it. The
-            propagator is built to match, because the kernels select their
-            precision from the field and then read the propagator with it.
+            field for float64 arithmetic. A backend without it (MLX, an
+            OpenCL device without fp64) hands the run, with a warning, to the
+            fastest one that has it. The propagator is built to match,
+            because the kernels select their precision from the field and
+            then read the propagator with it.
         method : str, optional
             Integration method: "split_step" or "RK4".
             Defaults to "split_step".
@@ -362,6 +364,7 @@ class NLSE(StepSize):
             raise TypeError(f"E_in must be complex64 or complex128, not {E_in.dtype}")
         self._check_batch_support(E_in)
         field_dtype = self._field_dtype(E_in)
+        self._check_precision_support(field_dtype)
         self._warn_about_splitting(splitting, field_dtype)
         # Rebuilt below once delta_z is settled; drop the previous run's so
         # the transfer does not carry it.
@@ -1672,6 +1675,26 @@ class NLSE(StepSize):
         E_in : np.ndarray
             The input field.
         """
+
+    def _check_precision_support(self, field_dtype: np.dtype) -> None:
+        """Move a complex128 run off a backend that has no float64.
+
+        MLX rounded such a field to complex64 without a word, and an OpenCL
+        device without fp64 refuses it when its kernels compile. Either way
+        the run moves, as ``_require_backend`` moves any run a backend
+        cannot serve.
+
+        Parameters
+        ----------
+        field_dtype : np.dtype
+            Complex dtype the run will use, from ``_field_dtype``.
+        """
+        if np.dtype(field_dtype) == np.dtype(np.complex64):
+            return
+        self._require_backend(
+            lambda backend: backend.supports_double_precision(),
+            "double precision (a complex128 field)",
+        )
 
     def _prepare_output_array(
         self, E_in: np.ndarray, normalize: bool
