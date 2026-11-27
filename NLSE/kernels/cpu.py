@@ -1166,29 +1166,43 @@ def _rk4_nl_rhs_c_v(
 
 
 def _batch_len(args, scalar_positions):
-    """Return the batch size implied by the scalar parameters, or 0.
+    """Return the length of the field's leading axis if a parameter is an array.
 
     Any array-valued parameter means the loop is needed, including a batch of
     exactly one. Requiring more than one element let a ``(1, 1, 1)`` parameter
     through as a raw array, which is the very thing numba cannot type:
     ``No implementation of function imul found for signature
     (complex64, array(complex128, 3d, C))``.
+
+    The length is the field's, not the parameter's: under numpy's rules a
+    parameter may hold one value along an axis the field is batched over.
     """
+    field = args[0]
     n = 0
     for i in scalar_positions:
         value = args[i]
         if isinstance(value, np.ndarray) and value.ndim > 0:
-            n = max(n, value.shape[0])
+            n = field.shape[0]
+            if value.ndim >= field.ndim and value.shape[0] not in (1, n):
+                raise ValueError(
+                    f"a parameter of shape {value.shape} does not broadcast "
+                    f"against a field of shape {field.shape}"
+                )
     return n
 
 
-def _pick_scalar(value, b):
-    """Take simulation b's value from a possibly-broadcast parameter."""
-    if isinstance(value, np.ndarray) and value.ndim > 0 and value.size > 1:
-        return value.reshape(value.shape[0], -1)[b, 0]
-    if isinstance(value, np.ndarray) and value.size == 1:
-        return value.reshape(-1)[0]
-    return value
+def _pick_scalar(value, b, batched_ndim):
+    """Take simulation b's share of a possibly-broadcast parameter.
+
+    Peels the leading axis of a parameter that reaches the field's. One value
+    left is handed back as a scalar; what is still an array varies over a
+    further batch axis.
+    """
+    if not isinstance(value, np.ndarray):
+        return value
+    if 0 < value.ndim >= batched_ndim:
+        value = value[b if value.shape[0] > 1 else 0]
+    return value.reshape(-1)[0] if value.size == 1 else value
 
 
 def _shared_grid_batch_len(args, scalar_positions):
@@ -1257,6 +1271,15 @@ def _require_contiguous(name, arrays):
             )
 
 
+def _pick_member(args, b, scalar_positions):
+    """Return the arguments of simulation b along the field's leading axis."""
+    ndim = args[0].ndim
+    return [
+        _pick_scalar(a, b, ndim) if i in scalar_positions else _pick_field(a, b, ndim)
+        for i, a in enumerate(args)
+    ]
+
+
 def _broadcast_batch(*scalar_positions, n_outputs=1):
     """Wrap an njit kernel so broadcast scalar parameters are looped over."""
     positions = frozenset(scalar_positions)
@@ -1265,21 +1288,18 @@ def _broadcast_batch(*scalar_positions, n_outputs=1):
         @functools.wraps(kernel)
         def wrapper(*args):
             _require_contiguous(kernel.__name__, args[:n_outputs])
-            n = _batch_len(args, positions)
-            if n == 0:
-                n = _shared_grid_batch_len(args, positions)
+            n = _batch_len(args, positions) or _shared_grid_batch_len(args, positions)
             if n == 0:
                 return kernel(*args)
-            ndim = args[0].ndim
+            # A member that is itself a batch (a second batch axis) goes
+            # through the wrapper again; every member has the first one's shape.
+            first = _pick_member(args, 0, positions)
+            nested = _batch_len(first, positions) or _shared_grid_batch_len(
+                first, positions
+            )
+            run = wrapper if nested else kernel
             for b in range(n):
-                kernel(
-                    *[
-                        _pick_scalar(a, b)
-                        if i in positions
-                        else _pick_field(a, b, ndim)
-                        for i, a in enumerate(args)
-                    ]
-                )
+                run(*_pick_member(args, b, positions))
             return args[0] if n_outputs == 1 else tuple(args[:n_outputs])
 
         return wrapper
@@ -1308,7 +1328,7 @@ def apply_propagator(A: np.ndarray, propagator: np.ndarray) -> np.ndarray:
     # compiled kernel with no indication of which argument was wrong -- not an
     # exception anything can catch or a traceback that names the caller.
     if A.ndim > propagator.ndim:
-        if A.shape[1:] != propagator.shape:
+        if A.shape[-propagator.ndim :] != propagator.shape:
             raise ValueError(
                 f"a batch of {A.shape} fields cannot share a {propagator.shape} "
                 f"propagator; the grid axes have to match"
@@ -1318,8 +1338,9 @@ def apply_propagator(A: np.ndarray, propagator: np.ndarray) -> np.ndarray:
                 f"field is {A.dtype} and propagator is {propagator.dtype}; "
                 f"the kernel reads both as the same width"
             )
-        for b in range(A.shape[0]):
-            _apply_propagator(A[b], propagator)
+        _require_contiguous("apply_propagator", (A,))
+        for field in A.reshape(-1, *propagator.shape):
+            _apply_propagator(field, propagator)
         return A
     if A.shape != propagator.shape:
         raise ValueError(

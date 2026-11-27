@@ -27,6 +27,45 @@ longer needed.
 ones first. The next release is a major one (5.0.0 is the suggestion); the
 version is not bumped and nothing is published.
 
+### In flight (2026-11-27, night session)
+
+`main` is ahead of `origin` and not pushed: the push waits for the closing
+review pass. Merged tonight: the uv, ruff and ty switch (`62bd2e8`, the
+untracked `CLAUDE.md` and the git hooks follow it) and the CPU batch fix
+over several parameter axes. Still open:
+
+- The CPU blocked step: an architect is writing
+  `NLSE_tangui_fix_specs/cpu_blocked_step_spec.md` and `.patch`. Next: spec
+  review, implementers, reviewer, timings at 1024², 2048², 4096² in both
+  dtypes on the Mac and the box. Its patch touches `NLSE/kernels/cpu.py`,
+  which the batch fix changed.
+- Tests that bite: an architect is writing
+  `NLSE_tangui_fix_specs/tests_bite_spec.md` (see the task list below).
+- A draft of the optimization-log entry for the transform libraries is in
+  `NLSE_tangui_fix_specs/cpu_fft/fft_revisit_entry.md`, next to its figures
+  (`results_*.txt`).
+- Left by the reviewer of the batch fix, all minor, none fixed. They belong
+  with the tests that bite:
+  - `_pick_field` (`NLSE/kernels/cpu.py`) does not peel a leading axis of
+    size 1: `V` of shape `(1, 4, N, N)` with `n2` of shape `(3, 1, 1, 1)` and
+    a `(3, 4, N, N)` field raises `IndexError`. `value[b if value.shape[0] > 1
+    else 0]` fixes it.
+  - `_shared_grid_batch_len` does not see `V` of shape `(1, N, N)` under a
+    `(3, N, N)` field with scalar parameters as shared: the kernel is called
+    once and its flat index runs past `V`. Older than the fix; values not
+    checked.
+  - A batched `omega` of shape `(B, 1, 1, 1)` fails under RK4 in
+    `_add_rabi_slope` (`NLSE/solvers/cnlse.py`). Older than the fix.
+  - The error for a parameter that does not broadcast names the shape of the
+    sliced member, not of the field the caller passed.
+  - The two-axis test is 3 by 3: give `ALPHA_VALUES` a fourth value so a
+    swapped axis cannot pass.
+  - The `wrapper` inside `_broadcast_batch` now holds the loop and the
+    recursion; a module-level `_run_batch(kernel, positions, n_outputs,
+    args)` would leave the factory pure.
+  - Not run by that review: OpenCL, CuPy, DDGPE, complex128, `GPE` with `V`,
+    `NLSE_3d` over two axes, strang and yoshida against per-member runs.
+
 ### Verification of the final tree
 
 - Mac (M3 Max, CPU and MLX, `.venv`), at `4ac2bb2`: `pytest tests/ -q -m "not
@@ -338,17 +377,41 @@ Task list for the closing review pass (asked on 2026-11-27):
     docs): 234 mutants, 106 not killed by their own slice's files.
     `crosscheck.py TREE s1 s2 s3 s4` runs each mutant against its slice and,
     if it passes, against the whole suite; a mutant is a gap only if the
-    whole suite lets it through. Its Mac output goes to
-    `crosscheck_mac_s134.txt` and `crosscheck_mac_s2.txt` there (running
-    when this was written).
-  - Slice-level candidates, not yet confirmed by the cross-check: Kerr sign
-    and factor, saturation, loss rate, complex `V`, non-local width, GPE `g`
-    and `V`, per-component CNLSE terms, batch parameters, step-size rates,
-    several callbacks; and the two-axis batch of `README.md:285`, which the
-    audit says raises on CPU (not verified).
-  - Left: read the cross-check, run its survivors on the box (the CuPy and
-    OpenCL tests may kill some), rank, then an architect spec for the
-    missing closed-form tests, and implement it.
+    whole suite lets it through. Mac output: `crosscheck_mac_s134.txt` and
+    `crosscheck_mac_s2.txt` there. **52 mutants survive the whole Mac suite**
+    (s1 15, s2 12, s3 10, s4 15), none by timeout.
+  - The 36 of them that do not depend on the backend
+    (`survivors_for_box.txt`) were run against the CuPy and OpenCL tests on
+    the box (tree 8493fe3, `crosscheck.py ../tree s1 s2 s3 s4 -j 2
+    --survivors survivors_for_box.txt -k "CUPY or CL or cupy or opencl or
+    cuda or cufft"`): **35 survive there too** (`crosscheck_box.txt`). The
+    one killed, "s1: split-step limit: pi rad -> 2 pi rad", dies only on
+    `test_propagator_fft_refresh.py::...::test_refreshed_when_step_limiter_clamps_delta_z[CUPY]`,
+    so it still needs a test that runs on every backend.
+  - On the batch fix's branch the two batch mutants of `s4` still survive
+    (`crosscheck_mac_batch2.txt`): `Isat` dropped from the batched positions
+    of `nl_prop` on CPU, and the MLX lossy kernel indexing a shared `V` with
+    the batch's flat id.
+  - Survivors by kind: step-size rates and limits, three callbacks, the
+    CNLSE second component (`n22` at `k` not `k2`, its `I_sat`, its `alpha`),
+    four DDGPE terms, CPU kernel signs and saturation on the lossless and
+    non-local paths, MLX batch and loss modes, the benchmark cache (grid and
+    processor not compared), the docs capability table, the `nsys` parser,
+    the wheel's module list. Kill recipes: a uniform field against
+    `k*n2*I*L`, `k*n2*I/(1+I/Isat)*L`, GPE `-g|psi|²t` and `-Vt`,
+    `exp(-gamma t)`, `exp(-alpha_i z)` per component.
+  - Found on the way and fixed (`fix/cpu-two-axis-batch`): the two-parameter
+    batch of `README.md:285` raised on CPU, and a one-value array parameter
+    moved only the first field of a batch.
+  - A batch and its members run alone differ by 5e-4 when the step is left
+    to the solver: the batch takes the strictest member's step. Not a bug;
+    a test comparing the two has to pass `delta_z`.
+  - Left: the architect's spec for the missing closed-form tests
+    (`NLSE_tangui_fix_specs/tests_bite_spec.md` and `tests_bite_<n>.patch`,
+    being written when this was), its spec review, the implementation, a
+    review; the backend-parametrized tests then run on the box.
+    `crosscheck.py --survivors` is the regression check (every listed mutant
+    has to die).
 - [x] **Packaging and tooling** ("I also would like you to check packaging
   and tooling in general. I want something modern based on uv ruff and ty",
   2026-11-27), which carries the mypy to ty switch ("Let's switch also from
@@ -373,6 +436,14 @@ Task list for the closing review pass (asked on 2026-11-27):
     majors, an SBOM artifact and a commit-message hook.
   - Not checked: the workflow has not run on GitHub (nothing is pushed), and
     the CuPy and OpenCL extras were not synced from the lock on the box.
+- [ ] **Headline performance in the README** (asked on 2026-11-27: "add the
+  headline perf numbers in the README of the repo, in % of max flops/s /
+  memory bandwidth (highlighting whether we are compute / or bandwidth
+  limited and why)"). Per backend and machine, at 1024², 2048² and 4096²,
+  both dtypes: the step time, its share of the measured peak (memory
+  bandwidth and flop/s), which of the two limits it, and why. The figures and
+  their configurations are in `docs/optimization-log.md`; write this once the
+  CPU blocked step has landed, so the CPU row is final.
 - [ ] Review of the architecture, the tests and the docs (docs page by page
   against Diátaxis), fix what is critical or major, then push.
 
