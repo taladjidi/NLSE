@@ -66,7 +66,7 @@ from NLSE import sample
 delta_z = L / 1000          # divides L, so the run is exactly 1000 steps
 n_steps = round(L / delta_z)
 save_every = 100
-n_samples = n_steps // save_every + 1
+n_samples = n_steps // save_every
 E_samples = np.zeros((n_samples, NY, NX), dtype=np.complex64)
 
 E_out = simu.out_field(
@@ -88,7 +88,7 @@ from NLSE import norm
 delta_z = L / 1000          # divides L, so the run is exactly 1000 steps
 n_steps = round(L / delta_z)
 save_every = 50
-norms = np.zeros(n_steps // save_every + 1)
+norms = np.zeros(n_steps // save_every)
 
 E_out = simu.out_field(
     E_in, L,
@@ -108,7 +108,7 @@ from NLSE import evaluate_delta_n
 delta_z = L / 1000          # divides L, so the run is exactly 1000 steps
 n_steps = round(L / delta_z)
 save_every = 100
-delta_n = np.zeros((n_steps // save_every + 1,) + (NY, NX))
+delta_n = np.zeros((n_steps // save_every,) + (NY, NX))
 
 E_out = simu.out_field(
     E_in, L,
