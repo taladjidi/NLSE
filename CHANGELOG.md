@@ -76,6 +76,12 @@ come first.
   potential that differs between simulations whose parameters differ (`V` of
   shape `(3, N, N)` with `n2` of shape `(3, 1, 1)`): it used to give every
   simulation the first potential, silently. The other backends run it.
+- **A batch over two axes is right on CuPy without the cuFFT callbacks.** With
+  `NLSE_FUSE_PROPAGATOR=0`, or where cuFFT refuses the store callbacks, a
+  field of shape `(B1, B2, N, N)` came back with NaN or another member's
+  values: the propagator kernel walked the first batch axis only and read
+  past the end of the shared propagator. With the callbacks on, the default,
+  the plan applies the propagator and the result was right.
 - **The Rabi coupling is applied by every scheme.** `CNLSE`, `CNLSE_1d` and
   `DDGPE` applied it in the `lie` step only: `strang`, `yoshida` and RK4 ran
   as if `omega` were zero.
