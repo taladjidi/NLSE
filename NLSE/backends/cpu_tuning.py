@@ -17,6 +17,8 @@ take the unblocked step meanwhile rather than time each other's load.
 
 import json
 import os
+import socket
+import threading
 import time
 import warnings
 from datetime import datetime, timedelta
@@ -108,10 +110,17 @@ BUSY_RETRY = 3.0
 _SETTLED: dict = {}
 _BUSY_UNTIL: dict = {}
 
+
+def _forget_settled() -> None:
+    """Forget the steps settled, and the grids deferred, in this process."""
+    _SETTLED.clear()
+    _BUSY_UNTIL.clear()
+
+
 # A forked child may inherit a step a thread of the parent was inside, its
-# lock held for good: it settles its own.
+# lock held for good, and the parent's deadlines to ask again: it settles its own.
 if hasattr(os, "register_at_fork"):
-    os.register_at_fork(after_in_child=_SETTLED.clear)
+    os.register_at_fork(after_in_child=_forget_settled)
 else:
     pass  # no fork on this platform (Windows), nothing to forget
 
@@ -558,8 +567,13 @@ def _store(path: Path, key: str, entry: dict) -> None:
         _warn_unwritable(e)
 
 
+def _lock_token() -> str:
+    """Return what a lock made by this thread holds: host, process and thread."""
+    return f"{socket.gethostname()} {os.getpid()} {threading.get_ident()}"
+
+
 def _create_lock(lock: Path) -> bool:
-    """Make the lock file, unless it exists.
+    """Make the lock file, holding ``_lock_token``, unless it exists.
 
     Parameters
     ----------
@@ -572,10 +586,35 @@ def _create_lock(lock: Path) -> bool:
         True if this call made it.
     """
     try:
-        os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+        descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
         return False
+    with os.fdopen(descriptor, "w") as f:
+        f.write(_lock_token())
     return True
+
+
+def _release_lock(lock: Path) -> None:
+    """Remove the lock if it is still the one this thread made.
+
+    A tuning that outlived ``LOCK_STALE_AFTER`` has had its lock taken over;
+    removing that one would let a third process measure beside the second.
+
+    Parameters
+    ----------
+    lock : Path
+        The lock file.
+    """
+    try:
+        held = lock.read_text()
+    except FileNotFoundError:
+        return  # removed by the process that took it over, then released
+    if held == _lock_token():
+        # shortcut: a takeover between the read and the unlink is lost; it
+        # needs this tuning past LOCK_STALE_AFTER, then a microsecond race.
+        lock.unlink(missing_ok=True)
+    else:
+        say("The CPU tuning lock was taken over meanwhile: leaving it to its owner.")
 
 
 def _is_stale(lock: Path) -> bool:
@@ -714,7 +753,7 @@ def _measure_and_store(
         entry = _measured(backend, shape, dtype, threads)
         _store(path, _cache_key(shape, dtype, threads), entry)
     finally:
-        lock.unlink(missing_ok=True)
+        _release_lock(lock)
     return entry
 
 
