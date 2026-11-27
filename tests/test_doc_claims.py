@@ -206,7 +206,7 @@ def test_the_splitting_table_matches_the_code():
 
 
 def test_the_documented_version_is_the_real_one():
-    """The version index.md names is the package's real version."""
+    """index.md names the current version; no page quotes an unknown one."""
     from NLSE import __version__
 
     allowed = {__version__, PREVIOUS_RELEASE, MIGRATION_FROM, MIGRATION_TO}

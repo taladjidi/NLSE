@@ -46,7 +46,7 @@ def unmeasured(monkeypatch):
 
 @pytest.mark.skipif(not DEVICES, reason="no device backend installed here")
 def test_the_host_is_ranked_last_when_nothing_is_measured(unmeasured):
-    """A device backend outranks the host, measurement or none."""
+    """With no benchmark cache, the host is ranked behind every device."""
     ranked = backends_by_speed((64, 64))
     assert ranked[-1] == "CPU", (
         f"the host should be the last resort, and this ranking is {ranked}"
