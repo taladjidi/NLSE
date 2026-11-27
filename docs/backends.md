@@ -111,8 +111,28 @@ python my_simulation.py
 Every backend broadcasts, but not in the same way: CUPY and MLX hand the
 batched parameters to their kernels, while CPU and OpenCL take one
 simulation's values per launch and loop, so their gain is in the transforms
-rather than in the kernels. "Falls back" means the solver moves the run to a
-backend that can serve it and says so, rather than refusing.
+rather than in the kernels. A batched `CNLSE`, `CNLSE_1d` or `DDGPE` run is
+the exception: CL and MLX cannot take one, so the solver moves it to the
+fastest backend that can, with a warning, and raises `NotImplementedError` if
+none is installed.
+
+## Threads and processes on CPU
+
+The CPU kernels run on numba's
+[threading layer](https://numba.readthedocs.io/en/stable/user/threading-layer.html),
+which numba picks when NLSE is imported: TBB, then OpenMP, then `workqueue`.
+Two of them limit how runs share a process:
+
+- `workqueue` is not thread-safe: numba ends the process when two Python
+  threads run CPU kernels at once. It is the layer when neither TBB nor
+  OpenMP is installed, and the one NLSE takes when `pyfftw` was imported
+  before it.
+- GNU OpenMP, the `omp` layer on Linux, is not fork-safe: numba ends a child
+  forked from a process that has run a CPU kernel when the child runs one.
+  Start processes with `multiprocessing`'s `spawn` method instead.
+
+`numba.threading_layer()` names the layer; `NUMBA_THREADING_LAYER`, set before
+`import NLSE`, chooses it.
 
 ## Performance Tips
 
@@ -134,7 +154,8 @@ which is faster only where FFTW is vectorized and on arm64 no prebuilt build is.
 On CPU, a 2D split step can run in blocks sized to the processor's caches.
 Whether that is faster, and at which block size, depends on the processor,
 so it is measured: the first run on a grid times the usual step against
-blocked ones (under 1 s at 1024², 7 to 12 s at 4096² on an M3 Max) and keeps
+blocked ones (0.4-0.9 s at 1024², 12.1-12.5 s at 4096² complex128 on an M3
+Max, `docs/optimization-log.md`) and keeps
 the answer in `cpu_blocking.json` in the cache directory. While one process
 measures, the others take the usual step and do not wait.
 

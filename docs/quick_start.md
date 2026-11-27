@@ -1,6 +1,9 @@
 # Quick Start
 
-After [installing](installation.md) NLSE, import the solver you need and set up your simulation.
+This page propagates a Gaussian beam through 1 cm of a Kerr medium in 2D, adds
+a potential, samples the field along the way with a callback, then runs the
+same beam in 1D and a condensate with the GPE. It assumes you have
+[installed](installation.md) NLSE.
 
 ## 2D NLSE
 
@@ -31,6 +34,54 @@ E_in = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(np.complex64)
 E_out = simu.out_field(E_in, L, splitting="lie")
 ```
 
+`E_out` is the field at the end of the medium, a `(2048, 2048)` `complex64`
+array in V/m. The run warns that `delta_z` exceeds the split-step accuracy
+limit, which is expected: the default step is chosen from the potential and the
+interaction, while the limit also bounds the phase diffraction adds to the
+finest wave the grid resolves, so the solver takes the shorter step.
+
+## Adding a Potential
+
+A potential is a dimensionless change of refractive index on the solver's grid.
+Assign it to `simu.V` and propagate the same input again:
+
+```python
+# Define a potential landscape
+waist_V = 70e-6
+V = -1e-4 * np.exp(-(simu.XX**2 + simu.YY**2) / waist_V**2)
+simu.V = V
+
+E_out = simu.out_field(E_in, L, splitting="lie")
+```
+
+`E_out` has the same shape, and the same warning comes with it.
+
+## Using Callbacks
+
+Monitor or modify the simulation during propagation:
+
+```python
+from NLSE import sample
+
+# Pre-allocate storage for sampled fields
+delta_z = L / 1000          # 1000 steps, numbered 0 to 999
+save_every = 100            # keeps steps 0, 100, ..., 900
+E_samples = np.zeros((1000 // save_every, N, N), dtype=np.complex64)
+
+E_out = simu.out_field(
+    E_in, L,
+    delta_z=delta_z,
+    splitting="lie",
+    callback=sample,
+    callback_args=(save_every, E_samples),
+)
+```
+
+`E_samples` now holds the field every 100 steps, a `(10, 2048, 2048)`
+`complex64` array. This run does not warn: its `delta_z` is inside the limit.
+
+See the [Callbacks](callbacks.md) guide for all built-in callbacks and how to write your own.
+
 ## 1D NLSE
 
 ```python
@@ -49,6 +100,8 @@ simu = NLSE_1d(alpha=20, power=power, window=window, n2=n2, V=None, L=L, NX=N)
 E_in = np.exp(-simu.X**2 / waist**2).astype(np.complex64)
 E_out = simu.out_field(E_in, L, splitting="lie")
 ```
+
+`E_out` is a `(4096,)` `complex64` array.
 
 ## GPE (Gross-Pitaevskii)
 
@@ -78,93 +131,13 @@ E_in = np.exp(-(simu.XX**2 + simu.YY**2) / (10e-6) ** 2).astype(np.complex64)
 E_out = simu.out_field(E_in, T, splitting="lie")
 ```
 
-## Choosing a Backend
-
-By default, NLSE selects the best available backend. You can specify one explicitly:
-
-```python
-# Use CPU backend
-simu = NLSE(alpha, power, window, n2, V=None, L=L, NX=N, NY=N, backend="CPU")
-
-# Use CUPY (NVIDIA CUDA) backend
-simu = NLSE(alpha, power, window, n2, V=None, L=L, NX=N, NY=N, backend="CUPY")
-
-# Use OpenCL backend
-simu = NLSE(alpha, power, window, n2, V=None, L=L, NX=N, NY=N, backend="CL")
-
-# Use MLX backend (Apple Silicon)
-simu = NLSE(alpha, power, window, n2, V=None, L=L, NX=N, NY=N, backend="MLX")
-
-# Auto-select fastest backend via benchmarking
-simu = NLSE(alpha, power, window, n2, V=None, L=L, NX=N, NY=N, backend="auto")
-```
-
-You can also switch backend after creation:
-
-```python
-simu.backend = "CL"
-```
-
-## Choosing a splitting and a method
-
-`splitting` says how the linear and nonlinear parts are composed. It is not the
-floating-point width — that follows the dtype of the field you pass.
-
-```python
-# O(dz) error, one transform pair per step (default)
-E_out = simu.out_field(E_in, L, splitting="lie")
-
-# O(dz^2) error, and still one transform pair: consecutive steps merge
-# their touching half-steps
-E_out = simu.out_field(E_in, L, splitting="strang")
-
-# O(dz^4), three transform pairs. Worth it only with a complex128 field
-E_out = simu.out_field(E_in.astype(np.complex128), L, splitting="yoshida")
-
-# RK4 instead of split-step
-E_out = simu.out_field(E_in, L, method="RK4")
-```
-
-See [Numerical Methods](numerical_methods.md) for which to use when.
-
-## Adding a Potential
-
-```python
-# Define a potential landscape
-waist_V = 70e-6
-V = -1e-4 * np.exp(-(simu.XX**2 + simu.YY**2) / waist_V**2)
-simu.V = V
-
-E_out = simu.out_field(E_in, L, splitting="lie")
-```
-
-## Using Callbacks
-
-Monitor or modify the simulation during propagation:
-
-```python
-from NLSE import sample
-
-# Pre-allocate storage for sampled fields
-delta_z = L / 1000          # divides L, so the run is exactly 1000 steps
-n_steps = int(L / delta_z)
-save_every = 100
-E_samples = np.zeros((n_steps // save_every + 1, N, N), dtype=np.complex64)
-
-E_out = simu.out_field(
-    E_in, L,
-    delta_z=delta_z,
-    splitting="lie",
-    callback=sample,
-    callback_args=(save_every, E_samples),
-)
-```
-
-See the [Callbacks](callbacks.md) guide for all built-in callbacks and how to write your own.
+`E_out` is the condensate after 1 ms, a `(512, 512)` `complex64` array.
 
 ## Next Steps
 
+Each of these pages takes one part of this one further:
+
 - [Solvers Overview](solvers_overview.md) -- detailed guide to each solver
-- [Backends](backends.md) -- backend system and performance tuning
-- [Numerical Methods](numerical_methods.md) -- algorithm details and step size control
+- [Backends](backends.md) -- choosing a backend, and switching it after creation
+- [Numerical Methods](numerical_methods.md) -- the splittings, RK4, and step size control
 - [Examples Gallery](auto_examples/index) -- full example scripts

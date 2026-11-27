@@ -2,7 +2,9 @@
 
 Run from anywhere:
 
-    python docs/make_validation_figure.py
+    python docs/make_validation_figure.py [--output PATH]
+
+It writes docs/img/validation.png unless --output names another file.
 
 The curves are the analytic solutions and the markers are what the solver
 returns; the point of the figure is that they lie on top of each other, so
@@ -11,6 +13,7 @@ than a plot can show -- see tests/physics/test_closed_forms.py -- which is why
 the residuals go in the panel titles.
 """
 
+import argparse
 import pathlib
 
 import matplotlib
@@ -152,6 +155,9 @@ def soliton():
 
 def main():
     """Draw the three panels and write the figure."""
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--output", type=pathlib.Path, default=OUT, help="PNG to write")
+    output = parser.parse_args().output
     fig, axes = plt.subplots(1, 3, figsize=(13, 4))
 
     ratios, measured, exact = diffraction()
@@ -188,9 +194,9 @@ def main():
         axis.legend(fontsize=8)
         axis.grid(alpha=0.3)
     fig.tight_layout()
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(OUT, dpi=130)
-    print(f"wrote {OUT}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output, dpi=130)
+    print(f"wrote {output}")
 
 
 if __name__ == "__main__":

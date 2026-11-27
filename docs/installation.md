@@ -10,13 +10,7 @@ cd NLSE
 pip install .
 ```
 
-For development, [uv](https://docs.astral.sh/uv/) creates `.venv` with the
-package in editable mode and the `dev` group (pytest, ruff, ty, etc.), pinned by
-`uv.lock`:
-
-```bash
-uv sync
-```
+To work on the package itself, see [Contributing](contributing.md#development-setup).
 
 ## Optional extras
 
@@ -29,14 +23,6 @@ uv sync
 Combine them in one install: `pip install ".[opencl,mlx]"`, or in the
 development environment `uv sync --extra opencl --extra mlx`.
 
-The development tools are dependency groups rather than extras, so they are
-not part of the published package:
-
-| Group | Installs | For |
-|---|---|---|
-| `dev` | `pytest`, `pytest-cov`, `pytest-benchmark`, `ruff`, `ty`, `pre-commit`, `hatchling` | the tests and the linters; `uv sync` installs it by default |
-| `docs` | `sphinx`, `furo`, `myst-nb`, `sphinx-autoapi`, `sphinx-copybutton`, `sphinx-gallery` | building this documentation: `uv sync --group docs` |
-
 ## Requirements
 
 - **Python**: 3.10 or later
@@ -46,16 +32,16 @@ Core dependencies (`numpy`, `scipy`, `matplotlib`, `numba`, `tqdm`) are installe
 
 ## GPU Backends
 
-By default, NLSE uses the CPU backend (NumPy + Numba, with `scipy.fft` for the transform). For GPU acceleration, install one or more of the following:
+Unless CuPy or MLX is installed, NLSE runs on the CPU backend (NumPy + Numba, with `scipy.fft` for the transform), even with the `opencl` extra: OpenCL is never the default. For GPU acceleration, install one or more of the following:
 
 ### CUPY (NVIDIA CUDA)
 
 For NVIDIA GPUs with CUDA support:
 
 ```bash
-pip install cupy-cuda12x   # for CUDA 12.x
+pip install cupy-cuda13x   # for CUDA 13.x
 # or
-pip install cupy-cuda11x   # for CUDA 11.x
+pip install cupy-cuda12x   # for CUDA 12.x
 ```
 
 The `gpu` extra installs the `cupy` package instead, which PyPI ships as source
@@ -76,7 +62,7 @@ You also need an OpenCL runtime installed for your GPU. On macOS, OpenCL is avai
 
 ### MLX (Apple Silicon)
 
-For Apple Silicon Macs (M1/M2/M3/M4):
+For Apple Silicon Macs:
 
 ```bash
 pip install ".[mlx]"
@@ -86,36 +72,17 @@ MLX provides native GPU acceleration on Apple hardware.
 
 ## Backend Selection
 
-NLSE auto-detects the best available backend. The priority order is:
-
-1. **CUPY** (if CuPy is installed and a CUDA GPU is available)
-2. **MLX** (if MLX is installed on Apple Silicon)
-3. **CPU** (always available)
-
-You can override this with the `NLSE_BACKEND` environment variable:
+NLSE picks its default backend when it is imported: CUPY if CuPy imports,
+otherwise MLX if MLX imports, otherwise CPU. It checks only that the library
+imports, not that it finds a device. Set `NLSE_BACKEND` to a backend name before
+NLSE is imported to choose it for every solver in the process; it takes
+precedence over the `backend=` argument. `NLSE_BACKEND=auto` is ignored, so each
+solver keeps its own `backend=`:
 
 ```bash
 export NLSE_BACKEND=CPU   # force CPU backend
 ```
 
-See the [Backends](backends.md) page for more details.
-
-## The CPU transform
-
-The CPU backend transforms with `scipy.fft`, which needs no
-planning, no wisdom file and no configuration. It uses every core by default.
-To limit that, cap the thread pool scipy draws on:
-
-```python
-import scipy.fft
-
-with scipy.fft.set_workers(4):
-    E_out = simu.out_field(E_in, L)
-```
-
-## Running Tests
-
-```bash
-uv run pytest tests/               # run all tests
-uv run pytest tests/ -v --tb=short  # verbose with short tracebacks
-```
+A backend that is named but not installed is replaced by the fastest one that
+is, with a warning. A name that is not a backend raises `ValueError`. See the
+[Backends](backends.md) page for choosing one per solver and benchmarking them.

@@ -1,10 +1,9 @@
 # NLSE
 
 :::{note}
-This site documents NLSE 4.1.0
-
-It is built from `main`, so it describes the current code rather than the
-version you have installed. Check with `python -c "import NLSE;
+This site is built from `main`: NLSE 4.1.0 plus the changes listed under
+Unreleased in the [Changelog](changelog.md), some of which break existing
+scripts. Check the version you have with `python -c "import NLSE;
 print(NLSE.__version__)"`. Upgrading from 3.0.0 changes four things — see
 [Migrating to 4.0.0](migration.md).
 :::
@@ -22,49 +21,16 @@ print(NLSE.__version__)"`. Upgrading from 3.0.0 changes four things — see
   solutions — diffraction, Beer's law, a bright soliton — and not only
   against each other. See [Physical Validation](physical_validation.md)
 
-## Solvers
+## Where to start
 
-| Solver | Description |
-|--------|-------------|
-| [`NLSE`](api/NLSE/solvers/nlse/index) | 2D Nonlinear Schrödinger Equation (base class) |
-| [`NLSE_1d`](api/NLSE/solvers/nlse_1d/index) | 1D specialization of NLSE |
-| [`NLSE_3d`](api/NLSE/solvers/nlse_3d/index) | 3D+1 paraxial propagation (includes GVD) |
-| [`CNLSE`](api/NLSE/solvers/cnlse/index) | 2D Coupled NLSE (two-component fields) |
-| [`CNLSE_1d`](api/NLSE/solvers/cnlse_1d/index) | 1D Coupled NLSE |
-| [`GPE`](api/NLSE/solvers/gpe/index) | 2D Gross-Pitaevskii Equation (SI units; V in rad/s, g in rad/s·m²) |
-| [`DDGPE`](api/NLSE/solvers/ddgpe/index) | 2D Driven-Dissipative GPE (exciton-polaritons) |
-
-## Quick Example
-
-```python
-import numpy as np
-from NLSE import NLSE
-
-# Physical parameters
-N = 2048
-n2 = -1.6e-9        # nonlinear index (m^2/W)
-waist = 2.23e-3      # beam waist (m)
-window = 4 * waist   # computational window (m)
-power = 1.05         # optical power (W)
-L = 10e-3            # propagation distance (m)
-
-# Create solver and define input field
-simu = NLSE(alpha=20, power=power, window=window, n2=n2, V=None, L=L,
-            NX=N, NY=N, Isat=10e4)
-
-# Complex: the field's width is what selects single or double precision.
-E_in = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(np.complex64)
-
-# Propagate
-E_out = simu.out_field(E_in, L, splitting="lie")
-```
-
-## Getting Started
-
-- [Installation](installation.md) -- install the package and optional GPU backends
-- [Quick Start](quick_start.md) -- minimal working examples for each solver
-- [User Guide](backends.md) -- backends, callbacks, numerical methods
-- [API Reference](api/NLSE/solvers/nlse/index) -- full class and function documentation
+[Installation](installation.md) installs the package and the backend for your
+hardware, and the [Quick Start](quick_start.md) runs a first propagation.
+The user guide explains the [equations](physics_problem.md), how to
+[choose a solver](solvers_overview.md) and the
+[numerical methods](numerical_methods.md). The
+[examples gallery](auto_examples/index) has working scripts with the figures
+they drew, and the [API reference](api/index) documents every class and
+function.
 
 ```{toctree}
 :hidden:

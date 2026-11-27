@@ -6,8 +6,6 @@ All solvers share a common interface inherited from the base `NLSE` class. This 
 
 All solver classes inherit from the main `NLSE` class to minimize code duplication:
 
-![inheritance](img/inheritance_graph.png)
-
 ```
 NLSE (2D base class)
 ├── NLSE_1d          - 1D specialization
@@ -35,69 +33,16 @@ NLSE (2D base class)
 `NLSE` itself is the 2D paraxial equation set out in
 [Physics Background](physics_problem.md); the rest specialise or extend it.
 
-### The `NLSE_1d` class
-
-`NLSE_1d` is a 1D specialization of `NLSE` for performance.
-It supports all of the features of the main `NLSE` class.
-
-The propagation equation is:
-
-$$
-i\partial_{z}E = -\frac{1}{2k_0}\partial^2_x E +
--\frac{k_0}{2}\delta n(r) E - n_2 \frac{k_0}{2n}c\epsilon_0|E|^2E
-$$
-
-### The `NLSE_3d` class
-
-`NLSE_3d` solves the full paraxial propagation equation.
-
-**WARNING:** Since this solves a 3D+1 equation, this is computationally very intensive ! The space complexity scales as $N^3$ if $N$ is the field array size.
-
-The propagation equation is:
-
-$$
-i\partial_{z}E = -\frac{1}{2k_0}\nabla_{\perp}^2 E +
-\frac{D_0}{2}\partial^2_t E
--\frac{k_0}{2}\delta n(r) E - n_2 \frac{k_0}{2n}c\epsilon_0|E|^2E
-$$
-
-### The `CNLSE` class
-
-The `CNLSE` class is a coupled non-linear Schrödinger equation allowing to solve the following equation:
-
-$$
-\begin{split}
-i\frac{\partial\psi_f}{\partial z} &= -\frac{1}{2k_f}\nabla^2\psi_f -\frac{1}{2}n_2^f k_f c\epsilon_0|\psi_f|^2\psi_f + k_f n_2^{fd}c\epsilon_0|\psi_d|^2\psi_f-\frac{i\alpha_f}{2}\psi_f + \frac{\Omega}{2} \psi_d  \\
-i\frac{\partial\psi_d}{\partial z} &= -\frac{1}{2k_d}\nabla^2\psi_d -\frac{1}{2}n_2^d k_d c\epsilon_0|\psi_d|^2\psi_d + k_d n_2^{fd}c\epsilon_0|\psi_f|^2\psi_d-\frac{i\alpha_d}{2}\psi_d + \frac{\Omega}{2} \psi_f
-\end{split}
-$$
-
-This allows to describe the back reaction of the fluid onto the defect as well as two components scenarii.
-In order to "turn on" different terms, it suffices to set the parameters value to something other than `None`.
-When `None`, the solver does not apply the corresponding evolution term for optimal performance.
-
-### The `CNLSE_1d` class
-
-Similarly to `NLSE_1d`, the `CNLSE_1d` is a 1D specialization of `CNLSE` class.
-
-The propagation equation is:
-
-$$
-\begin{split}
-i\frac{\partial\psi_f}{\partial z} &= -\frac{1}{2k_f}\partial^2_x\psi_f -\frac{1}{2}n_2^f k_f c\epsilon_0|\psi_f|^2\psi_f + k_f n_2^{fd}c\epsilon_0|\psi_d|^2\psi_f-\frac{i\alpha_f}{2}\psi_f + \frac{\Omega}{2} \psi_d  \\
-i\frac{\partial\psi_d}{\partial z} &= -\frac{1}{2k_d}\partial^2_x\psi_d -\frac{1}{2}n_2^d k_d c\epsilon_0|\psi_d|^2\psi_d + k_d n_2^{fd}c\epsilon_0|\psi_f|^2\psi_d-\frac{i\alpha_d}{2}\psi_d + \frac{\Omega}{2} \psi_f
-\end{split}
-$$
-
-### The `GPE` class
-
-The `GPE` class allows to solve the 2D Gross-Pitaevskii equation describing the temporal evolution of a Bosonic field:
-
-$$
-i\hbar\partial_{t}\psi = -\frac{\hbar^2}{2m}\nabla^2\psi+\hbar V\psi+\hbar g|\psi|^2\psi.
-$$
-
-It follows the same conventions as the other classes, except that it describes atoms: SI units (masses in kg, times in s), with `V` and `g` given as energies divided by $\hbar$, in rad/s and rad/s$\cdot$m$^2$.
+- `NLSE_1d`: the same equation with $\partial_x^2$ in place of
+  $\nabla_\perp^2$.
+- `NLSE_3d`: the same equation with the dispersion term $D_0$. The field holds
+  every time sample of every transverse point, so memory grows with
+  `NX * NY * NZ`.
+- `CNLSE`, and `CNLSE_1d` in 1D: two coupled components, in
+  [Coupled NLSE](physics_problem.md#coupled-nlse-cnlse).
+- `GPE`: the Gross-Pitaevskii equation, in
+  [Gross-Pitaevskii Equation](physics_problem.md#gross-pitaevskii-equation-gpe).
+- `DDGPE`: below.
 
 ### The `DDGPE` class
 
@@ -105,36 +50,32 @@ The DDGPE class allows to solve the temporal evolution of two coupled fields in 
 
 It was designed to study problems like the evolution of exciton polaritons in microcavities.
 
-The equation solved in this context is the following:
+It works in rates (rad/s), in the frame turning at the pump frequency
+$\omega_p$:
 
 $$
 \begin{split}
-i\hbar \partial_t\psi_X(\textbf{r}, t)&=
-(\frac{\hbar^2}{2m_X}\nabla^2 +
-V_X(\textbf{r}) +
-\hbar g_X|\psi_X(\textbf{r}, t)|^2 -
-i\hbar\frac{\Gamma_X}{2})\psi_X(\textbf{r}, t)+
-\hbar\Omega_R\psi_C(\textbf{r}, t) \\
-i\hbar \partial_t \psi_C(\textbf{r}, t)&=
-(\frac{\hbar^2}{2m_C}\nabla^2 +
-V_C(\textbf{r})  -
-i\hbar\frac{\Gamma_C}{2})\psi_C(\textbf{r}, t) +
-\hbar\Omega_R\psi_X(\textbf{r}, t) +
-\hbar F_p(\textbf{r},t)
+i\partial_t\psi_X &= \left(\omega_X - \omega_p + V + g|\psi_X|^2 s
+  - g_{12}|\psi_C|^2 s - \frac{i\gamma}{2}s\right)\psi_X
+  + \frac{\Omega}{2}\psi_C \\
+i\partial_t\psi_C &= \left(\omega_C\sqrt{1 - \nabla^2/k_z^2} - \omega_p + V
+  - g_{12}|\psi_X|^2 s - \frac{i\gamma}{2}s\right)\psi_C
+  + \frac{\Omega}{2}\psi_X + F_p
 \end{split}
 $$
 
 where
 
-- $\psi_X$ is the exciton field
-- $\psi_C$ is the cavity field
-- $V_X$ is the exciton potential
-- $V_C$ is the cavity potential
-- $g_X$ is the exciton interaction energy
-- $\Gamma_X$ is the exciton losses coefficient
-- $\Gamma_C$ is the cavity losses coefficient
-- $\Omega_R$ is the Rabi coupling between excitons and photons
-- $F_p$ is the pumping field impinging on the cavity
+- $\psi_X$ and $\psi_C$ are the exciton and cavity fields
+- $\omega_X$, $\omega_C$ are `omega_exc` and `omega_cav`; $k_z$ is `k_z`
+- $\omega_p = \omega_{LP} + \delta$, with $\delta$ the `detuning` and
+  $\omega_{LP} = \frac{\omega_X + \omega_C}{2}
+  - \frac{1}{2}\sqrt{(\omega_X - \omega_C)^2 + \Omega^2}$ the lower polariton
+- $\Omega$ is `omega`, the Rabi coupling
+- $g$ and $g_{12}$ are `g` and `g12`; $\gamma$ is `gamma`, the loss of both fields
+- $V$ is the potential, on both fields
+- $s = 1/(1 + |\psi_X|^2/I_\text{sat} + |\psi_C|^2/I_\text{sat})$, 1 by default
+- $F_p$ is the pump, applied by the `laser_excitation` argument of `out_field`
 
 ## Common Interface
 
@@ -171,8 +112,9 @@ The main entry point is `out_field()`:
 
 ```python
 E_out = simu.out_field(
-    E_in,                # input field (normalized 0-1)
+    E_in,                # input field, rescaled to `power` when normalize=True
     z,                   # propagation distance
+    delta_z=None,        # step; None derives one from the field
     splitting="lie",  # "lie" O(dz), "strang" O(dz^2), "yoshida" O(dz^4)
     method="split_step", # "split_step" or "RK4"
     callback=None,       # callback function(s)
@@ -183,7 +125,9 @@ E_out = simu.out_field(
 )
 ```
 
-The returned field `E_out` is always a NumPy array on the CPU, in physical units (V/m for optical solvers).
+The returned field `E_out` is in physical units (V/m for optical solvers). It
+is a NumPy array when `E_in` was one, and stays on the device when `E_in` was a
+device array.
 
 ### Coordinate Grids
 
@@ -255,7 +199,9 @@ E_in = np.exp(-r**2 / waist**2).astype(np.complex64)
 E_out = simu.out_field(E_in, 2e-3)
 ```
 
-Positive imaginary part removes power, negative adds it. The potential is
+In `NLSE`, a positive imaginary part removes power and a negative one adds it.
+`GPE` and `DDGPE` take $V$ with the opposite sign, so there a positive
+imaginary part is gain. The potential is
 transferred at the field's precision, so a `complex64` field carries a
 `complex64` potential and a `complex128` one carries `complex128`.
 
@@ -297,15 +243,13 @@ E_out = simu.out_field(E_in, L, splitting="lie")
 # E_out.shape == (2, 512, 512)
 ```
 
-Setting coupling parameters to `None` disables the corresponding term for better performance.
+`omega=None`, the default, leaves the Rabi coupling out.
 
 ## Broadcasting (Parallel Simulations)
 
-You can run multiple simulations in parallel using NumPy broadcasting. This
-works on **every backend**. CUPY and MLX hand the batched parameters to their
-kernels and broadcast there; CPU and OpenCL take one simulation's values per
-launch and loop over the batch, so their gain over separate runs is in the
-FFTs rather than in the kernels.
+You can run multiple simulations in parallel using NumPy broadcasting, on every
+backend; see [Backend Capabilities](backends.md#backend-capabilities) for how
+each runs a batch.
 
 ```python
 # Propagate 10 different initial states
@@ -334,10 +278,11 @@ The batch axes come first and the grid axes last, so a scan over two
 parameters on a 2D grid is a four-dimensional array. Memory is the limit:
 every simulation in the batch holds its own field.
 :::
+
 ## Plotting
 
 All solvers have a `plot_field` method for visualizing fields:
 
 ```python
-simu.plot_field(E_out)
+simu.plot_field(E_out, z)
 ```

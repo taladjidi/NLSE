@@ -61,7 +61,7 @@ come first.
   and ranked first whatever its speed. The benchmark now waits on what each
   transform returns.
 - **A batch over two parameters runs on CPU and OpenCL.** `n2` along one
-  batch axis and `alpha` along the next, the grid search of the README,
+  batch axis and `alpha` along the next, the grid search in Solvers Overview,
   raised `ValueError` on CPU and `IndexError` on OpenCL while CuPy and MLX
   ran it: both loops peeled one batch axis. They now follow numpy's
   broadcasting rules over any number of them. With it, an array parameter
@@ -126,6 +126,14 @@ come first.
 - **Backend benchmark caches are measured again, once.** The CuPy timing now
   waits on the stream instead of copying the result to the host, so a cached
   timing no longer compares with a new one; `CACHE_VERSION` 3 discards it.
+- **The README links to the guide instead of summarising it.** Its copies of
+  the physics, the solvers, the callbacks, the step size and the backends had
+  drifted from the pages they copied: it said the CUPY backend transforms
+  with PyVkFFT, where it uses cuFFT, and dated the empty `site-packages/NLSE/`
+  left by an uninstall to versions before 2.4, not 4.0.0. It keeps the
+  splitting table. `docs/installation.md` no longer says the CPU backend is
+  the default, or that `scipy.fft.set_workers` caps the threads a run uses:
+  NLSE passes `workers=-1`, which overrides it.
 - **Development tooling runs from the lock.** The `dev` and `docs` extras are
   now dependency groups, so they no longer appear in the published metadata.
   `uv sync` installs the package with the dev tools on the Python in
@@ -152,7 +160,8 @@ come first.
   and is 1.17 to 1.19x faster at 512² to 3072² in complex64 (RTX 3050; 1.12x
   at 2560² and 3000², 0.89x at 256², unchanged in complex128). Results are
   bit-identical wherever cuFFT plans the same transform with a callback as
-  without; `NLSE_FUSE_PROPAGATOR=0` now switches both callbacks off. Figures in `docs/optimization-log.md`.
+  without; `NLSE_FUSE_PROPAGATOR=0` now switches both callbacks off. Figures
+  in `docs/optimization-log.md`.
 - **CUPY builds the propagator from one factor per axis.** In a 2D `NLSE` or
   `GPE` split step the forward transform's callback read the propagator from a
   grid-sized array; it now multiplies a row factor by a column factor. A step

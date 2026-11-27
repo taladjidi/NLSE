@@ -31,10 +31,10 @@ pass, and the two are chosen separately.
 
 - A half nonlinear step either side of the linear one
 - Error: $\mathcal{O}(\delta z^2)$
-- Cost: still 1 transform pair per step in a run of them, because consecutive
-  steps merge their touching halves. The merge needs the real-space step to be
-  the exact solution over its own step, so that two halves compose into one
-  whole; an absorbing potential breaks that and the solver checks
+- Cost: 1 transform pair per step, as Lie. Consecutive steps also merge their
+  touching half steps into one real-space pass, except with a callback, a
+  non-local interaction, a Rabi coupling, a complex potential, or in
+  `NLSE_3d` and `DDGPE`
 
 **`splitting="yoshida"`**:
 
@@ -54,27 +54,24 @@ pass, and the two are chosen separately.
 A splitting composes exponentials of the two parts of the equation, and its
 order is only what its real-space step deserves. That step applies
 
-$$\exp\left[\left(-\alpha s + i g |A|^2 s\right)\delta z\right], \qquad
+$$\exp\left[\left(-\frac{\alpha}{2} s + i g |A|^2 s\right)\delta z\right], \qquad
 s = \frac{1}{1 + |A|^2/I_\text{sat}}$$
 
-and reading $|A|^2$ once, on entry, is the *exact* solution only while the step
-leaves $|A|^2$ alone. A pure rotation does. Loss does not: the amplitude decays
-inside the step while the interaction goes on turning the phase at the rate the
-step began with.
+with $\alpha$ the intensity loss of the constructor. Reading $|A|^2$ once, on
+entry, is the exact solution only while the step leaves $|A|^2$ alone. Loss
+does not: the amplitude decays inside the step while the interaction turns the
+phase. Frozen like that, the step is first order over a run, and so is every
+splitting built on it.
 
-Frozen like that the step is $\mathcal{O}(\delta z^2)$ locally and
-$\mathcal{O}(\delta z)$ over a run, and that ceiling lands on whatever is
-composed around it — Lie, Strang and Yoshida all came out **first order** with
-loss, so their extra sub-steps bought nothing. The solver now solves that step
-instead, using two exact facts: the phase over a step is
-$\frac{g}{2\alpha}\left(|A|^2_\text{in} - |A|^2_\text{out}\right)$ whatever the
+So the solver solves that step, from two exact facts: the phase over a step is
+$\frac{g}{\alpha}\left(|A|^2_\text{in} - |A|^2_\text{out}\right)$ whatever the
 saturation does in between, and $|A|^2_\text{out}$ follows from
-$\ln y + y/I_\text{sat}$ falling by $2\alpha\,\delta z$. Each composition is
-back at its own order with loss, and to within a few percent of the numbers it
-returns without any.
+$\ln y + y/I_\text{sat}$ falling by $\alpha\,\delta z$. Each splitting keeps
+its order with loss. The coupled solvers and a complex potential still freeze
+the step (see [Physical validation](physical_validation.md#what-this-does-not-cover)).
 
-One ceiling comes with it: a step may take out at most a few percent of the
-intensity ($2\alpha\,\delta z \le 0.05$), and a coarser one is lowered with a
+A step may take out only a few percent of the intensity: $2\alpha\,\delta z$
+stays under `LOSS_PER_STEP_LIMIT` = 0.05. A coarser step is lowered with a
 warning, like every other step limit here.
 
 ```python
@@ -96,21 +93,10 @@ An explicit 4th-order Runge-Kutta method that integrates the full equation (line
 E_out = simu.out_field(E_in, L, method="RK4")
 ```
 
-### When to use RK4
-
-- When you need a well-understood global error estimate
-- For stiff problems where split-step operator splitting introduces errors
-- When comparing against reference solutions — it is the only method here that
-  is not a splitting, so it is the independent check on one
-
-RK4 used to be the only method that held fourth order on a lossy problem, and
-on one such problem it beat Strang by 14x at matched accuracy for that reason
-alone. That is no longer why to choose it: see *Loss and the order of a
-splitting* above.
-
-### Trade-offs
-
-RK4 requires 4 FFT evaluations per step (vs 1 or 2 for split-step) but may allow larger steps for smooth fields. It also has strict stability limits (see below).
+RK4 is the one method here that is not a splitting, which makes it the
+independent check on one. Each step costs 4 transform pairs, against 1 for Lie
+and Strang and 3 for Yoshida, and its step is bounded by the stability limit
+below, dispersion included.
 
 ## Step Size
 
@@ -127,18 +113,19 @@ $$
 \delta z = \frac{\phi}{\sum_\text{terms} \langle\psi|\hat{O}|\psi\rangle / \langle\psi|\psi\rangle}
 $$
 
-The two methods want different phases and no longer share a number:
+The two methods aim at different phases:
 
 - `DEFAULT_PHASE_PER_STEP` = 0.1 rad, for split-step.
 - `RK4_PHASE_PER_STEP` = 0.02 rad, for RK4, whose truncation error is still
   falling steeply where split-step's has flattened.
 
 Those expectation values are the same quantities the stability and accuracy
-limits below are built from, so the default sits a fixed distance inside them
-rather than at an arbitrary fraction of a length scale. Terms that do not bind
-are left out: split-step applies the linear part exactly in Fourier space, so
-only the real-space terms enter its step, while RK4 approximates the whole
-right-hand side and takes all of them.
+limits below are built from, rather than an arbitrary fraction of a length
+scale. Split-step applies the linear part exactly in Fourier space, so only
+the real-space terms enter its default, while RK4 approximates the whole
+right-hand side and takes all of them. The split-step limit does count
+dispersion, so a default can come out above it, and is then lowered like any
+other step. A default run takes at least `DEFAULT_MIN_STEPS` = 10 steps.
 
 These are defaults, not guarantees. They are written against the phase the
 potential and the interaction imprint, on the reasoning that split-step applies
@@ -163,35 +150,40 @@ E = simu.out_field(E_in, z, delta_z=1e-5)  # in meters (or seconds for GPE/DDGPE
 
 ### Automatic step limit enforcement
 
-A step you pass is used as given, and reduced only if it would leave the
-method's region of convergence — to 90% of the limit, with a warning naming
-which limit bound. A step the solver chose itself is already well inside.
+Every step is checked against the method's limit, whether you passed it or
+the solver chose it. Inside the limit it is used as given. Past it, it is
+lowered to `CAPPED_STEP_FRACTION` = 0.9 of the limit, with a warning naming
+which limit bound.
 
-**Split-step limit**: The nonlinear phase per step must stay below $\pi$ to avoid phase aliasing:
+The default is not exempt. On a fine grid the dispersion limit sits below the
+split-step default: the first run of the [quick start](quick_start.md) is
+lowered that way, and says so.
 
-$$
-\delta z_\text{max} = \frac{\pi}{g \cdot I_\text{peak} / (1 + I_\text{peak}/I_\text{sat})}
-$$
+**Split-step limit**: the smallest of three steps.
 
-where $g$ is the effective nonlinear coefficient and the intensity is the
-field-weighted mean, not the peak: the limit follows the solution rather than
-the grid.
+- The step at which the potential and the interaction, weighted by the field,
+  imprint $\pi$ of phase.
+- The step at which the shortest wave on the grid turns by
+  `SPLIT_STEP_DISPERSION_PHASE_LIMIT` = 1 rad. On a vortex dipole the
+  density stops converging between 1.3 and 1.6 rad (4.1.0 in the
+  [changelog](changelog.md)).
+- The loss ceiling above.
 
-**RK4 stability limit**: The purely imaginary eigenvalues of the dispersion operator must stay within the RK4 stability region (radius $\approx 2.83$):
-
-$$
-\delta z_\text{max} = \frac{2.83}{\sum_\text{terms} \langle\psi|\hat{O}|\psi\rangle / \langle\psi|\psi\rangle}
-$$
-
-Every term counts here, dispersion included, since RK4 approximates all of
-them. Counting dispersion alone made this wrong by orders of magnitude under a
-potential, which is scaled by $k_0/2$.
+**RK4 stability limit**: $\lambda\,\delta z$ stays within
+`RK4_STABILITY_RADIUS` = 2.83, the reach of RK4's stability region along the
+imaginary axis, for $\lambda$ the sum of every rate RK4 integrates. Dispersion
+and the potential count at their largest on the grid, because past the radius
+RK4 amplifies whatever a mode holds and round-off puts something in every
+mode; the interaction and the loss count weighted by the field.
 
 ## Propagator Caching
 
 The linear propagator matrix $e^{-i \frac{K_x^2 + K_y^2}{2k_0} \delta z}$ is cached by `(grid_size, delta_z, k, precision)`, so calling `out_field` again with the same step reuses it.
 
-Every step size gets its own entry, which is what makes an adaptive callback cheap: when it changes the step, the propagator is rebuilt to match before the next step is taken, and a step seen before costs nothing.
+Every step size gets its own entry, up to `PROPAGATOR_CACHE_SIZE` = 8, the
+least recently used dropped first. When an adaptive callback changes the step, the
+propagator is rebuilt to match before the next step, and a step still in the
+cache costs nothing.
 
 ## Propagation distance
 
@@ -200,11 +192,3 @@ its own size, so a run lands on $z$ rather than up to a step past it. This is
 not a rounding detail: the error an overshoot leaves is the phase the medium
 imprints over the excess, and a step derived from the physics is an arbitrary
 real number that rarely divides $z$.
-
-## Tips
-
-- Start with `splitting="lie"` for quick iterations, switch to `"strang"` for
-  final results, and to `"yoshida"` only with a `complex128` field
-- Use powers-of-2 grid sizes for optimal FFT performance
-- If the solver warns about step size reduction, consider using a finer initial grid or reducing the field power
-- For convergence studies, run with decreasing $\delta z$ and check that results stabilize
