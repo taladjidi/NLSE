@@ -18,12 +18,12 @@ from NLSE.utils import get_benchmark_cache_path, get_cache_dir
 # a record that is otherwise accepted.
 CACHED_GRID = [256, 256]
 CACHED_TIME_MS = 1.0  # ms, any positive time
-# Past load_benchmark_cache's 30-day limit (NLSE/backends/benchmark.py:259).
+# Past load_benchmark_cache's limit, CACHE_MAX_AGE (30 days).
 STALE_AGE_DAYS = 31
 OLD_CACHE_VERSION = "2"
 # The last version that held one grid's record as the whole file.
 SINGLE_GRID_CACHE_VERSION = "3"
-# Two grids asked for in turn: each should be measured once (B4 of the review).
+# Two grids asked for in turn: each should be measured once.
 ALTERNATING_GRIDS = [(64, 64), (128, 128), (64, 64), (128, 128)]
 CPU_SPEEDUP = 1.0  # the CPU against itself, as benchmark_all_backends computes it
 OTHER_SYSTEM = "Plan9"

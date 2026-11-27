@@ -56,6 +56,7 @@ AHEAD = timedelta(days=1)  # a timestamp in the future, by more than clock skew
 THREADED_STEPS = 200  # steps each of two threads takes: long enough to overlap
 FORK_TIMEOUT = 60  # s a forked child gets for SOLVER_STEPS steps: ~1 s needed
 OTHER_OWNER = "another-host 1 1"  # a lock another process holds, as _lock_token
+UNREADABLE_LOCK = b"\xff\xfe"  # not UTF-8: no token this library wrote
 SLOW_SHARE = 0.05  # s a share still runs after another has failed
 PARENT_MARK, CHILD_MARK = 1, 2  # what each side of a fork fills its scratch with
 # s a step of each candidate takes: the fastest neither first nor last.
@@ -626,6 +627,13 @@ def test_a_lock_taken_over_is_left_to_its_new_owner(blocking, monkeypatch):
     assert settle().rows == ROWS
     assert lock_file().exists(), "removed the lock of the process that took it over"
     assert lock_file().read_text() == OTHER_OWNER
+
+
+def test_an_unreadable_lock_is_left_alone(blocking):
+    """Catches a release that raises out of the tuning's ``finally``."""
+    lock_file().write_bytes(UNREADABLE_LOCK)
+    cpu_tuning._release_lock(lock_file())
+    assert lock_file().read_bytes() == UNREADABLE_LOCK
 
 
 def exit_by_busy_grids():

@@ -609,6 +609,8 @@ def _release_lock(lock: Path) -> None:
         held = lock.read_text()
     except FileNotFoundError:
         return  # removed by the process that took it over, then released
+    except (OSError, ValueError):
+        held = None  # unreadable, so not provably ours: called from a finally
     if held == _lock_token():
         # shortcut: a takeover between the read and the unlink is lost; it
         # needs this tuning past LOCK_STALE_AFTER, then a microsecond race.

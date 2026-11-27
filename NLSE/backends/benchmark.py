@@ -21,6 +21,8 @@ from ..utils import machine_identity, say, write_json_atomically
 # and the MLX one waits on the transform's result instead of its input. 4: one
 # record per grid size in the one file, so a second grid does not evict the first.
 CACHE_VERSION = "4"
+# How long a record is believed: drivers and libraries change under it.
+CACHE_MAX_AGE = timedelta(days=30)
 
 
 class BackendResult(TypedDict):
@@ -337,15 +339,17 @@ def load_benchmark_cache(grid_size: tuple | list) -> BenchmarkResults | None:
         say(f"Benchmark cache was written on {there}, not {here}, re-benchmarking...")
         return None
 
-    # Check if cache is stale (>30 days). ValueError: a timestamp that is not
-    # a date. TypeError: a timestamp with a time zone.
+    # ValueError: a timestamp that is not a date. TypeError: a timestamp with
+    # a time zone.
     try:
         age = datetime.now() - datetime.fromisoformat(record["timestamp"])
     except (ValueError, TypeError) as e:
         say(f"Warning: Invalid benchmark cache: {e}")
         return None
-    if age > timedelta(days=30):
-        say("Benchmark cache is stale (>30 days), re-benchmarking...")
+    if age > CACHE_MAX_AGE:
+        say(
+            f"Benchmark cache is stale (>{CACHE_MAX_AGE.days} days), re-benchmarking..."
+        )
         return None
 
     return record
