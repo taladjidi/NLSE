@@ -742,8 +742,7 @@ class CNLSE(NLSE):
         V : np.ndarray
             Potential field (can be None).
         propagator : np.ndarray
-            Propagator matrix for both fields
-            [propagator1, propagator2].
+            Propagators of the two fields, one per component.
         plans : list
             List of FFT plan objects: one plan used in both directions on
             the GPU backends, and the axes to transform over on CPU.
