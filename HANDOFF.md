@@ -83,8 +83,16 @@ threading layer decides (`fix/ci-threading-layer-tests`). Still open:
     difference above the floor. The reviewer's minor notes, not fixed:
     three shortened comments lost their reason (`kernels.cu:287` why
     `A_orig` may alias `out`; `ddgpe.py` near 296 why one profile at a
-    time; `cpu.py` near 20 "not `fastmath=True`"), and nothing tests that
-    the benchmark synchronizes.
+    time; `cpu.py` near 20 "not `fastmath=True`").
+  - `fix/benchmark-times-lazy-backends`: done, found by the package review.
+    `benchmark_backend` dropped what `fft` and `ifft` return and waited on
+    its input; MLX's transforms are lazy and return a new array, so MLX was
+    timed doing nothing (0.001 to 0.005 ms at 2048² on the M3 Max, 1.4 ms
+    once fixed; CPU 4.4 ms) and `backend="auto"` ranked it first on that
+    figure. A stand-in backend in `tests/backends/test_benchmark.py` fails
+    on the old code and if a trial stops waiting. Reviewer: pass. Box:
+    the benchmark tests pass under CuPy and OpenCL (CUPY 1.82 ms, CL
+    2.6 ms at 2048²).
   - Left for the owner, not done: the tutorial notebook's 8 MB of outputs
     (re-render smaller), `paper/` and `img/output.png` (the JOSS record),
     `examples/juliaGPE_vs_NLSE.py` with `vortex_precession.jl`, merging
@@ -463,6 +471,20 @@ threading layer decides (`fix/ci-threading-layer-tests`). Still open:
   OpenMP (Linux without TBB) a forked child that runs the CPU backend is
   killed. Neither comes from the blocked step. For the owner: document it
   (docs pass), or hold a lock around the CPU run on `workqueue`.
+- `NLSE_3d` never merges its Strang half steps: it stores its frequency
+  grid as `self.omega` (`nlse_3d.py:104`), and `_merges_strang_halves`
+  (`nlse.py:2330`) reads any `omega` that is not None as a Rabi coupling. A
+  3D Strang run pays two transform pairs a step where one would do. Found
+  by the docs spec review; not fixed, the docs will say it.
+- The default step exceeds the split-step cap on a default 2D run:
+  `_default_delta_z` aims at 0.1 rad of potential and interaction only,
+  while the cap also takes the dispersion bound, so the quick start and
+  the README example warn "delta_z=... exceeds split-step accuracy limit"
+  and run at the cap (2.12e-4 m asked, 1.55e-5 m run, at 2048² on a
+  window of four waists). A docstring in `step_size.py`
+  (`_capped_delta_z`) says the default is well inside the limit. The 1D
+  quick-start block takes 157,241 steps (54 s on CPU) without a warning.
+  Found by the docs audit; for the owner.
 - `evaluate_delta_n` convention: `k/2` or `k`.
 - Setting `simu.wl` does not update `k`.
 - `get_fastest_backend` crashes on a wrong-typed `grid_size`.

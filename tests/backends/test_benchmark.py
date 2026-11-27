@@ -32,6 +32,9 @@ BY_THE_PRIOR = ["CUPY", "MLX", "CL", "CPU"]
 # A cache timing only the CPU: the CPU first, the others in the prior's order.
 CPU_TIMED_FIRST = ["CPU", "CUPY", "MLX", "CL"]
 NOT_A_BACKEND = "NO_SUCH_BACKEND"
+# The stand-in backend below allocates nothing, so any grid does.
+LAZY_GRID = (8, 8)
+LAZY_TRIALS = 3  # timed trials, each of which must wait on its own result
 
 
 def valid_cache_record():
@@ -73,6 +76,40 @@ def write_cache(text):
     get_benchmark_cache_path().write_text(text)
 
 
+class LazyBackend:
+    """Stand-in backend whose transforms return a new array, as MLX's do."""
+
+    def __init__(self):
+        self.latest = object()  # the array the last transform returned
+        self.stale = 0  # calls handed any other array
+        self.waits = 0  # calls to synchronize
+
+    def _seen(self, array):
+        """Count the array if it is not the one last returned."""
+        self.stale += array is not self.latest
+
+    def allocate_field(self, shape, dtype):
+        """Return the first array."""
+        return self.latest
+
+    def build_fft(self, shape, axes, dtype):
+        """Return no plan: the transform below needs none."""
+        return None
+
+    def fft(self, array, plan):
+        """Return a new array, leaving the one passed in as it was."""
+        self._seen(array)
+        self.latest = object()
+        return self.latest
+
+    ifft = fft
+
+    def synchronize(self, array=None):
+        """Record a wait and the array it was asked to wait on."""
+        self._seen(array)
+        self.waits += 1
+
+
 class TestCacheDir:
     """Test that the cache directory lives outside the installed package."""
 
@@ -107,6 +144,15 @@ class TestBenchmarkBackend:
         time_ms = benchmark.benchmark_backend(backend_name, (256, 256), num_trials=3)
         assert time_ms is not None
         assert time_ms > 0
+
+    def test_benchmark_times_what_the_transforms_return(self, monkeypatch):
+        """Each transform is fed, and each trial waits on, the last result."""
+        lazy = LazyBackend()
+        monkeypatch.setattr("NLSE.backends.get_backend", lambda name: lazy)
+        time_ms = benchmark.benchmark_backend("LAZY", LAZY_GRID, LAZY_TRIALS)
+        assert time_ms is not None
+        assert lazy.stale == 0
+        assert lazy.waits >= LAZY_TRIALS
 
     def test_benchmark_invalid_backend(self):
         """Test that invalid backend returns None."""

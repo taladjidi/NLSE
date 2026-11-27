@@ -17,7 +17,8 @@ from ..utils import machine_identity, say, write_json_atomically
 
 # Bumped whenever a cached timing stops meaning what it meant, so an older
 # cache is discarded rather than believed. 2: the CPU FFT moved from pyFFTW to
-# scipy. 3: the CUPY timing waits on the stream instead of copying to the host.
+# scipy. 3: the CUPY timing waits on the stream instead of copying to the host,
+# and the MLX one waits on the transform's result instead of its input.
 CACHE_VERSION = "3"
 
 
@@ -81,10 +82,11 @@ def benchmark_backend(
         # Build FFT plan
         plans = backend.build_fft(grid_size, axes=(-2, -1), dtype=dtype)
 
-        # Warmup runs
+        # Warmup runs. Each transform's result is kept: MLX's are lazy and
+        # return a new array, so waiting on the input would time nothing.
         for _ in range(3):
-            backend.fft(A, plans)
-            backend.ifft(A, plans)
+            A = backend.fft(A, plans)
+            A = backend.ifft(A, plans)
 
         # Synchronize for GPU backends
         backend.synchronize(A)
@@ -93,8 +95,8 @@ def benchmark_backend(
         times = []
         for _ in range(num_trials):
             t0 = time.perf_counter()
-            backend.fft(A, plans)
-            backend.ifft(A, plans)
+            A = backend.fft(A, plans)
+            A = backend.ifft(A, plans)
             backend.synchronize(A)
             times.append((time.perf_counter() - t0) * 1000)
 
