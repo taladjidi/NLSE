@@ -45,6 +45,16 @@ FIELD_AMPLITUDE = 1e4
 
 N2_VALUES = np.linspace(-1.6e-9, -1e-10, COUNT)
 ALPHA_VALUES = np.array([0.0, 5.0, 20.0])
+# Factors on n2 along a second batch axis, so that one parameter spans two.
+SECOND_AXIS_SCALES = np.array([1.0, 0.5, 0.25])
+# Factors on the potential, one per member, so that each has its own.
+POTENTIAL_SCALES = np.linspace(1.0, 0.25, COUNT)
+# An OpenCL launch reads the potential from its start, so there a potential
+# per member cannot meet a parameter per member (_launch_count, kernels/cl.py).
+OWN_V_BACKENDS = [b for b in AVAILABLE_BACKENDS if b != "CL"]
+SHARED_V_ONLY = [b for b in AVAILABLE_BACKENDS if b == "CL"]
+# Backends whose batch loop words the refusal of a shape itself.
+OWN_REFUSAL = {"CPU": "does not broadcast", "CL": "does not broadcast against"}
 
 BASE = {
     "power": 1.05,
@@ -353,18 +363,64 @@ def test_a_two_axis_batch_matches_the_same_runs_on_one_axis(
 
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
-def test_a_one_value_parameter_reaches_every_member(backend_name):
+@pytest.mark.parametrize(
+    ("second_axis", "with_potential"),
+    [(SECOND_AXIS_SCALES, False), (np.ones(1), True)],
+    ids=["n2_over_both_axes", "n2_over_the_first_axis_shared_V"],
+)
+def test_one_parameter_on_a_two_axis_batch_keeps_every_value(
+    backend_name, second_axis, with_potential
+):
+    """One parameter may span both batch axes, or only the first of them.
+
+    The OpenCL loop read a parameter along its leading axis only, and with a
+    shared potential it launched once per value, not once per field.
+    """
+    V, field = grids(backend_name)
+    if not with_potential:
+        V = None
+    shape = (COUNT, SECOND_AXIS_SCALES.size)
+    members = COUNT * SECOND_AXIS_SCALES.size
+    n2 = N2_VALUES.reshape(-1, 1, 1, 1) * second_axis.reshape(1, -1, 1, 1)
+
+    on_a_grid = make_solver(backend_name, n2, 0.0, V)
+    got = propagate(on_a_grid, np.broadcast_to(field, (*shape, N, N)), "split_step")
+    in_a_row = make_solver(
+        backend_name,
+        np.broadcast_to(n2, (*shape, 1, 1)).reshape(members, 1, 1),
+        0.0,
+        V,
+    )
+    expected = propagate(
+        in_a_row, np.broadcast_to(field, (members, N, N)), "split_step"
+    )
+
+    np.testing.assert_allclose(
+        got.reshape(expected.shape),
+        expected,
+        rtol=1e-4,
+        atol=1e-5 * float(np.max(np.abs(expected))),
+        err_msg=f"{backend_name}: a member got another member's n2",
+    )
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+@pytest.mark.parametrize("with_potential", [False, True], ids=["no_V", "shared_V"])
+def test_a_one_value_parameter_reaches_every_member(backend_name, with_potential):
     """A ``(1, 1, 1)`` parameter broadcasts against a batch of fields.
 
     The CPU loop took its length from the parameter and so ran the first
-    field only, handing the others back untouched.
+    field only, handing the others back untouched. With a shared potential
+    the OpenCL loop ran one launch over the batch, past the potential's end.
     """
-    _, field = grids(backend_name)
+    V, field = grids(backend_name)
+    if not with_potential:
+        V = None
     n2 = np.full((1, 1, 1), N2_VALUES[0])
-    batched = make_solver(backend_name, n2, 0.0, None)
+    batched = make_solver(backend_name, n2, 0.0, V)
     got = propagate(batched, np.broadcast_to(field, (COUNT, N, N)), "split_step")
 
-    alone = make_solver(backend_name, float(N2_VALUES[0]), 0.0, None)
+    alone = make_solver(backend_name, float(N2_VALUES[0]), 0.0, V)
     expected = propagate(alone, field, "split_step")
     for index in range(COUNT):
         np.testing.assert_allclose(
@@ -383,6 +439,70 @@ def test_the_cpu_loop_refuses_a_parameter_that_does_not_broadcast():
     g = np.linspace(1.0, 2.0, COUNT).reshape(COUNT, 1, 1)
     with pytest.raises(ValueError, match="does not broadcast"):
         cpu_kernels.square_mod_nl_prop(fields, DELTA_Z, 0.0, g, BASE["Isat"])
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+@pytest.mark.parametrize("shape", [(COUNT,), (COUNT, 1)], ids=["flat", "column"])
+def test_every_backend_refuses_a_batch_parameter_without_the_grid_axes(
+    backend_name, shape
+):
+    """``(3,)`` against a ``(3, N, N)`` field lines up with x, not the batch.
+
+    The OpenCL loop used to read it as one value per member.
+    """
+    _, field = grids(backend_name)
+    simu = make_solver(backend_name, N2_VALUES.reshape(shape), 0.0, None)
+    with pytest.raises(ValueError, match=OWN_REFUSAL.get(backend_name, "broadcast")):
+        propagate(simu, np.broadcast_to(field, (COUNT, N, N)), "split_step")
+
+
+def own_potentials(backend_name):
+    """Return one potential per member, a single field and a batched solver.
+
+    Parameters
+    ----------
+    backend_name : str
+        Backend the solver runs on.
+
+    Returns
+    -------
+    tuple
+        ``(potentials, field, solver)``: potentials of shape ``(COUNT, N, N)``
+        and a solver with one ``n2`` per member.
+    """
+    V, field = grids(backend_name)
+    potentials = (V * POTENTIAL_SCALES.reshape(-1, 1, 1)).astype(V.dtype)
+    solver = make_solver(backend_name, N2_VALUES.reshape(-1, 1, 1), 0.0, potentials)
+    return potentials, field, solver
+
+
+@pytest.mark.parametrize("backend_name", OWN_V_BACKENDS)
+def test_each_member_reads_its_own_potential(backend_name):
+    """A potential per member and ``n2`` per member match the runs alone."""
+    potentials, field, batched = own_potentials(backend_name)
+    got = propagate(batched, np.broadcast_to(field, (COUNT, N, N)), "split_step")
+    for index in range(COUNT):
+        alone = make_solver(
+            backend_name, float(N2_VALUES[index]), 0.0, potentials[index]
+        )
+        expected = propagate(alone, field, "split_step")
+        np.testing.assert_allclose(
+            got[index],
+            expected,
+            rtol=1e-4,
+            atol=1e-5 * float(np.max(np.abs(expected))),
+            err_msg=f"{backend_name}: member {index} read another potential",
+        )
+
+
+@pytest.mark.parametrize("backend_name", SHARED_V_ONLY)
+def test_opencl_refuses_a_potential_per_member_with_a_parameter_per_member(
+    backend_name,
+):
+    """Every launch read the first potential, silently: now it is refused."""
+    _, field, batched = own_potentials(backend_name)
+    with pytest.raises(ValueError, match="shared by those simulations"):
+        propagate(batched, np.broadcast_to(field, (COUNT, N, N)), "split_step")
 
 
 # ---------------------------------------------------------------------------

@@ -5,6 +5,7 @@ Supports both single (float32/complex64) and double (float64/complex128) precisi
 on devices that support double precision.
 """
 
+import math
 from pathlib import Path
 
 import numpy as np
@@ -16,6 +17,10 @@ from .templating import COMPLEX_V_SUFFIX, REAL_V_SUFFIX
 
 # How OpenCL C opens a kernel.
 KERNEL_DECL = "__kernel void"
+
+# Length of an axis numpy broadcasts against any other (numpy's broadcasting
+# rules); a parameter of that many values is one value for every simulation.
+BROADCAST_LENGTH = 1
 
 # Module-level cache for compiled programs
 # Key: (context_hash, precision) -> Value: compiled cl.Program
@@ -68,30 +73,133 @@ def _check_double_support(context):
 
 
 def _is_batched_param(value):
-    """Return True if a physical parameter carries a per-simulation axis.
+    """Return True if a physical parameter differs between simulations."""
+    return isinstance(value, np.ndarray) and value.size > BROADCAST_LENGTH
 
-    A batch of one still counts: the value has to be unwrapped to a scalar
-    before it can be passed to a kernel, whatever the batch size.
+
+def _param_depth(param_shape, field_shape):
+    """Return how many leading axes of the field a parameter varies over.
+
+    The parameter follows numpy's broadcasting rules against the field: its
+    shape is aligned on the field's last axes.
+
+    Parameters
+    ----------
+    param_shape : tuple of int
+        Shape of a parameter holding more than one value.
+    field_shape : tuple of int
+        Shape of the batched field.
+
+    Returns
+    -------
+    int
+        Index past the last axis along which the parameter changes.
+
+    Raises
+    ------
+    ValueError
+        If the parameter does not broadcast against the field.
     """
-    return isinstance(value, np.ndarray) and value.ndim > 0
+    shape = (BROADCAST_LENGTH,) * (len(field_shape) - len(param_shape)) + param_shape
+    if len(shape) != len(field_shape) or any(
+        own not in (BROADCAST_LENGTH, other) for own, other in zip(shape, field_shape)
+    ):
+        raise ValueError(
+            f"a parameter of shape {param_shape} does not broadcast against "
+            f"a field of shape {tuple(field_shape)}"
+        )
+    depth = len(shape)
+    while shape[depth - 1] == BROADCAST_LENGTH:
+        depth -= 1
+    return depth
 
 
-def _param_batch_len(params):
-    """Return the number of simulations the parameters imply, or 0."""
-    n = 0
+def _batch_depth(params, field_shape):
+    """Return how many leading axes of the field the parameters vary over.
+
+    Parameters
+    ----------
+    params : tuple
+        Physical parameters, scalars or arrays.
+    field_shape : tuple of int
+        Shape of the field.
+
+    Returns
+    -------
+    int
+        0 when every parameter is one value for the whole field.
+    """
+    depth = 0
     for value in params:
         if _is_batched_param(value):
-            n = max(n, value.shape[0])
-    return n
+            depth = max(depth, _param_depth(value.shape, field_shape))
+    return depth
 
 
-def _pick_param(value, b):
-    """Take simulation b's value from a possibly-batched parameter."""
-    if _is_batched_param(value):
-        return value.reshape(value.shape[0], -1)[b, 0]
-    if isinstance(value, np.ndarray):
-        return value.reshape(-1)[0]
-    return value
+def _launch_count(field_shape, depth, points, grid_size):
+    """Return how many launches a field needs: one per simulation.
+
+    Parameters
+    ----------
+    field_shape : tuple of int
+        Shape of the batched field.
+    depth : int
+        Number of leading axes the parameters vary over.
+    points : int
+        Points in the field.
+    grid_size : int
+        Points in the grid the kernel indexes alongside the field, or 0.
+        Every launch reads the grid from its start, so a launch is one grid
+        long and never runs past it.
+
+    Returns
+    -------
+    int
+        The number of launches.
+
+    Raises
+    ------
+    ValueError
+        If the grid differs between simulations whose parameters differ.
+    """
+    members = math.prod(field_shape[:depth])
+    if not 0 < grid_size <= points:
+        return members
+    grids = points // grid_size
+    if grids % members:
+        raise ValueError(
+            f"on OpenCL, parameters varying over {tuple(field_shape[:depth])} "
+            f"need a potential shared by those simulations: this one holds "
+            f"{grid_size} points for a field of shape {tuple(field_shape)}"
+        )
+    return grids
+
+
+def _member_values(value, field_shape, depth):
+    """Return a parameter's value for each simulation it varies over.
+
+    Parameters
+    ----------
+    value : float or numpy.ndarray
+        A physical parameter.
+    field_shape : tuple of int
+        Shape of the batched field.
+    depth : int
+        Number of leading axes the parameters vary over.
+
+    Returns
+    -------
+    sequence
+        One scalar per simulation of those ``depth`` axes, in the field's
+        order.
+    """
+    batch = field_shape[:depth]
+    if not _is_batched_param(value):
+        scalar = value.item() if isinstance(value, np.ndarray) else value
+        return [scalar] * math.prod(batch)
+    padding = (BROADCAST_LENGTH,) * (len(field_shape) - value.ndim)
+    shape = (padding + value.shape)[:depth]
+    return np.broadcast_to(value.reshape(shape), batch).reshape(-1)
 
 
 def _load_kernel_template():
@@ -311,13 +419,14 @@ class OpenCLKernels:
         A : cla.Array
             The field the launches cover.
         params : tuple
-            Physical parameters, any of which may carry a per-simulation
-            leading axis.
+            Physical parameters, any of which may vary over the leading
+            (batch) axes of the field.
         grid : cla.Array or None
             A grid-shaped array the kernel indexes alongside the field. When
             it is smaller than the field, the field carries a batch axis the
             grid does not, which needs per-simulation launches even if every
-            parameter is scalar.
+            parameter is scalar. A grid that differs between simulations whose
+            parameters differ is refused: each launch reads it from its start.
 
         Yields
         ------
@@ -326,21 +435,26 @@ class OpenCLKernels:
             the launch's global offset and the amount the kernel subtracts to
             address the shared grid; it is 0 for an unbatched run.
         """
-        n = _param_batch_len(params)
-        if n == 0 and grid is not None and int(grid.size) < int(A.size):
-            n = int(A.size) // int(grid.size)
+        shape = A.shape
+        points = int(A.size)
+        depth = _batch_depth(params, shape)
+        grid_size = 0 if grid is None else int(grid.size)
+        n = _launch_count(shape, depth, points, grid_size)
         if n <= 1:
-            size = int(A.size)
-            yield 0, (size,), self._local_size(size), tuple(params)
+            yield 0, (points,), self._local_size(points), tuple(params)
             return
-        size = int(A.size) // n
+        size = points // n
         local = self._local_size(size)
+        columns = [_member_values(p, shape, depth) for p in params]
+        # A shared grid can ask for more launches than the parameters have
+        # values: consecutive launches then share one set of them.
+        repeat = n // math.prod(shape[:depth])
         for b in range(n):
             yield (
                 b * size,
                 (size,),
                 local,
-                tuple(_pick_param(p, b) for p in params),
+                tuple(column[b // repeat] for column in columns),
             )
 
     @staticmethod
