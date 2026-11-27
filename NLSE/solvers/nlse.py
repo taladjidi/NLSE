@@ -61,6 +61,11 @@ SPLITTINGS = ("lie", "strang", "yoshida")
 # steps comes to 237.00000000000003, which must still be 237 whole steps.
 STEP_ROUNDOFF = 1e-9
 
+# Transformed axes the nonlinear step is folded into the inverse transform at:
+# 2D, the plans cuFFT links store callbacks into here and the only ones the
+# callback is checked against (tests/backends/test_fft_propagator_fusion.py).
+FUSED_TRANSFORM_AXES = 2
+
 
 # Backends that render to a file rather than a window. Calling show() on one
 # does nothing except warn, and a library should not warn a user for the
@@ -494,12 +499,12 @@ class NLSE(StepSize):
         if splitting == "strang":
             A = self._nonlinear_step(A, A_sq, V_scaled, delta_z / 2)
 
-        # Linear propagation in Fourier domain
-        A = self._apply_linear_step(A, propagator, plans)
-
-        # Second half-step (always executed), the whole step for Lie splitting
+        # Linear propagation, then the second half-step (always executed),
+        # the whole step for Lie splitting
         dz_step = delta_z / 2 if splitting == "strang" else delta_z
-        return self._nonlinear_step(A, A_sq, V_scaled, dz_step)
+        return self._linear_then_nonlinear(
+            A, A_sq, V_scaled, propagator, plans, dz_step
+        )
 
     def _nonlinear_step(self, A, A_sq, V_scaled, dz):
         """Apply the real-space part of the step: interaction, potential, loss.
@@ -541,6 +546,69 @@ class NLSE(StepSize):
         if V_scaled is None:
             return kernels.square_mod_nl_prop(A, dz, alpha_half, g, Isat_conv)
         return kernels.square_mod_nl_prop_v(A, V_scaled, dz, alpha_half, g, Isat_conv)
+
+    def _fuses_nonlinear_into_transform(self) -> bool:
+        """Whether the nonlinear step may run inside the inverse transform.
+
+        Only where the backend has a store callback for it, the response is
+        local (a non-local one smooths |A|^2 between the transform and the
+        step), and the transform is 2D, the one cuFFT links callbacks into.
+
+        Returns
+        -------
+        bool
+            True to try ``kernels.linear_nonlinear_step``.
+        """
+        return (
+            self._backend.has_nonlinear_store_callback
+            and self.nl_length == 0
+            and len(self._last_axes) == FUSED_TRANSFORM_AXES
+        )
+
+    def _linear_then_nonlinear(self, A, A_sq, V_scaled, propagator, plans, dz):
+        """Apply the linear step, then ``_nonlinear_step`` over ``dz``.
+
+        In one pass over the field fewer where the backend can run the
+        nonlinear step as the inverse transform stores its output; as the two
+        steps one after the other where it cannot.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            Field, modified in place on the array backends.
+        A_sq : np.ndarray
+            Scratch for the intensity, as in ``_nonlinear_step``.
+        V_scaled : np.ndarray or None
+            Pre-scaled potential, or None.
+        propagator : np.ndarray
+            Propagator matrix.
+        plans : list
+            List of FFT plan objects from backend.
+        dz : float
+            Distance the nonlinear step advances by.
+
+        Returns
+        -------
+        np.ndarray
+            The field.
+        """
+        if self._fuses_nonlinear_into_transform():
+            prop, unnorm = self._fused_propagator(propagator)
+            # The callback's inverse transform does not normalize, so it needs
+            # the propagator that carries 1/N.
+            if unnorm and self._backend.kernels.linear_nonlinear_step(
+                A,
+                prop,
+                plans[0],
+                V_scaled,
+                dz,
+                self._constant("_alpha_half"),
+                self._constant("_g"),
+                self._constant("_Isat_conv"),
+            ):
+                return A
+        A = self._apply_linear_step(A, propagator, plans)
+        return self._nonlinear_step(A, A_sq, V_scaled, dz)
 
     def _require_backend(self, supports: Callable, what: str) -> None:
         """Move to the fastest backend that can serve this run, and say so.

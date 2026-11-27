@@ -100,7 +100,7 @@ def fused_kinds(cls, n, dtype, **kw):
         field(cls, n, dtype), 3 * DELTA_Z, delta_z=DELTA_Z, verbose=False, plot=False
     )
     fused = getattr(simu.plans[0], "_fused", {})
-    return ",".join("batched" if k else "direct" for k in fused) or "none"
+    return ",".join(fused) or "none"
 
 
 def measure(cls, n, dtype, **kw):

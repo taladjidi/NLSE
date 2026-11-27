@@ -1,5 +1,6 @@
-// cuFFT store callbacks that fold the propagator multiply into the transform
-// whose output it consumes.
+// cuFFT store callbacks that fold the propagator multiply into the forward
+// transform and the nonlinear step into the inverse one, the transforms whose
+// output they consume. nonlinear_step.cuh is prepended to this file.
 //
 // A split step touches the field four times: the transform pair, the
 // propagator multiply, and the nonlinear step. cuFFT calls a store callback
@@ -66,3 +67,43 @@ __device__ void nlse_store_propagator_batched(void *dataOut,
     out.y = element.x * p.y + element.y * p.x;
     (({{FP2_TYPE}} *)dataOut)[offset] = out;
 }
+
+// The nonlinear step's arguments, read through callerInfo for the reason
+// NlsePropagator is. The fields and the bound are rendered from
+// NONLINEAR_FIELDS and INFO_WORDS in kernels/templating.py, whose
+// nonlinear_words packs the words _WRITE_INFO writes from the same tuple.
+struct NlseNonlinear {
+    const void *V;
+    {{NONLINEAR_FIELDS}}
+};
+static_assert(sizeof(NlseNonlinear) <= {{INFO_WORDS}} * sizeof(unsigned long long),
+              "NlseNonlinear outgrew INFO_WORDS in kernels/templating.py");
+
+// The nonlinear step as the inverse transform writes each element; the flat
+// offset indexes the field and the potential alike. Called out of line:
+// inlined, cuFFT's kernel spills its sixteen elements per thread to the stack
+// and writes 36 bytes per point for 8 (docs/optimization-log.md, CUDA).
+// {{VBLOCK}}
+__device__ __noinline__ {{FP2_TYPE}} nlse_nonlinear_out_of_line(
+    const {{FP2_TYPE}} element,
+    V_ARG(V)
+    const unsigned long long offset,
+    const {{FP_TYPE}} dz,
+    const {{FP_TYPE}} alpha,
+    const {{FP_TYPE}} g,
+    const {{FP_TYPE}} Isat
+) {
+    {{FP_TYPE}} A_sq_val = element.x * element.x + element.y * element.y;
+    return nlse_nonlinear_element(
+        element, A_sq_val, V_PASS(V) offset, dz, alpha, g, Isat);
+}
+
+__device__ void nlse_store_nonlinear(void *dataOut, unsigned long long offset,
+                                     {{FP2_TYPE}} element, void *callerInfo,
+                                     void *sharedPointer) {
+    const NlseNonlinear *info = (const NlseNonlinear *)callerInfo;
+    (({{FP2_TYPE}} *)dataOut)[offset] = nlse_nonlinear_out_of_line(
+        element, V_PASS(info->V) offset,
+        info->dz, info->alpha, info->g, info->Isat);
+}
+// {{END_VBLOCK}}

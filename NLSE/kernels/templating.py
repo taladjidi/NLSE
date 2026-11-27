@@ -12,11 +12,18 @@ which is otherwise the half of this code that no local test can reach.
 """
 
 import re
+import struct
 from pathlib import Path
 
 import numpy as np
 
 CALLBACK_SOURCE = Path(__file__).parent / "cuda_source" / "fft_callbacks.cu"
+KERNEL_SOURCE = Path(__file__).parent / "cuda_source" / "kernels.cu"
+NONLINEAR_SOURCE = Path(__file__).parent / "cuda_source" / "nonlinear_step.cuh"
+
+# How fft_callbacks.cu opens a callback. cuFFT calls a __device__ function,
+# so this is what expand_v_blocks renames in each callback twin.
+CALLBACK_DECL = "__device__ void"
 
 # Suffixes of the twins that take a potential. The twin that takes none keeps
 # the bare name.
@@ -37,12 +44,14 @@ PLACEHOLDERS = frozenset(
         "FP2_TYPE",  # its two-component form, used for complex values
         "FP_SUFFIX",  # what a literal of that type is suffixed with
         "SINCOS_FUNC",  # the combined sine/cosine, which CUDA names per width
+        "NONLINEAR_FIELDS",  # NlseNonlinear's scalars, from NONLINEAR_FIELDS
+        "INFO_WORDS",  # the bound on its size, from INFO_WORDS
         "VBLOCK",  # markers, consumed by expand_v_blocks rather than
         "END_VBLOCK",  # substituted
     }
 )
 
-_V_UNDEF = "#undef V_ARG\n#undef V_PHASE\n#undef V_LOSS\n"
+_V_UNDEF = "#undef V_ARG\n#undef V_PHASE\n#undef V_LOSS\n#undef V_PASS\n"
 
 
 def _v_variants(address_space: str) -> tuple:
@@ -55,7 +64,8 @@ def _v_variants(address_space: str) -> tuple:
     values, for the same reason: with no potential they leave nothing behind
     rather than an added zero, so each twin is the instruction stream it would
     have been written by hand. ``V_LOSS`` is empty for a real V too — only a
-    complex potential has a gain/loss part.
+    complex potential has a gain/loss part. ``V_PASS`` hands the potential on
+    to ``nlse_nonlinear_element``, cast to the twin's type, comma included.
 
     Parameters
     ----------
@@ -71,19 +81,22 @@ def _v_variants(address_space: str) -> tuple:
     return (
         (
             "",
-            "#define V_ARG(v)\n#define V_PHASE(v, i)\n#define V_LOSS(v, i)\n",
+            "#define V_ARG(v)\n#define V_PHASE(v, i)\n#define V_LOSS(v, i)\n"
+            "#define V_PASS(v)\n",
         ),
         (
             REAL_V_SUFFIX,
             f"#define V_ARG(v) {address_space}const {{{{FP_TYPE}}}}* v,\n"
             "#define V_PHASE(v, i) + (v)[i]\n"
-            "#define V_LOSS(v, i)\n",
+            "#define V_LOSS(v, i)\n"
+            f"#define V_PASS(v) ({address_space}const {{{{FP_TYPE}}}}*)(v),\n",
         ),
         (
             COMPLEX_V_SUFFIX,
             f"#define V_ARG(v) {address_space}const {{{{FP2_TYPE}}}}* v,\n"
             "#define V_PHASE(v, i) + (v)[i].x\n"
-            "#define V_LOSS(v, i) + (v)[i].y\n",
+            "#define V_LOSS(v, i) + (v)[i].y\n"
+            f"#define V_PASS(v) ({address_space}const {{{{FP2_TYPE}}}}*)(v),\n",
         ),
     )
 
@@ -150,54 +163,197 @@ def kernel_names(source: str, decl: str) -> list:
     return re.findall(re.escape(decl) + r" (\w+)\(", source)
 
 
-# What the two store callbacks in cuda_source/fft_callbacks.cu are called, by
-# whether the propagator is shared across a batch of fields.
+# What the two propagator store callbacks in cuda_source/fft_callbacks.cu are
+# called, by whether the propagator is shared across a batch of fields.
 STORE_CALLBACKS = {
     False: "nlse_store_propagator",
     True: "nlse_store_propagator_batched",
 }
 
-# The element type each field width gives a callback. Spelled as CUDA vector
-# types rather than cufftComplex and cufftDoubleComplex, which are the same
-# types under names nvrtc cannot reach: it has no cuFFT headers.
-_FP2_TYPES = {"complex64": "float2", "complex128": "double2"}
+# What each placeholder becomes at each field width. The complex element is
+# spelled as a CUDA vector type rather than cufftComplex or cufftDoubleComplex,
+# which are the same types under names nvrtc cannot reach: it has no cuFFT
+# headers.
+CUDA_TYPES = {
+    "complex64": {
+        "FP_TYPE": "float",
+        "FP2_TYPE": "float2",
+        "FP_SUFFIX": "f",
+        "SINCOS_FUNC": "sincosf",
+    },
+    "complex128": {
+        "FP_TYPE": "double",
+        "FP2_TYPE": "double2",
+        "FP_SUFFIX": "",
+        "SINCOS_FUNC": "sincos",
+    },
+}
+
+# The base name of the nonlinear store callback in fft_callbacks.cu. Its twins
+# carry the suffix ``v_suffix`` gives the potential.
+NONLINEAR_CALLBACK = "nlse_store_nonlinear"
+
+# NlseNonlinear's scalars after the potential's address, in order. The struct
+# in fft_callbacks.cu is rendered from this and nonlinear_words packs from it,
+# so the device and the host cannot read the block in different orders.
+NONLINEAR_FIELDS = ("dz", "alpha", "g", "Isat")
+
+# Bytes in one word of a store callback's block: a uint64, as _WRITE_INFO in
+# backends/cupy_backend.py writes it.
+WORD_BYTES = struct.calcsize("<Q")
+
+# Words in that block. The largest it holds is NlseNonlinear at complex128:
+# the potential's address, then one double per field, a word each.
+INFO_WORDS = 1 + len(NONLINEAR_FIELDS)
+
+# What fft_callbacks.cu's layout placeholders become, at either width.
+CALLBACK_LAYOUT = {
+    "NONLINEAR_FIELDS": "\n    ".join(
+        f"{{{{FP_TYPE}}}} {name};" for name in NONLINEAR_FIELDS
+    ),
+    "INFO_WORDS": str(INFO_WORDS),
+}
+
+# The one-thread kernel that rewrites a block, one parameter per word: words
+# go by value, so that a CUDA graph records them with the launch.
+WRITE_INFO_KERNEL = "nlse_write_info"
+WRITE_INFO_SOURCE = (
+    f'extern "C" __global__ void {WRITE_INFO_KERNEL}(unsigned long long* info, '
+    + ", ".join(f"const unsigned long long w{i}" for i in range(INFO_WORDS))
+    + ") {\n"
+    + "".join(f"    info[{i}] = w{i};\n" for i in range(INFO_WORDS))
+    + "}\n"
+)
 
 
-def propagator_store_callback(dtype: str, batched: bool) -> tuple:
-    """Return the cuFFT store callback that applies the propagator.
-
-    Compiled by cuFFT and not by any backend: the source goes to
-    ``cupy.fft.config.set_cufft_callbacks``, which hands it to nvrtc and links
-    the LTO-IR into an FFT plan. Only the text is built here, and here rather
-    than beside the plan for the reason the rest of this module exists -- it
-    can then be checked on a machine with no CUDA, which is where the CUDA half
-    of this project otherwise has no coverage at all.
+def fill_cuda_types(source: str, dtype) -> str:
+    """Substitute the float types of a field's width into CUDA source.
 
     Parameters
     ----------
+    source : str
+        CUDA source with ``{{FP_TYPE}}``-style placeholders.
     dtype : npt.DTypeLike
-        Complex type of the field, which fixes the callback's element type.
-    batched : bool
-        Whether the field is a batch of fields sharing one propagator, which
-        decides how the callback indexes it.
+        Complex type of the field.
 
     Returns
     -------
-    tuple
-        ``(source, symbol)`` -- the CUDA C to compile, and the name of the
-        callback within it.
+    str
+        The source at that width.
 
     Raises
     ------
     ValueError
-        If the field is of a width no callback is written for.
+        If the field is of a width no CUDA source is written for.
 
     """
     name = np.dtype(dtype).name
-    if name not in _FP2_TYPES:
+    if name not in CUDA_TYPES:
         raise ValueError(
-            f"no propagator store callback for a {name} field: cuFFT transforms "
+            f"no CUDA source for a {name} field: the kernels and cuFFT take "
             f"complex64 and complex128"
         )
-    source = CALLBACK_SOURCE.read_text().replace("{{FP2_TYPE}}", _FP2_TYPES[name])
-    return source, STORE_CALLBACKS[bool(batched)]
+    for placeholder, value in CUDA_TYPES[name].items():
+        source = source.replace("{{" + placeholder + "}}", value)
+    return source
+
+
+def cuda_kernel_template() -> str:
+    """Return the CUDA kernel template, with the step it shares prepended.
+
+    Returns
+    -------
+    str
+        nonlinear_step.cuh followed by kernels.cu, placeholders unfilled.
+
+    """
+    return NONLINEAR_SOURCE.read_text() + KERNEL_SOURCE.read_text()
+
+
+def store_callbacks_source(dtype) -> str:
+    """Return the cuFFT store callbacks, at a field's width.
+
+    Compiled by cuFFT and not by any backend: the source goes to
+    ``cupy.fft.config.set_cufft_callbacks``, which hands it to nvrtc and links
+    the callback it is asked for into an FFT plan. Built here so it can be
+    checked on a machine with no CUDA.
+
+    Parameters
+    ----------
+    dtype : npt.DTypeLike
+        Complex type of the field, which fixes the callbacks' element type.
+
+    Returns
+    -------
+    str
+        The CUDA C defining every callback in ``STORE_CALLBACKS`` and the
+        three twins of ``NONLINEAR_CALLBACK``.
+
+    """
+    source = NONLINEAR_SOURCE.read_text() + CALLBACK_SOURCE.read_text()
+    for placeholder, value in CALLBACK_LAYOUT.items():
+        source = source.replace("{{" + placeholder + "}}", value)
+    return fill_cuda_types(expand_v_blocks(source, CALLBACK_DECL), dtype)
+
+
+def nonlinear_words(pointer: int, dtype, **scalars) -> tuple:
+    """Pack NlseNonlinear into the words of a store callback's block.
+
+    Parameters
+    ----------
+    pointer : int
+        Device address of the potential, 0 for none.
+    dtype : npt.DTypeLike
+        Complex type of the field, whose real width the scalars are stored at.
+    **scalars : float
+        One value per name in ``NONLINEAR_FIELDS``. Read with ``float``, so a
+        0-d device array is taken as the number it holds.
+
+    Returns
+    -------
+    tuple
+        The block's words as unsigned integers, the last zero-padded: three at
+        complex64, ``INFO_WORDS`` at complex128.
+
+    Raises
+    ------
+    ValueError
+        If the scalars are not exactly the ones ``NONLINEAR_FIELDS`` names.
+
+    """
+    if set(scalars) != set(NONLINEAR_FIELDS):
+        raise ValueError(
+            f"NlseNonlinear holds {', '.join(NONLINEAR_FIELDS)}, not "
+            f"{', '.join(sorted(scalars))}"
+        )
+    code = np.finfo(dtype).dtype.char
+    # Little-endian, as every CUDA device is.
+    packed = struct.pack(
+        f"<Q{len(NONLINEAR_FIELDS)}{code}",
+        pointer,
+        *(float(scalars[name]) for name in NONLINEAR_FIELDS),
+    )
+    packed += bytes(-len(packed) % WORD_BYTES)
+    return struct.unpack(f"<{len(packed) // WORD_BYTES}Q", packed)
+
+
+def v_suffix(V) -> str:
+    """Return the suffix of the twin that takes this potential.
+
+    Parameters
+    ----------
+    V : array or None
+        The potential.
+
+    Returns
+    -------
+    str
+        Empty with no potential, ``REAL_V_SUFFIX`` for a real one and
+        ``COMPLEX_V_SUFFIX`` for a complex one.
+
+    """
+    if V is None:
+        return ""
+    if V.dtype.kind == "c":
+        return COMPLEX_V_SUFFIX
+    return REAL_V_SUFFIX
