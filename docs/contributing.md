@@ -4,57 +4,67 @@ Contributions are welcome! You can open a pull request or create an issue on the
 
 ## Development Setup
 
-Clone the repository and install in development mode:
+Clone the repository and create the development environment with
+[uv](https://docs.astral.sh/uv/):
 
 ```bash
 git clone https://github.com/taladjidi/NLSE.git
 cd NLSE
-pip install -e ".[dev]"
+uv sync
 ```
 
-This installs all development dependencies: pytest, ruff, mypy, etc.
+This creates `.venv` on the Python named in `.python-version`, with the
+package in editable mode and the `dev` dependency group (pytest, ruff, ty,
+pre-commit, hatchling), at the versions pinned in `uv.lock`. Add
+`--extra opencl`, `--extra mlx` or `--extra gpu` for a backend, and repeat
+them on every later `uv sync`: it removes what it was not asked for. Every
+command below, and every git hook, runs through `uv run`, which uses that
+environment whatever else is on your PATH, so uv is required.
+
+After changing dependencies in `pyproject.toml`, run `uv lock` and commit
+`uv.lock` with it; CI and the hooks refuse a stale lock.
 
 ## Running Tests
 
 ```bash
 # Run all tests
-pytest tests/
+uv run pytest tests/
 
 # Run a specific test file
-pytest tests/solvers/test_nlse.py
+uv run pytest tests/solvers/test_nlse.py
 
 # Run a single test
-pytest tests/solvers/test_nlse.py::test_name
+uv run pytest tests/solvers/test_nlse.py::test_name
 
 # Verbose output with short tracebacks
-pytest tests/ -v --tb=short
+uv run pytest tests/ -v --tb=short
 
 # With coverage report
-pytest tests/ -v --cov=NLSE --cov-report=term
+uv run pytest tests/ -v --cov=NLSE --cov-report=term
 
 # Skip benchmarks
-pytest tests/ -m "not benchmark"
+uv run pytest tests/ -m "not benchmark"
 ```
 
 ## Linting and Formatting
 
-The project uses [ruff](https://docs.astral.sh/ruff/) for linting and formatting, and [mypy](https://mypy.readthedocs.io/) for type checking:
+The project uses [ruff](https://docs.astral.sh/ruff/) for linting and formatting, and [ty](https://docs.astral.sh/ty/) for type checking:
 
 ```bash
 # Lint
-ruff check NLSE/ tests/ examples/
+uv run ruff check NLSE/ tests/ examples/
 
 # Format check
-ruff format --check NLSE/ tests/ examples/
+uv run ruff format --check NLSE/ tests/ examples/
 
 # Auto-fix lint issues
-ruff check --fix NLSE/ tests/ examples/
+uv run ruff check --fix NLSE/ tests/ examples/
 
 # Auto-format
-ruff format NLSE/ tests/ examples/
+uv run ruff format NLSE/ tests/ examples/
 
 # Type check
-mypy NLSE/ --non-interactive
+uv run ty check
 ```
 
 All checks must pass before merging.
@@ -65,32 +75,38 @@ All checks must pass before merging.
 the commit rather than in the minutes after the push:
 
 ```bash
-pre-commit install
+uv run pre-commit install
 ```
 
-That installs two hooks. On **commit**, ruff and mypy run — about a third of a
-second together, and ruff fixes what it can. On **push**, the test suite runs,
-about 25 seconds. Use `git commit --no-verify` to skip them on work in
-progress.
+That installs two hooks. On **commit**, ruff and ty run, well under a second
+together, and ruff fixes what it can. On **push**, the test suite runs. Use
+`git commit --no-verify` to skip them on work in progress.
 
-Every hook runs the tools from your own environment, with the same commands
-listed above, so there is no second set of versions to drift from these. Run
-them by hand over the whole repository with:
+Every hook runs its tool through `uv run --locked`, with the same commands
+listed above: the versions in `uv.lock`, from `.venv`, so another Python or
+an older install of the package earlier on your PATH cannot stand in for
+them. Run them by hand over the whole repository with:
 
 ```bash
-pre-commit run --all-files
-pre-commit run --all-files --hook-stage pre-push   # includes the tests
+uv run pre-commit run --all-files
+uv run pre-commit run --all-files --hook-stage pre-push   # includes the tests
 ```
 
-Note that mypy is configured to skip `NLSE.solvers.*` and `NLSE.kernels.*`,
-which is most of the package; see the type-checking note in the repository's
-handoff notes.
+ty checks `NLSE/` only, and fails only on diagnostics that are not already
+recorded in `ty-baseline.json`. A recorded diagnostic is matched by file,
+rule and columns, not by line number: moving it is fine, but renaming or
+reformatting the line it is on reports it again. Then either fix it, or, once
+you have checked it is the same diagnostic, run
+`uv run ty check --update-baseline` and commit the file. Do the same after
+fixing recorded ones, which shrinks it. Never update it to absorb a new
+diagnostic: review reads the diff of `ty-baseline.json`, where a moved entry
+changes only its columns and a new one adds an entry.
 
 ## Code Style
 
 - **Formatter**: ruff (88-character line length)
 - **Docstrings**: NumPy style (`Parameters`, `Returns`, `Raises` sections)
-- **Type checking**: mypy (solvers and kernels modules are excluded via `ignore_errors = true`)
+- **Type checking**: ty, on `NLSE/`, against the baseline in `ty-baseline.json`
 
 ## Project Structure
 
@@ -117,9 +133,9 @@ For questions or issues, contact tangui.aladjidi[at]lkb.upmc.fr or open a GitHub
 ## Building the documentation
 
 ```bash
-pip install -e ".[docs]"
-python -m sphinx -b html docs docs/_build/html -W
-python -m http.server -d docs/_build/html      # then open http://localhost:8000
+uv sync --group docs
+uv run python -m sphinx -b html docs docs/_build/html -W
+uv run python -m http.server -d docs/_build/html      # then open http://localhost:8000
 ```
 
 `-W` turns warnings into errors, which is what CI does: a broken

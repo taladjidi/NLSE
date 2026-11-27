@@ -39,6 +39,30 @@ dependencies = [
 opencl = ["pyopencl", "pyvkfft", "mako"]
 gpu = ["cupy"]
 mlx = ["mlx"]
+
+[project.urls]
+Documentation = "https://taladjidi.github.io/NLSE/"
+Homepage = "https://github.com/taladjidi/NLSE"
+Repository = "https://github.com/taladjidi/NLSE"
+
+# Groups rather than extras: they are local to this repository and never part
+# of the published metadata (PEP 735). `uv sync` installs dev by default; the
+# docs build adds `--group docs`.
+[dependency-groups]
+dev = [
+  "pytest>=7.0",
+  "pytest-cov",
+  "pytest-benchmark",
+  "ruff",
+  # Pinned: ty is pre-1.0, its diagnostics change between releases, and
+  # ty-baseline.json is only valid for the release that wrote it.
+  "ty==0.0.112",
+  # Runs ruff and ty on commit and the suite on push; see .pre-commit-config.yaml
+  "pre-commit>=4.4.0",
+  # Needed by tests/test_packaging.py, which builds a real wheel to verify
+  # what ships. Without it the test fails rather than checking nothing.
+  "hatchling",
+]
 # Sphinx, because the maths, the notebook and the API reference all go
 # through one renderer. sphinx-autoapi parses the source rather than
 # importing it, which matters here: importing NLSE pulls in whichever
@@ -52,23 +76,6 @@ docs = [
   "sphinx-copybutton",
   "sphinx-gallery",
 ]
-dev = [
-  "pytest>=7.0",
-  "pytest-cov",
-  "pytest-benchmark",
-  "ruff",
-  "mypy",
-  # Runs those two on commit and the suite on push; see .pre-commit-config.yaml
-  "pre-commit",
-  # Needed by tests/test_packaging.py, which builds a real wheel to verify
-  # what ships. Without it the test would silently skip.
-  "hatchling",
-]
-
-[project.urls]
-Documentation = "https://taladjidi.github.io/NLSE/"
-Homepage = "https://github.com/taladjidi/NLSE"
-Repository = "https://github.com/taladjidi/NLSE"
 
 # hatchling builds straight from the source tree into the archive. There is no
 # build/lib staging directory to go stale and no egg-info file list to cache,
@@ -117,8 +124,10 @@ select = [
   "C90",
   "RUF",
   "D",
+  "UP",
+  "PGH",
 ]
-extend-ignore = [
+ignore = [
   "E501",
   "RUF012",
   "D100",
@@ -137,11 +146,6 @@ max-complexity = 20
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
 
-[tool.mypy]
-follow_imports = "normal"
-strict_optional = true
-ignore_missing_imports = true
-
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # Allow unused imports in __init__.py
 "NLSE/utils.py" = ["F401"]  # Imports used for availability checking
@@ -149,14 +153,6 @@ ignore_missing_imports = true
 # its underline -- which sphinx-gallery reads as the page heading. That is
 # not a numpy summary line, so the two rules that police one do not apply.
 "examples/*.py" = ["D205", "D400"]
-
-# Skip type checking for solvers (multi-backend complexity)
-[[tool.mypy.overrides]]
-module = [
-  "NLSE.solvers.*",
-  "NLSE.kernels.*",
-]
-ignore_errors = true
 
 [tool.coverage.run]
 source = ["NLSE"]
@@ -174,4 +170,36 @@ exclude_lines = [
   "if __name__ == .__main__.:",
   "if TYPE_CHECKING:",
   "pass",
+]
+
+[tool.ty]
+# The diagnostics present when ty was adopted, recorded so that only new ones
+# fail. Entries match on file, rule and columns, not line numbers: editing a
+# recorded line reports it again. See docs/contributing.md for when to run
+# `uv run ty check --update-baseline`. Preview feature: the file format is
+# tied to the pinned ty release.
+baseline = "ty-baseline.json"
+
+[tool.ty.src]
+# The package only. tests/, examples/ and benchmarks/ are not checked: most of
+# what ty reports there is `**PARAMS` unpacked into a typed signature.
+include = ["NLSE"]
+
+[tool.ty.environment]
+# Every backend is reachable on some OS; check them all whatever the host is.
+python-platform = "all"
+
+[tool.ty.analysis]
+# Optional backends and numba: not installed everywhere (cupy, mlx), shipped
+# without stubs (mlx.core is compiled), or typed in a way ty cannot follow
+# (numba.prange). Their imports become Any, so the result does not depend on
+# which extras the checking machine has.
+replace-imports-with-any = [
+  "cupy.**",
+  "cupyx.**",
+  "pyopencl.**",
+  "pyvkfft.**",
+  "mlx.**",
+  "nvtx.**",
+  "numba.**",
 ]

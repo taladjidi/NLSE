@@ -5,6 +5,7 @@ editable install (which is what CI uses) resolves every path against the
 repository and therefore cannot catch a file that fails to ship.
 """
 
+import email
 import re
 import shutil
 import subprocess
@@ -65,6 +66,10 @@ FORBIDDEN_STALE_MODULES = [
     "NLSE/kernels_cl.py",
 ]
 
+# The extras a user can install. The dev and docs tools are dependency groups
+# (PEP 735), which stay out of the published metadata.
+PUBLISHED_EXTRAS = {"gpu", "mlx", "opencl"}
+
 
 def _build_wheel_command(outdir: Path) -> list[str]:
     """Return the command that builds a wheel straight from the source tree.
@@ -74,7 +79,7 @@ def _build_wheel_command(outdir: Path) -> list[str]:
     ``pip install .`` takes; the sdist route is covered separately.
 
     ``--no-build-isolation`` keeps the build offline and deterministic; the
-    dev extra pins the hatchling it needs.
+    dev dependency group pins the hatchling it needs.
     """
     if shutil.which("uv"):
         return [
@@ -112,14 +117,14 @@ def _require_hatchling() -> None:
     except ImportError:
         pytest.fail(
             "hatchling is missing, so the packaging tests cannot build "
-            "anything to inspect. It is in the dev extra: install with "
-            '`pip install -e ".[dev]"`.'
+            "anything to inspect. It is in the dev dependency group: run "
+            "`uv sync`."
         )
 
 
 @pytest.fixture(scope="module")
-def wheel_contents(tmp_path_factory) -> list[str]:
-    """Build a wheel from the project root and return its member names."""
+def wheel_path(tmp_path_factory) -> Path:
+    """Build a wheel from the project root and return its path."""
     _require_hatchling()
 
     outdir = tmp_path_factory.mktemp("wheel")
@@ -133,7 +138,13 @@ def wheel_contents(tmp_path_factory) -> list[str]:
 
     wheels = list(outdir.glob("*.whl"))
     assert len(wheels) == 1, f"expected exactly one wheel, got {wheels}"
-    with zipfile.ZipFile(wheels[0]) as zf:
+    return wheels[0]
+
+
+@pytest.fixture(scope="module")
+def wheel_contents(wheel_path) -> list[str]:
+    """Return the member names of the wheel built from the project root."""
+    with zipfile.ZipFile(wheel_path) as zf:
         return zf.namelist()
 
 
@@ -152,7 +163,7 @@ def _build_sdist_and_wheel(outdir: Path) -> None:
 
     ``uv build`` does both in one command where it is installed. Otherwise
     the backend builds the sdist and pip builds the wheel from it, so this
-    needs nothing beyond the dev extra.
+    needs nothing beyond the dev dependency group.
     """
     if shutil.which("uv"):
         _run(
@@ -238,8 +249,8 @@ def test_kernel_templates_are_packaged(wheel_contents, data_file):
     """Kernel source templates must ship in the wheel."""
     assert data_file in wheel_contents, (
         f"{data_file} is missing from the wheel. The backend that loads it will "
-        f"raise FileNotFoundError on a non-editable install. Add its directory "
-        f"to [tool.setuptools.package-data] in pyproject.toml."
+        f"raise FileNotFoundError on a non-editable install. Check the "
+        f"[tool.hatch.build.targets.wheel] exclude list in pyproject.toml."
     )
 
 
@@ -264,6 +275,19 @@ def test_wheel_top_level_modules_match_source(wheel_contents):
         "NLSE/utils.py",
         "NLSE/callbacks.py",
     }, f"unexpected top-level modules in wheel: {sorted(top_level)}" + _cause_hint()
+
+
+def test_the_wheel_publishes_only_the_backend_extras(wheel_path):
+    """The dev and docs tools must not come back as extras of the package."""
+    with zipfile.ZipFile(wheel_path) as zf:
+        names = [n for n in zf.namelist() if n.endswith(".dist-info/METADATA")]
+        assert len(names) == 1, f"expected one METADATA file, got {names}"
+        metadata = email.message_from_bytes(zf.read(names[0]))
+    extras = set(metadata.get_all("Provides-Extra", []))
+    assert extras == PUBLISHED_EXTRAS, (
+        f"the wheel declares the extras {sorted(extras)}; the development "
+        f"tools belong in [dependency-groups] of pyproject.toml"
+    )
 
 
 def test_cache_dir_is_outside_the_installed_package(tmp_path, monkeypatch):
