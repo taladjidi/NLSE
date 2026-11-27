@@ -37,8 +37,9 @@ untracked `CLAUDE.md` and the git hooks follow it), the CPU batch fix
 over several parameter axes (`496cd96`), the transform wording with the
 log entry of the library re-measure (`c04afd7`) and the same batch fix for
 the OpenCL loop (`fix/cl-multi-axis-batch`), the tests that bite
-(`test/tests-that-bite`), the CPU blocked step (`7518025`) and the fix of its
-scratch (`fix/cpu-blocked-scratch`). Still open:
+(`test/tests-that-bite`), the CPU blocked step (`7518025`), the fix of its
+scratch (`fix/cpu-blocked-scratch`) and the two tests of it that numba's
+threading layer decides (`fix/ci-threading-layer-tests`). Still open:
 
 - **Order set by the owner (2026-11-27), all after a `/clear`:** first the
   GPU patches, then the thread counts per machine (both described below),
@@ -261,6 +262,21 @@ scratch (`fix/cpu-blocked-scratch`). Still open:
 
 ### Verification of the final tree
 
+- CI (2026-11-27). The first push with the blocked step (`c503edb`) went red
+  on two of its tests, for what
+  [numba's threading layer](https://numba.readthedocs.io/en/stable/user/threading-layer.html)
+  allows, not for the step. Ubuntu runners get GNU OpenMP, and numba ends a
+  forked child that enters it (`test_a_child_forked_mid_step_steps_blocked`,
+  exit -15, numba's message in the log). The macOS runner aborted in
+  `test_two_threads_step_as_they_would_one_after_the_other` (exit 134), as
+  `workqueue` does when two threads enter it (4 runs in 6 on the box, with
+  numba's message); that the runner is on `workqueue` is inferred, its log
+  does not show the message. Each test now skips on that one layer.
+  Reproduced and checked with `NUMBA_THREADING_LAYER`: Mac `workqueue`
+  1736 passed, 157 skipped (`omp`, vendor Intel as numba names it, is the
+  Mac's default: 1737, 156); box `omp` (GNU) 1805 passed, 69 skipped (`tbb` is its default:
+  1806, 68). The failed log is
+  `~/Documents/LKB/NLSE_tangui_fix_specs/cpu_blocked_step/ryzen/ci_failed_c503edb.log`.
 - Scratch fix (`fix/cpu-blocked-scratch`, 2026-11-27), code as at `3b8113f`
   (the commit after it changes a comment): Mac 1737 passed, 156 skipped;
   `ruff check`, `ruff format --check` and `ty check` clean. On the box:
@@ -297,6 +313,11 @@ scratch (`fix/cpu-blocked-scratch`). Still open:
 
 ### Review findings left as they are (MINOR)
 
+- `tests/backends/test_cpu_blocked_step.py`, the skip on `workqueue`: no
+  comment says `run()` must come first so that numba has chosen its layer
+  (the helper's docstring does), and its reason cites no page (numba's
+  page does not state the limit; its abort message does). The fork test
+  now runs in CI on macOS only.
 - p1a: a callback's shape error surfaces after a step; bare numbers in
   `tests/solvers/test_backward_run.py:151,170` and
   `tests/solvers/test_out_field_arguments.py:40`; a CNLSE strang run with a
@@ -376,6 +397,12 @@ scratch (`fix/cpu-blocked-scratch`). Still open:
 
 ### Still open, not fixed
 
+- Numba's threading layer limits the CPU backend, and nothing in the library
+  or the docs says so: on `workqueue` (no TBB, no OpenMP: the macOS CI
+  runner) two `out_field` calls in two threads abort the process, and on GNU
+  OpenMP (Linux without TBB) a forked child that runs the CPU backend is
+  killed. Neither comes from the blocked step. For the owner: document it
+  (docs pass), or hold a lock around the CPU run on `workqueue`.
 - `evaluate_delta_n` convention: `k/2` or `k`.
 - Setting `simu.wl` does not update `k`.
 - `get_fastest_backend` crashes on a wrong-typed `grid_size`.
@@ -638,8 +665,9 @@ Task list for the closing review pass (asked on 2026-11-27):
     hatchling 1.27), dropping Python 3.10, ruff 0.17.6, ty on `tests/`
     (456 diagnostics), pinning the actions by hash and bumping their
     majors, an SBOM artifact and a commit-message hook.
-  - Not checked: the workflow has not run on GitHub (nothing is pushed), and
-    the CuPy and OpenCL extras were not synced from the lock on the box.
+  - The workflow has run on GitHub since the push of `c503edb`: see the CI
+    entry under "Verification of the final tree". Not checked: the CuPy and
+    OpenCL extras were not synced from the lock on the box.
 - [ ] **Headline performance in the README** (asked on 2026-11-27: "add the
   headline perf numbers in the README of the repo, in % of max flops/s /
   memory bandwidth (highlighting whether we are compute / or bandwidth
