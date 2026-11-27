@@ -420,9 +420,13 @@ In progress, in this order:
     `fp_ncu_table.py` in `~/Documents/nlse_scratch_scripts/`; reports
     `rep/fp_sep_2c*.txt` and `rep/ncu_2c_*`.
 - **CuPy at 4096² is at 62% of the memory peak**, against 85% at 1024² and
-  2048². `ncu`: the first pass of each transform (`regular_fft`) streams 96
-  GB/s there and 161 GB/s at 2048²; two launches, 5.8 of the 8.9 ms of a
-  step. Not explained, nothing tried. In the optimization log, *Open*.
+  2048², and the gap is inside cuFFT: the pass down the columns costs 0.097
+  ns a point for columns of 2048 and 0.166 for columns of 4096, whatever the
+  stride; rows cost 0.077 at every length. Padding the rows (0.250 to 0.263
+  against 0.240 ns a point) and a transposed layout (the copy costs 0.157 to
+  save 0.089) are measured and rejected. Closed; in the optimization log's
+  CUDA section. Box scripts `fft_axes.py`, `fft_stride.py`,
+  `fft_transpose.py`.
 - Scratch to delete. Box: `~/Documents/nlse_cuda_sp2c` (= `main` after the
   merge of 2b, less the docs), `nlse_cpu32`, `nlse_cuda_fp` (= 5113580, the
   tree the CPU prototypes import). Mac: `git worktree list` (this session's
@@ -603,9 +607,8 @@ Known before the profiles:
   `_rk4_max_dz`, Yoshida's extra `_split_step_max_dz`), each with a transform
   of a copy of the field, and `_energy_rates_on_device` copies `V` to the host
   every time.
-- Open in the optimization log already: the first transform pass at 4096²
-  on CuPy, a plan callback in 1D, an `alpha == 0` branch in `_nl_prop`, the
-  linear step as an increment.
+- Open in the optimization log already: a plan callback in 1D, an
+  `alpha == 0` branch in `_nl_prop`, the linear step as an increment.
 
 Environment:
 
