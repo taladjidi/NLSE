@@ -849,6 +849,18 @@ def test_a_batch_runs_unblocked_and_unchanged(blocking, monkeypatch):
     assert np.array_equal(got, expected)
 
 
+def openmp_vendor():
+    """Return the vendor of numba's OpenMP runtime, None on another layer.
+
+    Numba chooses its layer on the first parallel call: ask after one.
+    """
+    if numba.threading_layer() != "omp":
+        return None
+    from numba.np.ufunc import omppool  # imports only where OpenMP is found
+
+    return omppool.openmp_vendor
+
+
 def run_into(results, index, barrier):
     """Run THREADED_STEPS NLSE steps after ``barrier``, into ``results[index]``."""
     barrier.wait()
@@ -861,6 +873,8 @@ def test_two_threads_step_as_they_would_one_after_the_other(blocking):
     Catches the step's scratch shared between two calls at once.
     """
     expected = run("NLSE", np.complex64, "lie", steps=THREADED_STEPS)
+    if numba.threading_layer() == "workqueue":
+        pytest.skip("numba's workqueue layer aborts when two threads enter it")
     results = [None, None]
     barrier = threading.Barrier(len(results))
     threads = [
@@ -893,6 +907,9 @@ def test_a_child_forked_mid_step_steps_blocked(blocking):
     threads it did not inherit.
     """
     expected = run("NLSE", np.complex64, "lie")
+    if openmp_vendor() == "GNU":
+        # https://numba.readthedocs.io/en/stable/user/threading-layer.html
+        pytest.skip("numba ends a forked child that enters GNU OpenMP")
     step = settle((N, N))
     context = multiprocessing.get_context("fork")
     with step._lock:  # as a thread of the parent stepping when it forks
