@@ -134,7 +134,8 @@ def adapt_delta_z(
 
     This callback will update the simulation step size every update_every steps by
     computing the nonlinear refractive index change and adjusting the step size
-    accordingly.
+    accordingly. Never past the split-step limit, ``_split_step_max_dz``, which
+    ``adapt_delta_z_to_error`` is held to as well.
 
     A callback changes the step by returning it. The loop rebuilds the
     propagator to match before taking the next step; assigning the step
@@ -166,20 +167,13 @@ def adapt_delta_z(
     delta_z.append(simu._current_delta_z)
     if i % update_every != 0:
         return None
-    # On the host: pyopencl's array has no .max(), and n2 and I_sat are device
-    # arrays once a batched run has been sent.
-    A_host = simu._as_host_array(A)
-    A_sq = A_host.real * A_host.real + A_host.imag * A_host.imag
     # The solver's own phase rate, k n2 I for NLSE and g n for GPE, whose k, n2
     # and optical intensity are not physical quantities.
-    g = np.abs(simu._as_host_array(simu._constant("_g")))
-    Isat = simu._as_host_array(simu._constant("_Isat_conv"))
-    rate = g * A_sq / (1 + A_sq / Isat)
-    peak = float(rate.max())
+    peak = simu._max_interaction_rate(A)
     if peak == 0:
         # The nonlinear length is infinite, which is not a step.
         return None
-    return 1 / (STEPS_PER_NONLINEAR_LENGTH * peak)
+    return min(1 / (STEPS_PER_NONLINEAR_LENGTH * peak), simu._split_step_max_dz(A))
 
 
 def _trial_propagation(simu: NLSE, A: np.ndarray, step: float, count: int):

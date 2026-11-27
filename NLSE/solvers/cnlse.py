@@ -186,6 +186,27 @@ class CNLSE(NLSE):
             rate += float(np.max(np.abs(self._as_host_array(self.omega)))) / 2
         return rate
 
+    def _max_interaction_rate(self, A: np.ndarray) -> float:
+        """Return the fastest interaction rate of either component, at its peak.
+
+        Component i turns at ``(|g_ii| I_i + |g_ij| I_j) sat``, with one
+        saturation ``1 / (1 + I1/Isat1 + I2/Isat2)`` for both, as the coupled
+        kernels apply it.
+        """
+        A_host = self._as_host_array(A)
+        A_sq = A_host.real * A_host.real + A_host.imag * A_host.imag
+        I1, I2 = A_sq[self._component(0)], A_sq[self._component(1)]
+        g11, g12, g21, g22 = (
+            np.abs(self._as_host_array(self._constant(name)))
+            for name in ("_g11", "_g12", "_g21", "_g22")
+        )
+        Isat1 = self._as_host_array(self._constant("_Isat_conv"))
+        Isat2 = self._as_host_array(self._constant("_Isat_conv2"))
+        sat = 1 / (1 + I1 / Isat1 + I2 / Isat2)
+        return float(
+            np.max(np.maximum((g11 * I1 + g12 * I2), (g22 * I2 + g21 * I1)) * sat)
+        )
+
     def _propagator_rk4_cache_key(self) -> tuple:
         """Return cache key for coupled RK4 dispersion operator."""
         return (self.NX, self.NY, "RK4", float(self.k), float(self.k2))

@@ -480,84 +480,6 @@
       },
       {
         "rule": "missing-attribute",
-        "startColumn": 18,
-        "endColumn": 43,
-        "lineCount": 1
-      },
-      {
-        "rule": "missing-attribute",
-        "startColumn": 12,
-        "endColumn": 31,
-        "lineCount": 1
-      },
-      {
-        "rule": "missing-attribute",
-        "startColumn": 32,
-        "endColumn": 46,
-        "lineCount": 1
-      },
-      {
-        "rule": "missing-attribute",
-        "startColumn": 25,
-        "endColumn": 31,
-        "lineCount": 1
-      },
-      {
-        "rule": "missing-attribute",
-        "startColumn": 16,
-        "endColumn": 35,
-        "lineCount": 1
-      },
-      {
-        "rule": "missing-attribute",
-        "startColumn": 36,
-        "endColumn": 42,
-        "lineCount": 1
-      },
-      {
-        "rule": "missing-attribute",
-        "startColumn": 46,
-        "endColumn": 60,
-        "lineCount": 1
-      },
-      {
-        "rule": "missing-attribute",
-        "startColumn": 48,
-        "endColumn": 59,
-        "lineCount": 1
-      },
-      {
-        "rule": "missing-attribute",
-        "startColumn": 27,
-        "endColumn": 37,
-        "lineCount": 1
-      },
-      {
-        "rule": "missing-attribute",
-        "startColumn": 22,
-        "endColumn": 41,
-        "lineCount": 1
-      },
-      {
-        "rule": "missing-attribute",
-        "startColumn": 42,
-        "endColumn": 56,
-        "lineCount": 1
-      },
-      {
-        "rule": "missing-attribute",
-        "startColumn": 19,
-        "endColumn": 38,
-        "lineCount": 1
-      },
-      {
-        "rule": "missing-attribute",
-        "startColumn": 39,
-        "endColumn": 53,
-        "lineCount": 1
-      },
-      {
-        "rule": "missing-attribute",
         "startColumn": 57,
         "endColumn": 63,
         "lineCount": 1
@@ -584,6 +506,36 @@
         "rule": "missing-attribute",
         "startColumn": 39,
         "endColumn": 53,
+        "lineCount": 1
+      },
+      {
+        "rule": "missing-attribute",
+        "startColumn": 17,
+        "endColumn": 36,
+        "lineCount": 1
+      },
+      {
+        "rule": "missing-attribute",
+        "startColumn": 19,
+        "endColumn": 38,
+        "lineCount": 1
+      },
+      {
+        "rule": "missing-attribute",
+        "startColumn": 39,
+        "endColumn": 53,
+        "lineCount": 1
+      },
+      {
+        "rule": "missing-attribute",
+        "startColumn": 15,
+        "endColumn": 34,
+        "lineCount": 1
+      },
+      {
+        "rule": "missing-attribute",
+        "startColumn": 35,
+        "endColumn": 49,
         "lineCount": 1
       },
       {

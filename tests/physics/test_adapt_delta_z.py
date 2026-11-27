@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from NLSE import GPE, NLSE
+from NLSE import CNLSE, GPE, NLSE
 from NLSE.callbacks import adapt_delta_z
 from scipy.constants import atomic_mass, c, epsilon_0
 
@@ -19,6 +19,10 @@ WAVELENGTH = 780e-9  # m, NLSE's default wvl
 N2 = -1.6e-9  # m^2/W
 INTENSITY = 1e5  # W/m^2
 I_SAT = 1e5  # W/m^2, halves the index change at INTENSITY
+
+# CNLSE with the cross coupling alone, both components at INTENSITY: one
+# saturation 1 / (1 + 2 INTENSITY / I_SAT) for both, as the kernels apply it.
+CROSS_SATURATION = 1 / (1 + 2 * INTENSITY / I_SAT)
 
 # Relative; float32 |A|^2 against the float64 closed form. Measured 3.8e-9
 # (GPE) and 8.7e-9 (NLSE) on CPU and MLX.
@@ -81,4 +85,31 @@ def test_the_nlse_step_is_a_twelfth_of_the_nonlinear_length(backend):
     amplitude = np.sqrt(2 * INTENSITY / (c * epsilon_0))
     assert step_for(simu, amplitude) == pytest.approx(
         1 / (STEPS_PER_LENGTH * rate), rel=STEP_REL_TOL
+    )
+
+
+def test_the_cnlse_step_counts_the_cross_coupling(backend):
+    """``dz = 1 / (12 k |n12| I sat)`` m with ``n2 = n22 = 0``: g12 alone turns."""
+    simu = CNLSE(
+        alpha=0,
+        power=1.0,
+        window=BEAM_WINDOW,
+        n2=0,
+        n12=N2,
+        V=None,
+        L=1e-2,
+        NX=N_GRID,
+        NY=N_GRID,
+        Isat=I_SAT,
+        wvl=WAVELENGTH,
+        backend=backend,
+    )
+    simu.n22 = 0
+    amplitude = np.sqrt(2 * INTENSITY / (c * epsilon_0))
+    A = np.full((2, N_GRID, N_GRID), amplitude, dtype=np.complex64)
+    got = adapt_delta_z(simu, simu._backend.from_numpy(A), 0.0, 0, 1, [])
+    k = 2 * np.pi / WAVELENGTH
+    rate = k * abs(N2) * INTENSITY * CROSS_SATURATION
+    assert got == pytest.approx(1 / (STEPS_PER_LENGTH * rate), rel=STEP_REL_TOL), (
+        f"CNLSE asked for {got} with only n12 set. (Backend {backend})"
     )

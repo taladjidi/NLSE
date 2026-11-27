@@ -355,6 +355,31 @@ class StepSize:
             return 0.0
         return float(np.max(np.abs(V_scaled)))
 
+    def _max_interaction_rate(self, A: np.ndarray) -> float:
+        """Return the fastest interaction rate on the grid, at the field's peak.
+
+        ``|g| |A|^2 / (1 + |A|^2 / Isat)``, maximized over the grid rather than
+        weighted by the field as in ``_energy_rates``. The coupled solvers add
+        the cross coupling.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            Field, possibly on a device.
+
+        Returns
+        -------
+        float
+            The largest rate, in radians per unit of the propagation axis.
+        """
+        # On the host: pyopencl's array has no .max(), and g and Isat are device
+        # arrays once a batched run has been sent.
+        A_host = self._as_host_array(A)
+        A_sq = A_host.real * A_host.real + A_host.imag * A_host.imag
+        g = np.abs(self._as_host_array(self._constant("_g")))
+        Isat = self._as_host_array(self._constant("_Isat_conv"))
+        return float(np.max(g * A_sq / (1 + A_sq / Isat)))
+
     def _rk4_max_dz(self, A: np.ndarray | None = None) -> float:
         """Compute the maximum stable step size for explicit RK4.
 
