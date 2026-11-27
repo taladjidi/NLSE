@@ -2100,7 +2100,9 @@ class NLSE(StepSize):
         if self._backend.broadcasts_parameters_natively:
             for attr in self._gpu_param_attrs:
                 val = getattr(self, attr)
-                if not isinstance(val, (int, float)):
+                # Any host scalar, numpy's included: converted, np.float32 came
+                # back a 0-d array, which the next run took for a batch.
+                if not np.isscalar(val):
                     setattr(self, attr, self._host_value(attr, val))
         self._sent_arrays.clear()
 
