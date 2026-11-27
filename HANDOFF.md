@@ -117,10 +117,31 @@ threading layer decides (`fix/ci-threading-layer-tests`). Still open:
     hour): a push to `main` meanwhile cancels it. Not checked yet: the
     cache on GitHub itself. For the owner: the weekly run also runs the
     test matrix and the benchmark job; gate them on the event if unwanted.
-  - The page review: two specs, `docs/pages_entry.md` (README, index,
-    installation, quick start, contributing, changelog; six patches) and
-    `docs/pages_guide.md` (the guide pages), in the same directory; in spec
-    review. Then the README's headline performance.
+  - The page review: done (`docs/page-review`), 13 pages against the code
+    along Diataxis, one commit a page. Specs, with the decisions left to the
+    owner: `docs/pages_entry.md` (decisions 1-7) and `docs/pages_guide.md`
+    (D1-D5), in the same directory. Two reviewers checked every equation
+    and sign term by term: no CRITICAL. Fixed after review: the methods
+    page said a default step is always inside its limit (it is not, see
+    "Still open"); the README's `gpu` extra and docs build disagreed with
+    the pages it links; `tests/test_doc_claims.py` let 10 of 18 mutants of
+    the pages through and now measures the transform pairs per step from a
+    run and reads a quoted constant across a line break (13 of 13 mutants
+    killed, list in the commit).
+    Not pinned by a test: the equations themselves (LaTeX against the
+    kernels), so a sign flipped on a page is caught by review only.
+    Left as they are, for the owner: the README still carries the install
+    steps and one example (entry decision 1) and its relative links do not
+    resolve on PyPI; the changelog entry does not mention the CuPy wheel
+    correction; `contributing.md` lists the dev group without pytest-cov
+    and pytest-benchmark; no page gives the tests' layout any more;
+    `literature-examples.md` keeps four numbers no script reproduces (Mach
+    0.3 and 2.0 densities, 85 000 singularities, ~30x, 7%); `backends.md`
+    says `NUMBA_THREADING_LAYER` picks the layer, which
+    `NLSE/kernels/cpu.py:14-16` overrides when pyfftw is imported first;
+    the DDGPE equation leaves out `g2`. The CuPy and OpenCL claims of the
+    pages were checked by reading the code, not by a run.
+  - Next: the README's headline performance.
 - CI on `e60e2a4`: all green, the four macOS jobs on a second try (GitHub
   cancelled them the first time for lack of a runner).
 - The CPU blocked step, merged (`7518025`): three passes in
@@ -474,17 +495,34 @@ threading layer decides (`fix/ci-threading-layer-tests`). Still open:
 - `NLSE_3d` never merges its Strang half steps: it stores its frequency
   grid as `self.omega` (`nlse_3d.py:104`), and `_merges_strang_halves`
   (`nlse.py:2330`) reads any `omega` that is not None as a Rabi coupling. A
-  3D Strang run pays two transform pairs a step where one would do. Found
-  by the docs spec review; not fixed, the docs will say it.
+  3D Strang run pays two real-space passes a step where one would do. Found
+  by the docs spec review; not fixed, the docs say it.
+- A run with a callback never merges them either (`_loop_with_callbacks`
+  does not ask): 20 nonlinear calls for 10 Strang steps against 12
+  without, counted on CPU at 64x64. The methods page says so. A batched
+  `n2` counted 20 as well, with `_merges_strang_halves` true; not traced.
 - The default step exceeds the split-step cap on a default 2D run:
   `_default_delta_z` aims at 0.1 rad of potential and interaction only,
   while the cap also takes the dispersion bound, so the quick start and
   the README example warn "delta_z=... exceeds split-step accuracy limit"
   and run at the cap (2.12e-4 m asked, 1.55e-5 m run, at 2048² on a
   window of four waists). A docstring in `step_size.py`
-  (`_capped_delta_z`) says the default is well inside the limit. The 1D
-  quick-start block takes 157,241 steps (54 s on CPU) without a warning.
+  (`_capped_delta_z`) says the default is well inside the limit. RK4's
+  default was inside its limit on the same run (2.28e-5 m, no warning). The
+  1D quick-start block takes 157,241 steps (54 s on CPU) without a warning.
   Found by the docs audit; for the owner.
+- Found by the page review, not fixed: `_loss_max_dz` (`step_size.py`)
+  bounds `2*alpha*dz` by `LOSS_PER_STEP_LIMIT`, so 2.5% of the intensity a
+  step where the constant's comment says 5% (the page quotes the code);
+  `ddgpe.py:165-166` passes `n2=-g` but `n12=g12`; `callbacks.py:314`
+  floors the error controller's step at `simu.L / 1e5`, which is 0 for a
+  GPE (`L=0`); `nlse.py:520` names a `_merged_strang_bracket` that does not
+  exist; the solver docstrings offer a backend `"GPU"`;
+  `docs/make_validation_figure.py` prints 12 step-cap warnings and 2
+  Strang-on-complex128 ones a run.
+- `tests/test_doc_claims.py` globs `docs/**/*.md`, build output included
+  (`docs/_build/html/_static/mathjax/VENDORED.md`), so it runs 93 tests
+  with a built site and 88 without.
 - `evaluate_delta_n` convention: `k/2` or `k`.
 - Setting `simu.wl` does not update `k`.
 - `get_fastest_backend` crashes on a wrong-typed `grid_size`.
