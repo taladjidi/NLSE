@@ -1,6 +1,6 @@
 # Contributing
 
-Contributions are welcome! You can open a pull request or create an issue on the [GitHub repository](https://github.com/taladjidi/NLSE).
+Contributions are welcome! You can open a pull request or create an issue on the [GitHub repository](https://github.com/taladjidi/NLSE), or write to tangui.aladjidi[at]lkb.upmc.fr.
 
 ## Development Setup
 
@@ -79,13 +79,14 @@ uv run pre-commit install
 ```
 
 That installs two hooks. On **commit**, ruff and ty run, well under a second
-together, and ruff fixes what it can. On **push**, the test suite runs. Use
+together, and ruff fixes what it can; a changed `pyproject.toml`, `uv.lock`,
+YAML file or notebook is checked too. On **push**, the test suite runs. Use
 `git commit --no-verify` to skip them on work in progress.
 
-Every hook runs its tool through `uv run --locked`, with the same commands
-listed above: the versions in `uv.lock`, from `.venv`, so another Python or
-an older install of the package earlier on your PATH cannot stand in for
-them. Run them by hand over the whole repository with:
+Every hook but the lock check runs its tool through `uv run --locked`: the
+versions in `uv.lock`, from `.venv`, so another Python or an older install of
+the package earlier on your PATH cannot stand in for them. Run them by hand
+over the whole repository with:
 
 ```bash
 uv run pre-commit run --all-files
@@ -107,28 +108,6 @@ changes only its columns and a new one adds an entry.
 - **Formatter**: ruff (88-character line length)
 - **Docstrings**: NumPy style (`Parameters`, `Returns`, `Raises` sections)
 - **Type checking**: ty, on `NLSE/`, against the baseline in `ty-baseline.json`
-
-## Project Structure
-
-```
-NLSE/
-├── __init__.py          # Public API exports
-├── callbacks.py         # Built-in callback functions
-├── utils.py             # Backend detection utilities
-├── solvers/             # Solver classes (NLSE, GPE, CNLSE, etc.)
-├── kernels/             # Backend-specific numerical kernels
-└── backends/            # Backend abstraction layer
-tests/
-├── solvers/             # Per-solver tests
-├── backends/            # Backend-specific tests
-├── integration/         # Integration tests (broadcasting, nonlocality)
-└── benchmarks/          # Performance benchmarks
-examples/                # Example scripts
-```
-
-## Contact
-
-For questions or issues, contact tangui.aladjidi[at]lkb.upmc.fr or open a GitHub issue.
 
 ## Building the documentation
 
