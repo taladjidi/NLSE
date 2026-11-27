@@ -20,6 +20,10 @@ from scipy.constants import atomic_mass, c, epsilon_0
 
 N = 32
 H_BAR = 0.654
+# |E|^2 in V^2/m^2 to an intensity in W/cm^2: c eps0 / 2, times 1e-4 m^2/cm^2.
+W_PER_CM2 = c * epsilon_0 / 2 * 1e-4
+# The drawn panel is float32: |E|^2 = 1 exactly, times the scale.
+PANEL_RTOL = 1e-6
 
 
 def nlse():
@@ -160,6 +164,17 @@ def test_the_optical_density_is_converted_and_the_quantum_one_is_not():
     assert gpe()._plot_density_scale == 1.0
     assert cnlse()._plot_density_scale == pytest.approx(c * epsilon_0 / 2 * 1e-4)
     assert ddgpe()._plot_density_scale == 1.0
+
+
+def test_the_optical_intensity_panel_is_drawn_in_w_per_cm2():
+    """The panel's values carry the scale, not only the declaration above.
+
+    ``draw`` plots a field of unit modulus, so the intensity panel holds
+    ``W_PER_CM2`` everywhere; unconverted, it would hold 1.
+    """
+    draw(nlse(), 1)
+    panel = plt.gcf().axes[0].images[0].get_array()
+    np.testing.assert_allclose(panel, W_PER_CM2, rtol=PANEL_RTOL)
 
 
 def test_a_figure_is_shown_where_it_can_be(monkeypatch):

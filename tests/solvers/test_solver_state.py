@@ -44,6 +44,27 @@ FAR_RING_WIDTH = 2e-4
 FAR_RING_PEAK = 1e-2
 # Loss in 1/m for the RK4 bound test; any value above zero serves.
 BOUND_ALPHA = 20.0
+# Loss in 1/m and potential as an index change, each the only term of an RK4
+# run without n2: their rates, alpha/2 and (k/2) V, are 400 and 403 rad/m, so
+# each alone sets the default step at 5e-5 m, under the Z / DEFAULT_MIN_STEPS
+# = 2e-4 m bound; without it the step is that bound.
+RK4_TERM_ALPHA = 800.0
+RK4_TERM_V = 1e-4
+# The Gaussian's kinetic rate, 0.025 rad/m, also counts: measured shift of the
+# step from the one-term closed form 6.2e-5 (CPU). Smallest effect: 2x.
+RK4_TERM_RTOL = 2e-4
+# Interaction for the phase-limit tests: its rate, 4.7e3 rad/m, puts the
+# split-step phase limit at 6.7e-4 m, under the 1.6e-2 m dispersion limit of
+# this grid, so the phase limit is the one that binds.
+PHASE_LIMIT_N2 = -1.6e-8
+# Against the closed form for a Gaussian, measured 2.0e-4 (CPU): the window
+# cuts the beam at two waists and the field is float32. Smallest effect: 2x.
+PHASE_LIMIT_RTOL = 1e-3
+# A batch's rate against its strongest member's alone, float32 on both sides:
+# measured 1.6e-7 (CPU). The weakest member's rate is 16x lower.
+BATCH_RATE_RTOL = 1e-6
+# A step far past every limit of this module's grid, in m.
+FAR_PAST_LIMIT = 1.0
 # Coupled RK4 runs, all linear. Uniform potential as an index change, the
 # ratio k2 / k that makes the second component's potential the faster one
 # (1.6e5 rad/m), and a Rabi coupling in rad/m whose half is 5e4 rad/m.
@@ -446,6 +467,29 @@ class TestDefaultStep:
             f"{RK4_PHASE_PER_STEP} rad per step wants {expected:.3e} m"
         )
 
+    @pytest.mark.parametrize(
+        "term",
+        [{"alpha": RK4_TERM_ALPHA}, {"V": RK4_TERM_V}],
+        ids=["loss", "potential"],
+    )
+    def test_the_rk4_step_counts_the_loss_and_the_potential(self, term):
+        """With either as the only term, it alone sets RK4's default step.
+
+        The test above runs without loss or potential, so it reads the same
+        whether RK4 sums every rate or leaves those two out.
+        """
+        if "V" in term:
+            term = {"V": np.full((N, N), term["V"], dtype=np.float32)}
+        simu = make_solver(n2=0.0, **term)
+        used = self.propagate(simu, method="RK4")
+        # Loss rotates at alpha/2, a uniform potential at (k/2) V.
+        rate = RK4_TERM_ALPHA / 2 if "alpha" in term else simu.k / 2 * RK4_TERM_V
+        expected = RK4_PHASE_PER_STEP / rate
+        assert used == pytest.approx(expected, rel=RK4_TERM_RTOL), (
+            f"with {sorted(term)} alone the RK4 step is {used:.3e} m, but a "
+            f"phase of {RK4_PHASE_PER_STEP} rad per step wants {expected:.3e} m"
+        )
+
     def test_rk4_takes_a_shorter_step_than_the_split_step(self):
         """The two no longer share a number, and RK4's is the tighter one."""
         rk4 = self.propagate(make_solver(n2=-1.6e-8), method="RK4")
@@ -749,6 +793,24 @@ class TestStepLimitWithBatchedParameters:
             err_msg="batched limit is not the most restrictive of the batch",
         )
 
+    def test_the_interaction_rate_is_the_strongest_members(self):
+        """A batch's interaction rate is that of its strongest n2 alone.
+
+        The limit test above has the dispersion limit binding at these n2,
+        so it reads the same whichever member the rate is taken from.
+        """
+        simu = make_solver(n2=self.batched_n2())
+        E = self.batched_input(simu)
+        simu._precompute_step_constants(None, np.complex64)
+        strongest = make_solver(n2=float(np.min(self.batched_n2()[:, 0, 0])))
+        strongest._precompute_step_constants(None, np.complex64)
+        batched = simu._energy_rates(E)["interaction"]
+        single = strongest._energy_rates(E[0])["interaction"]
+        assert batched == pytest.approx(single, rel=BATCH_RATE_RTOL), (
+            f"the batch's interaction rate is {batched:.4e} rad/m against "
+            f"{single:.4e} for its strongest member alone"
+        )
+
     @pytest.mark.parametrize("backend_name", list_available_backends())
     def test_batched_run_matches_individual_runs(self, backend_name):
         """Each slice of a batched run must equal running that case alone.
@@ -959,6 +1021,39 @@ class TestStepLimitEnergies:
         simu._precompute_step_constants(V, np.complex64)
         A, _ = simu._prepare_output_array(E, True)
         return simu, A
+
+    def test_the_split_step_limit_is_pi_of_real_space_phase(self):
+        """At the limit one step imprints pi of interaction phase.
+
+        The rate is ``k |n2|`` times the saturated intensity averaged over the
+        beam's own intensity; for a Gaussian of power P, waist w and peak
+        ``I0 = 2 P / (pi w^2)`` that is ``Isat^2 (x - ln(1 + x)) pi w^2 / (2 P)``
+        with ``x = I0 / Isat``.
+        """
+        simu, A = self.prepared(None, n2=PHASE_LIMIT_N2)
+        ratio = 2 * simu.power / (np.pi * waist**2) / simu.I_sat
+        mean = simu.I_sat**2 * (ratio - np.log1p(ratio)) * np.pi * waist**2
+        rate = simu.k * abs(PHASE_LIMIT_N2) * mean / (2 * simu.power)
+        limit = simu._split_step_max_dz(A)
+        assert limit == pytest.approx(np.pi / rate, rel=PHASE_LIMIT_RTOL), (
+            f"the split-step limit is {limit:.4e} m; pi rad at the closed-form "
+            f"rate {rate:.4e} rad/m wants {np.pi / rate:.4e} m"
+        )
+
+    @pytest.mark.parametrize(
+        "method, limit",
+        [("split_step", "_split_step_max_dz"), ("RK4", "_rk4_max_dz")],
+    )
+    def test_a_capped_step_lands_inside_the_limit(self, method, limit):
+        """A step past the limit is lowered strictly below it, not onto it."""
+        simu, A = self.prepared(None, n2=PHASE_LIMIT_N2)
+        with pytest.warns(UserWarning, match="exceeds"):
+            capped = simu._capped_delta_z(FAR_PAST_LIMIT, A, method)
+        bound = getattr(simu, limit)(A)
+        assert 0 < capped < bound, (
+            f"{method}: a {FAR_PAST_LIMIT} m step was capped to {capped:.4e} m "
+            f"against a limit of {bound:.4e} m"
+        )
 
     @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
     def test_rk4_with_a_potential_does_not_diverge(self, backend_name):

@@ -125,6 +125,26 @@ def _gaussian_field_2d(waist: float, x: np.ndarray, y: np.ndarray) -> np.ndarray
     return np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
 
 
+def assert_written(out, before, name):
+    """Fail unless a kernel's output is finite and no longer its input.
+
+    The kernels write in place into copies, so the arrays the test holds stay
+    as they were whatever the kernel does: only the copy it wrote can show
+    one that does nothing.
+
+    Parameters
+    ----------
+    out : np.ndarray
+        The array the kernel wrote into.
+    before : np.ndarray
+        The same array before the kernel ran.
+    name : str
+        Kernel name, for the message.
+    """
+    assert np.all(np.isfinite(out)), f"{name} wrote non-finite values"
+    assert not np.array_equal(out, before), f"{name} left its output as it was"
+
+
 @pytest.mark.benchmark(group="kernels")
 class TestKernelBenchmark:
     """Benchmark individual kernel functions (CPU backend only)."""
@@ -135,10 +155,12 @@ class TestKernelBenchmark:
         A_sq = _random_real_2d()
 
         def kernel():
-            square_mod(A.copy(), A_sq.copy())
+            out = A_sq.copy()
+            square_mod(A.copy(), out)
+            return out
 
-        benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
-        assert np.all(np.isfinite(A_sq))
+        out = benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
+        assert_written(out, A_sq, "square_mod")
 
     def test_nl_prop(self, benchmark):
         """Benchmark nl_prop kernel (with potential)."""
@@ -147,8 +169,9 @@ class TestKernelBenchmark:
         V = _random_real_2d(seed=43)
 
         def kernel():
+            out = A.copy()
             nl_prop(
-                A.copy(),
+                out,
                 A_sq.copy(),
                 dz,
                 alpha_k,
@@ -156,9 +179,10 @@ class TestKernelBenchmark:
                 g_k,
                 Isat_k,
             )
+            return out
 
-        benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
-        assert np.all(np.isfinite(A))
+        out = benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
+        assert_written(out, A, "nl_prop")
 
     def test_nl_prop_without_V(self, benchmark):
         """Benchmark nl_prop_without_V kernel (no potential)."""
@@ -166,17 +190,19 @@ class TestKernelBenchmark:
         A_sq = _random_real_2d()
 
         def kernel():
+            out = A.copy()
             nl_prop_without_V(
-                A.copy(),
+                out,
                 A_sq.copy(),
                 dz,
                 alpha_k,
                 g_k,
                 Isat_k,
             )
+            return out
 
-        benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
-        assert np.all(np.isfinite(A))
+        out = benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
+        assert_written(out, A, "nl_prop_without_V")
 
     def test_nl_prop_c(self, benchmark):
         """Benchmark nl_prop_c kernel (coupled with potential)."""
@@ -187,8 +213,9 @@ class TestKernelBenchmark:
         V = _random_real_2d(seed=46).astype(PRECISION_COMPLEX)
 
         def kernel():
+            out = A1.copy()
             nl_prop_c(
-                A1.copy(),
+                out,
                 A_sq_1.copy(),
                 A_sq_2.copy(),
                 dz,
@@ -199,9 +226,10 @@ class TestKernelBenchmark:
                 Isat_k,
                 Isat_k,
             )
+            return out
 
-        benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
-        assert np.all(np.isfinite(A1))
+        out = benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
+        assert_written(out, A1, "nl_prop_c")
 
     def test_nl_prop_without_V_c(self, benchmark):
         """Benchmark nl_prop_without_V_c kernel (coupled, no potential)."""
@@ -210,8 +238,9 @@ class TestKernelBenchmark:
         A_sq_2 = _random_real_2d(seed=45)
 
         def kernel():
+            out = A1.copy()
             nl_prop_without_V_c(
-                A1.copy(),
+                out,
                 A_sq_1.copy(),
                 A_sq_2.copy(),
                 dz,
@@ -221,9 +250,10 @@ class TestKernelBenchmark:
                 Isat_k,
                 Isat_k,
             )
+            return out
 
-        benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
-        assert np.all(np.isfinite(A1))
+        out = benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
+        assert_written(out, A1, "nl_prop_without_V_c")
 
     def test_rabi_coupling(self, benchmark):
         """Benchmark rabi_coupling kernel."""
@@ -231,11 +261,13 @@ class TestKernelBenchmark:
         A2 = _random_field_2d(seed=43)
 
         def kernel():
-            rabi_coupling(A1.copy(), A2.copy(), dz, omega_k)
+            out1, out2 = A1.copy(), A2.copy()
+            rabi_coupling(out1, out2, dz, omega_k)
+            return out1, out2
 
-        benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
-        assert np.all(np.isfinite(A1))
-        assert np.all(np.isfinite(A2))
+        out1, out2 = benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
+        assert_written(out1, A1, "rabi_coupling")
+        assert_written(out2, A2, "rabi_coupling")
 
 
 @pytest.mark.benchmark(group="solvers-single")

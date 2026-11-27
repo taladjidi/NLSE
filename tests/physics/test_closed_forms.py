@@ -47,10 +47,11 @@ PLANE_N = 64
 # Two cells of that grid. A plane wave is its own local average, so the
 # answer does not change: only the kernels that compute it do.
 NONLOCAL_LENGTH = 2 * WINDOW / PLANE_N  # m
-# Each integrator, and RK4 again through its non-local branch, which calls
-# kernels of its own (NLSE._RK4_rhs).
+# Each integrator, and each again through its non-local branch, which calls
+# kernels of its own: NLSE._RK4_rhs, and nl_prop with |A|^2 passed in.
 PATHS = {
     "split_step": ("split_step", 0),
+    "split_step_nonlocal": ("split_step", NONLOCAL_LENGTH),
     "RK4": ("RK4", 0),
     "RK4_nonlocal": ("RK4", NONLOCAL_LENGTH),
 }
@@ -65,10 +66,24 @@ POTENTIAL_DISTANCE = 5e-3  # m
 POTENTIAL_STEP = 1e-4  # m, as the self-phase test below
 POTENTIAL_PHASE = 1.0  # rad
 POTENTIAL_ABSORPTION = 0.5  # e-folds of intensity
-# Relative tolerances. Measured worst cases over CPU and MLX and the three
-# paths: phase 3.6e-7, intensity 1.04e-5.
+# Relative tolerances. Measured worst cases over CPU and MLX and the four
+# paths, both on MLX split-step, local and non-local alike: phase 3.6e-7,
+# intensity 1.06e-5.
 POTENTIAL_PHASE_RTOL = 1e-3
 POTENTIAL_INTENSITY_RTOL = 1e-4
+
+# Loss, interaction and an absorbing potential at once, over POTENTIAL_DISTANCE
+# at POTENTIAL_STEP, Re V turning the phase by POTENTIAL_PHASE as above.
+MIXED_N2 = -1e-9  # m^2/W, the self-phase test's
+MIXED_KERR_PHASE = 1.0  # rad, k |n2| I0 z at the entrance intensity I0
+MIXED_LOSS = 0.5  # e-folds of intensity alpha takes out
+MIXED_ABSORPTION = 0.1  # e-folds of intensity Im V takes out
+# Measured worst cases over CPU and MLX and the four paths: phase 7.5e-4 rad on
+# split-step, which freezes the Im V decay across a step, and intensity 8.6e-6
+# on MLX. Smallest effects guarded: Im V dropped, 10% of the intensity, and
+# the potential or the self-phase dropped or flipped, 0.75 rad and more.
+MIXED_PHASE_ATOL = 2e-3  # rad
+MIXED_INTENSITY_RTOL = 1e-4
 
 # Factor the wavenumber is changed by between two runs of one solver.
 WAVENUMBER_CHANGE = 0.5
@@ -406,6 +421,57 @@ def test_a_uniform_potential_turns_and_absorbs_a_plane_wave(backend, path):
     ), (
         f"{backend}, {path}: Im V left {kept:.6f} of the intensity against "
         f"exp(-k Im(V) z) = {np.exp(-POTENTIAL_ABSORPTION):.6f}"
+    )
+
+
+@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
+@pytest.mark.parametrize("path", sorted(PATHS))
+def test_loss_interaction_and_potential_act_together_on_a_plane_wave(backend, path):
+    """``I = I0 exp(-gamma z)`` and the phase its self-phase plus ``k Re(V) z / 2``.
+
+    ``alpha`` and ``k Im(V)`` add up to one decay rate ``gamma``, and the
+    self-phase is that of the decaying intensity,
+    ``k n2 I0 (1 - exp(-gamma z)) / gamma``. The tests above take each term
+    alone, so the kernels that carry loss and a potential together, which a
+    run takes only when both are there, are read here.
+    """
+    z = POTENTIAL_DISTANCE
+    probe = solver(backend, NX=PLANE_N, NY=PLANE_N)
+    intensity = MIXED_KERR_PHASE / (probe.k * abs(MIXED_N2) * z)
+    amplitude = float(np.sqrt(2 * intensity / (c * epsilon_0)))
+    potential = (2 * POTENTIAL_PHASE + 1j * MIXED_ABSORPTION) / (probe.k * z)
+    simu, method = plane_wave_solver(
+        backend,
+        path,
+        alpha=MIXED_LOSS / z,
+        n2=MIXED_N2,
+        V=np.full((PLANE_N, PLANE_N), potential, dtype=np.complex64),
+        L=z,
+    )
+    out = to_host(
+        simu,
+        simu.out_field(
+            (amplitude * np.ones((PLANE_N, PLANE_N))).astype(np.complex64),
+            z,
+            delta_z=POTENTIAL_STEP,
+            method=method,
+            verbose=False,
+            plot=False,
+            normalize=False,
+        ),
+    )
+    centre = out[PLANE_N // 2, PLANE_N // 2]
+    decay = MIXED_LOSS + MIXED_ABSORPTION  # gamma z
+    kept = float(np.abs(centre / amplitude) ** 2)
+    assert kept == pytest.approx(np.exp(-decay), rel=MIXED_INTENSITY_RTOL), (
+        f"{backend}, {path}: {kept:.6f} of the intensity is left against "
+        f"exp(-(alpha + k Im V) z) = {np.exp(-decay):.6f}"
+    )
+    expected = POTENTIAL_PHASE - MIXED_KERR_PHASE * (1 - np.exp(-decay)) / decay
+    phase = float(np.angle(centre))
+    assert phase == pytest.approx(expected, abs=MIXED_PHASE_ATOL), (
+        f"{backend}, {path}: the phase is {phase:+.5f} rad against "
+        f"{expected:+.5f} from Re V and the self-phase of the decaying intensity"
     )
 
 

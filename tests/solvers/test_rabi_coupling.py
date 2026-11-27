@@ -12,6 +12,7 @@ import warnings
 
 import numpy as np
 import pytest
+from helpers import ORDERS
 from NLSE import CNLSE, DDGPE, CNLSE_1d
 from scipy.linalg import expm
 
@@ -30,8 +31,7 @@ RATIO_RTOL = 1e-5
 # Plane-wave index along x: it sits well inside the band of either grid.
 MODE_CNLSE = 6
 MODE_DDGPE = 4
-# Expected order of each method; the measured slope is within ORDER_TOL of it.
-ORDERS = {"lie": 1, "strang": 2, "yoshida": 4, "RK4": 4}
+# The measured slope is within ORDER_TOL of each method's ORDERS entry.
 ORDER_TOL = 0.1
 # Step counts for the order: Yoshida reaches its asymptotic order from 16.
 STEPS = {"lie": (8, 16), "strang": (8, 16), "yoshida": (16, 32), "RK4": (8, 16)}
@@ -41,6 +41,11 @@ METHODS = [
     ("yoshida", "split_step"),
     ("lie", "RK4"),
 ]
+# Steps of the lower-polariton test, and its tolerance: measured worst case
+# 5.4e-7 (MLX, float32). A pump frame off by omega / 4 turns the mode by
+# 0.5 rad over T_DD, a change of 0.49 in each unit amplitude.
+POLARITON_STEPS = 8
+POLARITON_ATOL = 5e-6
 
 
 def coupled(cls, backend, n):
@@ -60,8 +65,21 @@ def coupled(cls, backend, n):
     )
 
 
-def ddgpe(backend):
-    """Return a lossless, undriven, interaction-free DDGPE."""
+def ddgpe(backend, detuning=OMEGA_DD / 2):
+    """Return a lossless, undriven, interaction-free DDGPE.
+
+    Parameters
+    ----------
+    backend : str
+        Backend name.
+    detuning : float
+        Pump detuning from the lower polariton, in rad per unit time.
+
+    Returns
+    -------
+    DDGPE
+        The solver.
+    """
     return DDGPE(
         gamma=0,
         power=1,
@@ -71,7 +89,7 @@ def ddgpe(backend):
         T=T_DD,
         omega_exc=W_DD,
         omega_cav=W_DD,
-        detuning=OMEGA_DD / 2,
+        detuning=detuning,
         k_z=1.0,
         NX=32,
         NY=32,
@@ -223,3 +241,19 @@ def test_ddgpe_order_against_closed_form(backend, splitting):
     assert order == pytest.approx(ORDERS[splitting], abs=ORDER_TOL), (
         f"{splitting} converges at order {order:.2f}, errors {errors}"
     )
+
+
+def test_the_lower_polariton_is_at_rest_in_the_pump_frame(backend):
+    """At zero detuning the pump turns at the lower polariton's frequency.
+
+    With equal exciton and cavity energies W that frequency is
+    ``W - omega / 2``, its mode ``(1, -1) / sqrt(2)``, uniform. In the frame
+    of the pump such a field must not move. The order tests above detune by
+    omega / 2 and take the frame from ``simu.omega_pump``, so they agree with
+    any value of it.
+    """
+    simu = ddgpe(backend, detuning=0.0)
+    mode = plane_wave(simu.NX, 0)
+    field = (np.stack([mode, -mode]) / np.sqrt(2)).astype(field_dtype(simu))
+    out = run_ddgpe(simu, field.copy(), POLARITON_STEPS, "strang")
+    np.testing.assert_allclose(out, field, rtol=0, atol=POLARITON_ATOL)

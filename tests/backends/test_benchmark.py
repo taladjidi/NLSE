@@ -22,6 +22,15 @@ STALE_AGE_DAYS = 31
 OLD_CACHE_VERSION = "1"
 CPU_SPEEDUP = 1.0  # the CPU against itself, as benchmark_all_backends computes it
 OTHER_SYSTEM = "Plan9"
+OTHER_PROCESSOR = "pdp11"
+OTHER_GRID = (128, 128)  # not CACHED_GRID
+# Available backends listed against the assumed speed order, slowest first, so
+# that an order kept from this list rather than from the prior shows.
+AGAINST_THE_PRIOR = ["CPU", "CL", "MLX", "CUPY"]
+# The same backends in the prior's order, NLSE/backends/__init__.py:203.
+BY_THE_PRIOR = ["CUPY", "MLX", "CL", "CPU"]
+# A cache timing only the CPU: the CPU first, the others in the prior's order.
+CPU_TIMED_FIRST = ["CPU", "CUPY", "MLX", "CL"]
 NOT_A_BACKEND = "NO_SUCH_BACKEND"
 
 
@@ -281,8 +290,12 @@ class TestCacheLoading:
 
     @pytest.mark.parametrize(
         "written",
-        [{"system": OTHER_SYSTEM, "processor": platform.machine()}, OTHER_SYSTEM],
-        ids=["another_machine", "not_an_object"],
+        [
+            {"system": OTHER_SYSTEM, "processor": platform.machine()},
+            {"system": platform.system(), "processor": OTHER_PROCESSOR},
+            OTHER_SYSTEM,
+        ],
+        ids=["another_machine", "another_processor", "not_an_object"],
     )
     def test_load_rejects_another_platform(self, written):
         """A cache is a statement about the machine that wrote it."""
@@ -343,6 +356,26 @@ class TestCacheLoading:
         assert backends_by_speed(tuple(CACHED_GRID)) == sorted(
             list_available_backends(), key=_assumed_rank
         )
+
+    def test_a_cache_at_another_grid_is_not_believed(self, monkeypatch):
+        """A time measured at one grid says nothing about another one.
+
+        The cache times only the CPU, last in the prior; believed, it would
+        put it first.
+        """
+        monkeypatch.setattr(
+            "NLSE.backends.list_available_backends", lambda: AGAINST_THE_PRIOR
+        )
+        write_cache(json.dumps(valid_cache_record()))
+        assert backends_by_speed(OTHER_GRID) == BY_THE_PRIOR
+
+    def test_untimed_backends_follow_the_prior(self, monkeypatch):
+        """Backends the cache has no time for come after it, in the prior's order."""
+        monkeypatch.setattr(
+            "NLSE.backends.list_available_backends", lambda: AGAINST_THE_PRIOR
+        )
+        write_cache(json.dumps(valid_cache_record()))
+        assert backends_by_speed(tuple(CACHED_GRID)) == CPU_TIMED_FIRST
 
     def test_a_cached_name_that_is_no_backend_is_measured_again(self):
         """A fastest backend this install does not have is not handed back."""

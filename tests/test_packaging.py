@@ -290,6 +290,35 @@ def test_the_wheel_publishes_only_the_backend_extras(wheel_path):
     )
 
 
+def ignored_package_dirs() -> tuple[str, ...]:
+    """Return the .gitignore entries under NLSE/, which hatchling leaves out.
+
+    Returns
+    -------
+    tuple of str
+        Entries such as ``NLSE/kernels/metal/``, as written in .gitignore.
+    """
+    # shortcut: literal NLSE/ prefixes only; use pathspec if globs appear there.
+    lines = (PROJECT_ROOT / ".gitignore").read_text().splitlines()
+    return tuple(line.strip() for line in lines if line.startswith("NLSE/"))
+
+
+def test_every_source_module_is_packaged(wheel_contents):
+    """A module left out imports on an editable install and fails on a real one.
+
+    Sources .gitignore excludes, such as a local Metal backend, are not
+    shipped on purpose (hatchling reads .gitignore, with or without git).
+    """
+    source = {
+        path.relative_to(PROJECT_ROOT).as_posix()
+        for path in (PROJECT_ROOT / "NLSE").rglob("*.py")
+        if "__pycache__" not in path.parts
+    }
+    source = {name for name in source if not name.startswith(ignored_package_dirs())}
+    missing = sorted(source - set(wheel_contents))
+    assert not missing, f"left out of the wheel: {missing}" + _cause_hint()
+
+
 def test_cache_dir_is_outside_the_installed_package(tmp_path, monkeypatch):
     """The runtime cache must never be written inside the package directory.
 
