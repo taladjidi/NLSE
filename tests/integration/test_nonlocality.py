@@ -2,15 +2,13 @@ import warnings
 
 import numpy as np
 import pytest
+from helpers import AVAILABLE_BACKENDS
 from NLSE import CNLSE, GPE, NLSE, CNLSE_1d, NLSE_1d, NLSE_3d
-from NLSE.backends import get_backend, list_available_backends
+from NLSE.backends import get_backend
 from scipy.constants import c, epsilon_0
 
 PRECISION_COMPLEX = np.complex64
 
-# The non-local response is a product in Fourier space, which every backend
-# has: none of them hands a non-local run to another.
-AVAILABLE_BACKENDS = list_available_backends()
 
 # The medium of the non-local runs below: about a radian of nonlinear phase
 # over the cell. Enough that the smoothing changes the answer, little enough
@@ -40,7 +38,6 @@ LONG_LENGTH = 5 * RESPONSE_WINDOW / RESPONSE_N
 RESPONSE_ATOL_FRACTION = 1e-6
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_a_non_local_run_stays_on_the_backend_asked_for(backend):
     """No backend lacks what non-locality needs, so none is swapped, silently or not."""
     with warnings.catch_warnings():
@@ -62,7 +59,6 @@ def test_a_non_local_run_stays_on_the_backend_asked_for(backend):
     assert simu.nl_length == 60e-6
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_a_length_below_one_cell_is_kept(backend):
     """The response is exact at any length, so a sub-cell one is not dropped.
 
@@ -250,7 +246,6 @@ def test_nonlocality():
         )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_a_three_dimensional_run_can_be_non_local(backend):
     """NLSE_3d smooths across the beam and runs to the end.
 
@@ -329,7 +324,6 @@ def smoothed_run(simu, splitting="lie"):
     return np.asarray(simu._backend.to_numpy(out))
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_a_new_length_is_a_new_response(backend):
     """Changing ``nl_length`` between runs smooths at the new length.
 

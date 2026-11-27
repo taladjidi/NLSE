@@ -11,11 +11,8 @@ against, and the fallback wherever the device one cannot apply.
 
 import numpy as np
 import pytest
-from helpers import make
+from helpers import AVAILABLE_BACKENDS, make
 from NLSE import CNLSE, NLSE, CNLSE_1d, NLSE_1d
-from NLSE.backends import list_available_backends
-
-AVAILABLE_BACKENDS = list_available_backends()
 
 N = 64
 L = 1e-3

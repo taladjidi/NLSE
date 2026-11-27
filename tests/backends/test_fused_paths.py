@@ -28,9 +28,9 @@ exception is noted where it is asserted.
 
 import numpy as np
 import pytest
-from helpers import gaussian as beam, make as build
+from helpers import AVAILABLE_BACKENDS, gaussian as beam, make as build
 from NLSE import CNLSE, NLSE, CNLSE_1d, NLSE_1d
-from NLSE.backends import get_backend, list_available_backends
+from NLSE.backends import get_backend
 
 # Every flag that puts a step on a shorter path than the generic one. A level
 # is defined by which of these are left on, so a new capability has to be
@@ -51,7 +51,6 @@ LEVELS = {
     "generic": (),
 }
 
-AVAILABLE_BACKENDS = list_available_backends()
 FUSED_BACKENDS = [
     name
     for name in AVAILABLE_BACKENDS

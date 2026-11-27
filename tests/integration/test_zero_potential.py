@@ -15,10 +15,8 @@ also what pins the generation itself.
 
 import numpy as np
 import pytest
+from helpers import AVAILABLE_BACKENDS
 from NLSE import CNLSE, GPE, NLSE
-from NLSE.backends import list_available_backends
-
-AVAILABLE_BACKENDS = list_available_backends()
 
 N = 64
 WAIST = 2.23e-3

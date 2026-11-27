@@ -18,12 +18,10 @@ chaotic problem is in the first of those within a few steps.
 
 import numpy as np
 import pytest
-from helpers import make
+from helpers import AVAILABLE_BACKENDS, make
 from NLSE import NLSE
-from NLSE.backends import get_backend, list_available_backends
+from NLSE.backends import get_backend
 from NLSE.kernels.cpu import _LOSS_SOLVED_LIMIT
-
-AVAILABLE_BACKENDS = list_available_backends()
 
 N = 32
 WAIST = 2.23e-3

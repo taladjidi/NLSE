@@ -10,10 +10,9 @@ the run itself.
 
 import numpy as np
 import pytest
+from helpers import AVAILABLE_BACKENDS
 from NLSE import CNLSE, NLSE
-from NLSE.backends import list_available_backends
 
-AVAILABLE_BACKENDS = list_available_backends()
 # Every ordered pair of distinct backends; empty, so skipped, with only one.
 SWITCHES = [(a, b) for a in AVAILABLE_BACKENDS for b in AVAILABLE_BACKENDS if a != b]
 
@@ -132,7 +131,6 @@ def test_a_switched_solver_takes_a_fresh_solvers_rk4_step(first, second):
     np.testing.assert_array_equal(rk4_step(switched), rk4_step(solver(second)))
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_a_coupled_run_leaves_no_second_potential(backend):
     """CNLSE's scaled second potential ends with the run, and a switch keeps it so."""
     simu = solver(backend, cls=CNLSE, n12=0, V=np.zeros((N, N), dtype=np.float32))

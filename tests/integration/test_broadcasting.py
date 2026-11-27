@@ -19,13 +19,13 @@ here rather than skipping, so the four implementations cannot drift apart:
 
 import numpy as np
 import pytest
+from helpers import AVAILABLE_BACKENDS
 from NLSE import CNLSE, NLSE, CNLSE_1d
-from NLSE.backends import get_backend, list_available_backends
+from NLSE.backends import get_backend
 from NLSE.kernels import cpu as cpu_kernels
 
 PRECISION_COMPLEX = np.complex64
 
-AVAILABLE_BACKENDS = list_available_backends()
 # Every backend can run a non-local response.
 NONLOCAL_BACKENDS = AVAILABLE_BACKENDS
 

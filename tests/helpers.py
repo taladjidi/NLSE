@@ -6,8 +6,10 @@ which is what previously left the MLX paths uncovered.
 """
 
 import numpy as np
+from NLSE.backends import list_available_backends
 
 PRECISION_COMPLEX = np.complex64
+AVAILABLE_BACKENDS = list_available_backends()
 
 # Convergence order of each splitting and of RK4: the slope
 # tests/solvers/test_rabi_coupling.py measures and the README's table states.

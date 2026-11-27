@@ -15,10 +15,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.backend_bases import MouseEvent
 from NLSE import CNLSE, NLSE, NLSE_3d
-from NLSE.backends import list_available_backends
 from scipy.constants import c
-
-AVAILABLE_BACKENDS = list_available_backends()
 
 N = 32
 NZ = 16  # time samples of NLSE_3d, a power of two for the FFT
@@ -190,7 +187,6 @@ def plotted_images(simu, field):
     return [axes.images[0] for axes in plt.gcf().axes if axes.images]
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize(
     "build,components,real_panels", [(nlse, 1, 2), (cnlse, 2, 4), (nlse_3d, 1, 2)]
 )
@@ -209,7 +205,6 @@ def test_a_spot_is_drawn_where_it_is(backend, build, components, real_panels):
     plt.close("all")
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_a_tilt_is_drawn_at_its_wavevector(backend):
     """The Fourier panel shows a tilted plane wave at its ``(kx, ky)``."""
     simu = nlse(backend)
@@ -221,7 +216,6 @@ def test_a_tilt_is_drawn_at_its_wavevector(backend):
     plt.close("all")
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_a_pulse_is_drawn_where_it_is_in_the_xt_panels(backend):
     """Both NLSE_3d ``xt`` panels show a pulse at its position and time.
 
@@ -245,7 +239,6 @@ def test_a_pulse_is_drawn_where_it_is_in_the_xt_panels(backend):
     plt.close("all")
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("NX,NY", OBLONG)
 def test_the_xt_panels_hold_x_and_t_on_a_grid_that_is_not_square(backend, NX, NY):
     """Both NLSE_3d ``xt`` panels are ``x`` by ``t``, cut at the middle row.

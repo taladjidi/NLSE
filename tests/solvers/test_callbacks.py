@@ -23,6 +23,7 @@ import warnings
 
 import numpy as np
 import pytest
+from helpers import AVAILABLE_BACKENDS
 from NLSE import (
     NLSE,
     adapt_delta_z,
@@ -32,10 +33,7 @@ from NLSE import (
     norm,
     sample,
 )
-from NLSE.backends import list_available_backends
 from scipy.constants import c, epsilon_0
-
-AVAILABLE_BACKENDS = list_available_backends()
 
 N = 32
 WAIST = 2.23e-3

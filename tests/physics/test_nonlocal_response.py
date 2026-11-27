@@ -22,10 +22,7 @@ factor along one of the two axes.
 import numpy as np
 import pytest
 from NLSE import CNLSE, NLSE, CNLSE_1d, NLSE_1d, NLSE_3d
-from NLSE.backends import list_available_backends
 from scipy.constants import c, epsilon_0
-
-AVAILABLE_BACKENDS = list_available_backends()
 
 WVL = 780e-9  # m, the solvers' default wavelength
 DZ = 1e-3  # m, the step the nonlinear phase is taken over
@@ -111,7 +108,6 @@ def make_3d(backend, nl_length):
     )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("method", METHODS)
 def test_a_local_step_gives_the_self_phase_of_its_intensity(backend, method):
     """At nl_length = 0 the phase is ``k n2 I dz``, ``I = c eps0 |A|^2 / 2``."""
@@ -123,7 +119,6 @@ def test_a_local_step_gives_the_self_phase_of_its_intensity(backend, method):
     )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("make", [make_1d, make_2d, make_3d], ids=["1d", "2d", "3d"])
 @pytest.mark.parametrize("method", METHODS)
 def test_a_uniform_field_takes_the_local_phase_everywhere(backend, make, method):
@@ -136,7 +131,6 @@ def test_a_uniform_field_takes_the_local_phase_everywhere(backend, make, method)
     assert np.ptp(phase) <= RTOL * PHASE, "the phase is not the same everywhere"
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("axis", ["x", "y"])
 @pytest.mark.parametrize("method", METHODS)
 def test_a_modulation_is_reduced_by_the_response_2d(backend, axis, method):
@@ -150,7 +144,6 @@ def test_a_modulation_is_reduced_by_the_response_2d(backend, axis, method):
     assert ratio == pytest.approx(response(q), rel=RTOL)
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("method", METHODS)
 def test_a_modulation_is_reduced_by_the_response_1d(backend, method):
     """The 1D solver smooths with the 1D form of the same response."""
@@ -162,7 +155,6 @@ def test_a_modulation_is_reduced_by_the_response_1d(backend, method):
     assert ratio == pytest.approx(response(q), rel=RTOL)
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("axis", ["x", "y", "t"])
 @pytest.mark.parametrize("method", METHODS)
 def test_a_modulation_is_reduced_by_the_transverse_response_3d(backend, axis, method):
@@ -181,7 +173,6 @@ def test_a_modulation_is_reduced_by_the_transverse_response_3d(backend, axis, me
     assert ratio == pytest.approx(expected, rel=RTOL)
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("method", METHODS)
 def test_a_batch_is_smoothed_member_by_member(backend, method):
     """A batch shares one response, and each member gets its own smoothing."""
@@ -235,7 +226,6 @@ def coupled_case(backend, cls):
     return simu, np.array([first, second]), smoothed
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("cls", [CNLSE, CNLSE_1d], ids=lambda cls: cls.__name__)
 def test_each_component_of_a_coupled_field_is_smoothed(backend, cls):
     """The coupled solvers smooth both intensities with the same response."""
@@ -246,7 +236,6 @@ def test_each_component_of_a_coupled_field_is_smoothed(backend, cls):
         np.testing.assert_allclose(to_host(simu, smoothed), closed_form, atol=RTOL)
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("cls", [CNLSE, CNLSE_1d], ids=lambda cls: cls.__name__)
 def test_the_coupled_rk4_rate_takes_both_smoothed_intensities(backend, cls):
     """With n12 = n2, each component's RK4 phase is PHASE (I1 + I2), smoothed."""

@@ -9,9 +9,6 @@ back the same way. A field of the wrong type or shape failed on a bare
 import numpy as np
 import pytest
 from NLSE import NLSE
-from NLSE.backends import list_available_backends
-
-AVAILABLE_BACKENDS = list_available_backends()
 
 N = 32
 WINDOW = 4e-3  # m
@@ -63,7 +60,6 @@ def run(simu, field):
     simu.out_field(field, Z, verbose=False, plot=False, normalize=False)
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_the_potential_comes_back_as_the_array_given(backend):
     """``simu.V`` is the caller's float64 array after the run, not a copy."""
     simu = solver(backend)
@@ -73,7 +69,6 @@ def test_the_potential_comes_back_as_the_array_given(backend):
     assert simu.V is potential, f"{backend}: V came back as {simu.V.dtype}"
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_a_batched_parameter_comes_back_as_the_array_given(backend):
     """A batched ``n2`` is the caller's array after the run, not a copy."""
     n2 = np.array(BATCH_N2).reshape(len(BATCH_N2), 1, 1)
@@ -82,14 +77,12 @@ def test_a_batched_parameter_comes_back_as_the_array_given(backend):
     assert simu.n2 is n2, f"{backend}: n2 came back as {simu.n2.dtype}"
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_a_real_field_is_refused_with_a_type_error(backend):
     """A float32 field raises TypeError, which survives ``python -O``."""
     with pytest.raises(TypeError, match="complex64 or complex128"):
         run(solver(backend), np.ones((N, N), dtype=np.float32))
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_a_field_off_the_grid_is_refused_with_a_value_error(backend):
     """A field whose last axes are not the grid's raises ValueError."""
     with pytest.raises(ValueError, match="does not end in the grid's"):

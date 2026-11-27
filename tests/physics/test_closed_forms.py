@@ -32,11 +32,9 @@ import numpy as np
 import pytest
 from helpers import gaussian_beam
 from NLSE import NLSE, NLSE_1d, NLSE_3d
-from NLSE.backends import get_backend, list_available_backends
+from NLSE.backends import get_backend
 from scipy.constants import c, epsilon_0
 from scipy.optimize import brentq
-
-AVAILABLE_BACKENDS = list_available_backends()
 
 N = 256
 WINDOW = 4e-3
@@ -195,7 +193,6 @@ def waist_of(intensity, xx, yy):
     return float(np.sqrt(2 * np.sum(intensity * (xx**2 + yy**2)) / total))
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("z_over_zr", [0.5, 1.0, 2.0])
 def test_a_gaussian_beam_diffracts_at_the_rate_diffraction_theory_gives(
     backend, z_over_zr
@@ -234,7 +231,6 @@ def test_a_gaussian_beam_diffracts_at_the_rate_diffraction_theory_gives(
     )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_the_on_axis_phase_is_the_gouy_phase(backend):
     """``-arctan(z/zR)``, which the intensity above cannot see.
 
@@ -264,7 +260,6 @@ def test_the_on_axis_phase_is_the_gouy_phase(backend):
         )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_a_grating_revives_at_the_talbot_distance(backend):
     """Self-imaging at ``z_T = k d^2 / pi``, and not before it.
 
@@ -302,7 +297,6 @@ def test_a_grating_revives_at_the_talbot_distance(backend):
     )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("alpha", [5.0, 20.0])
 @pytest.mark.parametrize("path", sorted(PATHS))
 def test_the_intensity_follows_beer_law(backend, alpha, path):
@@ -340,7 +334,6 @@ def test_the_intensity_follows_beer_law(backend, alpha, path):
         )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("saturation", [1.0, 0.25], ids=["I_sat=I", "I_sat=I/4"])
 @pytest.mark.parametrize("path", sorted(PATHS))
 def test_self_phase_modulation_saturates_as_the_model_says(backend, saturation, path):
@@ -378,7 +371,6 @@ def test_self_phase_modulation_saturates_as_the_model_says(backend, saturation, 
     )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("path", sorted(PATHS))
 def test_a_uniform_potential_turns_and_absorbs_a_plane_wave(backend, path):
     """``A(z) = exp(i k V z / 2)``: the potential enters as ``-(k/2) V``.
@@ -424,7 +416,6 @@ def test_a_uniform_potential_turns_and_absorbs_a_plane_wave(backend, path):
     )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("path", sorted(PATHS))
 def test_loss_interaction_and_potential_act_together_on_a_plane_wave(backend, path):
     """``I = I0 exp(-gamma z)`` and the phase its self-phase plus ``k Re(V) z / 2``.
@@ -475,7 +466,6 @@ def test_loss_interaction_and_potential_act_together_on_a_plane_wave(backend, pa
     )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("method", ["split_step", "RK4"])
 def test_a_new_wavenumber_diffracts_at_its_own_rate(backend, method):
     """A solver keeps its propagators, so the key has to hold ``k``.
@@ -510,7 +500,6 @@ def test_a_new_wavenumber_diffracts_at_its_own_rate(backend, method):
         )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_rk4_left_to_choose_its_step_diffracts_at_the_closed_form_rate(backend):
     """RK4 bounds its step by the grid's fastest mode, not by the beam's.
 
@@ -538,7 +527,6 @@ def test_rk4_left_to_choose_its_step_diffracts_at_the_closed_form_rate(backend):
     )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_a_pulse_disperses_as_the_chirped_gaussian(backend):
     """The documented ``i dA/dz = (D0/2) d^2A/dt^2``, as a chirped Gaussian.
 
@@ -578,7 +566,6 @@ def test_a_pulse_disperses_as_the_chirped_gaussian(backend):
     )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_a_lossy_saturable_step_obeys_the_identity_it_is_solved_from(backend):
     """The physics behind the solved real-space step, not its convergence.
 
@@ -635,7 +622,6 @@ def test_a_lossy_saturable_step_obeys_the_identity_it_is_solved_from(backend):
     )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_a_bright_soliton_keeps_its_shape(backend):
     """Diffraction and self-focusing cancel, or they do not.
 

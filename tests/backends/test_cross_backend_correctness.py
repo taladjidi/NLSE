@@ -5,6 +5,7 @@ Also validates CPU backend internals (FFT plans, propagator, conservation laws).
 """
 
 import matplotlib
+from helpers import AVAILABLE_BACKENDS
 
 matplotlib.use("Agg")  # non-interactive backend for plot tests
 
@@ -12,10 +13,8 @@ import numpy as np
 import pytest
 from helpers import as_numpy, make
 from NLSE import CNLSE, GPE, NLSE, CNLSE_1d, NLSE_1d, NLSE_3d
-from NLSE.backends import list_available_backends
 from scipy.constants import c, epsilon_0
 
-AVAILABLE_BACKENDS = list_available_backends()
 GPU_BACKENDS = [b for b in AVAILABLE_BACKENDS if b != "CPU"]
 
 PRECISION_COMPLEX = np.complex64
@@ -106,7 +105,6 @@ class TestCPUCorrectness:
         )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_power_conservation(backend):
     """Propagation with alpha=0 conserves the norm."""
     simu = make_nlse(backend, alpha=0)
@@ -200,7 +198,6 @@ def test_cnlse_matches_the_cpu(backend, case):
     )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("with_V", [False, True], ids=["no_V", "V"])
 def test_split_step_vs_rk4(backend, with_V):
     """Split-step and RK4 converge to same result."""
@@ -219,7 +216,6 @@ def test_split_step_vs_rk4(backend, with_V):
     )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("with_V", [False, True], ids=["no_V", "V"])
 def test_cnlse_split_step_vs_rk4(backend, with_V):
     """CNLSE split-step and RK4 converge to same result, at weak nonlinearity."""
@@ -798,7 +794,6 @@ class TestPlotField:
         plt.close("all")
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 class TestPropagatorMatchesFieldDtype:
     """The propagator must carry the same dtype as the field it multiplies.
 

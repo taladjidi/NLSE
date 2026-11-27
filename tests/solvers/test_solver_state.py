@@ -7,7 +7,7 @@ state has to be refreshed rather than silently reused.
 
 import numpy as np
 import pytest
-from helpers import as_numpy, make
+from helpers import AVAILABLE_BACKENDS, as_numpy, make
 from NLSE import CNLSE, DDGPE, GPE, NLSE
 from NLSE.backends import get_backend, list_available_backends
 from NLSE.callbacks import adapt_delta_z
@@ -21,7 +21,6 @@ from scipy.constants import atomic_mass
 
 PRECISION_COMPLEX = np.complex64
 
-AVAILABLE_BACKENDS = list_available_backends()
 # Backends whose solvers bypass apply_propagator for the fused linear step.
 LINEAR_STEP_BACKENDS = [
     name for name in AVAILABLE_BACKENDS if get_backend(name).has_linear_step

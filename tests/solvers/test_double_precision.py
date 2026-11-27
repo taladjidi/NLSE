@@ -15,10 +15,8 @@ unaffected, which is why the suite stayed green: no test ran RK4 in double.
 
 import numpy as np
 import pytest
+from helpers import AVAILABLE_BACKENDS
 from NLSE import CNLSE, GPE, NLSE, CNLSE_1d, NLSE_1d
-from NLSE.backends import list_available_backends
-
-AVAILABLE_BACKENDS = list_available_backends()
 
 N = 32
 L = 1e-3

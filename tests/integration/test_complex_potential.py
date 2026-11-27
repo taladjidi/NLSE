@@ -16,10 +16,9 @@ the instruction stream it always had.
 
 import numpy as np
 import pytest
+from helpers import AVAILABLE_BACKENDS
 from NLSE import NLSE
-from NLSE.backends import get_backend, list_available_backends
-
-AVAILABLE_BACKENDS = list_available_backends()
+from NLSE.backends import get_backend
 
 N = 64
 WAIST = 2.23e-3

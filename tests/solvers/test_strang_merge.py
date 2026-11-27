@@ -17,11 +17,8 @@ hold changes the answer without failing anything else.
 
 import numpy as np
 import pytest
-from helpers import make
+from helpers import AVAILABLE_BACKENDS, make
 from NLSE import CNLSE, NLSE
-from NLSE.backends import list_available_backends
-
-AVAILABLE_BACKENDS = list_available_backends()
 
 N = 64
 L = 1e-3

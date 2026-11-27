@@ -12,8 +12,9 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from helpers import AVAILABLE_BACKENDS
 from NLSE import NLSE
-from NLSE.backends import Backend, get_backend, list_available_backends
+from NLSE.backends import Backend, get_backend
 from NLSE.backends.backend import Timing
 from scipy.constants import c, epsilon_0
 
@@ -51,8 +52,6 @@ REQUIRED_METHODS = [
     "rk4_nl_rhs_c",
     "rk4_nl_rhs_c_v",
 ]
-
-AVAILABLE_BACKENDS = list_available_backends()
 
 
 def test_every_capability_is_declared_on_the_base_class():

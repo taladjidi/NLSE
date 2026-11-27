@@ -14,10 +14,7 @@ potential scale ``k / 2`` of ``NLSE._step_constants``.
 import numpy as np
 import pytest
 from NLSE import CNLSE, NLSE
-from NLSE.backends import list_available_backends
 from scipy.constants import c, epsilon_0
-
-AVAILABLE_BACKENDS = list_available_backends()
 
 N = 32
 WINDOW = 4e-3  # m
@@ -151,7 +148,6 @@ def phase_after_one_step(simu, field, V):
     return np.angle(np.asarray(backend.to_numpy(out))[..., N // 2, N // 2])
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("factor", [0, 1, 2])
 def test_a_step_after_a_run_takes_the_potential_it_is_given(backend, factor):
     """``V`` times ``factor`` writes ``factor`` times ``PHASE``; 0 is no ``V``."""
@@ -164,7 +160,6 @@ def test_a_step_after_a_run_takes_the_potential_it_is_given(backend, factor):
     assert got == pytest.approx(factor * PHASE, abs=TOLERANCE)
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_a_step_after_a_run_past_the_medium_keeps_the_coupling(backend):
     """The run left the medium; the step by hand still has ``k n2 I dz``."""
     simu = solver(backend, n2=N2)
@@ -176,7 +171,6 @@ def test_a_step_after_a_run_past_the_medium_keeps_the_coupling(backend):
     assert got == pytest.approx(simu.k * N2 * intensity * DELTA_Z, abs=TOLERANCE)
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_a_step_after_a_failed_run_takes_no_potential(backend):
     """A run that raised leaves no potential behind either."""
     simu = solver(backend)
@@ -187,7 +181,6 @@ def test_a_step_after_a_failed_run_takes_no_potential(backend):
     assert phase_after_one_step(simu, field, None) == pytest.approx(0, abs=TOLERANCE)
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_a_coupled_step_after_a_run_takes_no_potential(backend):
     """Neither component of a CNLSE keeps the run's potential."""
     simu = solver(backend, cls=CNLSE)

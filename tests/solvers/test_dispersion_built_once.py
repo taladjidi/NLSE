@@ -9,9 +9,6 @@ key they are kept under.
 import numpy as np
 import pytest
 from NLSE import NLSE
-from NLSE.backends import list_available_backends
-
-AVAILABLE_BACKENDS = list_available_backends()
 
 N = 32
 WAIST = 2.23e-3  # m
@@ -52,7 +49,6 @@ def make_solver(backend):
     )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("delta_z", [None, DELTA_Z])
 def test_repeated_runs_build_the_dispersion_eigenvalues_once(
     backend, delta_z, monkeypatch
@@ -70,7 +66,6 @@ def test_repeated_runs_build_the_dispersion_eigenvalues_once(
     assert len(builds) == 1
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_a_new_wavenumber_rebuilds_them(backend):
     """Built once per wavenumber: after k changes, the rate is ``K^2 / (2 k)``."""
     simu = make_solver(backend)

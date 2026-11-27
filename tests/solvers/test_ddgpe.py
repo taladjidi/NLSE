@@ -1,13 +1,11 @@
 import numpy as np
 import pytest
-from helpers import as_numpy, assert_c_contiguous
+from helpers import AVAILABLE_BACKENDS, as_numpy, assert_c_contiguous
 from NLSE import DDGPE
-from NLSE.backends import list_available_backends
 
 if DDGPE.__CUPY_AVAILABLE__:
     import cupy as cp
 
-AVAILABLE_BACKENDS = list_available_backends()
 
 PRECISION_COMPLEX = np.complex64
 

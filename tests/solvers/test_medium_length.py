@@ -18,10 +18,7 @@ import warnings
 import numpy as np
 import pytest
 from NLSE import NLSE
-from NLSE.backends import list_available_backends
 from scipy.constants import c, epsilon_0
-
-AVAILABLE_BACKENDS = list_available_backends()
 
 N = 16
 WINDOW = 1e-2  # m; coarse enough that dispersion does not cap the steps below
@@ -114,7 +111,6 @@ def record_step(simu, A, z, i, steps):
     steps.append(simu._current_delta_z)
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("scheme", SCHEMES)
 @pytest.mark.parametrize("delta_z", [3e-3, 4e-3, 1e-3, -3e-3])
 def test_the_medium_imprints_its_phase_over_l(backend, scheme, delta_z):
@@ -129,7 +125,6 @@ def test_the_medium_imprints_its_phase_over_l(backend, scheme, delta_z):
     )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("scheme", SCHEMES)
 @pytest.mark.parametrize("delta_z", [1e-3, -1e-3])
 def test_a_step_grown_by_a_callback_is_cut_at_l(backend, scheme, delta_z):
@@ -149,7 +144,6 @@ def test_a_step_grown_by_a_callback_is_cut_at_l(backend, scheme, delta_z):
     )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("scheme", SCHEMES)
 @pytest.mark.parametrize("delta_z", [3e-3, -3e-3])
 def test_callbacks_see_the_step_just_taken(backend, scheme, delta_z):
@@ -167,7 +161,6 @@ def test_callbacks_see_the_step_just_taken(backend, scheme, delta_z):
     )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("scheme", SCHEMES)
 @pytest.mark.parametrize("delta_z", [3e-3, 4e-3])
 def test_absorption_stops_at_l(backend, scheme, delta_z):

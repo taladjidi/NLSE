@@ -14,9 +14,6 @@ from unittest import mock
 import numpy as np
 import pytest
 from NLSE import NLSE
-from NLSE.backends import list_available_backends
-
-AVAILABLE_BACKENDS = list_available_backends()
 
 N = 32
 WINDOW = 1e-2  # m
@@ -85,7 +82,6 @@ def return_step(simu, A, z, i, step):
     return step
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("delta_z", [1e-4j, complex(1e-4, 0), np.complex64(1e-4)])
 def test_a_complex_step_is_refused(backend, delta_z):
     """Imaginary time is not supported, and says so rather than crashing."""
@@ -94,7 +90,6 @@ def test_a_complex_step_is_refused(backend, delta_z):
         simu.out_field(beam(simu), L, delta_z=delta_z, verbose=False)
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_a_list_of_callbacks_runs_with_default_arguments(backend):
     """Each callback of a list is called at every step, at the field's position."""
     simu = solver(backend)
@@ -114,7 +109,6 @@ def test_a_list_of_callbacks_runs_with_default_arguments(backend):
     assert second == pytest.approx(expected), f"second callback saw {second}"
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_a_list_of_callbacks_with_too_few_arguments_is_refused(backend):
     """Arguments given for a list must still come one tuple per callback."""
     simu = solver(backend)
@@ -129,7 +123,6 @@ def test_a_list_of_callbacks_with_too_few_arguments_is_refused(backend):
         )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("delta_z", [0.0, math.nan, math.inf, -math.inf])
 @pytest.mark.parametrize("callback", [None, fail_if_endless])
 def test_a_step_that_is_zero_or_not_finite_is_refused(backend, delta_z, callback):
@@ -139,7 +132,6 @@ def test_a_step_that_is_zero_or_not_finite_is_refused(backend, delta_z, callback
         simu.out_field(beam(simu), L, delta_z=delta_z, verbose=False, callback=callback)
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("z", [math.nan, math.inf])
 def test_a_distance_that_is_not_finite_is_refused(backend, z):
     """A NaN distance returned the input; an infinite one never returned."""
@@ -150,7 +142,6 @@ def test_a_distance_that_is_not_finite_is_refused(backend, z):
         )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize(
     "returned, error",
     [(0.0, ValueError), (math.nan, ValueError), (1e-4j, TypeError)],
@@ -169,7 +160,6 @@ def test_a_callback_cannot_return_what_out_field_refuses(backend, returned, erro
         )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("z, delta_z, count", STEP_COUNTS)
 @pytest.mark.parametrize("direction", [1, -1])
 def test_round_off_neither_drops_a_step_nor_adds_a_sliver(
@@ -191,7 +181,6 @@ def test_round_off_neither_drops_a_step_nor_adds_a_sliver(
     assert end == pytest.approx(direction * z, rel=1e-12), f"ended at {end!r} m"
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("callback", [None, fail_if_endless])
 def test_a_distance_of_whole_steps_takes_no_cut_one(backend, callback):
     """Three steps cover 0.3e-3 m, though the quotient is 2.9999999999999996."""
