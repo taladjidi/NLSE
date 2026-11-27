@@ -108,6 +108,7 @@ CASES = [
     ("coupled", CNLSE, (2, N, N), {}),
     ("coupled RK4", CNLSE, (2, N, N), {"method": "RK4"}),
     ("batched", NLSE, (3, N, N), {}),
+    ("two-axis batch", NLSE, (3, 2, N, N), {}),
     ("lossless", NLSE, (N, N), {"physics": {"alpha": 0.0}}),
     ("real V", NLSE, (N, N), {"physics": {"V": REAL_V}}),
     ("complex V", NLSE, (N, N), {"physics": {"V": COMPLEX_V}}),

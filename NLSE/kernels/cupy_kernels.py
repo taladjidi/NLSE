@@ -702,16 +702,16 @@ class CUDAKernels:
         kernels = self._get_kernels(A.dtype)
         if A.ndim > propagator.ndim:
             # Batched field against a propagator shared by the whole batch.
-            # The kernel indexes both with the same flat index, so launching
-            # over the full field reads past the end of the propagator and
-            # returns NaN and garbage for every slice after the first.
-            for index in range(A.shape[0]):
-                component = A[index]
-                size = int(component.size)
+            # The kernel indexes both with one flat index, so each launch
+            # covers one propagator's worth of the field, whatever the number
+            # of batch axes: a longer one reads past the propagator's end.
+            size = int(propagator.size)
+            members = A.reshape(-1, *propagator.shape)
+            for index in range(members.shape[0]):
                 self._launch(
                     kernels["apply_propagator"],
                     size,
-                    component,
+                    members[index],
                     propagator,
                     np.int32(size),
                 )
