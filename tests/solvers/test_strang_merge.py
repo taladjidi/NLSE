@@ -9,6 +9,11 @@ N = 64
 L = 1e-3
 WAIST = 2.23e-3
 WINDOW = 4 * WAIST
+# Relative. At COUPLED_PHASE the scalar bracket of a merged run is off by
+# 7.8e-4 (CPU and MLX, measured 2026-11-27); the run without it by 0.
+COUPLED_TOLERANCE = 1e-5
+# Phase per step, rad: large, so that a wrong half step shows.
+COUPLED_PHASE = 0.5
 
 
 def beam(coupled=False, dtype=np.complex64):
@@ -30,7 +35,7 @@ def build(backend, cls=NLSE, **overrides):
     return make(cls, backend, n=N, **params)
 
 
-def propagate(solver, coupled=False, phase=0.1):
+def propagate(solver, coupled=False, phase=0.1, callback=None):
     """Run one propagation at a step giving this phase, in Strang splitting."""
     A = beam(coupled)
     prepared, _ = solver._prepare_output_array(A.copy(), normalize=True)
@@ -45,6 +50,7 @@ def propagate(solver, coupled=False, phase=0.1):
         plot=False,
         splitting="strang",
         method="split_step",
+        callback=callback,
     )
     return np.asarray(solver._backend.to_numpy(out))
 
@@ -169,13 +175,25 @@ def test_the_merge_declines_for_lie_splitting():
     assert not solver._merges_strang_halves("lie")
 
 
-def test_the_merge_declines_with_a_rabi_coupling():
-    """The Rabi rotation rides on the Lie step, not on the Strang one."""
-    solver = build("CPU", cls=CNLSE, omega=1e4)
-    solver._precompute_step_constants(solver.V, np.complex64)
-    assert not solver._merges_strang_halves("strang")
-    solver.omega = None
-    assert solver._merges_strang_halves("strang")
+def no_callback(simu, A, z, i):
+    """Do nothing: any callback keeps a run off the merged path."""
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_a_coupled_strang_run_keeps_its_cross_coupling(backend_name):
+    """A coupled run must not take the scalar half steps of a merged one."""
+    assert not CNLSE._lie_step_is_strang_body
+
+    def coupled(callback):
+        solver = build(backend_name, cls=CNLSE, symmetric=False)
+        return propagate(solver, coupled=True, phase=COUPLED_PHASE, callback=callback)
+
+    stepped = coupled(no_callback)
+    difference = np.max(np.abs(coupled(None) - stepped)) / np.max(np.abs(stepped))
+    assert difference < COUPLED_TOLERANCE, (
+        f"{backend_name}: a coupled Strang run differs by {difference:.3e} from "
+        f"the same run stepped under a callback"
+    )
 
 
 def test_a_driven_solver_opts_out():
