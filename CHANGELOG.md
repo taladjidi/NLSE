@@ -54,17 +54,22 @@ come first.
 
 ### Fixed
 
-- **A batch over two parameters runs on CPU.** `n2` along one batch axis and
-  `alpha` along the next, the grid search of the README, raised `ValueError`
-  on CPU while CuPy, OpenCL and MLX ran it: the CPU loop peeled one batch
-  axis. It now follows numpy's broadcasting rules over any number of them.
-  With it, an array parameter holding one value (shape `(1, 1, 1)`) reaches
-  every field of a batch; on CPU it moved the first and returned the others
-  as they came in. A parameter that does not broadcast against the field
-  raises `ValueError`. That includes a flat array of one value per member,
-  shape `(3,)` or `(3, 1)` against a `(3, N, N)` field, which the CPU loop
-  used to accept while CuPy and MLX refused it: give it the field's trailing
-  axes, `(3, 1, 1)`.
+- **A batch over two parameters runs on CPU and OpenCL.** `n2` along one
+  batch axis and `alpha` along the next, the grid search of the README,
+  raised `ValueError` on CPU and `IndexError` on OpenCL while CuPy and MLX
+  ran it: both loops peeled one batch axis. They now follow numpy's
+  broadcasting rules over any number of them. With it, an array parameter
+  holding one value (shape `(1, 1, 1)`) reaches every field of a batch; on
+  CPU it moved the first and returned the others as they came in. On OpenCL
+  a parameter that varied over two batch axes took its first value along the
+  second. A parameter that does not broadcast against the field raises
+  `ValueError`. That includes a flat array of one value per member, shape
+  `(3,)` or `(3, 1)` against a `(3, N, N)` field, which the CPU and OpenCL
+  loops used to accept while CuPy and MLX refused it: give it the field's
+  trailing axes, `(3, 1, 1)`. OpenCL also refuses, with `ValueError`, a
+  potential that differs between simulations whose parameters differ (`V` of
+  shape `(3, N, N)` with `n2` of shape `(3, 1, 1)`): it used to give every
+  simulation the first potential, silently. The other backends run it.
 - **The Rabi coupling is applied by every scheme.** `CNLSE`, `CNLSE_1d` and
   `DDGPE` applied it in the `lie` step only: `strang`, `yoshida` and RK4 ran
   as if `omega` were zero.

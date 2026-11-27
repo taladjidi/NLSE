@@ -32,16 +32,62 @@ version is not bumped and nothing is published.
 `main` is ahead of `origin` and not pushed: the push waits for the closing
 review pass. Merged tonight: the uv, ruff and ty switch (`62bd2e8`, the
 untracked `CLAUDE.md` and the git hooks follow it), the CPU batch fix
-over several parameter axes (`496cd96`) and the transform wording with the
-log entry of the library re-measure (`docs/fft-wording`). Still open:
+over several parameter axes (`496cd96`), the transform wording with the
+log entry of the library re-measure (`c04afd7`) and the same batch fix for
+the OpenCL loop (`fix/cl-multi-axis-batch`). Still open:
 
-- The CPU blocked step: an architect is writing
-  `NLSE_tangui_fix_specs/cpu_blocked_step_spec.md` and `.patch`. Next: spec
-  review, implementers, reviewer, timings at 1024², 2048², 4096² in both
-  dtypes on the Mac and the box. Its patch touches `NLSE/kernels/cpu.py`,
-  which the batch fix changed.
-- Tests that bite: an architect is writing
-  `NLSE_tangui_fix_specs/tests_bite_spec.md` (see the task list below).
+- The CPU blocked step: spec and patches `cpu_blocked_step_spec.md`,
+  `cpu_blocked_step_T1..T5.patch` in `NLSE_tangui_fix_specs/`. The spec
+  review blocked them and the architect is regenerating at `c04afd7`: two
+  runs in two threads shared the scratch blocks (wrong results), a forked
+  child hung on the thread pool, the cache key lacked the CPU model and the
+  numba thread count, parallel tuners timed each other, and the cost of a
+  declined step against the old path was never measured. Next: apply on
+  `perf/cpu-blocked-step`, reviewer, timings at 1024², 2048², 4096² in both
+  dtypes on the Mac and the Ryzen (`benchmarks/cpu_blocked_step.py
+  [--double]`, machine idle), the CuPy suite for the flag rename
+  (`has_nonlinear_store_callback` becomes `has_linear_nonlinear_step`), the
+  docs (task T6 of the spec). First figures, M3 Max, one process,
+  alternating, not yet redone on a quiet machine: 4096² 1.44x complex64 and
+  1.28x complex128; 1024² and 2048² complex64 not blocked. Measuring on
+  first use (`TUNE_ON_FIRST_RUN`, up to 12.5 s inside the first `out_field`
+  at 4096² complex128) is not confirmed by the owner.
+- Tests that bite: `tests_bite_spec.md` and `tests_bite_1..13.patch` in
+  `NLSE_tangui_fix_specs/` (mutation audit: 234 mutants, 52 survivors, 47
+  killed by the patches). The spec review asked for fixes (expected values
+  taken from the code under test, constants at the bottom of four files);
+  the architect is regenerating. Next: apply on `test/tests-that-bite`,
+  crosscheck (`test_audit/crosscheck.py --survivors`), reviewer, the box
+  (CuPy venv and the OpenCL env) for two tolerances: the frozen-step test of
+  `test_lossy_substep` (rtol 1e-6) and the mixed plane-wave phase of
+  `test_closed_forms` (atol 2e-3 rad).
+- Defects the audit found, none fixed, the first three for the owner:
+  - `_loss_max_dz` (`NLSE/solvers/step_size.py`) divides by `2 * alpha` while
+    the kernels receive `alpha / 2`: the kernel's `u` at the cap is 0.025,
+    and the comments there and in `NLSE/kernels/cpu.py` say 0.05. Safe side.
+    Change the code or the comments.
+  - `DDGPE` flips the sign of `g` but not of `g12` nor `g2`
+    (`NLSE/solvers/ddgpe.py`); `tests/solvers/test_parameter_names.py` pins
+    the current sign.
+  - `_loss_max_dz` reads `alpha` only; `CNLSE` and `DDGPE` hand the kernels
+    `alpha2` too, so a larger `alpha2` or `gamma2` can pass the limit the
+    kernel assumes. Read from the code, not run.
+  - `benchmarks/nsys_summary.py`: a "Total Time"-only table parses to an
+    empty list, and `parse()` reads on into the next table.
+  - The comments "Lossless, or too lossy to solve" in `NLSE/kernels/cpu.py`
+    are wrong: a lossless step takes the solved loop.
+- OpenCL batches, left by the reviewer of `fix/cl-multi-axis-batch`:
+  - A potential that differs between simulations whose parameters differ is
+    refused (`_launch_count`, `NLSE/kernels/cl.py`); it was silently wrong.
+    Running it needs one sub-buffer of `V` per launch
+    (`Buffer.get_sub_region`), not a kernel argument: the comment above
+    `KERNEL_DECL` records that an `int` shift costs about 3x.
+  - A parameter varying over the grid axes (`n2` of shape `(N, N)`) is not
+    refused: it runs one launch per grid point, right but very slow. CPU
+    raises a numba `TypingError` there.
+  - `_launches` reads only `A.shape` and `A.size` (PYS003); nine callers.
+  - No test on OpenCL for a batch over three axes, for 1D, or for `NLSE_3d`
+    (the reviewer's 3D probe hung, cause not found).
 - The probes behind the log's transform-library entry are not in the repo:
   `NLSE_tangui_fix_specs/cpu_fft/` (`vdsp_rows.py`, `vdsp_scale.py`,
   `results_*.txt`) and, on the box, `~/Documents/nlse_scratch_scripts/fft/fft_libs.py`
