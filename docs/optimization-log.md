@@ -155,9 +155,9 @@ Thread count is not it either — `workers=-1` beats every setting from 1 to 16
 
 **Apple Accelerate / vDSP — rejected, measured.** It is correct through ctypes
 (`vDSP_fft2d_zip`, split-complex, max rel error 3.5e-7 against numpy) and
-genuinely **1.37x faster than pocketfft on one thread**, 26.4 ms against
+genuinely **1.37x faster than scipy (pocketfft then) on one thread**, 26.4 ms against
 36.1 ms. It loses anyway, because vDSP has no threading of its own and
-pocketfft's does: **5.5 ms against 26.4 ms, so scipy wins by 4.8x** in the
+scipy's does: **5.5 ms against 26.4 ms, so scipy wins by 4.8x** in the
 configuration actually used.
 
 Threading it by hand does not rescue it. Splitting rows and columns across a
@@ -638,9 +638,71 @@ removed disk wisdom and its staleness check, the `FFTW_MEASURE` save/restore,
 the vector-codelet detector, and `benchmarks/check_fftw.py`; `backends/cpu.py`
 went 402 → 132 lines.
 
-*Challenge this on x86*, where the wheels are vectorized and this may go the
-other way. It is unmeasured there, which is why the transform stays behind the
-`Backend` interface rather than being called directly.
+*Challenged on x86 on 2026-11-27*, in the next entry: pyFFTW is ahead only at
+512². The transform stays behind the `Backend` interface all the same.
+
+**The transform libraries, measured again — nothing taken** (2026-11-27). The
+two rejections, pyFFTW above and vDSP under "What is left on macOS", were
+measured on arm64 only and against older libraries. `scipy.fft` changed
+underneath in the meantime: from scipy 1.18 its transform is ducc, the
+successor of pocketfft ([release notes](https://docs.scipy.org/doc/scipy/release/1.18.0-notes.html#scipy-fft-improvements)).
+
+*x86.* Ryzen 3 4100 (4 cores, 8 threads, AVX2, L3 4 MiB), `fft2` + `ifft2` in
+place, min over 15 × 5, interleaved in one process, each library at its best
+thread count; numpy 2.5.5, pyFFTW planned with `FFTW_MEASURE`:
+
+| | scipy 1.18.1 | ducc0 0.42.0 wheel | mkl_fft 2.4.0 | pyfftw 0.15.1 |
+|---|---|---|---|---|
+| complex64 512² | 1.330 ms | 1.189 (1.12x) | 0.610 (2.18x) | 0.740 (1.80x) |
+| complex64 1024² | 7.694 ms | 6.256 (1.23x) | 4.947 (1.56x) | 8.048 (0.96x) |
+| complex64 2048² | 28.657 ms | 29.291 (0.98x) | **wrong** | 28.630 (1.00x) |
+| complex128 512² | 2.165 ms | 1.354 (1.60x) | 1.457 (1.49x) | 1.781 (1.22x) |
+| complex128 1024² | 13.894 ms | 11.732 (1.18x) | 11.940 (1.16x) | 13.986 (0.99x) |
+| complex128 2048² | 46.922 ms | 42.413 (1.11x) | 51.356 (0.91x) | 59.316 (0.79x) |
+
+- The `ducc0` wheel is a newer release of the library scipy carries (0.42.0
+  against 0.40) and a different build: its binary holds AVX and AVX-512 code
+  (357k `ymm` and 140k `zmm` instructions under `objdump -d`), scipy's none.
+  Which of the two gives the lead was not isolated, nor why the lead is gone
+  at complex64 2048².
+- pyFFTW stays rejected, now on x86 too: it is ahead at 512² only. The runs
+  move by more than the gaps at 1024²: an earlier run of the same script had
+  pyFFTW at 7.316 ms against scipy's 7.370 there, and scipy's 512² at 1.080 ms.
+- `mkl_fft` is the fastest for complex64 at 512² and 1024², and **returns a
+  wrong result** for complex64 2048² on 4 or 8 threads (`ifft2(fft2(a))` off
+  by 1.4; one thread, 1024², 4096² and complex128 are right).
+- 4096² was not timed on the box.
+
+*vDSP threaded by hand, through the interleaved API.*
+`vDSP_DFT_Interleaved_Execute` takes interleaved complex, so the split-complex
+conversion the earlier entry counted is not needed. M3 Max, rows of an n × n
+complex64 array in place, ns per point per 1D transform, min of 15, against
+ducc0 0.42.0, machine under load (load average 4 to 6):
+
+| | ducc0, 1 thread | vDSP, 1 thread | ducc0, 12 threads | vDSP, `prange` on 12 |
+|---|---|---|---|---|
+| 1024² | 1.079 | 0.706 | 0.205 | 0.303 |
+| 2048² | 1.250 | 0.704 | 0.188 | 0.241 |
+| 4096² | 1.701 | 0.890 | 0.220 | 0.282 |
+
+vDSP is 1.5 to 1.9x faster on one thread and loses on twelve, by 1.5x at
+1024² and 1.3x at 2048² and 4096². It stops scaling after two threads even
+when each thread has its own 1 MiB buffer and shares only the setup: 0.684 ns
+per point per thread on one or two threads, 2.442 on twelve, where ducc0 goes
+1.290 → 1.564. The cause was not identified. Rejected again, on rows alone;
+the column pass was not reached.
+
+*Decision.* Nothing taken. `mkl_fft` is rejected for the wrong result alone:
+where it is right it is ahead for complex64, by 1.56x at 1024². pyFFTW is
+ahead at 512² only. The `ducc0` wheel is right everywhere and gives 1.18x to
+1.23x of the transform at 1024² and 0.98x to 1.11x at 2048²; it is not taken
+as it stands, a second copy of what scipy ships for that much on one machine,
+with 4096² and arm64 not timed. It is the one to time first if x86 CPU runs
+matter.
+
+*Challenge this* if Accelerate documents how the DFT routines are meant to be
+called from several threads, if a `mkl_fft` release fixes the 2048² result, or
+if scipy's wheels come with the AVX code the `ducc0` wheel has.
 
 **numba threads started before any vendored OpenMP loads — deployed**
 (`87b3b4e`). Two OpenMP runtimes in one process segfault at the first `prange`.
@@ -819,7 +881,7 @@ fused kernel) gains less, since the transforms are most of it:
 | 2048², lossy with `V` | 7.377 → 6.755 (1.09x) | 38.702 → 35.095 (1.10x) |
 
 On the box a step costs 3.7 ns a point at 512² and 8.3 at 2048²: past its
-8 MB of L3 the transforms are bound on memory, and they are nine tenths of the
+4 MiB of L3 the transforms are bound on memory, and they are nine tenths of the
 step.
 
 *Rounding.* In units of 2^-24 relative to the value (one rounding of a float32),

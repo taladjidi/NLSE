@@ -136,7 +136,7 @@ goes away.
 ### The CPU transform
 
 If no GPU backend is available the solver falls back to the CPU, where the
-transform is `scipy.fft` — pocketfft, multithreaded over every core
+transform is `scipy.fft`, multithreaded over every core
 (`workers=-1`). It needs no planning, no wisdom on disk and no configuration,
 so there is nothing to tune and nothing to invalidate.
 
@@ -145,10 +145,11 @@ only faster where it is vectorized, and on arm64 no prebuilt `pyfftw` is:
 neither the PyPI wheel nor the conda-forge build ships NEON codelets, and only
 an FFTW compiled from source with NEON on would. Measured on an M3 Max, a
 2048x2048 complex64 pair took 37 ms through FFTW on 16 threads against 6.5 ms
-through scipy, and 1.6 ms against 0.6 at 512x512. On x86, where the wheels
-are vectorized, the gap should be smaller or reversed; the transform sits
-behind the backend interface, so putting FFTW back for that case is a class,
-not a rewrite.
+through scipy, and 1.6 ms against 0.6 at 512x512. On x86 the wheels are
+vectorized, and FFTW is still ahead at 512x512 only: on a Ryzen 3 4100 it is
+level with scipy at 1024x1024 and level or behind at 2048x2048
+([measurements](docs/optimization-log.md)). The transform sits behind the
+backend interface, so another library is a class, not a rewrite.
 
 ### PyVkFFT
 

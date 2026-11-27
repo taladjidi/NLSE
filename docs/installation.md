@@ -102,7 +102,7 @@ See the [Backends](backends.md) page for more details.
 
 ## The CPU transform
 
-The CPU backend transforms with `scipy.fft` (pocketfft), which needs no
+The CPU backend transforms with `scipy.fft`, which needs no
 planning, no wisdom file and no configuration. It uses every core by default.
 To limit that, cap the thread pool scipy draws on:
 

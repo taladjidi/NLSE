@@ -6,7 +6,7 @@ NLSE supports multiple compute backends to run on different hardware. Each backe
 
 | Backend | Name | Library | Hardware | FFT |
 |---------|------|---------|----------|-----|
-| CPU | `"CPU"` | NumPy + Numba | Any CPU | `scipy.fft` (pocketfft) |
+| CPU | `"CPU"` | NumPy + Numba | Any CPU | `scipy.fft` |
 | CUPY | `"CUPY"` | CuPy | NVIDIA GPU (CUDA) | cuFFT |
 | OpenCL | `"CL"` | PyOpenCL | Any GPU/CPU with OpenCL | VkFFT |
 | MLX | `"MLX"` | Apple MLX | Apple Silicon | MLX FFT |
@@ -106,8 +106,10 @@ Use grid sizes that are powers of 2 (e.g., 256, 512, 1024, 2048) or have low pri
 
 ### The CPU transform
 
-`scipy.fft` (pocketfft), multithreaded over every core with `workers=-1`. It
-plans per call from a cache of its own, so there is no wisdom file, no warm-up
+`scipy.fft`, multithreaded over every core with `workers=-1`: pocketfft up to
+scipy 1.17 and its successor ducc from
+[1.18](https://docs.scipy.org/doc/scipy/release/1.18.0-notes.html#scipy-fft-improvements).
+It plans per call from a cache of its own, so there is no wisdom file, no warm-up
 run and nothing to invalidate. It replaced PyFFTW, which is faster only where
 FFTW is vectorized and on arm64 no prebuilt build is.
 
