@@ -255,8 +255,8 @@ def backends_by_speed(grid_size: tuple = (2048, 2048)) -> list[str]:
     from .benchmark import load_benchmark_cache
 
     available = list_available_backends()
-    cache = load_benchmark_cache()
-    if cache is None or tuple(cache.get("grid_size", [])) != tuple(grid_size):
+    cache = load_benchmark_cache(grid_size)
+    if cache is None:
         return sorted(available, key=_ASSUMED_SPEED_ORDER.index)
     times = {
         name: entry.get("time_ms")

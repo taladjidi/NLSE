@@ -72,7 +72,7 @@ class TestAutoBackendSelection:
         assert simu.backend in list_available_backends()
 
         # Cache should contain results for 512x512
-        cache = benchmark.load_benchmark_cache()
+        cache = benchmark.load_benchmark_cache((512, 512))
         assert cache is not None
         assert cache["grid_size"] == [512, 512]
 
@@ -200,7 +200,7 @@ class TestCacheManagement:
         simu = make_solver("auto")
 
         # Load and verify benchmark results
-        results = benchmark.load_benchmark_cache()
+        results = benchmark.load_benchmark_cache((N, N))
         assert results is not None
         assert "fastest" in results
         assert results["fastest"] == simu.backend

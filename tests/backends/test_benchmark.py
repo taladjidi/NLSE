@@ -3,6 +3,7 @@
 import json
 import platform
 from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock
 
 import pytest
 from NLSE.backends import (
@@ -20,6 +21,10 @@ CACHED_TIME_MS = 1.0  # ms, any positive time
 # Past load_benchmark_cache's 30-day limit (NLSE/backends/benchmark.py:259).
 STALE_AGE_DAYS = 31
 OLD_CACHE_VERSION = "2"
+# The last version that held one grid's record as the whole file.
+SINGLE_GRID_CACHE_VERSION = "3"
+# Two grids asked for in turn: each should be measured once (B4 of the review).
+ALTERNATING_GRIDS = [(64, 64), (128, 128), (64, 64), (128, 128)]
 CPU_SPEEDUP = 1.0  # the CPU against itself, as benchmark_all_backends computes it
 OTHER_SYSTEM = "Plan9"
 OTHER_PROCESSOR = "pdp11"
@@ -63,6 +68,26 @@ def valid_cache_record():
         },
         "fastest": "CPU",
     }
+
+
+def cache_file(record):
+    """Return the cache file holding one record under ``CACHED_GRID``'s key.
+
+    The key does not come from the record, so a record with a spoiled
+    ``grid_size`` can still be written.
+
+    Parameters
+    ----------
+    record : dict
+        A record, as ``valid_cache_record`` returns it.
+
+    Returns
+    -------
+    dict
+        The file, at the current cache version.
+    """
+    grid = "x".join(str(n) for n in CACHED_GRID)
+    return {"version": benchmark.CACHE_VERSION, "grids": {grid: record}}
 
 
 def write_cache(text):
@@ -243,8 +268,9 @@ class TestCachePersistence:
         with open(cache_path) as f:
             cache = json.load(f)
 
-        assert cache["fastest"] == fastest
-        assert cache["grid_size"] == [256, 256]
+        record = cache["grids"]["256x256"]
+        assert record["fastest"] == fastest
+        assert record["grid_size"] == [256, 256]
 
     def test_cache_reuse(self, monkeypatch):
         """A cached call answers without benchmarking again."""
@@ -280,19 +306,20 @@ class TestCachePersistence:
         benchmark.invalidate_cache()
         assert not cache_path.exists()
 
-    def test_cache_grid_size_mismatch(self):
-        """Test that cache is invalidated on grid size mismatch."""
-        # Create cache with one size
+    def test_another_grid_is_added_beside_the_first(self):
+        """A second grid size is measured and kept beside the first."""
         benchmark.get_fastest_backend((256, 256), force_benchmark=True)
-        cache1 = benchmark.load_benchmark_cache()
-
-        # Request different size (should re-benchmark)
         benchmark.get_fastest_backend((512, 512), force_benchmark=False)
-        cache2 = benchmark.load_benchmark_cache()
+        assert benchmark.load_benchmark_cache((256, 256))["grid_size"] == [256, 256]
+        assert benchmark.load_benchmark_cache((512, 512))["grid_size"] == [512, 512]
 
-        # Cache should have been updated
-        assert cache1["grid_size"] != cache2["grid_size"]
-        assert cache2["grid_size"] == [512, 512]
+    def test_alternating_grids_are_each_measured_once(self, monkeypatch):
+        """Two grids asked for in turn do not evict each other's record."""
+        spy = Mock(wraps=benchmark.benchmark_all_backends)
+        monkeypatch.setattr(benchmark, "benchmark_all_backends", spy)
+        for grid in ALTERNATING_GRIDS:
+            benchmark.get_fastest_backend(grid)
+        assert spy.call_count == len(set(ALTERNATING_GRIDS))
 
 
 class TestCacheLoading:
@@ -300,7 +327,7 @@ class TestCacheLoading:
 
     def test_load_nonexistent_cache(self):
         """Test loading cache when it doesn't exist."""
-        cache = benchmark.load_benchmark_cache()
+        cache = benchmark.load_benchmark_cache(CACHED_GRID)
         assert cache is None
 
     def test_load_valid_cache(self):
@@ -309,7 +336,7 @@ class TestCacheLoading:
         benchmark.get_fastest_backend((256, 256), force_benchmark=True)
 
         # Load it
-        cache = benchmark.load_benchmark_cache()
+        cache = benchmark.load_benchmark_cache((256, 256))
         assert cache is not None
         assert "version" in cache
         assert "timestamp" in cache
@@ -324,14 +351,14 @@ class TestCacheLoading:
             f.write("invalid json {{{")
 
         # Should return None
-        cache = benchmark.load_benchmark_cache()
+        cache = benchmark.load_benchmark_cache(CACHED_GRID)
         assert cache is None
 
     def test_load_hand_written_cache(self):
         """The record the rejections below each spoil one field of is accepted."""
         record = valid_cache_record()
-        write_cache(json.dumps(record))
-        assert benchmark.load_benchmark_cache() == record
+        write_cache(json.dumps(cache_file(record)))
+        assert benchmark.load_benchmark_cache(CACHED_GRID) == record
 
     @pytest.mark.parametrize(
         "written",
@@ -346,23 +373,32 @@ class TestCacheLoading:
         """A cache is a statement about the machine that wrote it."""
         record = valid_cache_record()
         record["platform"] = written
-        write_cache(json.dumps(record))
-        assert benchmark.load_benchmark_cache() is None
+        write_cache(json.dumps(cache_file(record)))
+        assert benchmark.load_benchmark_cache(CACHED_GRID) is None
 
     def test_load_rejects_a_stale_cache(self):
         """Older than 30 days is measured again."""
         record = valid_cache_record()
         written = datetime.now() - timedelta(days=STALE_AGE_DAYS)
         record["timestamp"] = written.isoformat()
-        write_cache(json.dumps(record))
-        assert benchmark.load_benchmark_cache() is None
+        write_cache(json.dumps(cache_file(record)))
+        assert benchmark.load_benchmark_cache(CACHED_GRID) is None
 
     def test_load_rejects_an_older_version(self):
         """A cache from before a change to what it timed is not believed."""
-        record = valid_cache_record()
-        record["version"] = OLD_CACHE_VERSION
+        written = {**cache_file(valid_cache_record()), "version": OLD_CACHE_VERSION}
+        write_cache(json.dumps(written))
+        assert benchmark.load_benchmark_cache(CACHED_GRID) is None
+
+    def test_a_single_grid_file_is_ignored_and_replaced(self):
+        """The file of one record that version 3 wrote is no cache, not a crash."""
+        record = {**valid_cache_record(), "version": SINGLE_GRID_CACHE_VERSION}
         write_cache(json.dumps(record))
-        assert benchmark.load_benchmark_cache() is None
+        assert benchmark.load_benchmark_cache(CACHED_GRID) is None
+        assert benchmark.get_fastest_backend(tuple(CACHED_GRID)) in (
+            list_available_backends()
+        )
+        assert benchmark.load_benchmark_cache(CACHED_GRID) is not None
 
     @pytest.mark.parametrize(
         "text",
@@ -372,7 +408,7 @@ class TestCacheLoading:
     def test_load_rejects_valid_json_of_the_wrong_shape(self, text):
         """Valid JSON that is not a record is refused, not raised on."""
         write_cache(text)
-        assert benchmark.load_benchmark_cache() is None
+        assert benchmark.load_benchmark_cache(CACHED_GRID) is None
 
     @pytest.mark.parametrize(
         "field, value",
@@ -396,8 +432,8 @@ class TestCacheLoading:
         """One field of another type: no cache, and backend selection goes on."""
         record = valid_cache_record()
         record[field] = value
-        write_cache(json.dumps(record))
-        assert benchmark.load_benchmark_cache() is None
+        write_cache(json.dumps(cache_file(record)))
+        assert benchmark.load_benchmark_cache(CACHED_GRID) is None
         assert backends_by_speed(tuple(CACHED_GRID)) == sorted(
             list_available_backends(), key=_ASSUMED_SPEED_ORDER.index
         )
@@ -407,7 +443,7 @@ class TestCacheLoading:
         monkeypatch.setattr(
             "NLSE.backends.list_available_backends", lambda: AGAINST_THE_PRIOR
         )
-        write_cache(json.dumps(valid_cache_record()))
+        write_cache(json.dumps(cache_file(valid_cache_record())))
         assert backends_by_speed(OTHER_GRID) == BY_THE_PRIOR
 
     def test_untimed_backends_follow_the_prior(self, monkeypatch):
@@ -415,14 +451,14 @@ class TestCacheLoading:
         monkeypatch.setattr(
             "NLSE.backends.list_available_backends", lambda: AGAINST_THE_PRIOR
         )
-        write_cache(json.dumps(valid_cache_record()))
+        write_cache(json.dumps(cache_file(valid_cache_record())))
         assert backends_by_speed(tuple(CACHED_GRID)) == CPU_TIMED_FIRST
 
     def test_a_cached_name_that_is_no_backend_is_measured_again(self):
         """A fastest backend this install does not have is not handed back."""
         record = valid_cache_record()
         record["fastest"] = NOT_A_BACKEND
-        write_cache(json.dumps(record))
+        write_cache(json.dumps(cache_file(record)))
         fastest = benchmark.get_fastest_backend(tuple(CACHED_GRID))
         assert fastest in list_available_backends()
 
@@ -431,16 +467,16 @@ class TestCacheLoading:
         blocker = tmp_path / "a_file"
         blocker.write_text("")
         monkeypatch.setenv("NLSE_CACHE_DIR", str(blocker))
-        assert benchmark.load_benchmark_cache() is None
+        assert benchmark.load_benchmark_cache(CACHED_GRID) is None
         benchmark.save_benchmark_cache(valid_cache_record())
         assert blocker.read_text() == ""
 
     def test_a_failed_write_keeps_the_previous_cache(self):
         """The cache is replaced whole or not at all."""
         record = valid_cache_record()
-        write_cache(json.dumps(record))
+        write_cache(json.dumps(cache_file(record)))
         benchmark.save_benchmark_cache({**record, "fastest": object()})
-        assert benchmark.load_benchmark_cache() == record
+        assert benchmark.load_benchmark_cache(CACHED_GRID) == record
         assert list(get_cache_dir().iterdir()) == [get_benchmark_cache_path()]
 
 
