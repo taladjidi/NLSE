@@ -56,9 +56,9 @@ come first.
 
 - **`backend="auto"` times MLX's transform.** The backend benchmark waited on
   the array it had passed in, and MLX's transforms are lazy and return a new
-  one, so MLX was timed computing nothing (0.004 ms for a 2048² complex64
-  transform pair on an Apple M3 Max, where the pair takes 1.4 ms) and
-  ranked first whatever its speed. The benchmark now waits on what each
+  one, so MLX was timed computing nothing (under 0.01 ms for a 2048²
+  complex64 transform pair on an Apple M3 Max, where the pair takes 1.4 ms)
+  and ranked first whatever its speed. The benchmark now waits on what each
   transform returns.
 - **A batch over two parameters runs on CPU and OpenCL.** `n2` along one
   batch axis and `alpha` along the next, the grid search of the README,
