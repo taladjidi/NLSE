@@ -362,7 +362,9 @@ class NLSE(StepSize):
             raise TypeError(f"E_in must be complex64 or complex128, not {E_in.dtype}")
         self._check_batch_support(E_in)
         field_dtype = self._field_dtype(E_in)
-        self._warn_about_splitting(splitting, field_dtype)
+        if method != "RK4":
+            # RK4 does not split, so the advice would be about a scheme not run.
+            self._warn_about_splitting(splitting, field_dtype)
         # Rebuilt below once delta_z is settled; drop the previous run's so
         # the transfer does not carry it.
         self.propagator = None
