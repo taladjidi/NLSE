@@ -17,7 +17,7 @@ NLSE supports multiple compute backends to run on different hardware. Each backe
 
 By default, NLSE picks the best available backend at import time:
 
-1. **CUPY** if CuPy is installed and a CUDA GPU is available
+1. **CUPY** if CuPy imports (no device is probed)
 2. **MLX** if MLX is installed (Apple Silicon only)
 3. **CPU** (always available)
 
@@ -63,7 +63,7 @@ simu.backend = "CL"
 | Variable | Description |
 |----------|-------------|
 | `NLSE_BACKEND` | Force a specific backend (e.g., `"CPU"`, `"CUPY"`, `"CL"`, `"MLX"`) |
-| `NLSE_QUIET` | Suppress backend auto-selection messages when set |
+| `NLSE_QUIET` | Suppress backend selection and benchmarking messages when set to `1` |
 | `NLSE_FORCE_BENCHMARK` | Re-run FFT benchmarks even if cache exists |
 | `NLSE_CACHE_DIR` | Directory for the backend benchmark and the CPU step's tuning, instead of the platform's cache directory |
 | `NLSE_CPU_BLOCKING` | Set to `0` to never block the CPU split step, and never measure it |

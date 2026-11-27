@@ -64,7 +64,7 @@ Saves the full field every `save_every` steps into a pre-allocated array.
 from NLSE import sample
 
 delta_z = L / 1000          # divides L, so the run is exactly 1000 steps
-n_steps = int(L / delta_z)
+n_steps = round(L / delta_z)
 save_every = 100
 n_samples = n_steps // save_every + 1
 E_samples = np.zeros((n_samples, NY, NX), dtype=np.complex64)
@@ -86,7 +86,7 @@ Records the total intensity ($\sum |A|^2$) at regular intervals.
 from NLSE import norm
 
 delta_z = L / 1000          # divides L, so the run is exactly 1000 steps
-n_steps = int(L / delta_z)
+n_steps = round(L / delta_z)
 save_every = 50
 norms = np.zeros(n_steps // save_every + 1)
 
@@ -106,7 +106,7 @@ Evaluates the nonlinear refractive index change $\delta n = n_2 I / (1 + I/I_\te
 from NLSE import evaluate_delta_n
 
 delta_z = L / 1000          # divides L, so the run is exactly 1000 steps
-n_steps = int(L / delta_z)
+n_steps = round(L / delta_z)
 save_every = 100
 delta_n = np.zeros((n_steps // save_every + 1,) + (NY, NX))
 
