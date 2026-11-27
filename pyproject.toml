@@ -84,19 +84,14 @@ docs = [
 # read at runtime need no separate package-data entry.
 [tool.hatch.build.targets.wheel]
 packages = ["NLSE"]
-exclude = ["*.pyc", "__pycache__", ".cache"]
 
 [tool.hatch.build.targets.sdist]
 # Anchored with "/": a bare "LICENSE" also matched docs/_static/mathjax/LICENSE.
 # No tests: they read docs/ and examples/, which the sdist does not carry.
 include = ["/NLSE", "/README.md", "/LICENSE", "/pyproject.toml"]
-exclude = ["*.pyc", "__pycache__", ".cache"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
 addopts = [
   "-ra",
   "--strict-markers",
@@ -131,7 +126,6 @@ ignore = [
   "E501",
   "RUF012",
   "D100",
-  "D101",
   "D102",
   "D103",
   "D104",
@@ -147,7 +141,6 @@ max-complexity = 20
 convention = "numpy"
 
 [tool.ruff.lint.per-file-ignores]
-"__init__.py" = ["F401"]  # Allow unused imports in __init__.py
 "NLSE/utils.py" = ["F401"]  # Imports used for availability checking
 # A gallery example opens with an reStructuredText document -- a title and
 # its underline -- which sphinx-gallery reads as the page heading. That is
@@ -156,10 +149,6 @@ convention = "numpy"
 
 [tool.coverage.run]
 source = ["NLSE"]
-omit = [
-  "*/tests/*",
-  "*/__pycache__/*",
-]
 
 [tool.coverage.report]
 exclude_lines = [
@@ -169,7 +158,8 @@ exclude_lines = [
   "raise NotImplementedError",
   "if __name__ == .__main__.:",
   "if TYPE_CHECKING:",
-  "pass",
+  # Anchored: a bare "pass" also matched prose such as "passes".
+  '^\s*pass\s*$',
 ]
 
 [tool.ty]
