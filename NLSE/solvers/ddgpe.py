@@ -387,7 +387,7 @@ class DDGPE(CNLSE):
 
     def _default_delta_z(
         self,
-        A: np.ndarray | None = None,
+        A: np.ndarray,
         method: str = "split_step",
         z: float | None = None,
     ) -> float:
@@ -395,7 +395,7 @@ class DDGPE(CNLSE):
 
         Parameters
         ----------
-        A : np.ndarray, optional
+        A : np.ndarray
             Field, as for the parent.
         method : str, optional
             Integration method, as for the parent.

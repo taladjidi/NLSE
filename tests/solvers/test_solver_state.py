@@ -158,7 +158,7 @@ class TestLinearConstruction:
     def test_zero_n2_constructor(self):
         """n2=0 must not raise; it is plain linear propagation."""
         simu = make_solver(n2=0.0)
-        dz = simu._default_delta_z()
+        dz = simu._default_delta_z(gaussian_input())
         assert np.isfinite(dz), "the derived step must be finite for n2=0"
         assert dz > 0, "the derived step must be positive for n2=0"
 

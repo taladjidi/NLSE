@@ -23,7 +23,6 @@ import warnings
 from typing import Any
 
 import numpy as np
-from scipy.constants import c, epsilon_0
 
 # Explicit RK4 is stable for |lambda * dz| up to ~2*sqrt(2) along the
 # imaginary axis. Every solver's step limit is derived from it.
@@ -292,46 +291,9 @@ class StepSize:
             "loss": loss,
         }
 
-    def _estimated_rates(self) -> dict[str, float]:
-        """Return the phase rates without a field, for use before a run.
-
-        Same quantities as ``_energy_rates``, from the grid rather than from
-        the solution: the largest dispersion eigenvalue, the extremes of V,
-        and the intensity the given power would have spread over the window.
-        Coarser than the field-weighted version, and only used to give
-        ``delta_z`` a value before anything has been propagated.
-
-        Returns
-        -------
-        dict
-            ``kinetic``, ``potential``, ``interaction`` and ``loss`` rates.
-        """
-        kinetic = self._max_dispersion_rate()
-
-        V = self._as_host_array(self._V_scaled)
-        if V is None and self.V is not None:
-            V = self._as_host_array(self.V) * self._constant("_k_half")
-        potential = float(np.max(np.abs(np.real(V)))) if V is not None else 0.0
-        loss = float(np.max(np.abs(np.imag(V)))) if V is not None else 0.0
-
-        area = float(np.prod([float(w) for w in self.window[:2]]))
-        intensity = np.abs(
-            2 * np.asarray(self.power, dtype=float) / (epsilon_0 * c * area)
-        )
-        Isat = np.abs(self._as_host_array(self._constant("_Isat_conv")))
-        g = np.abs(self._as_host_array(self._constant("_g")))
-        interaction = float(np.max(g * intensity / (1 + intensity / Isat)))
-
-        return {
-            "kinetic": kinetic,
-            "potential": potential,
-            "interaction": interaction,
-            "loss": loss,
-        }
-
     def _default_delta_z(
         self,
-        A: np.ndarray | None = None,
+        A: np.ndarray,
         method: str = "split_step",
         z: float | None = None,
     ) -> float:
@@ -346,9 +308,8 @@ class StepSize:
 
         Parameters
         ----------
-        A : np.ndarray or None
-            Normalized field (possibly on device). Without one the rates are
-            estimated from the grid instead.
+        A : np.ndarray
+            Normalized field (possibly on device).
         method : str
             Integration method ("split_step" or "RK4").
         z : float or None
@@ -360,7 +321,7 @@ class StepSize:
         float
             Step size.
         """
-        rates = self._energy_rates(A) if A is not None else self._estimated_rates()
+        rates = self._energy_rates(A)
         if method == "RK4":
             rate = sum(rates.values())
             phase = RK4_PHASE_PER_STEP
