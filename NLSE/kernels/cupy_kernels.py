@@ -7,34 +7,19 @@ placeholders, compile once via cp.RawModule, cache, and invoke directly.
 Supports both single (float32/complex64) and double (float64/complex128) precision.
 """
 
-from pathlib import Path
-
 import cupy as cp
 import numpy as np
 
 from . import templating
-from .templating import COMPLEX_V_SUFFIX, REAL_V_SUFFIX
 
 # How CUDA C opens a kernel. The extern "C" that precedes it is not part of the
 # match: it keeps the names unmangled so get_function can find them.
 KERNEL_DECL = "__global__ void"
 
-# Module-level cache: precision string -> compiled cp.RawModule
+# Module-level cache: complex dtype name -> compiled cp.RawModule
 _COMPILED_MODULES = {}
 
 BLOCK_SIZE = 256
-
-
-def _load_kernel_template():
-    """Load CUDA kernel template from file.
-
-    Returns
-    -------
-    str
-        String containing kernel template with {{placeholders}}
-    """
-    template_path = Path(__file__).parent / "cuda_source" / "kernels.cu"
-    return template_path.read_text()
 
 
 def _expand_v_blocks(source):
@@ -61,72 +46,54 @@ def _kernel_names():
     if not _KERNEL_NAMES:
         _KERNEL_NAMES.extend(
             templating.kernel_names(
-                _expand_v_blocks(_load_kernel_template()), KERNEL_DECL
+                _expand_v_blocks(templating.cuda_kernel_template()), KERNEL_DECL
             )
         )
     return _KERNEL_NAMES
 
 
-def _get_kernel_source(precision="single"):
-    """Generate CUDA C kernel source for specified precision.
+def _get_kernel_source(dtype):
+    """Generate CUDA C kernel source for a field's width.
 
     Parameters
     ----------
-    precision : str
-        'single' for float32 or 'double' for float64
+    dtype : str
+        Complex dtype name of the field: 'complex64' or 'complex128'.
 
     Returns
     -------
     str
         String containing all kernel source code
     """
-    if precision == "single":
-        fp_type = "float"
-        fp2_type = "float2"
-        fp_suffix = "f"
-        sincos_func = "sincosf"
-    elif precision == "double":
-        fp_type = "double"
-        fp2_type = "double2"
-        fp_suffix = ""
-        sincos_func = "sincos"
-    else:
-        raise ValueError(f"precision must be 'single' or 'double', got {precision}")
-
-    template = _expand_v_blocks(_load_kernel_template())
-    source = template.replace("{{FP_TYPE}}", fp_type)
-    source = source.replace("{{FP2_TYPE}}", fp2_type)
-    source = source.replace("{{FP_SUFFIX}}", fp_suffix)
-    source = source.replace("{{SINCOS_FUNC}}", sincos_func)
-
-    return source
+    template = _expand_v_blocks(templating.cuda_kernel_template())
+    return templating.fill_cuda_types(template, dtype)
 
 
-def _compile_kernels(precision="single"):
-    """Compile CUDA kernels for specified precision.
+def _compile_kernels(dtype):
+    """Compile CUDA kernels for a field's width.
 
-    Uses module-level cache to compile only once per precision.
+    Uses module-level cache to compile only once per width.
 
     Parameters
     ----------
-    precision : str
-        'lie' or 'strang'
+    dtype : str
+        Complex dtype name of the field: 'complex64' or 'complex128'.
 
     Returns
     -------
     cp.RawModule
         Compiled CUDA module
     """
-    if precision in _COMPILED_MODULES:
-        return _COMPILED_MODULES[precision]
+    if dtype in _COMPILED_MODULES:
+        return _COMPILED_MODULES[dtype]
 
-    source = _get_kernel_source(precision)
+    source = _get_kernel_source(dtype)
     # No --use_fast_math: it turns sincosf into __sincosf, whose error grows with
     # the phase (1.4e-4 at 1e3 rad, 9e-8 without the flag). Step time within
     # 0.5%: docs/optimization-log.md.
     module = cp.RawModule(code=source)
 
-    _COMPILED_MODULES[precision] = module
+    _COMPILED_MODULES[dtype] = module
     return module
 
 
@@ -205,11 +172,7 @@ class CUDAKernels:
         cp.RawKernel
             The no-V, real-V or complex-V twin.
         """
-        if V is None:
-            return kernels[base]
-        if V.dtype.kind == "c":
-            return kernels[base + COMPLEX_V_SUFFIX]
-        return kernels[base + REAL_V_SUFFIX]
+        return kernels[base + templating.v_suffix(V)]
 
     def _get_kernels(self, dtype):
         """Get compiled kernel functions for given dtype, compiling if needed.
@@ -224,25 +187,17 @@ class CUDAKernels:
         dict
             Dictionary of compiled kernel functions
         """
-        if dtype == np.complex64:
-            precision = "single"
-        elif dtype == np.complex128:
-            precision = "double"
-        else:
-            raise ValueError(
-                f"Unsupported dtype: {dtype}. Use complex64 or complex128."
-            )
-
-        if precision not in self._kernels:
-            module = _compile_kernels(precision)
+        name = np.dtype(dtype).name
+        if name not in self._kernels:
+            module = _compile_kernels(name)
             # Keyed by the kernel's own name, so a V-reading kernel is reached
             # as <name> with no potential, <name>_v with a real one and
             # <name>_cv with a complex one -- see _v_kernel.
-            self._kernels[precision] = {
-                name: module.get_function(name) for name in _kernel_names()
+            self._kernels[name] = {
+                kernel: module.get_function(kernel) for kernel in _kernel_names()
             }
 
-        return self._kernels[precision]
+        return self._kernels[name]
 
     @staticmethod
     def _cast(dtype, *values):
@@ -643,6 +598,47 @@ class CUDAKernels:
         else:
             plan.ifft(A, A)
         return A
+
+    def linear_nonlinear_step(self, A, propagator, plan, V_scaled, dz, alpha, g, Isat):
+        """Linear step, then the nonlinear step from the inverse transform's store.
+
+        The pass ``square_mod_nl_prop`` makes over the field goes: cuFFT runs
+        its arithmetic, ``nlse_nonlinear_element``, as it writes each element
+        of the inverse transform's output.
+
+        Parameters
+        ----------
+        A : cp.ndarray
+            Field, modified in place.
+        propagator : cp.ndarray
+            Propagator pre-divided by the transform size: the inverse
+            transform here does not normalize.
+        plan : _CuFFTPlan
+            Pre-built FFT plan.
+        V_scaled : cp.ndarray or None
+            Pre-scaled potential, or None.
+        dz : float
+            Distance the nonlinear step advances by.
+        alpha : float
+            Loss coefficient.
+        g : float
+            Nonlinear interaction strength.
+        Isat : float
+            Saturation intensity.
+
+        Returns
+        -------
+        bool
+            Whether it happened. ``False`` leaves ``A`` untouched, and the
+            caller owes both steps.
+        """
+        if self._needs_broadcast((alpha, g, Isat), A, (V_scaled,)):
+            return False
+        if not plan.ifft_nonlinear_ready(A, V_scaled):
+            return False
+        self.fft_propagate(plan, A, A, propagator)
+        plan.ifft_nonlinear(A, A, V_scaled, dz, alpha, g, Isat)
+        return True
 
     def fft_propagate(self, plan, A_in, out, propagator):
         """Transform into ``out`` and multiply it by the propagator.

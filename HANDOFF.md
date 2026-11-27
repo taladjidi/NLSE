@@ -1,6 +1,6 @@
 # Handoff
 
-## State (2026-11-26)
+## State (2026-11-27)
 
 A full audit of the repo was done at commit `fa7aa59` (v4.1.0 plus six
 commits); its findings are listed under "Findings, ranked" below. All of them
@@ -259,9 +259,10 @@ Each was reproduced by a script unless marked *(read)* or *(reviewer)*.
 
 ## Open items
 
-Resume here. Everything above is merged into `main` and pushed. Open: the
-performance profiles, and the release (5.0.0 suggested; the version is not
-bumped and nothing is published).
+Resume here. Everything above is merged into `main` and pushed; the
+performance work below is merged into `main` locally and not pushed (the push
+waits for the closing review pass). Open: the performance profiles, and the
+release (5.0.0 suggested; the version is not bumped and nothing is published).
 
 ### Performance work (2026-11-26 and 27)
 
@@ -292,23 +293,75 @@ Done:
   `benchmarks/roofline.py` still measures the double `_sincos` and `_exp` as
   its transcendental ceiling, which is no longer what a complex64 run calls.
 
+- **CuPy: the nonlinear step inside the inverse transform**
+  (`perf/cuda-fewer-passes`, spec 1). A cuFFT store callback applies
+  `square_mod_nl_prop` as the inverse transform writes; 2D local `NLSE` and
+  `GPE`, every splitting. RTX 3050, complex64, lie: 88 → 72 bytes a point
+  (`ncu`), a step 1.17 to 1.19x faster than `main` at 512² to 3072² (1.12x at
+  2560² and 3000²), 1.34 to 1.38x faster than no callback at all; 0.89x at
+  256²; complex128 unchanged. Still at 87 to 92% of the 208 GB/s ceiling.
+  Entry in the optimization log, CUDA section, with the tables.
+  - The callback calls the step out of line (`__noinline__`,
+    `NLSE/kernels/cuda_source/fft_callbacks.cu`). Inlined, cuFFT's kernel
+    spilled to the stack and the path ran at 0.84x of `main`.
+    `tests/backends/test_kernel_templating.py` pins it.
+  - Box: suite 1556 passed; callback tests six times; 36 runs bit-identical
+    to `main` with callbacks on and off. At 2560, 3000, 3072 and 3600 points a
+    callback plan is another cuFFT plan and differs from the unfused path by
+    rounding. That was already true of the propagator callback in `main`.
+  - Tests: `mutants_spec_1.py` (in `NLSE_tangui_fix_specs/`) kills 14 of 14,
+    0 of 14 before the fix round.
+  - Reviewer, two rounds: no critical or major finding left. Minor, not
+    fixed: no test runs the callback above 64² or at a non-power-of-two size
+    (checked by hand at 13 sizes); `ifft_nonlinear_ready`'s refusals
+    (non-contiguous field, `V` of another shape or width) have no test; the
+    Strang half step handed to the callback is pinned only by the box's
+    bitwise tests; `nonlinear_words` raises `OverflowError` on a finite
+    complex64 scalar above the float32 maximum (direct kernel calls only);
+    a nested `def refuse` in `tests/backends/test_fft_propagator_fusion.py`;
+    bare `2` and `(1,)` in `nlse.py` and `cupy_backend.py` lines the change
+    sits next to; `NLSE_FUSE_PROPAGATOR` now names two callbacks; a cuFFT
+    without LTO callbacks pays three failed builds per plan.
+  - Scripts: `~/Documents/LKB/NLSE_tangui_fix_specs/cuda_fewer_passes/`
+    (`fp_step.py`, `fp_three.py`, `fp_ncu*.py`, `fp_bitwise.py`,
+    `fp_sizes_diff.py`, `fp_variants.py`), copies on the box in
+    `~/Documents/nlse_scratch_scripts/`, `ncu` reports in its `rep/`.
+
+Task list for the closing review pass (asked on 2026-11-27):
+
+- [ ] **Tests must bite.** "review thoroughly tests to make sure they
+  actually bite and test": for each test file, break the behaviour it claims
+  to pin (a mutation of the code under test) and see the test fail. Report
+  every test that still passes, that asserts nothing, or whose tolerance is
+  wider than the effect it guards; fix or delete those.
+- [ ] **mypy to ty** ("Let's switch also from mypy to ty at the end"):
+  `pyproject.toml`, the pre-commit hooks, CI, the commands in `CLAUDE.md`
+  and the docs that name mypy.
+- [ ] Review of the architecture, the tests and the docs (docs page by page
+  against Diátaxis), fix what is critical or major, then push.
+
 Decisions taken by the user:
 
-- CuPy store callbacks: one path at every grid size and dtype. The callback
-  path loses 20 to 26% at 1280, 1536, 2560, 3000 and 3072 and wins 16 to 26%
-  at powers of two from 512: "Document that gap for non power of 2 sizes,
-  20-26% slower is bearable. The most used config is power of 2 !"
+- CuPy store callbacks: one path at every grid size and dtype ("No no, let's
+  not split paths, let's keep the fastest one"). The prototype lost 20 to 26%
+  at 1280, 1536, 2560, 3000 and 3072: "Document that gap for non power of 2
+  sizes, 20-26% slower is bearable. The most used config is power of 2 !" The
+  shipped callback has no such gap (it was the stack spill); what is left is
+  256², 3 µs a step slower, which the one-path decision keeps.
 
 Open, in this order:
 
-- **CuPy, fewer passes.** Specs and reference patches:
-  `~/Documents/LKB/NLSE_tangui_fix_specs/cuda_fewer_passes_spec_{1,2}.{md,patch}`
-  (1: the nonlinear step in the inverse transform's store callback, bitwise,
-  88 to 64 bytes a point per lie step; 2: a separable propagator in the
-  forward callback, not bitwise). Spec-reviewed, seven findings sent back to
-  the architect. Then implement, review, and validate on the box (tests six
-  times, step time interleaved against `main`, `ncu` bytes a point). Branch
-  `perf/cuda-fewer-passes` exists, empty.
+- **CuPy, a separable propagator** (spec 2:
+  `~/Documents/LKB/NLSE_tangui_fix_specs/cuda_fewer_passes_spec_2.{md,patch}`).
+  The forward callback would build the propagator from two vectors: 72 → 64
+  bytes a point, 0.89 to 0.95x of today's step in the prototype, not bitwise.
+  The patch no longer applies on top of spec 1 as merged
+  (`cupy_backend.py`, `templating.py`, `nlse.py`, the fusion tests): rebase
+  it, then implementer, reviewer, and the box. Drop it if the solver does not
+  show the prototype's gain.
+- Box scratch trees to delete once spec 2 is settled: `~/Documents/nlse_cpu32`
+  (`main` before spec 1), `nlse_cuda_fp` (this tree), `nlse_cuda_fp_x`,
+  `nlse_cuda_fp_lean` (a wrong-physics bisection copy).
 - **The CPU transform.** It is 60% of a step on the Mac and 90% on the box.
   The log's rejections (pyFFTW on arm64, vDSP, thread counts) are being
   re-checked against current libraries, and a hand-threaded transform that

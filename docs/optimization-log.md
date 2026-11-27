@@ -1162,7 +1162,8 @@ machine or any pip-installed CuPy — they compile with nvcc against the static
 cuFFT and the wheels ship no `cufft.h`. The `cb_ver="jit"` route needs only
 nvrtc and nvJitLink, both present, and is what is used. (2) The result agrees
 with the separate multiply *bit for bit*, not to a tolerance, on every solver
-and method. (3) A callback plan captures into a CUDA graph and replays, so the
+and method (at most grid sizes: the nonlinear callback's entry below lists the
+exceptions). (3) A callback plan captures into a CUDA graph and replays, so the
 fusion and the graph compose rather than exclude each other. (4) **cuFFT binds
 the callback's argument when the plan is created, and no propagator lives that
 long** — an adaptive step rebuilds it, Yoshida cycles three, the solver's cache
@@ -1211,6 +1212,105 @@ step limit, so a row is comparable with itself only. RK4 was slower without the
 flag in 7 pairs of 7, by 0.4%: under the 1.1% this box resolves at 2048², and
 the price of a phase that is right.
 
+**Deployed: the nonlinear step applied from the inverse transform's store
+callback** (2026-11-27). RTX 3050 8 GB, driver 620.70.06, CuPy 14.2.0, CUDA
+runtime 13.2, cuFFT 12.3.0. The other pass a split step made outside its
+transforms is gone: `square_mod_nl_prop` runs as cuFFT writes each element of
+the inverse transform. `NLSE` and `GPE`, 2D, local, every splitting. The
+formula lives once, `nlse_nonlinear_element` in
+`kernels/cuda_source/nonlinear_step.cuh`, and is compiled into the kernels and
+into the callback.
+
+Per step in ms, lie, complex64, lossless, no potential. One process, the three
+sides rotating, slope between 20 and 220 steps, median of 6 rounds; "spread" is
+the widest side's max minus min over its median:
+
+| grid | no callback | propagator | both | both / none | both / propagator | spread |
+|---|---|---|---|---|---|---|
+| 256² | 0.021 | 0.020 | 0.023 | 0.89x | 0.89x | 15.7% |
+| 512² | 0.138 | 0.120 | 0.102 | **1.36x** | 1.18x | 2.4% |
+| 1024² | 0.559 | 0.481 | 0.405 | **1.38x** | 1.19x | 2.9% |
+| 2048² | 2.294 | 1.975 | 1.658 | **1.38x** | 1.19x | 0.4% |
+| 1280² | 0.953 | 0.833 | 0.714 | 1.34x | 1.17x | 4.2% |
+| 1536² | 1.366 | 1.192 | 1.019 | 1.34x | 1.17x | 0.4% |
+| 2560² | 4.409 | 3.981 | 3.548 | 1.24x | 1.12x | 0.6% |
+| 3000² | 6.194 | 5.544 | 4.936 | 1.25x | 1.12x | 0.9% |
+| 3072² | 5.588 | 4.871 | 4.168 | 1.34x | 1.17x | 0.3% |
+
+Propagator callback → both, other cells (same method, two sides): lossy
+1024² 0.480 → 0.405 and 2048² 1.946 → 1.629 (1.19x); lossy with a real `V`
+0.503 → 0.432 and 2.014 → 1.715 (1.16x, 1.17x); 1024×2048 0.950 → 0.793
+(1.20x); 4096² 12.95 → 11.88 (1.09x, the first side ranging 12.6 to 15.9);
+complex128 4.152 → 4.168 at 1024² and 16.79 → 16.81 at 2048² (1.00x: 8.6 times
+the complex64 step for twice the bytes, so traffic is not what binds it).
+
+Where the bytes go, 1024² (`ncu --set full`, 8 steps after 5 warm ones, the
+CUDA graph replaced by a plain loop so that `ncu` sees each launch; DRAM bytes
+per grid point):
+
+| | kernel | per step | ms | read | written |
+|---|---|---|---|---|---|
+| before | `regular_fft` (first pass of a transform) | 2 | 0.100 | 8.0 | 8.0 |
+| | `vector_fft` (inverse, last pass) | 1 | 0.081 | 8.0 | 7.8 |
+| | forward last pass, propagator callback | 1 | 0.124 | 16.0 | 7.9 |
+| | `square_mod_nl_prop` | 1 | 0.082 | 8.0 | 7.9 |
+| | **step** | | 0.487 | | **87.6 in all** |
+| after | `regular_fft` | 2 | 0.100 | 8.0 | 7.9 |
+| | forward last pass, propagator callback | 1 | 0.124 | 16.0 | 7.9 |
+| | inverse last pass, nonlinear callback | 1 | 0.087 | 8.0 | 7.8 |
+| | **step** | | 0.411 | | **71.6 in all** |
+
+88 bytes per point become 72, and the inverse transform's last pass carries
+the nonlinear step for 0.006 ms more than it cost alone. Against the 208 GB/s
+this card streams, the untraced step moves 191 GB/s before and 185 after at
+1024² (92% and 89%), 187 and 182 at 2048² (90% and 87%): it was at the ceiling
+and still is, with fewer bytes to move.
+
+**The callback calls the step out of line, and nothing else separates a gain
+from a loss.** Inlined, the first implementation ran at 0.84x of the
+propagator callback alone (0.499 → 0.594 ms at 1024²). cuFFT's callback kernel
+holds sixteen elements per thread, and with the whole formula inlined they no
+longer fit in registers. `ncu` on that one kernel, inlined against out of line:
+
+| | inlined | out of line |
+|---|---|---|
+| registers per thread | 80 | 56 |
+| local-memory store requests per launch | 933 888 | 0 |
+| local-memory load requests per launch | 98 304 | 0 |
+| DRAM written | 37.9 MB (36 B/pt) | 8.2 MB (7.8 B/pt) |
+| duration | 266 µs | 87 µs |
+
+The cost is in what is compiled, not in what runs. On a scratch tree, same
+cell, propagator callback → both: an early return for `alpha == 0`, or the
+exponential, the square root or the loss iteration removed one at a time,
+stayed at 0.83 to 0.84x; only the square root left, 1.19x; the exponential or
+the loss iteration alone, 0.83x; `__forceinline__` on the helpers, no change;
+`__noinline__` on the step, 1.18x. The prototype had gained because its
+formula was shorter, and its 20 to 26% loss at 1280, 1536, 2560, 3000 and 3072
+points was this same spill: the table above has none.
+`tests/backends/test_kernel_templating.py` pins the `__noinline__`, which no
+test can time.
+
+**Bit for bit, where cuFFT plans the same transform.** 36 runs at 256² (lie,
+strang, yoshida; no, real and complex `V`; lossless and lossy; both widths)
+are identical to the commit before, with callbacks on and with
+`NLSE_FUSE_PROPAGATOR=0`. Against the unfused path the callbacks are identical
+at 100, 243, 1000, 1009, 1280, 1536, 2187, 3125 and 4096 points. At 2560,
+3000, 3072 and 3600 a plan that carries a callback is another cuFFT plan, and
+every element differs by rounding: 2e-7 of the peak after one complex64 step,
+4e-15 after seven complex128 ones. The propagator callback did that already,
+so claim (2) of its entry above holds at the other sizes only.
+
+**What it does not cover.** 256² loses 3 µs a step, twice in two campaigns and
+inside that cell's spread; not explained. 1D and 3D runs, non-local ones (the
+response is applied between the transform and the step), the coupled solvers
+and RK4 keep the kernel. `NLSE_FUSE_PROPAGATOR=0` switches both callbacks off.
+
+Reproduce none against both with `benchmarks/propagator_fusion.py`. The
+three-way table, the `ncu` tables and the bitwise runs are `fp_three.py`,
+`fp_ncu.py` with `fp_ncu_table.py`, `fp_bitwise.py` and `fp_sizes_diff.py`,
+kept outside the repository with the session's other scratch scripts.
+
 ## Open
 
 **The absorbing-potential and coupled halves of the lossy step.** The solved
@@ -1220,18 +1320,14 @@ and in neither case is `dphi/dy` constant, so both still freeze `|A|^2` and both
 are still first order. The coupled case is the one worth measuring first: it is
 where DDGPE lives, and DDGPE is driven and dissipative by construction.
 
-**The nonlinear step as a store callback on the *inverse* transform.** The
-propagator fusion above removes one of the two passes a split step makes over
-the field outside the transforms; this would remove the other, leaving a step
-that is two transforms and nothing else. Unmeasured, and there is a real
-argument that it pays much less: the propagator multiply was pure traffic, while
-the nonlinear kernels run at 15% of bandwidth because they are bound on
-transcendentals (see *Where the time goes*), so the 16 bytes per point this
-saves may be dwarfed by what the same arithmetic costs inside a transform kernel
-whose occupancy it would cut. It also needs more than a pointer through the
-callback's block — the interaction strength, the loss, the saturation and the
-step all change with an adaptive stepper — so the block becomes a struct that
-the host rewrites per step rather than per propagator.
+**A separable propagator on CuPy.** A lie step moves 72 bytes per point: four
+transform passes at 16 and the 8 the forward callback reads of the propagator.
+The propagator is a function of kx times a function of ky, two vectors that
+fit in cache, so the callback could build each value from them and read no
+grid: 64 bytes.
+Prototype outside the solver, RTX 3050: 0.89x of the two-callback step at 512²
+and 0.95x at 2048². Not bit for bit: the product rounds differently from the
+grid. Not implemented.
 
 **Whether a 1D plan can be made to take a callback.** `NLSE_1d` and `CNLSE_1d`
 cannot fuse, because CuPy's one-dimensional plan path raises on the way into

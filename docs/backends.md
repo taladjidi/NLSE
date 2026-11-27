@@ -66,12 +66,13 @@ simu.backend = "CL"
 | `NLSE_QUIET` | Suppress backend auto-selection messages when set |
 | `NLSE_FORCE_BENCHMARK` | Re-run FFT benchmarks even if cache exists |
 | `NLSE_CACHE_DIR` | Directory for the benchmark cache, instead of the platform's cache directory |
-| `NLSE_FUSE_PROPAGATOR` | Set to `0` to stop CUPY applying the propagator from a cuFFT callback |
+| `NLSE_FUSE_PROPAGATOR` | Set to `0` to stop CUPY running the propagator and the nonlinear step from cuFFT callbacks |
 
 `NLSE_FUSE_PROPAGATOR` is an escape hatch rather than a tuning knob. On CUPY
-the propagator multiply is normally folded into the forward transform, which
-computes the same thing in one pass fewer; setting it to `0` puts the multiply
-back in a kernel of its own. It is read when an FFT plan is built, so a session
+the propagator multiply is normally folded into the forward transform, and the
+nonlinear step that follows the linear one into the inverse transform, which
+computes the same thing in two passes fewer; setting it to `0` puts both back
+in kernels of their own. It is read when an FFT plan is built, so a session
 that changes it also has to call `simu._backend.clear_fft_plans()`.
 
 Example:
@@ -101,7 +102,7 @@ backend that can serve it and says so, rather than refusing.
 
 ### Grid sizes
 
-Use grid sizes that are powers of 2 (e.g., 256, 512, 1024, 2048) or have low prime factors. FFT performance drops significantly with large prime factors.
+Use grid sizes that are powers of 2 (e.g., 256, 512, 1024, 2048) or have low prime factors. FFT performance drops significantly with large prime factors. On CUPY the split step's cuFFT store callbacks make a 2D step 1.36-1.38x faster at 512 to 2048 points and 1.24-1.34x faster at 1280 to 3072 (RTX 3050, complex64; `docs/optimization-log.md`, CUDA).
 
 ### The CPU transform
 

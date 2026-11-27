@@ -7,7 +7,7 @@
 // complex (absorbing) one. See _expand_v_blocks in kernels/cl.py.
 
 // The saturation the interaction should be evaluated at over a lossy step.
-// The CUDA twin of this, in cuda_source/kernels.cu, carries the derivation;
+// The CUDA twin of this, in cuda_source/nonlinear_step.cuh, carries the derivation;
 // briefly: freezing |A|^2 across a step is exact only while the step preserves
 // it, which loss does not, and the frozen step costs every composition built
 // on it its order. With u = 2*alpha*dz this returns P = (1 - y_end/y0)/u, so

@@ -44,7 +44,9 @@ def _cause_hint() -> str:
 # FileNotFoundError on a non-editable install.
 REQUIRED_DATA_FILES = [
     "NLSE/kernels/cl_source/kernels.cl",
+    "NLSE/kernels/cuda_source/fft_callbacks.cu",
     "NLSE/kernels/cuda_source/kernels.cu",
+    "NLSE/kernels/cuda_source/nonlinear_step.cuh",
 ]
 
 # Modules from the pre-2.3 flat layout. They still exist under build/lib/ and

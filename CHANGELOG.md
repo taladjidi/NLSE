@@ -109,6 +109,14 @@ come first.
   and 3 to 32%. complex128 results are bit-identical. complex64 results move
   at the 2^-24 level; a lossless step keeps the rounding it had up to the
   default 0.1 rad per step. Figures in `docs/optimization-log.md`.
+- **CUPY runs the nonlinear step inside the inverse transform.** A 2D local
+  `NLSE` or `GPE` split step applied it in a pass of its own; a cuFFT store
+  callback now applies it as the transform writes each element, as the
+  propagator already was. A step moves 72 bytes per grid point instead of 88
+  and is 1.17 to 1.19x faster at 512² to 3072² in complex64 (RTX 3050; 1.12x
+  at 2560² and 3000², 0.89x at 256², unchanged in complex128). Results are
+  bit-identical wherever cuFFT plans the same transform with a callback as
+  without; `NLSE_FUSE_PROPAGATOR=0` now switches both callbacks off. Figures in `docs/optimization-log.md`.
 - One-step `out_field` at 2048² (M3 Max): CPU 73 → 47 ms, MLX 70 → 41 ms; the
   dispersion eigenvalues are kept and the normalization writes in place. The
   per-step time is unchanged.

@@ -83,6 +83,12 @@ class Backend(ABC):
     # A whole single-component split step without returning to Python.
     has_fused_split_step = False
 
+    # kernels.linear_nonlinear_step(
+    #     A, propagator, plan, V_scaled, dz, alpha, g, Isat) -> bool
+    # The linear step, then the nonlinear step run as the inverse transform
+    # stores its output. False, with A untouched, where it cannot.
+    has_nonlinear_store_callback = False
+
     # kernels.rk4_rhs_fused(
     #     A_in, k, V_scaled, propagator, plan, alpha, g, Isat,
     #     unnorm_ifft=False)
