@@ -83,6 +83,7 @@ def test_prepare_output_array(backend) -> None:
     if backend == "CPU":
         assert out.flags.aligned, f"Output array is not aligned. (Backend {backend})"
         assert out_sq.flags.aligned, f"Output array is not aligned. (Backend {backend})"
+        assert isinstance(out, np.ndarray), "Output array type wrong"
     out_np = as_numpy(simu, out)
     integral = (
         (out_np.real * out_np.real + out_np.imag * out_np.imag)
