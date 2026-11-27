@@ -188,7 +188,8 @@ come first.
   examples whose source changed, so a push that changes no example executes
   none, where every push spent 57 of the job's 58 minutes running all of them.
   A weekly run, or one started by hand, executes every example against the
-  current code; the next push to `main` publishes the figures it drew.
+  current code, and so does a push that changes `uv.lock` or
+  `examples/_output.py`.
 
 ## 4.1.0 — 2026-08-05
 

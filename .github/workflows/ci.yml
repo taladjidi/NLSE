@@ -238,15 +238,16 @@ jobs:
             - name: Install dependencies
               run: uv sync --locked --no-default-groups --group docs
 
-            # The gallery pages the last run executed. sphinx-gallery re-runs only
-            # examples whose source changed since (md5). A unique key always saves,
-            # and restore-keys brings back the newest, as for the benchmarks above.
+            # The gallery pages the last run executed: sphinx-gallery re-runs only
+            # the examples whose source changed since (md5). The run id makes every
+            # run save; restore-keys brings back the newest made with the same
+            # uv.lock and examples/_output.py, so a change to either runs them all.
             - name: Restore the executed gallery
               uses: actions/cache@v4
               with:
                   path: docs/auto_examples
-                  key: docs-gallery-${{ github.run_id }}
-                  restore-keys: docs-gallery-
+                  key: docs-gallery-${{ hashFiles('uv.lock', 'examples/_output.py') }}-${{ github.run_id }}
+                  restore-keys: docs-gallery-${{ hashFiles('uv.lock', 'examples/_output.py') }}-
 
             # The page of an example deleted or renamed since would fail -W as a
             # document in no toctree.
@@ -257,9 +258,8 @@ jobs:
                       [ -e "examples/${page##*/}" ] || rm -v "${page%.py}".*
                   done
 
-            # -W turns warnings into errors, which is what --strict was doing
-            # before: a broken cross-reference or a page missing from a
-            # toctree fails the build rather than shipping.
+            # -W turns warnings into errors: a broken cross-reference or a page
+            # missing from a toctree fails the build rather than shipping.
             # sphinx-gallery fails the build on an example that raises; the two it
             # never executes are excluded by filename_pattern in docs/conf.py.
             - name: Build the site

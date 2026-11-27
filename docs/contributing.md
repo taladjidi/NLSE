@@ -147,11 +147,11 @@ docstring and it appears.
 The gallery runs every script in `examples/` but two, 57 minutes on a GitHub
 runner. sphinx-gallery keeps what it ran in `docs/auto_examples/` and runs a
 script again only when its source changes, so a second build runs none, and
-neither does a change to `NLSE/` alone. A change to `NLSE/` that breaks an
-example therefore passes CI, and the weekly run is the first to fail on it;
-the same holds for a change to `sphinx_gallery_conf` or `examples/_output.py`,
-since neither re-runs an example. CI keeps that directory between runs, so a
-push runs only the examples it changed. The weekly CI run, and one started
+neither does a change to `NLSE/` or to `sphinx_gallery_conf` alone. CI keeps
+that directory between runs, so a push runs only the examples it changed; a
+push that changes `uv.lock` or `examples/_output.py` starts without it and
+runs them all. A change to `NLSE/` that breaks an example therefore passes
+CI, and the weekly run is the first to fail on it. That run, and one started
 with **Run workflow** on the Actions page, run every example against the
 current code and fail if one raises. To do that locally:
 
