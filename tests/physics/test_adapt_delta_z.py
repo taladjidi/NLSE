@@ -24,6 +24,16 @@ I_SAT = 1e5  # W/m^2, halves the index change at INTENSITY
 # saturation 1 / (1 + 2 INTENSITY / I_SAT) for both, as the kernels apply it.
 CROSS_SATURATION = 1 / (1 + 2 * INTENSITY / I_SAT)
 
+# An asymmetric CNLSE, so each constant multiplies an intensity no other
+# does: its own index per component, a cross index, a second wavenumber.
+N22 = -2.4e-9  # m^2/W
+N12 = -0.8e-9  # m^2/W
+K2_OVER_K = 1.5
+# Second intensity over the first: at 0.3 the second component turns faster
+# (2.28 against 1.84, in k * 1e-9 * INTENSITY * sat), at 0.05 the first
+# (1.64 against 1.38).
+SECOND_INTENSITY_FRACTIONS = (0.3, 0.05)
+
 # Relative; float32 |A|^2 against the float64 closed form. Measured 3.8e-9
 # (GPE) and 8.7e-9 (NLSE) on CPU and MLX.
 STEP_REL_TOL = 1e-6
@@ -112,4 +122,47 @@ def test_the_cnlse_step_counts_the_cross_coupling(backend):
     rate = k * abs(N2) * INTENSITY * CROSS_SATURATION
     assert got == pytest.approx(1 / (STEPS_PER_LENGTH * rate), rel=STEP_REL_TOL), (
         f"CNLSE asked for {got} with only n12 set. (Backend {backend})"
+    )
+
+
+@pytest.mark.parametrize("fraction", SECOND_INTENSITY_FRACTIONS)
+def test_the_cnlse_step_follows_the_faster_component(backend, fraction):
+    """``dz = 1 / (12 max_i k_i (|n_ii| I_i + |n12| I_j) sat)`` m.
+
+    Parameters
+    ----------
+    backend : str
+        Backend to run on.
+    fraction : float
+        Second component's intensity over the first's.
+    """
+    simu = CNLSE(
+        alpha=0,
+        power=1.0,
+        window=BEAM_WINDOW,
+        n2=N2,
+        n12=N12,
+        V=None,
+        L=1e-2,
+        NX=N_GRID,
+        NY=N_GRID,
+        Isat=I_SAT,
+        wvl=WAVELENGTH,
+        backend=backend,
+    )
+    simu.n22 = N22
+    simu.k2 = K2_OVER_K * simu.k
+    I1, I2 = INTENSITY, fraction * INTENSITY
+    A = np.empty((2, N_GRID, N_GRID), dtype=np.complex64)
+    A[0] = np.sqrt(2 * I1 / (c * epsilon_0))
+    A[1] = np.sqrt(2 * I2 / (c * epsilon_0))
+    got = adapt_delta_z(simu, simu._backend.from_numpy(A), 0.0, 0, 1, [])
+    k = 2 * np.pi / WAVELENGTH
+    sat = 1 / (1 + (I1 + I2) / I_SAT)
+    rate = sat * max(
+        k * (abs(N2) * I1 + abs(N12) * I2),
+        K2_OVER_K * k * (abs(N22) * I2 + abs(N12) * I1),
+    )
+    assert got == pytest.approx(1 / (STEPS_PER_LENGTH * rate), rel=STEP_REL_TOL), (
+        f"CNLSE asked for {got} at I2 = {fraction} I1. (Backend {backend})"
     )

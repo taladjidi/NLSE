@@ -167,8 +167,9 @@ def adapt_delta_z(
     delta_z.append(simu._current_delta_z)
     if i % update_every != 0:
         return None
-    # The solver's own phase rate, k n2 I for NLSE and g n for GPE, whose k, n2
-    # and optical intensity are not physical quantities.
+    # The solver's own phase rate: k n2 I for NLSE, with the cross coupling for
+    # the coupled solvers, and g n for GPE, whose k, n2 and optical intensity
+    # are not physical quantities.
     peak = simu._max_interaction_rate(A)
     if peak == 0:
         # The nonlinear length is infinite, which is not a step.

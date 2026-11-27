@@ -342,6 +342,9 @@ def test_adapt_delta_z_keeps_the_step_past_the_medium(backend_name):
     )
     assert np.all(np.isfinite(in_force)), f"a step was not finite on {backend_name}"
     assert np.all(np.isfinite(np.asarray(simu._backend.to_numpy(out))))
+    # The run ends on a cut step; the whole step before it is past the medium
+    # and still the one the medium's last adaptation asked for.
+    assert in_force[-2] == pytest.approx(in_force[1], rel=STEP_RTOL)
 
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
