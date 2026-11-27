@@ -117,6 +117,15 @@ come first.
   at 2560² and 3000², 0.89x at 256², unchanged in complex128). Results are
   bit-identical wherever cuFFT plans the same transform with a callback as
   without; `NLSE_FUSE_PROPAGATOR=0` now switches both callbacks off. Figures in `docs/optimization-log.md`.
+- **CUPY builds the propagator from one factor per axis.** In a 2D `NLSE` or
+  `GPE` split step the forward transform's callback read the propagator from a
+  grid-sized array; it now multiplies a row factor by a column factor. A step
+  moves 65 bytes per grid point instead of 73 and is 1.04 to 1.05x faster at
+  1024², 2048² and 4096² in complex64 (RTX 3050; 1.10x at 512², 0.90x at 256²,
+  0.97 to 0.99x in complex128, where arithmetic and not memory binds the
+  step). Results move at rounding level: 8e-6 of the peak after 220 complex64
+  steps, 1.4e-14 in complex128. `NLSE_FUSE_PROPAGATOR=0` still switches every
+  callback off. Figures in `docs/optimization-log.md`.
 - One-step `out_field` at 2048² (M3 Max): CPU 73 → 47 ms, MLX 70 → 41 ms; the
   dispersion eigenvalues are kept and the normalization writes in place. The
   per-step time is unchanged.

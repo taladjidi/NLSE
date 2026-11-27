@@ -334,9 +334,36 @@ Task list for the closing review pass (asked on 2026-11-27):
   to pin (a mutation of the code under test) and see the test fail. Report
   every test that still passes, that asserts nothing, or whose tolerance is
   wider than the effect it guards; fix or delete those.
-- [ ] **mypy to ty** ("Let's switch also from mypy to ty at the end"):
-  `pyproject.toml`, the pre-commit hooks, CI, the commands in `CLAUDE.md`
-  and the docs that name mypy.
+  - Done: four mutation audits, one per slice of `tests/`, in
+    `~/Documents/LKB/NLSE_tangui_fix_specs/test_audit/` (`mutants_s1.py`
+    solver state, `s2` solver physics, `s3` backends, `s4` integration and
+    docs): 234 mutants, 106 not killed by their own slice's files.
+    `crosscheck.py TREE s1 s2 s3 s4` runs each mutant against its slice and,
+    if it passes, against the whole suite; a mutant is a gap only if the
+    whole suite lets it through. Its Mac output goes to
+    `crosscheck_mac_s134.txt` and `crosscheck_mac_s2.txt` there (running
+    when this was written).
+  - Slice-level candidates, not yet confirmed by the cross-check: Kerr sign
+    and factor, saturation, loss rate, complex `V`, non-local width, GPE `g`
+    and `V`, per-component CNLSE terms, batch parameters, step-size rates,
+    several callbacks; and the two-axis batch of `README.md:285`, which the
+    audit says raises on CPU (not verified).
+  - Left: read the cross-check, run its survivors on the box (the CuPy and
+    OpenCL tests may kill some), rank, then an architect spec for the
+    missing closed-form tests, and implement it.
+- [ ] **Packaging and tooling** ("I also would like you to check packaging
+  and tooling in general. I want something modern based on uv ruff and ty",
+  2026-11-27), which carries the mypy to ty switch ("Let's switch also from
+  mypy to ty at the end"). Architect's spec and patch:
+  `NLSE_tangui_fix_specs/tooling_uv_ruff_ty_spec.md` and
+  `tooling_uv_ruff_ty.patch`, in spec review when this was written. Its
+  decisions: dev and docs become dependency groups and the backends stay
+  extras; hatchling stays; ty 0.0.112, pinned, on `NLSE/` with a baseline of
+  the 99 diagnostics it finds today; ruff gains UP and PGH; the hooks run
+  through `uv run --locked`, so the pre-push hook no longer depends on PATH;
+  CI installs with `uv sync --locked`. For the user to decide: the licence
+  (`GPL-3.0-only` or `GPL-3.0-or-later`), dropping Python 3.10, ruff 0.17,
+  pinning the actions by hash.
 - [ ] Review of the architecture, the tests and the docs (docs page by page
   against Diátaxis), fix what is critical or major, then push.
 
@@ -354,42 +381,52 @@ Decisions taken by the user:
 
 In progress, in this order:
 
-- **CuPy, a separable propagator** (spec 2b, for `main` at 5113580):
-  `~/Documents/LKB/NLSE_tangui_fix_specs/cuda_fewer_passes_spec_2b.{md,patch}`
-  and `mutants_spec_2.py`. The forward store callback multiplies
-  `rows[iy] * columns[ix]` instead of reading the propagator: 72 → 64 bytes a
-  point. Not merged; on no branch yet.
-  - The tie between the twin the kernel would read and the factors it gets:
-    `_build_propagator` caches `(array, dtype, delta_z)`; `_built_step` finds
-    an array by identity; `_update_propagator_fft` records
+- **CuPy, a separable propagator** (`perf/cuda-separable-propagator`, spec
+  2b: `~/Documents/LKB/NLSE_tangui_fix_specs/cuda_fewer_passes_spec_2b.{md,patch}`).
+  Merged, not pushed. The forward store callback multiplies
+  `rows[iy] * columns[ix]` instead of reading the propagator. RTX 3050,
+  complex64, lie, 12 interleaved rounds: 73 → 65 bytes a point (`ncu`), a step
+  1.04x faster at 1024², 1.05x at 2048², 1.04x at 4096²; 1.10x at 512², 0.90x
+  at 256²; complex128 0.97 to 0.99x (that step is at 18% of the memory peak:
+  arithmetic binds it). Kept under the one-path decision; the complex128 cost
+  is for the user to accept or not. Entry in the optimization log, CUDA
+  section.
+  - The tie between the array the kernel would read and the factors it
+    gets: `_build_propagator` caches `(array, dtype, delta_z)`; `_built_step`
+    finds an array by identity; `_update_propagator_fft` records
     `_propagator_fft_origin`; `_propagator_fft_factors` returns None unless
-    the origin is that very array. Every swap of the linear state goes
-    through `_linear_state` / `_restore_linear_state`. Any doubt gives None
-    and the kernel reads the full array.
-  - Measured on the patch as first delivered. Mac: suite 1492 passed, 155
-    skipped; 14 of 14 mutants killed. Box (RTX 3050, CuPy 14.2.0): suite 1468
-    passed, 67 skipped; the fusion file 41 passed, six times out of six.
-    complex64, lie, lossless, interleaved in one process, ms a step, full
-    against separable: 512² 0.088 / 0.079 (1.11x), 1024² 0.405 / 0.384
-    (1.05x, 16 rounds, twice), 2048² 1.629 / 1.552 (1.05x, 12 rounds), 4096²
-    8.876 / 8.484 (1.05x, 12 rounds). complex128: 0.99x. About 0.88x at 256².
-    Not bitwise: 8e-6 of max|A| in complex64, 1.3e-14 in complex128.
-  - Spec review: the design holds; six findings sent back to the architect
-    (agent `ad1da302c32593064`) in one round on 2026-11-27: a `k` changed
-    between the build and the step gets factors for the new `k`; two
-    untested expressions (`- operator[0, 0]`, `rows` in the cache key);
-    `_dispersion_axes` peaks at 1.8 GB at 4096²; duplicated test constants;
-    acceptance wording. Its answer was not back when this was written.
-  - Left: the architect's round, then implementer tasks A, B, C from the
-    spec in a worktree, reviewer, and on the box `ncu` (72 → 64 bytes), the
-    five CUDA-only mutants by hand, the share of the 208 GB/s peak. Then the
-    optimization log, CHANGELOG, `docs/backends.md`, merge.
-- Scratch to delete once it is merged. Box: `~/Documents/nlse_cuda_sp2`,
-  `nlse_cuda_sp2x`, `nlse_cuda_sp2b`, `nlse_cpu32`, `nlse_cuda_fp` (= `main`,
-  the tree the CPU prototypes import), `nlse_cuda_fp_x`, `nlse_cuda_fp_lean`.
-  Mac: worktrees `spec2` and `spec2b` in this session's scratchpad
-  (`git worktree list`), and older ones (`docs_tree`, `fix_tree`, `old_tree`,
-  `~/Documents/LKB/NLSE_wt/p1a…p7`) from earlier sessions.
+    the origin is that very array and its cache key still holds. Every swap
+    of the linear state goes through `_linear_state` /
+    `_restore_linear_state`. Any doubt gives None and the kernel reads the
+    full array.
+  - Mac: suite 1498 passed, 155 skipped; `mutants_spec_2.py` kills 17 of 17.
+    Box (CuPy 14.2.0): suite 1596 passed, 67 skipped; the fusion file 41
+    passed three times; the five CUDA-only mutants killed
+    (`run_cuda_mutants.py`, same directory as the spec).
+  - Reviewer: pass, minor findings only, not fixed. With
+    `NLSE_FUSE_PROPAGATOR=0` the solver still builds the factors the plan
+    then refuses (0.1 to 0.2 s and 0.5 GB of host memory at 4096², the
+    reviewer's figures). The axes come from `_compute_propagator_rk4`, so a
+    subclass overriding only `_dispersion_on_device` would get factors that
+    do not describe its propagator (no such subclass exists).
+    `_take_partial_step` swaps the linear state before its `try`, as before
+    the change. `FUSED_TRANSFORM_AXES` is reused as an ndim.
+    `_forget_device_state` does not clear `_propagator_fft` (only
+    `_forget_run_state` does). The fallback `if` in `linear_nonlinear_step`
+    has no `else`. Seven returns in `cupy_backend.py:126`; bare `1j` and `2`
+    in the two test files. A 32-bit divide in the callback, which the
+    reviewer suggested, was measured and changes nothing.
+  - Scripts on the box: `fp_sep.py ROUNDS N,N,... [DTYPE]`, `fp_ncu.py`,
+    `fp_ncu_table.py` in `~/Documents/nlse_scratch_scripts/`; reports
+    `rep/fp_sep_2c*.txt` and `rep/ncu_2c_*`.
+- **CuPy at 4096² is at 62% of the memory peak**, against 85% at 1024² and
+  2048². `ncu`: the first pass of each transform (`regular_fft`) streams 96
+  GB/s there and 161 GB/s at 2048²; two launches, 5.8 of the 8.9 ms of a
+  step. Not explained, nothing tried. In the optimization log, *Open*.
+- Scratch to delete. Box: `~/Documents/nlse_cuda_sp2c` (= `main` after the
+  merge of 2b, less the docs), `nlse_cpu32`, `nlse_cuda_fp` (= 5113580, the
+  tree the CPU prototypes import). Mac: `git worktree list` (this session's
+  scratchpad, `~/Documents/LKB/NLSE_wt/`).
 - **CPU: a step that owns its passes.** Measured as a prototype, not
   designed or implemented. Three passes a step, each over blocks that fit a
   core's cache, the field back in real space after each: transform the rows
@@ -399,19 +436,32 @@ In progress, in this order:
   inside releases the GIL (scipy.fft 1D with `workers=1`, serial `nogil`
   numba kernels). It fits the hook spec 2b adds
   (`linear_nonlinear_step(..., factors=...)`), so it comes after it.
-  - Box (Ryzen 3 4100, 4 threads, lossless Kerr, ms a step, today's step
-    against the prototype, best of 4 rounds of 20 steps), each work buffer
-    512 KiB: complex64 1024² 8.23 / 6.80 (1.21x), 2048² 35.09 / 24.98
-    (1.40x), 4096² 145.4 / 98.3 (1.48x); complex128 13.82 / 10.63 (1.30x),
-    58.80 / 41.02 (1.43x), 279.0 / 179.4 (1.55x).
+  - Decided by the user on 2026-11-27: "For this type of optimizations, this
+    should be done by a utility, since this will vary machine from machine /
+    chip to chip", then "Basically the library should keep a cache of best
+    chunk sizes per grid size. Very much like the old API used to cache FFT
+    plans." So no constant and no rule from the cache sizes: the block size,
+    or "do not block", is measured on the machine and kept in a cache the
+    library owns, keyed by grid shape, dtype and thread count, next to the
+    backend benchmark cache (`NLSE/backends/benchmark.py`, `NLSE_CACHE_DIR`).
+    My reading, not confirmed: the first run on an untuned grid measures and
+    stores, and the same routine can be called ahead of time.
+  - Box, 8 rounds (Ryzen 3 4100, 4 threads, lossless Kerr, ms a step,
+    today's step against the best block): complex64 1024² 7.22 / 6.43
+    (1.12x, 32 rows), 2048² 35.14 / 24.75 (1.42x, 16 rows), 4096² 144.66 /
+    98.83 (1.46x, 16 rows; 8 rows 1.26x, 32 rows 0.56x); complex128 13.67 /
+    10.75 (1.27x, 32 rows), 59.45 / 41.00 (1.45x, 16 rows), 277.76 / 178.73
+    (1.55x, 8 rows; 16 rows 0.90x). The best block is 256 to 512 KiB (a
+    core's L2 is 512 KiB) and 1 MiB loses. Reports on the box:
+    `rep/cpu_fused3_bytes8_complex{64,128}.txt`.
   - The buffer must fit the core's L2 (512 KiB on the box): 1 MiB gives
     0.58x at 4096² complex64. 128 KiB gives 1.01 to 1.15x. Eight logical
     threads lose to four (1.17 to 1.30x): a pair shares one L2.
   - Mac (M3 Max, 12 to 16 threads, machine not idle, the chunk rule not yet
     run there): complex64 0.77x at 1024², 0.98x at 2048², 1.41x at 4096²;
     complex128 0.92x, 1.21x, 1.46x. The field fits the 16 MiB L2 at 1024²
-    and three thread dispatches weigh on a 1.6 ms step. So a gate on the
-    field's size is likely, which is a split of paths: the user decides.
+    and three thread dispatches weigh on a 1.6 ms step. The best block there is
+    1 MiB. Whether to block at all on a grid is what the cache records.
   - The same passes threaded by scipy and numba alone (no Python threads)
     do not win: 0.79 to 1.03x on the box in complex64. The gain is each
     thread keeping its block in its own cache across the transform and the
@@ -553,9 +603,9 @@ Known before the profiles:
   `_rk4_max_dz`, Yoshida's extra `_split_step_max_dz`), each with a transform
   of a copy of the field, and `_energy_rates_on_device` copies `V` to the host
   every time.
-- Open in the optimization log already: the separable propagator, the
-  nonlinear step as an inverse-transform store callback, a plan callback in
-  1D, an `alpha == 0` branch in `_nl_prop`.
+- Open in the optimization log already: the first transform pass at 4096²
+  on CuPy, a plan callback in 1D, an `alpha == 0` branch in `_nl_prop`, the
+  linear step as an increment.
 
 Environment:
 

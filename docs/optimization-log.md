@@ -1311,6 +1311,59 @@ three-way table, the `ncu` tables and the bitwise runs are `fp_three.py`,
 `fp_ncu.py` with `fp_ncu_table.py`, `fp_bitwise.py` and `fp_sizes_diff.py`,
 kept outside the repository with the session's other scratch scripts.
 
+**Deployed: the forward callback builds the propagator from one factor per
+axis.** RTX 3050, CUDA 13.3, CuPy 14.2.0. The dispersion operator of `NLSE`
+and `GPE` is one term in `kx` plus one in `ky`, so the propagator is a product
+`rows[iy] * columns[ix]`. The forward transform's store callback read it from
+a grid-sized array, 8 bytes per point in complex64; it now reads two vectors
+that stay in cache and multiplies them. The solver checks that the operator is
+such a sum (to 1e-12 of its largest element; NLSE's and GPE's are within
+3e-16) and hands the factors over only for the very array the kernel would
+otherwise read, found by identity. In any doubt the callback reads the array,
+as before.
+
+DRAM bytes per point per step (`ncu --set full`, 10 steps after the warm
+ones, plain loop), full array → factors: 73.2 → 65.2 at 1024², 73.5 → 65.7 at
+2048², 74.9 → 67.0 at 4096² in complex64; 147.5 → 131.7 at 2048² in
+complex128. At 2048² the forward last pass reads 12.0 → 8.1 bytes per point
+and takes 0.409 → 0.375 ms.
+
+Per step, untraced, complex64, lie, lossless, the two sides interleaved in
+one process over 12 rounds, from the 20→220 step slope (`fp_sep.py`):
+
+| grid | full array | factors | ratio | spread | of 208 GB/s |
+|---|---|---|---|---|---|
+| 1024² | 0.404 | 0.388 | **1.04x** | 8.5% | 91% → 85% |
+| 2048² | 1.639 | 1.562 | **1.05x** | 1.1% | 90% → 85% |
+| 4096² | 9.042 | 8.675 | **1.04x** | 2.2% | 67% → 62% |
+
+Other cells: 512² 0.089 → 0.081 (1.10x, spread 8.8%), 256² 0.023 → 0.026
+(0.90x, 7.4%). complex128 4.168 → 4.233 at 1024², 16.762 → 17.002 at 2048²,
+72.69 → 74.93 at 4096² (0.98x, 0.99x, 0.97x; spreads 2.2%, 1.1%, 11.3%): 16
+bytes fewer per point and no faster, because that step moves 37 GB/s, 18% of
+what the card streams. Arithmetic binds it, and the callback now does a
+second complex multiply. One path at every size and width, as for the
+callbacks above: the typical runs, 1024² to 4096² in complex64, gain 4 to 5%.
+
+A tenth fewer bytes buys half as much time: the step was at 90% of the memory
+peak and is at 85%. A 32-bit divide for the row index, in place of the 64-bit
+one, changed nothing (1.04x and 1.04x, then 1.02x and 1.05x, at 1024² and
+2048², against 1.02x and 1.05x without; 0.98x and 0.99x in complex128):
+rejected.
+
+Not bit for bit: the product of two factors rounds differently from the
+exponential of the sum. Against the full array after 220 steps, 8e-6 of
+max|A| in complex64 and 1.4e-14 in complex128.
+`tests/backends/test_fft_propagator_fusion.py` holds the callback against the
+full array, and `tests/solvers/test_nonlinear_in_transform.py` the factors
+against a closed form.
+
+**4096² is not at the ceiling.** The step moves 130 GB/s there, 62% of the
+peak, against 85% at 1024² and 2048². In the `ncu` table the first pass of
+each transform (`regular_fft`) takes 2.89 ms for 16.6 bytes per point, 96
+GB/s, where the same pass runs at 161 GB/s at 2048²; the last pass with its
+callback runs at 188 GB/s. Two launches a step: 5.8 of its 8.9 ms. See *Open*.
+
 ## Open
 
 **The absorbing-potential and coupled halves of the lossy step.** The solved
@@ -1320,14 +1373,11 @@ and in neither case is `dphi/dy` constant, so both still freeze `|A|^2` and both
 are still first order. The coupled case is the one worth measuring first: it is
 where DDGPE lives, and DDGPE is driven and dissipative by construction.
 
-**A separable propagator on CuPy.** A lie step moves 72 bytes per point: four
-transform passes at 16 and the 8 the forward callback reads of the propagator.
-The propagator is a function of kx times a function of ky, two vectors that
-fit in cache, so the callback could build each value from them and read no
-grid: 64 bytes.
-Prototype outside the solver, RTX 3050: 0.89x of the two-callback step at 512²
-and 0.95x at 2048². Not bit for bit: the product rounds differently from the
-grid. Not implemented.
+**The first transform pass at 4096² on CuPy.** `regular_fft` streams 96 GB/s
+at 4096² and 161 GB/s at 2048² (CUDA entry above), and is two thirds of the
+step. Were it as fast per byte as at 2048², the step would take about 6.5 ms
+instead of 8.7. Not explained and nothing tried: the pass that walks the grid
+across rows has a stride of 32 KiB there, a power of two.
 
 **Whether a 1D plan can be made to take a callback.** `NLSE_1d` and `CNLSE_1d`
 cannot fuse, because CuPy's one-dimensional plan path raises on the way into

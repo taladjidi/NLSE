@@ -84,7 +84,7 @@ class Backend(ABC):
     has_fused_split_step = False
 
     # kernels.linear_nonlinear_step(
-    #     A, propagator, plan, V_scaled, dz, alpha, g, Isat) -> bool
+    #     A, propagator, plan, V_scaled, dz, alpha, g, Isat, factors=None) -> bool
     # The linear step, then the nonlinear step run as the inverse transform
     # stores its output. False, with A untouched, where it cannot.
     has_nonlinear_store_callback = False

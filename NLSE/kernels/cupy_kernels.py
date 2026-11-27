@@ -599,7 +599,9 @@ class CUDAKernels:
             plan.ifft(A, A)
         return A
 
-    def linear_nonlinear_step(self, A, propagator, plan, V_scaled, dz, alpha, g, Isat):
+    def linear_nonlinear_step(
+        self, A, propagator, plan, V_scaled, dz, alpha, g, Isat, factors=None
+    ):
         """Linear step, then the nonlinear step from the inverse transform's store.
 
         The pass ``square_mod_nl_prop`` makes over the field goes: cuFFT runs
@@ -625,6 +627,10 @@ class CUDAKernels:
             Nonlinear interaction strength.
         Isat : float
             Saturation intensity.
+        factors : tuple, optional
+            ``(rows, columns)``, the propagator as one factor per axis, 1/N in
+            rows. Read in its place where the plan can, which spares the
+            forward transform the propagator's 8 or 16 bytes per element.
 
         Returns
         -------
@@ -636,7 +642,8 @@ class CUDAKernels:
             return False
         if not plan.ifft_nonlinear_ready(A, V_scaled):
             return False
-        self.fft_propagate(plan, A, A, propagator)
+        if factors is None or not plan.fft_propagate_separable(A, A, *factors):
+            self.fft_propagate(plan, A, A, propagator)
         plan.ifft_nonlinear(A, A, V_scaled, dz, alpha, g, Isat)
         return True
 

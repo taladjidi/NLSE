@@ -11,6 +11,7 @@ import numpy.typing as npt
 from ..kernels.templating import (
     INFO_WORDS,
     NONLINEAR_CALLBACK,
+    SEPARABLE_CALLBACK,
     STORE_CALLBACKS,
     WRITE_INFO_KERNEL,
     WRITE_INFO_SOURCE,
@@ -120,6 +121,47 @@ class _CuFFTPlan:
             return False
         words = (propagator.data.ptr, propagator.size)
         self._transform(symbol, words, a, out, cp.cuda.cufft.CUFFT_FORWARD)
+        return True
+
+    def fft_propagate_separable(
+        self, a: Any, out: Any, rows: Any, columns: Any
+    ) -> bool:
+        """Forward FFT with a propagator of one factor per axis in its store.
+
+        Parameters
+        ----------
+        a : cp.ndarray
+            Field to transform, of ``rows.size`` rows of ``columns.size``.
+        out : cp.ndarray
+            Where the transform lands, ``a`` itself for an in-place step.
+        rows : cp.ndarray
+            Factor of each row, 1D, over every row of a batch.
+        columns : cp.ndarray
+            Factor of each column, 1D.
+
+        Returns
+        -------
+        bool
+            Whether it happened. ``False`` leaves ``out`` untouched, and the
+            caller owes the transform and the multiply.
+
+        """
+        if a.shape != self._shape or a.dtype != self._dtype:
+            return False
+        if not a.flags.c_contiguous:
+            return False
+        # Read by index from their first element, so contiguous or not at all.
+        for factor in (rows, columns):
+            if factor.dtype != a.dtype or factor.ndim != 1:
+                return False
+            if not factor.flags.c_contiguous:
+                return False
+        if columns.size != a.shape[-1] or rows.size * columns.size != a.size:
+            return False
+        if not self._callback_plan(SEPARABLE_CALLBACK):
+            return False
+        words = (rows.data.ptr, columns.data.ptr, columns.size)
+        self._transform(SEPARABLE_CALLBACK, words, a, out, cp.cuda.cufft.CUFFT_FORWARD)
         return True
 
     def ifft_nonlinear_ready(self, a: Any, V: Any) -> bool:
