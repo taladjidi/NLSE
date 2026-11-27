@@ -8,11 +8,13 @@ import pytest
 from helpers import ORDERS
 from NLSE import NLSE
 from NLSE.backends import get_backend, list_available_backends
-from NLSE.solvers.nlse import SPLITTINGS, YOSHIDA_WEIGHTS
+from NLSE.solvers.nlse import PROPAGATOR_CACHE_SIZE, SPLITTINGS, YOSHIDA_WEIGHTS
 from NLSE.solvers.step_size import (
     DEFAULT_MIN_STEPS,
     DEFAULT_PHASE_PER_STEP,
     RK4_PHASE_PER_STEP,
+    RK4_STABILITY_RADIUS,
+    SPLIT_STEP_DISPERSION_PHASE_LIMIT,
 )
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -36,8 +38,8 @@ PREVIOUS_RELEASE = "4.0.0"
 MIGRATION_FROM, MIGRATION_TO = "3.0.0", "4.0.0"
 
 # The README's splitting table: orders as in helpers.ORDERS; transform pairs
-# per step: Strang's half steps merge into a Lie body
-# (tests/solvers/test_strang_merge.py), Yoshida takes one per weight.
+# per step: one for Lie, one for Strang, whose two real-space halves sit around
+# a single linear step, and one per weight for Yoshida.
 TRANSFORM_PAIRS = {"lie": 1, "strang": 1, "yoshida": len(YOSHIDA_WEIGHTS)}
 # A row: `"name"` ... | $\mathcal{O}(\delta z^order)$ | pairs |
 SPLITTING_ROW = (
@@ -145,6 +147,9 @@ def test_quoted_constants_match_the_code(page):
         "DEFAULT_PHASE_PER_STEP": DEFAULT_PHASE_PER_STEP,
         "RK4_PHASE_PER_STEP": RK4_PHASE_PER_STEP,
         "DEFAULT_MIN_STEPS": DEFAULT_MIN_STEPS,
+        "SPLIT_STEP_DISPERSION_PHASE_LIMIT": SPLIT_STEP_DISPERSION_PHASE_LIMIT,
+        "RK4_STABILITY_RADIUS": RK4_STABILITY_RADIUS,
+        "PROPAGATOR_CACHE_SIZE": PROPAGATOR_CACHE_SIZE,
     }
     text = page.read_text(encoding="utf-8")
     wrong = []
