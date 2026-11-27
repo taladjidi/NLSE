@@ -422,6 +422,7 @@ def coupled_field(simu, cls):
         profile = np.exp(-(simu.XX**2 + simu.YY**2) / WAIST**2)
     else:
         profile = np.exp(-(simu.X**2) / WAIST**2)
+    profile = FIELD_AMPLITUDE * profile
     return np.array([profile, 0.5 * profile]).astype(PRECISION_COMPLEX)
 
 
