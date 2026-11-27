@@ -3,33 +3,10 @@
 // and the store callback that replaces them on CUPY run one expression, in one
 // order, and fold the step into the inverse transform without changing it.
 
-// The saturation the interaction should be evaluated at over a lossy step.
-//
-// A real-space step that freezes |A|^2 is exact only where |A|^2 is constant
-// through it -- true of a pure rotation, false the moment there is loss, since
-// the amplitude decays inside the step while the interaction goes on turning
-// the phase at the rate the step began with. Frozen, the sub-step is O(dz^2)
-// locally and every composition over it is first order: Lie, Strang and
-// Yoshida alike, measured.
-//
-// With y = |A|^2, s(y) = 1/(1 + y/Isat) and u = 2*alpha*dz, two exact facts,
-//
-//     dy/dz = -2*alpha*s*y,  dphi/dz = g*y*s   =>   dphi/dy = -g/(2*alpha)
-//
-// give the phase over the step as (g/(2*alpha))*(y0 - y_end) whatever the
-// saturation does in between, with y_end fixed by
-// ln y + y/Isat = ln y0 + y0/Isat - u.
-//
-// Returned is P = (1 - y_end/y0)/u, that phase written as a saturation: the
-// step applies g*y0*P*dz where it applied g*y0*sat*dz, and scales the
-// amplitude by sqrt(1 - P*u) where it multiplied by exp(-alpha*sat*dz). Three
-// passes put the composition back at fourth order, which is all Yoshida can
-// use. The bracket is the series of (-log1p(-P*u) - P*u)/(P*u)^2, and it
-// contracts while a step loses well under half the intensity -- which is what
-// LOSS_PER_STEP_LIMIT in solvers/step_size.py keeps it to.
-//
-// u == 0 returns early, so a lossless run computes what it always did, to the
-// bit, and pays one comparison for it.
+// The saturation P the interaction sees over a lossy step, u = 2*alpha*dz: the
+// step applies g*y0*P*dz for the phase and sqrt(1 - P*u) for the amplitude.
+// Three passes give fourth order; derivation in docs/numerical_methods.md.
+// u == 0 returns early, so a lossless run is unchanged to the bit.
 __device__ inline {{FP_TYPE}} nlse_loss_factor(
     const {{FP_TYPE}} sat,
     const {{FP_TYPE}} u
@@ -44,14 +21,9 @@ __device__ inline {{FP_TYPE}} nlse_loss_factor(
     return P;
 }
 
-// Largest |u| = |2*alpha*dz| the iteration above is used at, and why there is a
-// limit: it contracts only while the step takes out a small fraction of the
-// intensity, and the fraction it sees is sat*u, so the bound has to hold at
-// sat = 1. Measured against a stiff solve there it beats the frozen step by
-// 2.6x at u = 0.1 and loses to it by u = 0.3; near 1 it walks away and returns
-// a larger field than it was given. Above this the kernels compute what they
-// computed before -- see LOSS_PER_STEP_LIMIT in solvers/step_size.py, which
-// caps a propagation at half of it, so only a direct kernel call gets here.
+// Largest |u| = |2*alpha*dz| the iteration is used at: past it the iteration
+// stops contracting and the kernels use the frozen step. A propagation never
+// gets here (LOSS_PER_STEP_LIMIT in solvers/step_size.py is half of it).
 #define NLSE_LOSS_SOLVED_LIMIT 0.1
 
 // One element of the step. A_sq_val is |A_val|^2, or the non-locally smoothed

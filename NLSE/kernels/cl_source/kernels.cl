@@ -1,18 +1,12 @@
-// OpenCL C kernels for NLSE operations (optimized fused versions only)
-// Precision-agnostic template using {{FP_TYPE}}, {{FP2_TYPE}}, {{FP_SUFFIX}}
-//
-// A kernel that reads a potential is written once, between the VBLOCK markers
-// and against the V_ARG/V_PHASE/V_LOSS macros, and compiled three times: as
-// <name> with no potential, <name>_v with a real one and <name>_cv with a
-// complex (absorbing) one. See _expand_v_blocks in kernels/cl.py.
+// OpenCL C kernels, precision-agnostic via {{FP_TYPE}}, {{FP2_TYPE}}, {{FP_SUFFIX}}.
+// A kernel between the VBLOCK markers, written against V_ARG/V_PHASE/V_LOSS, is
+// compiled as <name>, <name>_v and <name>_cv (no, real, complex potential).
+// See _expand_v_blocks in kernels/cl.py.
 
-// The saturation the interaction should be evaluated at over a lossy step.
-// The CUDA twin of this, in cuda_source/nonlinear_step.cuh, carries the derivation;
-// briefly: freezing |A|^2 across a step is exact only while the step preserves
-// it, which loss does not, and the frozen step costs every composition built
-// on it its order. With u = 2*alpha*dz this returns P = (1 - y_end/y0)/u, so
-// the step applies g*y0*P*dz for the phase and sqrt(1 - P*u) for the
-// amplitude. u == 0 returns early and a lossless run is unchanged to the bit.
+// The saturation P the interaction sees over a lossy step, u = 2*alpha*dz: the
+// step applies g*y0*P*dz for the phase and sqrt(1 - P*u) for the amplitude.
+// Derivation in docs/numerical_methods.md. u == 0 returns early, so a lossless
+// run is unchanged to the bit.
 inline {{FP_TYPE}} nlse_loss_factor(const {{FP_TYPE}} sat, const {{FP_TYPE}} u) {
     if (u == 0.0{{FP_SUFFIX}}) return sat;
     {{FP_TYPE}} P = sat;
@@ -24,14 +18,9 @@ inline {{FP_TYPE}} nlse_loss_factor(const {{FP_TYPE}} sat, const {{FP_TYPE}} u) 
     return P;
 }
 
-// Largest |u| = |2*alpha*dz| the iteration above is used at, and why there is a
-// limit: it contracts only while the step takes out a small fraction of the
-// intensity, and the fraction it sees is sat*u, so the bound has to hold at
-// sat = 1. Measured against a stiff solve there it beats the frozen step by
-// 2.6x at u = 0.1 and loses to it by u = 0.3; near 1 it walks away and returns
-// a larger field than it was given. Above this the kernels compute what they
-// computed before -- see LOSS_PER_STEP_LIMIT in solvers/step_size.py, which
-// caps a propagation at half of it, so only a direct kernel call gets here.
+// Largest |u| = |2*alpha*dz| the iteration is used at: past it the iteration
+// stops contracting and the kernels use the frozen step. A propagation never
+// gets here (LOSS_PER_STEP_LIMIT in solvers/step_size.py is half of it).
 #define NLSE_LOSS_SOLVED_LIMIT 0.1
 
 // FUSED: square_mod + nl_prop
