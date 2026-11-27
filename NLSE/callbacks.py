@@ -160,11 +160,8 @@ def adapt_delta_z(
     delta_z.append(simu._current_delta_z)
     if i % update_every != 0:
         return None
-    # On the host, for the same reason as the callbacks above: pyopencl's
-    # array has no .max(), and n2 and I_sat are scalars for an ordinary run
-    # but device arrays for a batched one that has already been sent. This is
-    # the last of the built-ins to still take the field as though it were
-    # numpy -- it was the one with tests, and they all run on the CPU.
+    # On the host: pyopencl's array has no .max(), and n2 and I_sat are device
+    # arrays once a batched run has been sent.
     A_host = simu._as_host_array(A)
     A_sq = A_host.real * A_host.real + A_host.imag * A_host.imag
     # The solver's own phase rate, k n2 I for NLSE and g n for GPE, whose k, n2
@@ -198,9 +195,7 @@ def _trial_propagation(simu: NLSE, A: np.ndarray, step: float, count: int):
     """
     dtype = simu._field_dtype(A)
     trial = simu._backend.copy_field(A)
-    scratch = simu._backend.allocate_real_field(
-        trial.shape, np.float32 if np.dtype(dtype).itemsize == 8 else np.float64
-    )
+    scratch = simu._backend.allocate_real_field(trial.shape, simu._real_dtype(dtype))
     # The propagator is built from the step, so a trial at another step needs
     # its own, and the run's has to come back whatever happens.
     saved = simu._linear_state()
@@ -309,26 +304,13 @@ def adapt_delta_z_to_error(
     if scale == 0:
         return None
     error = simu._backend.norm(whole - halves) / scale
-    # The step the tolerance asks for, and the largest the physics allows.
-    #
-    # The cap is not a formality here. Below about 0.8 rad per step the
-    # measured difference is the complex64 round-off floor rather than the
-    # splitting error -- it sits flat at ~3e-7 from 0.1 to 0.4 rad -- so any
-    # tolerance above the floor reads as "no error at all" and asks for a
-    # larger step however large the step already is. Uncapped, that doubles
-    # every time it fires and the run is unrecognisable within three
-    # adjustments. The cap is recomputed from the current field, so it tightens
-    # as a self-focusing beam raises the phase rate.
+    # Capped at the physical limit: in complex64 the error estimate can read
+    # round-off as no error at all, so any tolerance above that floor keeps doubling
+    # the step. The cap follows the current field and tightens as a beam focuses.
     cap = simu._split_step_max_dz(A)
-    # Absolute, not relative to the step in force: a floor recomputed as a
-    # fraction of the current step shrinks with it and never binds.
-    #
-    # Deliberately not the round-off optimum. There is such an optimum on a
-    # smooth beam, and flooring the controller at it was worth a great deal
-    # there, but on a field with spectral content of its own the splitting
-    # error at that step is enormous -- see DEFAULT_PHASE_PER_STEP. A floor
-    # that stops the controller resolving a hard problem while it reports
-    # success is worse than a slow run.
+    # Absolute, not relative to the step in force: a relative floor shrinks with
+    # the step and never binds. Not the round-off optimum either, which is far too
+    # coarse on a field with spectral content (see DEFAULT_PHASE_PER_STEP).
     floor = min(min_step if min_step is not None else float(simu.L) / 1e5, cap)
     if error == 0:
         return float(min(abs(step) * bounds[1], cap))
