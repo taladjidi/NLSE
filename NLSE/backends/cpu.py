@@ -11,7 +11,7 @@ from .backend import Backend
 
 
 class CPUBackend(Backend):
-    """CPU backend using NumPy and scipy's pocketfft.
+    """CPU backend using NumPy and ``scipy.fft``.
 
     Provides no fused entry points: the transform is driven from Python and
     the numba kernels are already single-pass, so there is no launch
@@ -28,9 +28,10 @@ class CPUBackend(Backend):
     the wheel vendors an OpenMP runtime that segfaults numba's if it
     initializes first. All of it is gone, and the transform got faster: on an
     M3 Max, where no prebuilt FFTW has NEON codelets, a 2048x2048 pair went
-    from 37 ms to 6.5. On x86 the FFTW wheels are vectorized and the gap
-    should be smaller or the other way round -- unmeasured, and the reason to
-    keep this behind the Backend interface rather than inline it.
+    from 37 ms to 6.5. On x86 the FFTW wheels are vectorized, and on a Ryzen 3
+    4100 pyFFTW is still ahead at 512x512 only (docs/optimization-log.md). The
+    transform stays behind the Backend interface, so another library is a
+    class, not a rewrite.
     """
 
     supports_unnormalized_ifft = True
@@ -64,7 +65,7 @@ class CPUBackend(Backend):
     ) -> list:
         """Record the axes to transform over.
 
-        pocketfft plans per call from a cache of its own, so there is nothing
+        scipy plans per call from a cache of its own, so there is nothing
         to build here and nothing to keep warm -- which is what let the disk
         wisdom, its staleness check and the planning pass go. ``shape``,
         ``dtype`` and ``array`` are what a planner would have needed and are

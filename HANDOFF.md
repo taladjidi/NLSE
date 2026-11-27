@@ -31,8 +31,9 @@ version is not bumped and nothing is published.
 
 `main` is ahead of `origin` and not pushed: the push waits for the closing
 review pass. Merged tonight: the uv, ruff and ty switch (`62bd2e8`, the
-untracked `CLAUDE.md` and the git hooks follow it) and the CPU batch fix
-over several parameter axes. Still open:
+untracked `CLAUDE.md` and the git hooks follow it), the CPU batch fix
+over several parameter axes (`496cd96`) and the transform wording with the
+log entry of the library re-measure (`docs/fft-wording`). Still open:
 
 - The CPU blocked step: an architect is writing
   `NLSE_tangui_fix_specs/cpu_blocked_step_spec.md` and `.patch`. Next: spec
@@ -41,9 +42,11 @@ over several parameter axes. Still open:
   which the batch fix changed.
 - Tests that bite: an architect is writing
   `NLSE_tangui_fix_specs/tests_bite_spec.md` (see the task list below).
-- A draft of the optimization-log entry for the transform libraries is in
-  `NLSE_tangui_fix_specs/cpu_fft/fft_revisit_entry.md`, next to its figures
-  (`results_*.txt`).
+- The probes behind the log's transform-library entry are not in the repo:
+  `NLSE_tangui_fix_specs/cpu_fft/` (`vdsp_rows.py`, `vdsp_scale.py`,
+  `results_*.txt`) and, on the box, `~/Documents/nlse_scratch_scripts/fft/fft_libs.py`
+  with the venv `fftw_venv`. Move them to `benchmarks/` if the entry is
+  challenged.
 - Left by the reviewer of the batch fix, all minor, none fixed. They belong
   with the tests that bite:
   - `_pick_field` (`NLSE/kernels/cpu.py`) does not peel a leading axis of
@@ -556,25 +559,18 @@ In progress, in this order:
     with `cache=True` share one cache entry on disk, whatever their options:
     the second loads the first's machine code (reproduced). Serial twins of
     the parallel kernels cannot be cached that way.
-  - ducc0 is 5 to 8% faster than scipy's transforms here, and GPL: not taken.
+  - ducc0 is 5 to 8% faster than scipy's transforms here: not taken, too
+    little for a second transform dependency. Its licence is GPLv2 or
+    later (PyPI classifier), which this GPLv3 project could take.
   - Scripts and reports: `~/Documents/LKB/NLSE_tangui_fix_specs/cpu_fft/`
     (`fused_proto.py`, `nl_serial_check.py`, `results_*.txt`), and on the box
     `~/Documents/nlse_scratch_scripts/rep/cpu_fused*.txt`. The box venv is
     `~/Documents/nlse_scratch_scripts/fftw_venv`.
-- **The CPU transform libraries**, re-checked on 2026-11-27, not yet in the
-  optimization log. Box, `fft2` + `ifft2` round trip against scipy 1.18.1:
-  at 2048² every library is within the floor (ducc0 0.98x, FFTW 1.00x in
-  complex64), which is where the transform is bound by memory; below, MKL is
-  1.56x at 1024² and 2.18x at 512² complex64, ducc0 1.12 to 1.23x, FFTW 1.80x
-  at 512² only. MKL returned a wrong result at 2048² complex64 on 4 threads
-  or more (round trip off by 1.4), so it is out. On the Mac, vDSP threaded by
-  hand stops scaling at 2 threads. Nothing taken: the gain at the typical
-  sizes is in the passes, above. Tables: `cpu_fft/results_box_libs.txt`,
-  `results_mac_vdsp.txt`. The docs call the
-  CPU transform "pocketfft"; the wording is to be checked against scipy's
-  docs (`NLSE/backends/cpu.py:14,67`, `docs/backends.md:9,109`,
-  `docs/installation.md:96`, `README.md:136`, `CLAUDE.md:77`). The log says
-  the box has 8 MB of L3; it has 4 MiB.
+- **The CPU transform libraries**, re-checked on 2026-11-27: nothing taken.
+  The figures and the decision are in `docs/optimization-log.md`, CPU
+  section ("The transform libraries, measured again"). The docs no longer
+  call the transform pocketfft (scipy 1.18 ships ducc), and the log gives
+  the box 4 MiB of L3.
 - **complex64 accuracy is set by the transforms**, not the kernels: a round
   trip loses 2.8 units of 2^-24 of power, every step. Writing the linear step
   as `A + ifft((P - 1) fft(A))` cuts the field error 40 to 390 times for 7 to
