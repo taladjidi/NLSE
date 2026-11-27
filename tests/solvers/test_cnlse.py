@@ -98,77 +98,29 @@ def test_each_component_normalizes_to_its_own_power(backend) -> None:
     )
 
 
-def test_send_arrays_to_gpu() -> None:
-    if CNLSE.__CUPY_AVAILABLE__:
-        alpha = 20
-        Isat = 10e4
-        n2 = -1.6e-9
-        n12 = -1e-10
-        V = 1e-4 * np.random.random((N, N)).astype(np.float32)
-        alpha = np.repeat(alpha, 2)
-        alpha = alpha[..., np.newaxis, np.newaxis, np.newaxis]
-        n2 = np.repeat(n2, 2)
-        n2 = n2[..., np.newaxis, np.newaxis, np.newaxis]
-        n12 = np.repeat(n2, 2)
-        n12 = n12[..., np.newaxis, np.newaxis, np.newaxis]
-        Isat = np.repeat(Isat, 2)
-        Isat = Isat[..., np.newaxis, np.newaxis, np.newaxis]
-        simu = make_solver("CUPY", alpha=alpha, n2=n2, n12=n12, V=V, Isat=Isat)
-        simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
-        simu._send_arrays_to_gpu()
-        assert isinstance(simu.propagator, cp.ndarray), (
-            "propagator is not a cp.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.V, cp.ndarray), "V is not a cp.ndarray. (Backend GPU)"
-        assert isinstance(simu.alpha, cp.ndarray), (
-            "alpha is not a cp.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.n2, cp.ndarray), "n2 is not a cp.ndarray. (Backend GPU)"
-        assert isinstance(simu.n12, cp.ndarray), (
-            "n12 is not a cp.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.I_sat, cp.ndarray), (
-            "I_sat is not a cp.ndarray. (Backend GPU)"
-        )
-    else:
-        pass
-
-
+@pytest.mark.skipif(not CNLSE.__CUPY_AVAILABLE__, reason="CuPy not available")
 def test_retrieve_arrays_from_gpu() -> None:
-    if CNLSE.__CUPY_AVAILABLE__:
-        alpha = 20
-        Isat = 10e4
-        n2 = -1.6e-9
-        n12 = -1e-10
-        V = 1e-4 * np.random.random((N, N)).astype(np.float32)
-        alpha = np.repeat(alpha, 2)
-        alpha = alpha[..., np.newaxis, np.newaxis, np.newaxis]
-        n2 = np.repeat(n2, 2)
-        n2 = n2[..., np.newaxis, np.newaxis, np.newaxis]
-        n12 = np.repeat(n2, 2)
-        n12 = n12[..., np.newaxis, np.newaxis, np.newaxis]
-        Isat = np.repeat(Isat, 2)
-        Isat = Isat[..., np.newaxis, np.newaxis, np.newaxis]
-        simu = make_solver("CUPY", alpha=alpha, n2=n2, n12=n12, V=V, Isat=Isat)
-        simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
-        simu._send_arrays_to_gpu()
-        simu._retrieve_arrays_from_gpu()
-        assert isinstance(simu.propagator, np.ndarray), (
-            "propagator is not a np.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.V, np.ndarray), "V is not a np.ndarray. (Backend GPU)"
-        assert isinstance(simu.alpha, np.ndarray), (
-            "alpha is not a np.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.n2, np.ndarray), "n2 is not a np.ndarray. (Backend GPU)"
-        assert isinstance(simu.n12, np.ndarray), (
-            "n12 is not a np.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.I_sat, np.ndarray), (
-            "I_sat is not a np.ndarray. (Backend GPU)"
-        )
-    else:
-        pass
+    alpha = 20
+    Isat = 10e4
+    n2 = -1.6e-9
+    n12 = -1e-10
+    V = 1e-4 * np.random.random((N, N)).astype(np.float32)
+    alpha = np.repeat(alpha, 2)
+    alpha = alpha[..., np.newaxis, np.newaxis, np.newaxis]
+    n2 = np.repeat(n2, 2)
+    n2 = n2[..., np.newaxis, np.newaxis, np.newaxis]
+    n12 = np.repeat(n2, 2)
+    n12 = n12[..., np.newaxis, np.newaxis, np.newaxis]
+    Isat = np.repeat(Isat, 2)
+    Isat = Isat[..., np.newaxis, np.newaxis, np.newaxis]
+    simu = make_solver("CUPY", alpha=alpha, n2=n2, n12=n12, V=V, Isat=Isat)
+    simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
+    simu._send_arrays_to_gpu()
+    for name in ("propagator", "V", "alpha", "n2", "n12", "I_sat"):
+        assert isinstance(getattr(simu, name), cp.ndarray), f"{name} not on the GPU"
+    simu._retrieve_arrays_from_gpu()
+    for name in ("propagator", "V", "alpha", "n2", "n12", "I_sat"):
+        assert isinstance(getattr(simu, name), np.ndarray), f"{name} not back on host"
 
 
 def test_take_components(backend) -> None:

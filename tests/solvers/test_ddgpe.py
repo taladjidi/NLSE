@@ -123,124 +123,46 @@ def test_prepare_output_array(backend) -> None:
     )
 
 
-def test_send_arrays_to_gpu() -> None:
-    if DDGPE.__CUPY_AVAILABLE__:
-        omega_exc_s = 1484.44 / h_bar
-        omega_cav_s = 1482.76 / h_bar
-        detuning_s = 0.17 / h_bar
-        k_z_s = 27
-        gamma_s = 0 * 0.07 / h_bar
-        omega_s = 5.07 / h_bar
-        g_s = 1e-2 / h_bar
-        V = 1e-4 * np.random.random((N, N)).astype(np.float32)
-        simu = DDGPE(
-            gamma_s,
-            puiss,
-            window,
-            g_s,
-            omega_s,
-            T,
-            omega_exc_s,
-            omega_cav_s,
-            detuning_s,
-            k_z_s,
-            V=V,
-            NX=N,
-            NY=N,
-            backend="CUPY",
-        )
-        # Build propagator while params are still scalars
-        simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
-        # Now broadcast params for GPU transfer test
-        simu.gamma = np.repeat(gamma_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
-        simu.g = np.repeat(g_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
-        simu.omega = np.repeat(omega_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
-        simu.omega_exc = np.repeat(omega_exc_s, 2)[
-            ..., np.newaxis, np.newaxis, np.newaxis
-        ]
-        simu.omega_cav = np.repeat(omega_cav_s, 2)[
-            ..., np.newaxis, np.newaxis, np.newaxis
-        ]
-        simu._send_arrays_to_gpu()
-        assert isinstance(simu.propagator, cp.ndarray), (
-            "propagator is not a cp.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.V, cp.ndarray), "V is not a cp.ndarray. (Backend GPU)"
-        assert isinstance(simu.gamma, cp.ndarray), (
-            "gamma is not a cp.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.g, cp.ndarray), "g is not a cp.ndarray. (Backend GPU)"
-        assert isinstance(simu.omega, cp.ndarray), (
-            "omega is not a cp.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.omega_cav, cp.ndarray), (
-            "omega cav is not a cp.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.omega_exc, cp.ndarray), (
-            "omega exc is not a cp.ndarray. (Backend GPU)"
-        )
-    else:
-        pass
-
-
+@pytest.mark.skipif(not DDGPE.__CUPY_AVAILABLE__, reason="CuPy not available")
 def test_retrieve_arrays_from_gpu() -> None:
-    if DDGPE.__CUPY_AVAILABLE__:
-        omega_exc_s = 1484.44 / h_bar
-        omega_cav_s = 1482.76 / h_bar
-        detuning_s = 0.17 / h_bar
-        k_z_s = 27
-        gamma_s = 0 * 0.07 / h_bar
-        g_s = 1e-2 / h_bar
-        omega_s = 5.07 / h_bar
-        V = 1e-4 * np.random.random((N, N)).astype(np.float32)
-        simu = DDGPE(
-            gamma_s,
-            puiss,
-            window,
-            g_s,
-            omega_s,
-            T,
-            omega_exc_s,
-            omega_cav_s,
-            detuning_s,
-            k_z_s,
-            V=V,
-            NX=N,
-            NY=N,
-            backend="CUPY",
-        )
-        # Build propagator while params are still scalars
-        simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
-        # Now broadcast params for GPU transfer test
-        simu.gamma = np.repeat(gamma_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
-        simu.g = np.repeat(g_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
-        simu.omega = np.repeat(omega_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
-        simu.omega_exc = np.repeat(omega_exc_s, 2)[
-            ..., np.newaxis, np.newaxis, np.newaxis
-        ]
-        simu.omega_cav = np.repeat(omega_cav_s, 2)[
-            ..., np.newaxis, np.newaxis, np.newaxis
-        ]
-        simu._send_arrays_to_gpu()
-        simu._retrieve_arrays_from_gpu()
-        assert isinstance(simu.propagator, np.ndarray), (
-            "propagator is not a np.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.gamma, np.ndarray), (
-            "gamma is not a np.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.g, np.ndarray), "g is not a np.ndarray. (Backend GPU)"
-        assert isinstance(simu.omega, np.ndarray), (
-            "omega is not a np.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.omega_cav, np.ndarray), (
-            "omega cav is not a np.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.omega_exc, np.ndarray), (
-            "omega exc is not a np.ndarray. (Backend GPU)"
-        )
-    else:
-        pass
+    omega_exc_s = 1484.44 / h_bar
+    omega_cav_s = 1482.76 / h_bar
+    detuning_s = 0.17 / h_bar
+    k_z_s = 27
+    gamma_s = 0 * 0.07 / h_bar
+    omega_s = 5.07 / h_bar
+    g_s = 1e-2 / h_bar
+    V = 1e-4 * np.random.random((N, N)).astype(np.float32)
+    simu = DDGPE(
+        gamma_s,
+        puiss,
+        window,
+        g_s,
+        omega_s,
+        T,
+        omega_exc_s,
+        omega_cav_s,
+        detuning_s,
+        k_z_s,
+        V=V,
+        NX=N,
+        NY=N,
+        backend="CUPY",
+    )
+    # Build propagator while params are still scalars
+    simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
+    # Now broadcast params for GPU transfer test
+    simu.gamma = np.repeat(gamma_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
+    simu.g = np.repeat(g_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
+    simu.omega = np.repeat(omega_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
+    simu.omega_exc = np.repeat(omega_exc_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
+    simu.omega_cav = np.repeat(omega_cav_s, 2)[..., np.newaxis, np.newaxis, np.newaxis]
+    simu._send_arrays_to_gpu()
+    for name in ("propagator", "V", "gamma", "g", "omega", "omega_cav", "omega_exc"):
+        assert isinstance(getattr(simu, name), cp.ndarray), f"{name} not on the GPU"
+    simu._retrieve_arrays_from_gpu()
+    for name in ("propagator", "gamma", "g", "omega", "omega_cav", "omega_exc"):
+        assert isinstance(getattr(simu, name), np.ndarray), f"{name} not back on host"
 
 
 def test_build_propagator(backend) -> None:

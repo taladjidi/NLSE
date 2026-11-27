@@ -102,65 +102,26 @@ def test_prepare_output_array(backend) -> None:
     )
 
 
-def test_send_arrays_to_gpu() -> None:
-    if NLSE.__CUPY_AVAILABLE__:
-        alpha = 20
-        Isat = 10e4
-        n2 = -1.6e-9
-        V = 1e-4 * np.random.random((N, N)).astype(np.float32)
-        alpha = np.repeat(alpha, 2)
-        alpha = alpha[..., cp.newaxis, cp.newaxis]
-        n2 = np.repeat(n2, 2)
-        n2 = n2[..., cp.newaxis, cp.newaxis]
-        Isat = np.repeat(Isat, 2)
-        Isat = Isat[..., cp.newaxis, cp.newaxis]
-        simu = make_solver("CUPY", alpha=alpha, n2=n2, V=V, Isat=Isat)
-        simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
-        simu._send_arrays_to_gpu()
-        assert isinstance(simu.propagator, cp.ndarray), (
-            "propagator is not a cp.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.V, cp.ndarray), "V is not a cp.ndarray. (Backend GPU)"
-        assert isinstance(simu.alpha, cp.ndarray), (
-            "alpha is not a cp.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.n2, cp.ndarray), "n2 is not a cp.ndarray. (Backend GPU)"
-        assert isinstance(simu.I_sat, cp.ndarray), (
-            "I_sat is not a cp.ndarray. (Backend GPU)"
-        )
-    else:
-        pass
-
-
+@pytest.mark.skipif(not NLSE.__CUPY_AVAILABLE__, reason="CuPy not available")
 def test_retrieve_arrays_from_gpu() -> None:
-    if NLSE.__CUPY_AVAILABLE__:
-        alpha = 20
-        Isat = 10e4
-        n2 = -1.6e-9
-        V = 1e-4 * np.random.random((N, N)).astype(np.float32)
-        alpha = np.repeat(alpha, 2)
-        alpha = alpha[..., cp.newaxis, cp.newaxis]
-        n2 = np.repeat(n2, 2)
-        n2 = n2[..., cp.newaxis, cp.newaxis]
-        Isat = np.repeat(Isat, 2)
-        Isat = Isat[..., cp.newaxis, cp.newaxis]
-        simu = make_solver("CUPY", alpha=alpha, n2=n2, V=V, Isat=Isat)
-        simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
-        simu._send_arrays_to_gpu()
-        simu._retrieve_arrays_from_gpu()
-        assert isinstance(simu.propagator, np.ndarray), (
-            "propagator is not a np.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.V, np.ndarray), "V is not a np.ndarray. (Backend GPU)"
-        assert isinstance(simu.alpha, np.ndarray), (
-            "alpha is not a np.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.n2, np.ndarray), "n2 is not a np.ndarray. (Backend GPU)"
-        assert isinstance(simu.I_sat, np.ndarray), (
-            "I_sat is not a np.ndarray. (Backend GPU)"
-        )
-    else:
-        pass
+    alpha = 20
+    Isat = 10e4
+    n2 = -1.6e-9
+    V = 1e-4 * np.random.random((N, N)).astype(np.float32)
+    alpha = np.repeat(alpha, 2)
+    alpha = alpha[..., cp.newaxis, cp.newaxis]
+    n2 = np.repeat(n2, 2)
+    n2 = n2[..., cp.newaxis, cp.newaxis]
+    Isat = np.repeat(Isat, 2)
+    Isat = Isat[..., cp.newaxis, cp.newaxis]
+    simu = make_solver("CUPY", alpha=alpha, n2=n2, V=V, Isat=Isat)
+    simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
+    simu._send_arrays_to_gpu()
+    for name in ("propagator", "V", "alpha", "n2", "I_sat"):
+        assert isinstance(getattr(simu, name), cp.ndarray), f"{name} not on the GPU"
+    simu._retrieve_arrays_from_gpu()
+    for name in ("propagator", "V", "alpha", "n2", "I_sat"):
+        assert isinstance(getattr(simu, name), np.ndarray), f"{name} not back on host"
 
 
 def test_split_step(backend) -> None:
