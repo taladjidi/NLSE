@@ -14,7 +14,7 @@ def my_callback(simu, A, z, i, *args):
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `simu` | solver instance | The solver object (access all attributes) |
-| `A` | `np.ndarray` | The current field (on device for GPU backends) |
+| `A` | backend array | The current field: NumPy on CPU, else a CuPy, PyOpenCL or MLX array |
 | `z` | `float` | Current propagation distance or time |
 | `i` | `int` | Current step number |
 | `*args` | any | Additional arguments passed via `callback_args` |
@@ -120,8 +120,8 @@ E_out = simu.out_field(
 
 ### `adapt_delta_z` -- Adaptive step sizing
 
-Dynamically adjusts the step size based on the nonlinear phase accumulated per
-step. Updates every `update_every` steps.
+Sets the step to a twelfth of the distance over which the peak nonlinear phase
+rate turns the phase by one radian. Updates every `update_every` steps.
 
 It changes the step by **returning** it. The solver rebuilds the linear
 propagator to match before taking the next step, so the two halves of a split
@@ -160,7 +160,7 @@ see it: the shorter one when a step was cut to land on `L` or on `z`.
 
 ### `adapt_delta_z_to_error` -- step sizing from a measured error
 
-`adapt_delta_z` reads the step off the peak nonlinear index and divides by
+`adapt_delta_z` reads the step off the peak nonlinear phase rate and divides by
 twelve. That is a *rate*: it says how fast the phase turns and nothing about
 how much of the answer the splitting is losing. This one measures instead —
 every `update_every` steps it takes the same distance once whole and once in
@@ -182,7 +182,7 @@ The arguments are `(tolerance, update_every, bounds, safety, min_step,
 delta_z)`. It costs three extra steps each time it fires, so `update_every`
 trades that overhead against how quickly the step follows the physics.
 
-Two things worth knowing before trusting a tolerance:
+Two limits apply to the tolerance:
 
 - **The step that minimises the error is not the smallest one.** In `complex64`
   the round-off accumulating over steps eventually grows faster than the
@@ -191,8 +191,9 @@ Two things worth knowing before trusting a tolerance:
 - **The estimate has a floor of its own.** Below that same scale, one step and
   two halves differ by round-off rather than by splitting error, so a tolerance
   under the floor reads as "no error at all" and asks for a *bigger* step. The
-  controller is capped by the physics ($\pi$ per step) so this cannot run away,
-  but a tolerance it cannot meet will simply sit at the cap.
+  controller is capped at the split-step limit (see
+  [Step Size](numerical_methods.md#step-size)), so a tolerance it cannot meet
+  sits at the cap.
 
 Pass `min_step` to stop it shrinking past a step you know is enough.
 
@@ -208,6 +209,9 @@ def print_progress(simu, A, z, i):
 
 E_out = simu.out_field(E_in, L, callback=print_progress)
 ```
+
+On the CL backend `A` is a PyOpenCL array, which has no `.max()`: copy it to
+NumPy first with `A.get()`.
 
 ### Performance considerations
 
