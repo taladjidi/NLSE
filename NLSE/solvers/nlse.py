@@ -29,11 +29,9 @@ from .step_size import (
     StepSize,
 )
 
-# How many propagators to keep. Built where the field is, this costs one
-# exponential over the grid -- 0.059 ms at 512x512 on CUPY against 9.7 ms for
-# the host round trip it replaces -- so there is little left to cache and every
-# reason to bound it: a step chosen from a measured error asks for a new one
-# every few steps, and an unbounded cache then holds a field per distinct step.
+# How many propagators to keep. Building one costs one exponential on the
+# device, so the cache stays small and bounded: an adaptive step asks for a
+# new one every few steps.
 PROPAGATOR_CACHE_SIZE = 8
 
 # Largest departure of the dispersion operator from one term per axis, as a
@@ -56,11 +54,8 @@ YOSHIDA_WEIGHTS = (
 # phase limits are written per real-space application, so they bind on this.
 YOSHIDA_SPAN = max(abs(w) for w in YOSHIDA_WEIGHTS)
 
-# The compositions of the linear and nonlinear parts this solver knows, named
-# for the schemes themselves. They used to be "single" and "double", which
-# counted nonlinear applications and which readers took for float width -- the
-# more so because the field's dtype really does choose that, separately and at
-# the same time.
+# The compositions of the linear and nonlinear parts, named for the schemes
+# (formerly "single" and "double", which read as float widths).
 SPLITTINGS = ("lie", "strang", "yoshida")
 
 # Fraction of a step below which a distance left over is round-off in
@@ -137,12 +132,8 @@ class NLSE(StepSize):
     # Key, dispersion eigenvalues and their largest magnitude, for the last
     # configuration only: one float64 grid, 33.5 MB at 2048x2048.
     _eigenvalues: tuple[tuple, np.ndarray, float] | None = None
-    # Assigned None in __init__ too, but only the declaration here says what
-    # they become: whichever array type the backend allocates, and a list of
-    # whichever plan object it builds. Without it they read as None-and-only-
-    # None outside this module, where the override that silences the solvers
-    # does not apply -- which is how a callback setting up a trial propagation
-    # was told it could not pass them to split_step.
+    # Declared for type checkers: whichever array type the backend allocates and
+    # a list of its plan objects (assigned None in __init__).
     propagator: Any = None
     plans: Any = None
 
@@ -855,19 +846,10 @@ class NLSE(StepSize):
         if self._backend.has_fused_rk4_stage and self._can_fuse_rk4_stage(A):
             return self._split_step_RK4_fused(A, V, propagator, plans, delta_z)
 
-        # Whole-step fused fast path (MLX), single component only.
-        #
-        # That is what `A.ndim == len(self._last_axes)` says: a field with
-        # nothing but its spatial axes, so no component axis and no batch.
-        # It used to say `A.ndim == 2`, which is the same thing for this
-        # class and for nothing else. A coupled 1d field is (2, NX) and has
-        # ndim 2 as well, so CNLSE_1d took this kernel and let it read the
-        # component axis as a spatial one -- 5% off the CPU on MLX, the only
-        # backend that sets the flag, and step-size-independent because it is
-        # the wrong sum rather than a coarse one. The 2d coupled field is
-        # (2, NY, NX) and was excluded by the same accident that included the
-        # 1d one. Meanwhile NLSE_1d is (NX,) and was excluded from a path it
-        # can use.
+        # Whole-step fused fast path (MLX), single component only: a field with
+        # nothing but its spatial axes, so no component axis and no batch. Testing
+        # A.ndim == 2 sent CNLSE_1d's (2, NX) field down this path, which read its
+        # component axis as a spatial one.
         if (
             self._backend.has_fused_rk4_step
             and self.nl_length == 0
@@ -1613,9 +1595,6 @@ class NLSE(StepSize):
         """
         self.propagator, self._propagator_fft, self._propagator_fft_origin = state
 
-    # Choosing the step. The rates are expectation values over the field, and
-    # everything else here is derived from them: the default, the two limits,
-    # and the cap applied to a step the caller passed.
     # Setting up one run: the dtypes, the arrays, the FFT plans and the
     # constants that do not change between steps.
     @staticmethod
@@ -1792,10 +1771,7 @@ class NLSE(StepSize):
         list
             List of FFT plan objects from the backend.
         """
-        # Pass the actual array for in-place FFT optimization
-        # CPU backend will handle wisdom loading/saving internally
-        plan = self._backend.build_fft(A.shape, self._last_axes, A.dtype, array=A)
-        return plan
+        return self._backend.build_fft(A.shape, self._last_axes, A.dtype, array=A)
 
     def _allocate_rk4_buffers(self, A: np.ndarray, method: str) -> None:
         """Pre-allocate scratch buffers for the RK4 stepper.
@@ -1937,15 +1913,9 @@ class NLSE(StepSize):
 
         """
         scaled = V * k_half
-        # numpy cannot interpret every backend's dtype: MLX names its own in
-        # its own namespace, and handing one to np.dtype raises rather than
-        # comparing -- which broke every MLX run that had a potential.
-        #
-        # Where numpy can read it, the cast stays as an explicit guarantee.
-        # Where it cannot, what holds the width is the scalar: the loop in
-        # _precompute_step_constants has already narrowed k_half to the field's
-        # own width, so the product is at that width and there is nothing to
-        # correct.
+        # numpy cannot read MLX dtypes, so the cast is a guarantee only where it can;
+        # elsewhere k_half, already narrowed to the field's width in
+        # _precompute_step_constants, keeps the product at that width.
         try:
             mismatched = np.dtype(scaled.dtype) != np.dtype(dtype)
         except TypeError:
@@ -2347,16 +2317,9 @@ class NLSE(StepSize):
             self._current_delta_z = in_force
             self._restore_linear_state(saved)
 
-    # The propagation loop, and what it switches off along the way.
-    #
-    # _medium_attrs holds everything the medium provides: zeroed once the
-    # propagation leaves it, then re-derived by _precompute_step_constants.
-    # Subclasses extend it with their own.
-    #
-    # alpha is in it because a beam that has left the medium is not in
-    # anything that absorbs. It used to hold the nonlinear coupling alone, so
-    # a run past L stopped accruing nonlinear phase and went on losing
-    # intensity to a medium it had already left.
+    # _medium_attrs: everything the medium provides, zeroed once the propagation
+    # leaves it and re-derived by _precompute_step_constants; subclasses extend it.
+    # alpha is in it because nothing outside the medium absorbs.
     _medium_attrs = ("n2", "alpha")
 
     # Whether this solver's Lie step is exactly the inside of its Strang step.
