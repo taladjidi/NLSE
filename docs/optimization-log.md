@@ -987,16 +987,19 @@ interleaved in one process, ms a step from the 10 to 60 step slope:
 
 | machine | grid | dtype | chosen | unblocked | as tuned | gain |
 |---|---|---|---|---|---|---|
-| Ryzen 3 4100 | 1024² | complex64 | 64 rows x 4 | 8.263 | 7.186 | 1.15x |
-| | 2048² | complex64 | 32 rows x 4 | 35.345 | 34.597 | 1.02x |
-| | 4096² | complex64 | 16 rows x 4 | 145.509 | 106.536 | 1.37x |
-| | 1024² | complex128 | 16 rows x 4 | 15.161 | 11.546 | 1.31x |
-| | 2048² | complex128 | 16 rows x 4 | 60.330 | 44.826 | 1.35x |
-| | 4096² | complex128 | 8 rows x 4 | 281.260 | 195.321 | 1.44x |
+| Ryzen 3 4100 | 1024² | complex64 | 64 rows x 4 | 8.158 | 7.158 | 1.14x |
+| | 2048² | complex64 | 32 rows x 4 | 35.372 | 26.992 | 1.31x |
+| | 4096² | complex64 | 16 rows x 4 | 145.085 | 109.630 | 1.32x |
+| | 1024² | complex128 | 16 rows x 4 | 14.922 | 11.155 | 1.34x |
+| | 2048² | complex128 | 16 rows x 4 | 60.808 | 45.344 | 1.34x |
+| | 4096² | complex128 | 8 rows x 4 | 283.722 | 193.778 | 1.46x |
 | M3 Max | 4096² | complex64 | 32 rows x 16 | 29.727 | 25.399 | 1.17x |
 | | 4096² | complex128 | 32 rows x 16 | 50.917 | 40.770 | 1.25x |
 
-Ryzen: 8 threads, numpy 2.5.5, scipy 1.18.1, numba 0.68.1. M3 Max: 16
+Ryzen: 8 threads, numpy 2.5.5, scipy 1.18.1, numba 0.68.1, with the scratch
+mapped apart (below; on malloc scratch 2048² complex64 read 34.597, 1.02x).
+The rounds at 4096² complex64 spread by 4.4% there, and fresh processes read
+106.3-106.5 ms (1.37x). M3 Max: 16
 threads, numpy 2.4.6, scipy 1.18.0, numba 0.66.0, Spotlight holding one core;
 1024² and 2048² stay unblocked there. `main` against the branch in alternating
 fresh processes agrees, median ms a step: Ryzen 1024² 7.64-8.61 to 7.19-7.68
@@ -1038,18 +1041,62 @@ The plain step's `fft2` at that size has two speeds in a long-lived process,
 size, only when interleaved with the numba kernels, and stays. The cause is
 not established (thread placement over the P and E clusters is a guess). The
 10% margin gives up a real 1.07x at 2048² complex128 on the Mac (11.66-11.80
-to 10.92-11.04 ms). Eight tunings per cell on the Ryzen: 1.04-1.29x at 1024²
-complex64 (64 rows six times, 32 rows once, unblocked once), 1.34-1.55x and
-one choice everywhere else. A tuning takes 0.4-0.9 s at 1024² and 12.1-12.5 s
+to 10.92-11.04 ms). Repeated tunings on the Ryzen, eight a cell at 1024², six at
+2048² and two at 4096², with the scratch mapped apart (below): 1.21-1.25x at
+1024² complex64, 64 rows every time (on malloc scratch 0.97-1.29x, and one in
+eight unblocked); 1.34-1.55x elsewhere, with 16 and 32 rows and 4 and 8
+threads near ties at 2048² complex64. A tuning takes 0.4-0.9 s at 1024² and 12.1-12.5 s
 at 4096² complex128 on the M3 Max; 1.2-2.4 s and 21-40 s on the Ryzen.
 
-*Open: a block the size of the L2.* The benchmark's own tuning on the Ryzen
-chose 32 rows at 2048² complex64 (512 KiB, the whole L2) on a 1.39x reading.
-The solver's step with that block then ran at 1.02x in the same process and
-at 27.4, 31.7 and 36.1 ms in three fresh ones, against 35.3-35.5 unblocked;
-six other tunings chose 16 rows at 1.41-1.42x. The time of a block that only
-just fits depends on where its scratch lands. Taking the smaller block among
-near ties would avoid it; not built.
+*The scratch is a mapping of its own — fixed* (2026-11-27). The benchmark's
+own tuning on the Ryzen chose 32 rows at 2048² complex64 (512 KiB, the whole
+L2) on a 1.39x reading; the solver's step with that block then ran at 1.02x in
+the same process, and at 27.0 to 40.0 ms from one fresh process to the next,
+against 35.3-35.8 unblocked. The block was not the cause. Each thread's
+scratch came from `np.empty`, and the solver builds its step late, after
+arrays of up to 32 MiB have been allocated and freed: glibc has then raised
+its mmap threshold (`M_MMAP_THRESHOLD` in
+[mallopt(3)](https://man7.org/linux/man-pages/man3/mallopt.3.html)) and
+serves the scratch from the recycled heap, on pages in the order earlier
+arrays left them, where the tuner had measured on fresh ones. The same layout
+on scratch allocated before anything else, or mapped apart, runs at its tuned
+speed every time. That it is the physical order of the pages (a block as
+large as an 8-way L2 missing on conflicts in some orders) is inferred, not
+read from a counter.
+
+`_scratch` now cuts every thread's block from one fresh private anonymous
+mapping. Alternating fresh processes on the cached 32 rows, median ms a step:
+`main` 36.3, 27.1, 28.3, 27.4, 27.1, the fix 27.0-27.9 five times of five,
+and 26.95-27.29 ten times of ten on its two earlier forms. The same bug
+reached 4096² complex64 (16 rows, 512 KiB) once another grid had run in the
+process: `main` 106.4-115.8 and once 145.8 ms, as slow as unblocked, the fix
+106.6-108.2 in every run. Where the block is smaller than the L2 nothing
+moves (2048² complex128 45.1-45.3 against 45.3-45.6, 4096² complex128
+198.5-201.0 against 197.1-197.6, 1024² at 16 and 32 rows within 0.2 ms), and
+those cells do not move on `main` after another grid ran either, so the
+factors and the field stay where numpy puts them. Tuning times, the first call (2.10-2.11 s at 4096² complex64) and the
+peak (2124 MiB) are unchanged, the fields are those of before (2.1e-6 to
+2.7e-6 of the peak in complex64, 5e-15 in complex128, unblocked equal to
+`main` bit for bit). On the M3 Max the 4096² step is the same (25.1-25.5 to
+25.4-25.7 ms and 40.5-40.7 to 40.4-40.6), and so are the tuner's verdicts but
+one: 2048² complex128 reads 1.07-1.11x against the 10% margin and blocked
+once in two tunings (`main` 1.08-1.09x, never).
+The mapping is private (`ACCESS_COPY`): mmap's default is shared, and a
+forked child would write its parent's scratch.
+
+*Huge pages for the scratch — rejected* (2026-11-27). The first form of the
+fix asked for them (`MADV_HUGEPAGE`, from a 2 MiB boundary; kernel 7.3.4,
+transparent huge pages on `madvise`). Against the same mapping on plain pages
+no layout the tuner picks moved (2048² complex64 at 32 rows 26.96-27.29
+against 26.95-27.26 ms, 4096² complex64 107.1-108.3 against 106.4-108.7), and
+a 4096² complex64 tuning took 26.3-26.8 s instead of 21.4-22.0, with no
+compaction stall: on huge pages a block larger than the L2 runs 2.3x slower
+(4 threads: 32 rows 248-249 against 108-110 ms, 64 rows 288-304 against 134;
+8 threads 143-147 against 121-129). Inferred: the column pass walks across
+the block's rows at a power-of-two stride, and on physically contiguous
+memory every row past what the L2's sets hold evicts another, where scattered
+4 KiB pages spread them. The logs are in
+`~/Documents/LKB/NLSE_tangui_fix_specs/cpu_blocked_step/ryzen/`.
 
 *Open: the first step.* Where the blocked step is taken (and on CUPY) the
 first step of a solver builds the separable factors: 4096² complex64, 1.86-2.03

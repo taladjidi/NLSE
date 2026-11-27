@@ -29,17 +29,23 @@ version is not bumped and nothing is published.
 
 ### In flight (2026-11-27, night session)
 
-`main` is ahead of `origin` and not pushed: the push waits for the closing
-review pass. Merged tonight: the uv, ruff and ty switch (`62bd2e8`, the
+`main` is pushed after each reviewed merge (owner, 2026-11-27: "No push also
+to main as we go along !"). The auto-mode classifier refused `git push origin
+main` once: when it does, ask the owner to run `! git push origin main`, and
+do not look for another way. Merged on 2026-11-27: the uv, ruff and ty switch (`62bd2e8`, the
 untracked `CLAUDE.md` and the git hooks follow it), the CPU batch fix
 over several parameter axes (`496cd96`), the transform wording with the
 log entry of the library re-measure (`c04afd7`) and the same batch fix for
 the OpenCL loop (`fix/cl-multi-axis-batch`), the tests that bite
-(`test/tests-that-bite`) and the CPU blocked step (`7518025`). Still open:
+(`test/tests-that-bite`), the CPU blocked step (`7518025`) and the fix of its
+scratch (`fix/cpu-blocked-scratch`). Still open:
 
 - **Order set by the owner (2026-11-27), all after a `/clear`:** first the
   GPU patches, then the thread counts per machine (both described below),
-  then the debloat. Merge each to `main` as it lands.
+  then the debloat. Merge each to `main` as it lands, and push. The owner
+  asked to be pinged for the `/clear` before any of them ("notably docs").
+  After it, the docs pass can run in a parallel agent on a branch of its own
+  beside the code packages; only the measurements on the box stay serial.
 - **Debloat the codebase**, third: "Clean up, make it as lean as
   possible." Not started. Start
   from an audit of what can be deleted, merged or split (package, tests,
@@ -85,20 +91,42 @@ the OpenCL loop (`fix/cl-multi-axis-batch`), the tests that bite
   1.27x at 2048², 1.45x and 1.53x at 4096²): the blocked step is the
   steadier of the two under load.
   Ryzen 3 4100 (8 threads, the benchmark, one process): complex64 1024²
-  8.26 to 7.19 (1.15x), 2048² 35.3 to 34.6 (1.02x, see below), 4096² 145.5
-  to 106.5 (1.37x); complex128 15.2 to 11.5 (1.31x), 60.3 to 44.8 (1.35x),
-  281.3 to 195.3 (1.44x); fresh processes agree. A tuning there takes
+  8.16 to 7.16 (1.14x), 2048² 35.4 to 27.0 (1.31x), 4096² 145.1 to 109.6
+  (1.32x, rounds 4.4% apart; 106.3-106.5 in fresh processes, 1.37x);
+  complex128 14.9 to 11.2 (1.34x), 60.8 to 45.3 (1.34x), 283.7 to 193.8
+  (1.46x), with the scratch fix below; fresh processes agree. A tuning there takes
   1.2-2.4 s at 1024², 5-9 s at 2048², 21 s and 40 s at 4096². CuPy suite on
   the branch: 1802 passed, 68 skipped; the CuPy step did not move (6, 6 and
   12 alternating pairs at 1024², 2048², 4096² complex64). The box ran the
   tree at `MARGIN = 0.05`; every cell it blocked read over 1.22x, so the
   verdicts are those of 0.10.
-  Open, tuner: at 2048² complex64 on the Ryzen one tuning in seven chose 32
-  rows, a block the size of the L2 (512 KiB), on a 1.39x reading; that
-  layout then ran at 1.02x in the same process and 27.4-36.1 ms in fresh
-  ones against 35.3-35.5 unblocked (16 rows: 1.41-1.42x, six of six).
-  Candidate fix: the smaller block among near ties. Goes with the thread
-  count package below.
+  Fixed (`fix/cpu-blocked-scratch`): the Ryzen's 2048² complex64 step at
+  the tuned 32 rows (512 KiB, the L2) ran at 27.0 to 40.0 ms from one fresh
+  process to the next, 35.3-35.8 unblocked. The cause was the scratch, not
+  the block: `np.empty` served it from heap pages recycled in the order
+  earlier arrays left them (glibc's mmap threshold rises to 32 MiB), where
+  the tuner measured on fresh ones. `_scratch` in
+  `NLSE/kernels/cpu_blocked.py` now cuts every thread's block from one
+  fresh private anonymous mapping: 27.0-27.9 ms five times of five, `main`
+  27.1-36.3. The same bug reached 4096² complex64 (16 rows, 512 KiB) after
+  another grid ran in the process (`main` 106.4-115.8 and once 145.8, the
+  fix 106.6-108.2), and made one 1024² complex64 tuning in eight decline to
+  block (now 1.21-1.25x, eight of eight). No other cell, tuning time, first
+  call or peak moved; M3 Max unchanged but 2048² complex128, which sits on
+  the 10% margin (1.07-1.11x) and blocked once in two tunings. Huge pages
+  for the scratch were tried and rejected: no gain for any layout the tuner
+  picks, and blocks above the L2 2.3x slower, 5 s more per 4096² tuning.
+  That the page order is the mechanism is inferred (no counter read). The
+  Windows branch of `_private_mapping` has run nowhere. Reviewed twice
+  (ship); left as it is: a grid with a zero-length axis now raises from
+  `mmap`. Written by hand, not through an implementer. Logs and scripts:
+  `NLSE_tangui_fix_specs/cpu_blocked_step/ryzen/`.
+  Rule from the owner (2026-11-27): hot working buffers come from "a fixed
+  memory stack", a region the library maps and keeps, not from malloc. The
+  factors and the solver's field were not moved there: no cell needs it
+  (measured after another grid ran in the process). My reading, to confirm
+  with the owner, is that the rule asks for it only where a measurement
+  shows a cell moving.
   The kernel split costs nothing (both trees' `square_mod_nl_prop`
   interleaved, 0.996-1.004). After 20 steps the blocked field is within
   6e-6 of the peak of the unblocked one in complex64 and 1e-14 in
@@ -233,6 +261,11 @@ the OpenCL loop (`fix/cl-multi-axis-batch`), the tests that bite
 
 ### Verification of the final tree
 
+- Scratch fix (`fix/cpu-blocked-scratch`, 2026-11-27), code as at `3b8113f`
+  (the commit after it changes a comment): Mac 1737 passed, 156 skipped;
+  `ruff check`, `ruff format --check` and `ty check` clean. On the box:
+  CuPy 1806 passed, 68 skipped; OpenCL 1714 passed, 149 skipped. Mutants
+  that fail the two new tests: malloc scratch, a shared mapping.
 - At `7518025` (2026-11-27), Mac (M3 Max, CPU and MLX): `uv run --locked
   pytest tests/ -q -m "not benchmark"` gives 1735 passed, 156 skipped;
   `ruff check`, `ruff format --check` and `ty check` are clean. CuPy on the
@@ -468,9 +501,8 @@ Each was reproduced by a script unless marked *(read)* or *(reviewer)*.
 
 ## Open items
 
-Resume here. Everything above is merged into `main` and pushed; the
-performance work below is merged into `main` locally and not pushed (the push
-waits for the closing review pass). Open: the performance profiles, and the
+Resume here. Everything above and the performance work below are merged
+into `main` and pushed. Open: the performance profiles, and the
 release (5.0.0 suggested; the version is not bumped and nothing is published).
 
 ### Performance work (2026-11-26 and 27)
@@ -635,7 +667,7 @@ In progress, in this order:
 
 - **CuPy, a separable propagator** (`perf/cuda-separable-propagator`, spec
   2b: `~/Documents/LKB/NLSE_tangui_fix_specs/cuda_fewer_passes_spec_2b.{md,patch}`).
-  Merged, not pushed. The forward store callback multiplies
+  Merged. The forward store callback multiplies
   `rows[iy] * columns[ix]` instead of reading the propagator. RTX 3050,
   complex64, lie, 12 interleaved rounds: 73 → 65 bytes a point (`ncu`), a step
   1.04x faster at 1024², 1.05x at 2048², 1.04x at 4096²; 1.10x at 512², 0.90x

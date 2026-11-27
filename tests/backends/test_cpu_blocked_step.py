@@ -9,6 +9,7 @@ wherever it is not the subject.
 """
 
 import json
+import mmap
 import multiprocessing
 import operator
 import os
@@ -63,6 +64,7 @@ AHEAD = timedelta(days=1)  # a timestamp in the future, by more than clock skew
 THREADED_STEPS = 200  # steps each of two threads takes: long enough to overlap
 FORK_TIMEOUT = 60  # s a forked child gets for SOLVER_STEPS steps: ~1 s needed
 SLOW_SHARE = 0.05  # s a share still runs after another has failed
+PARENT_MARK, CHILD_MARK = 1, 2  # what each side of a fork fills its scratch with
 # s a step of each candidate takes: the fastest neither first nor last.
 CANDIDATE_SECONDS = {"slow": 3.0, "fast": 1.0, "middling": 2.0}
 # s a step of each takes, round by round: the best of "early" is not its last.
@@ -335,6 +337,36 @@ def test_a_failed_share_is_raised_once_every_share_is_done():
         with pytest.raises(ZeroDivisionError):
             _wait(futures)
         assert all(future.done() for future in futures), "a share still runs"
+
+
+def scratch_owner(block):
+    """Return the object whose memory ``block`` is a view of, None for numpy's own."""
+    while isinstance(block, np.ndarray):
+        block = block.base
+    return getattr(block, "obj", None)
+
+
+def test_the_scratch_is_one_mapping_of_its_own():
+    """Catches scratch from malloc: on recycled pages a cache-sized block misses."""
+    blocks = BlockedStep((NY, NX), np.dtype(np.complex64), ROWS, THREADS)._blocks
+    starts = [block.ctypes.data for block in blocks]
+    assert isinstance(scratch_owner(blocks[0]), mmap.mmap)
+    assert np.diff(starts).tolist() == [blocks[0].nbytes] * (len(blocks) - 1)
+    assert all(block.shape == (ROWS, NY) and block.flags.writeable for block in blocks)
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="no fork on this platform")
+@pytest.mark.filterwarnings("ignore:This process")  # fork of a threaded process
+def test_a_forked_child_writes_scratch_of_its_own():
+    """Catches a shared mapping, mmap's default: parent and child on one scratch."""
+    block = BlockedStep((NY, NX), np.dtype(np.complex64), ROWS, THREADS)._blocks[0]
+    block[...] = PARENT_MARK
+    context = multiprocessing.get_context("fork")
+    child = context.Process(target=block.fill, args=(CHILD_MARK,))
+    child.start()
+    child.join(FORK_TIMEOUT)
+    assert child.exitcode == 0, "the forked child failed"
+    assert (block == PARENT_MARK).all()
 
 
 # ── The tuning and its cache ─────────────────────────────────────────────────

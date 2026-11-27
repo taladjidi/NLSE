@@ -16,7 +16,10 @@ a static share of rows or columns. One step runs at a time per ``BlockedStep``:
 its scratch is its own, and it already takes every thread it was measured on.
 """
 
+import math
+import mmap
 import os
+import sys
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import cache
@@ -27,6 +30,10 @@ import numpy as np
 from scipy import fft as scipy_fft
 
 from .cpu import _square_mod_nl_prop_span, _square_mod_nl_prop_v_span
+
+# The fileno mmap takes for memory backed by no file:
+# https://docs.python.org/3/library/mmap.html#mmap.mmap
+ANONYMOUS = -1
 
 
 @numba.njit(nogil=True, cache=True, boundscheck=False)
@@ -159,6 +166,54 @@ if hasattr(os, "register_at_fork"):
     os.register_at_fork(after_in_child=_thread_pool.cache_clear)
 else:
     pass  # no fork on this platform (Windows), nothing to forget
+
+
+def _private_mapping(size: int) -> mmap.mmap:
+    """Return ``size`` B of fresh anonymous memory, private to this process.
+
+    Private wherever a process forks: mmap's default is shared, and a child
+    would then write the scratch its parent is stepping on. No huge pages are
+    asked for: on a Ryzen 3 4100 they made a block larger than the L2 2.3x
+    slower and changed nothing for the others (``docs/optimization-log.md``).
+
+    Parameters
+    ----------
+    size : int
+        Bytes to map.
+
+    Returns
+    -------
+    mmap.mmap
+        The mapping, unmapped once nothing views it.
+    """
+    if sys.platform == "win32":
+        return mmap.mmap(ANONYMOUS, size)  # shared, with no fork to share it over
+    return mmap.mmap(ANONYMOUS, size, access=mmap.ACCESS_COPY)
+
+
+def _scratch(count: int, shape: tuple, dtype: np.dtype) -> np.ndarray:
+    """Return ``count`` blocks of ``shape`` in a mapping of their own.
+
+    Not ``np.empty``: malloc hands back pages in the order earlier arrays left
+    them, and a block the size of a cache then misses in it, 27 to 41 ms a step
+    from one process to the next (``docs/optimization-log.md``).
+
+    Parameters
+    ----------
+    count : int
+        Blocks, one per thread.
+    shape : tuple of int
+        Shape of each.
+    dtype : np.dtype
+        Their dtype.
+
+    Returns
+    -------
+    np.ndarray
+        ``(count, *shape)`` of zeros, starting on a page boundary.
+    """
+    size = count * math.prod(shape) * np.dtype(dtype).itemsize
+    return np.frombuffer(_private_mapping(size), dtype).reshape(count, *shape)
 
 
 def _forward_rows(field: np.ndarray, start: int, stop: int, rows: int) -> None:
@@ -296,7 +351,7 @@ class BlockedStep:
         self.threads = threads
         self._row_shares = _shares(ny, threads, rows)
         self._column_shares = _shares(nx, threads, rows)
-        self._blocks = [np.empty((rows, ny), dtype) for _ in self._column_shares]
+        self._blocks = list(_scratch(len(self._column_shares), (rows, ny), dtype))
         self._lock = threading.Lock()
 
     def __call__(
