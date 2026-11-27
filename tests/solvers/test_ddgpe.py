@@ -430,13 +430,15 @@ def test_the_total_density_decays_at_the_damping_rate(backend) -> None:
     )
 
 
-def uniform_run(backend, **overrides):
-    """Run two uniform components over UNIFORM_T and return them on the host.
+def uniform_run(backend, duration=UNIFORM_T, **overrides):
+    """Run two uniform components for a duration and return them on the host.
 
     Parameters
     ----------
     backend : str
         Backend name.
+    duration : float
+        Time to run for, a whole number of UNIFORM_T / UNIFORM_STEPS steps.
     **overrides
         Constructor arguments; ``gamma2`` is set after construction.
 
@@ -453,10 +455,11 @@ def uniform_run(backend, **overrides):
     field[0] = np.sqrt(EXCITON_DENSITY)
     field[1] = np.sqrt(CAVITY_DENSITY)
     zero_r = np.zeros((UNIFORM_N, UNIFORM_N), dtype=PRECISION_COMPLEX)
-    zero_t = np.zeros(UNIFORM_STEPS, dtype=PRECISION_COMPLEX)
+    steps = round(UNIFORM_STEPS * duration / UNIFORM_T)
+    zero_t = np.zeros(steps, dtype=PRECISION_COMPLEX)
     out = simu.out_field(
         field,
-        UNIFORM_T,
+        duration,
         None,
         delta_z=UNIFORM_T / UNIFORM_STEPS,
         verbose=False,
@@ -488,6 +491,19 @@ def test_each_component_decays_at_its_own_rate(backend) -> None:
         assert density == pytest.approx(np.exp(-rate * UNIFORM_T), rel=UNIFORM_RTOL), (
             f"a component damped at {rate} kept {density:.6f} of its density. "
             f"(Backend {backend})"
+        )
+
+
+def test_neither_component_decays_past_t(backend) -> None:
+    """Past T both losses stop: a run to 2 T keeps what was left at T."""
+    out = uniform_run(
+        backend, duration=2 * UNIFORM_T, gamma=EXCITON_GAMMA, gamma2=CAVITY_GAMMA
+    )
+    densities = np.abs(out) ** 2 / np.array([EXCITON_DENSITY, CAVITY_DENSITY])
+    for density, rate in zip(densities, (EXCITON_GAMMA, CAVITY_GAMMA), strict=True):
+        assert density == pytest.approx(np.exp(-rate * UNIFORM_T), rel=UNIFORM_RTOL), (
+            f"a component damped at {rate} until T kept {density:.6f} of its "
+            f"density at 2 T. (Backend {backend})"
         )
 
 

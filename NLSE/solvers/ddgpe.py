@@ -76,11 +76,12 @@ class DDGPE(CNLSE):
     # sign: the two parametrisations write the interaction term opposite ways,
     # and the kernels want CNLSE's.
     gamma = Parameter("alpha", "Losses in Hz.")
+    gamma2 = Parameter("alpha2", "Cavity losses in Hz.")
     g = Parameter("n2", "Intra-component interaction parameter.", scale=-1)
     g12 = Parameter("n12", "Inter-component interaction parameter.")
     T = Parameter("L", "Total propagation time in s.")
 
-    # gamma, g and g12 are not listed: they are views onto alpha, n2 and n12,
+    # gamma, gamma2, g and g12 are not listed: views onto alpha, alpha2, n2, n12,
     # which the inherited tuples already carry, and transferring the same
     # storage twice would convert it twice.
     _gpu_param_attrs = (
@@ -176,7 +177,6 @@ class DDGPE(CNLSE):
         )
         self.g2 = 0
         self.k_z = k_z
-        self.gamma2 = gamma
         self.omega_exc = omega_exc
         self.omega_cav = omega_cav
         self.detuning = detuning
@@ -311,11 +311,10 @@ class DDGPE(CNLSE):
         by ``k / 2`` and the saturation by ``2 / (epsilon_0 * c)``. DDGPE's
         ``k`` comes from a wavelength it supplies only to satisfy the base
         constructor, so that conversion would inflate the interaction rate by
-        ~1e26. The cavity loss is ``gamma2``, not CNLSE's ``alpha2``.
+        ~1e26. The losses are CNLSE's, ``gamma2`` being ``alpha2``.
         """
         return {
             **super()._step_constants(),
-            "_alpha2_half": self.gamma2 / 2,
             "_Isat_conv": self.I_sat,
             "_Isat_conv2": self.I_sat2,
             "_k_half": POTENTIAL_SCALE,
