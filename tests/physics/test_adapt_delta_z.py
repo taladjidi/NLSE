@@ -6,7 +6,7 @@ from NLSE import GPE, NLSE
 from NLSE.callbacks import adapt_delta_z
 from scipy.constants import atomic_mass, c, epsilon_0
 
-STEPS_PER_LENGTH = 12  # steps per nonlinear length, NLSE/callbacks.py:173
+STEPS_PER_LENGTH = 12  # NLSE/callbacks.py, STEPS_PER_NONLINEAR_LENGTH
 N_GRID = 32  # grid points per axis
 
 MASS = 87 * atomic_mass  # kg, rubidium 87

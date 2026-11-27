@@ -3,6 +3,10 @@ from scipy.constants import c, epsilon_0
 
 from .solvers.nlse import NLSE
 
+# Steps per nonlinear length that adapt_delta_z aims at, dimensionless. A
+# heuristic, not a derived value: the rule's since commit bc56be6.
+STEPS_PER_NONLINEAR_LENGTH = 12
+
 
 def sample(
     simu: NLSE,
@@ -155,7 +159,9 @@ def adapt_delta_z(
     Returns
     -------
     float or None
-        The new step, on the steps where it is updated, else None.
+        The new step, on the steps where it is updated, else None. None too
+        where nothing turns the phase (no interaction, or past the medium):
+        the step in force stands.
     """
     delta_z.append(simu._current_delta_z)
     if i % update_every != 0:
@@ -169,8 +175,11 @@ def adapt_delta_z(
     g = np.abs(simu._as_host_array(simu._constant("_g")))
     Isat = simu._as_host_array(simu._constant("_Isat_conv"))
     rate = g * A_sq / (1 + A_sq / Isat)
-    z_nl = float(1 / rate.max())
-    return np.abs(z_nl) / 12
+    peak = float(rate.max())
+    if peak == 0:
+        # The nonlinear length is infinite, which is not a step.
+        return None
+    return 1 / (STEPS_PER_NONLINEAR_LENGTH * peak)
 
 
 def _trial_propagation(simu: NLSE, A: np.ndarray, step: float, count: int):

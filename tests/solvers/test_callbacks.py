@@ -297,6 +297,30 @@ def test_adapt_delta_z_steps_by_a_twelfth_of_the_nonlinear_length(backend_name):
 
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_adapt_delta_z_keeps_the_step_past_the_medium(backend_name):
+    """Past L nothing turns the phase, so the step in force stands.
+
+    Parameters
+    ----------
+    backend_name : str
+        Backend to run on.
+    """
+    simu = NLSE(backend=backend_name, **BASE)
+    in_force: list = []
+    out = simu.out_field(
+        uniform_field(INTENSITY),
+        2 * L,
+        delta_z=DELTA_Z,
+        verbose=False,
+        normalize=False,
+        callback=adapt_delta_z,
+        callback_args=(1, in_force),
+    )
+    assert np.all(np.isfinite(in_force)), f"a step was not finite on {backend_name}"
+    assert np.all(np.isfinite(np.asarray(simu._backend.to_numpy(out))))
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_adapt_delta_z_to_error_follows_the_step_rule(backend_name, monkeypatch):
     """``adapt_delta_z_to_error`` returns ``h safety (tol / error) ** (1 / 3)``.
 
