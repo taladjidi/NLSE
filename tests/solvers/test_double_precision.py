@@ -1,24 +1,9 @@
-"""Tests that a double-precision run stays double precision throughout.
-
-A run's splitting is set by the dtype of the field handed to ``out_field``,
-and everything the step touches has to follow it: the scratch buffers, the
-intensity buffer the coupled solvers keep, and the dispersion operator RK4
-multiplies by.
-
-Nothing did. Three places pinned the width to single -- the RK4 buffers, the
-coupled intensity buffer, and ``_compute_propagator_rk4`` -- so **every
-complex128 RK4 run was broken on every backend**: pyfftw refused the array
-outright, and cuFFT returned NaN because the CUDA kernels pick their precision
-from the field and then index an operator of the other width. split_step was
-unaffected, which is why the suite stayed green: no test ran RK4 in double.
-"""
+"""Tests that a double-precision run stays double precision throughout."""
 
 import numpy as np
 import pytest
+from helpers import AVAILABLE_BACKENDS
 from NLSE import CNLSE, GPE, NLSE, CNLSE_1d, NLSE_1d
-from NLSE.backends import list_available_backends
-
-AVAILABLE_BACKENDS = list_available_backends()
 
 N = 32
 L = 1e-3
@@ -101,12 +86,7 @@ def test_rk4_runs_in_double_precision(backend_name, cls):
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("cls", SOLVERS, ids=lambda c: c.__name__)
 def test_double_and_single_agree(backend_name, cls):
-    """The two widths must describe the same physics.
-
-    A double run that merely avoids NaN could still be reading a
-    single-precision operator; agreement to float32 round-off is the check
-    that the whole step went double.
-    """
+    """Double- and single-precision runs describe the same physics."""
     solver = build(cls, backend_name)
     if not solver._backend.supports_double_precision():
         pytest.skip(f"{backend_name} has no double precision")
@@ -154,12 +134,7 @@ def test_the_rk4_buffers_take_the_field_dtype(backend_name, cls):
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("cls", SOLVERS, ids=lambda c: c.__name__)
 def test_the_rk4_operator_takes_the_field_dtype(backend_name, cls):
-    """The dispersion operator must match the field it multiplies.
-
-    The GPU kernels select single or double from the field and index the
-    operator with the same flat id, so an operator of the other width is
-    read as the wrong type.
-    """
+    """The dispersion operator must match the field it multiplies."""
     solver = build(cls, backend_name)
     for dtype in (np.complex64, np.complex128):
         operator = solver._build_propagator_rk4(dtype)
@@ -171,24 +146,7 @@ def test_the_rk4_operator_takes_the_field_dtype(backend_name, cls):
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_the_step_constants_take_the_field_width(backend_name):
-    """The same rule again, and it was broken in both directions at once.
-
-    The width used to be chosen from the *splitting* -- float32 for Lie and
-    float64 for everything else -- which is a leftover from when "single" and
-    "double" named the splittings rather than the float width.
-
-    A complex64 Strang or Yoshida run scaled the potential by a float64 scalar,
-    and NEP 50 promotion put the product at float64: a kernel picked for a
-    complex64 field then read it through a ``float*``, half a double per
-    element. That returned NaN from the first step above 128x128 and a field
-    30% wrong below it. A complex128 Lie run had the opposite fault and rounded
-    every physical constant to float32.
-
-    Asserted on every backend, not only the device ones. Numba reads a
-    mismatched array correctly, so CPU never showed the NaN -- but a
-    complex128 CPU run whose potential is float32 is still single precision
-    where it was asked for double.
-    """
+    """The scaled potential and the interaction constant take the field's width."""
     solver = build(NLSE, backend_name)
     X, Y = np.meshgrid(solver.X, solver.Y)
     solver.V = 1e-4 * np.exp(-(X**2 + Y**2) / (window / 8) ** 2)
@@ -219,16 +177,7 @@ def test_the_step_constants_take_the_field_width(backend_name):
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_a_wider_potential_is_narrowed_to_the_field(backend_name):
-    """A float64 potential on a complex64 field must be cast down.
-
-    The test above builds its potential from ``solver.X``, which is float32,
-    so the product is float32 already and the cast in ``_scale_potential``
-    can be deleted without failing it -- what it pins is the narrowing of the
-    scalar, not the cast. A user computing V from their own ``np.meshgrid``
-    gets float64, and then the cast is the only thing standing between the
-    kernel and half a double per element: NEP 50 keeps the product at float64,
-    and a kernel picked for a complex64 field reads it through a ``float*``.
-    """
+    """A float64 potential on a complex64 field must be cast down."""
     solver = build(NLSE, backend_name)
     X, Y = np.meshgrid(
         np.asarray(solver.X, dtype=np.float64), np.asarray(solver.Y, dtype=np.float64)
@@ -247,13 +196,7 @@ def test_a_wider_potential_is_narrowed_to_the_field(backend_name):
 
 @pytest.mark.parametrize("splitting", ["lie", "strang", "yoshida"])
 def test_a_single_precision_run_with_a_potential_agrees_across_backends(splitting):
-    """And the answer, since a width mismatch is not always loud.
-
-    Above 128x128 the misread potential returned NaN from the first step; at
-    64x64 the same bug returned a field 30% wrong, which is the outcome worth
-    testing for. Scored against CPU, whose numba kernels are indifferent to
-    the width and were always right.
-    """
+    """A single-precision run with a potential agrees across backends."""
     if "CPU" not in AVAILABLE_BACKENDS or len(AVAILABLE_BACKENDS) < 2:
         pytest.skip("needs CPU and at least one device backend")
 

@@ -1,25 +1,10 @@
-"""A complex potential is an absorbing one, and must behave the same everywhere.
-
-``V`` may be complex: its imaginary part enters the real part of the exponent,
-so it is gain or loss rather than phase. That is how an absorbing boundary is
-built.
-
-The device backends are the risk: a real cast anywhere in the transfer drops
-the imaginary part, and the absorption with it, leaving CPU and GPU disagreeing
-on the same input.
-
-The kernels take V as a bare pointer, so real and complex V cannot share an
-entry point. Each backend compiles a ``_cv`` twin of every V-reading kernel and
-dispatches on V's dtype, which keeps a real V — the common case — on exactly
-the instruction stream it always had.
-"""
+"""A complex potential is an absorbing one, and must behave the same everywhere."""
 
 import numpy as np
 import pytest
+from helpers import AVAILABLE_BACKENDS
 from NLSE import NLSE
-from NLSE.backends import get_backend, list_available_backends
-
-AVAILABLE_BACKENDS = list_available_backends()
+from NLSE.backends import get_backend
 
 N = 64
 WAIST = 2.23e-3
@@ -72,12 +57,7 @@ def norm(field):
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_an_absorbing_potential_absorbs(backend_name):
-    """A positive imaginary V must remove power, not merely add phase.
-
-    This is the test the old float32 cast would have failed on every device
-    backend: with the imaginary part discarded the run is lossless, so the
-    norm comes back unchanged.
-    """
+    """A positive imaginary V must remove power, not merely add phase."""
     field, ring = grids(backend_name)
     V = (1j * 2e2 * ring).astype(np.complex64)
     out = propagate(backend_name, V, field)
@@ -113,12 +93,7 @@ def test_complex_potential_matches_the_cpu_reference(backend_name):
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_a_real_potential_is_unaffected(backend_name):
-    """Adding complex-V support must not disturb the real-V path.
-
-    A real V and the same V with a zero imaginary part describe identical
-    physics, so they must give identical results even though they take
-    different kernels.
-    """
+    """Adding complex-V support must not disturb the real-V path."""
     field, ring = grids(backend_name)
     # A physical refractive-index change. A larger one twists the phase by
     # more than pi per grid cell, so the step limiter clamps hard and the
@@ -140,13 +115,7 @@ def test_a_real_potential_is_unaffected(backend_name):
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_the_imaginary_part_sets_the_direction(backend_name):
-    """Positive imaginary V loses power, negative gains it.
-
-    The amplitude is small on purpose. V enters scaled by k/2 ~ 4e6, so the
-    accumulated exponent over this run is ~8e3 * Im(V): anything much larger
-    saturates the lossy case to zero and overflows the gain case to inf, and
-    the sign would no longer be what is under test.
-    """
+    """Positive imaginary V loses power, negative gains it."""
     field, ring = grids(backend_name)
     amplitude = 1e-4
     lossy = propagate(backend_name, (1j * amplitude * ring).astype(np.complex64), field)
@@ -170,13 +139,7 @@ def test_the_imaginary_part_sets_the_direction(backend_name):
     ids=["lie", "strang"],
 )
 def test_potential_dtype_follows_the_field(backend_name, field_dtype, expected):
-    """V is transferred at the field's width, complex staying complex.
-
-    The kernels pick their precision from the field and then read V with it,
-    so a mismatched V is read at the wrong width. V was previously pinned to
-    float32 regardless, which both broke double precision and deleted the
-    absorption.
-    """
+    """V is transferred at the field's width, complex staying complex."""
     backend = get_backend(backend_name)
     if field_dtype == np.complex128 and not backend.supports_double_precision():
         pytest.skip(f"{backend_name} has no fp64")

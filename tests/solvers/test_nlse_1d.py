@@ -4,12 +4,10 @@ from NLSE import NLSE_1d
 from scipy.constants import c, epsilon_0
 
 PRECISION_COMPLEX = np.complex64
-PRECISION_REAL = np.float32
 
 N = 256
 n2 = -1.6e-9
 waist = 2.23e-3
-waist2 = 70e-6
 window = 4 * waist
 power = 1.05
 Isat = 10e4  # saturation intensity in W/m^2
@@ -67,11 +65,7 @@ def test_prepare_output_array(backend) -> None:
 
 
 def test_split_step(backend) -> None:
-    """One linear step of a Rayleigh length lands on the Gaussian beam.
-
-    Lossless and linear, so the step is diffraction alone and exact. The
-    complex field is compared, so a propagator of the wrong sign fails too.
-    """
+    """One linear step of a Rayleigh length lands on the Gaussian beam."""
     simu = make_solver(backend, n2=0, alpha=0)
     r_sq = simu.X**2
     z_rayleigh = simu.k * BEAM_WAIST**2 / 2

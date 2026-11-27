@@ -1,21 +1,11 @@
-"""A negative delta_z propagates backwards over the whole of z.
-
-The last, partial step of a backward run used to go forward, so a forward run
-followed by a backward one did not return the input unless the step divided z.
-Checked against the closed form of a linear medium, where propagation is the
-unitary exp(-i K^2 z / 2k) and a backward run over the same z is its exact
-inverse, for every splitting and RK4.
-"""
+"""A negative delta_z propagates backwards over the whole of z."""
 
 import warnings
 
 import numpy as np
 import pytest
 from NLSE import NLSE
-from NLSE.backends import list_available_backends
 from NLSE.callbacks import adapt_delta_z, adapt_delta_z_to_error
-
-AVAILABLE_BACKENDS = list_available_backends()
 
 N = 64
 WINDOW = 1e-3  # m
@@ -77,7 +67,6 @@ def beam(simu):
     return np.exp(-(simu.XX**2 + simu.YY**2) / WAIST**2).astype(dtype)
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("scheme", SCHEMES)
 @pytest.mark.parametrize("z", [1.05e-3, 1e-3])
 def test_a_backward_run_undoes_a_forward_one(backend, scheme, z):
@@ -98,7 +87,6 @@ def test_a_backward_run_undoes_a_forward_one(backend, scheme, z):
     )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_a_negative_distance_is_refused(backend):
     """A negative z is not a backward run; it used to return the input."""
     simu = solver(backend)
@@ -106,7 +94,6 @@ def test_a_negative_distance_is_refused(backend):
         simu.out_field(beam(simu), -1e-3, delta_z=STEP, verbose=False)
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_a_backward_step_is_capped_like_a_forward_one(backend):
     """A step past the accuracy limit is lowered by magnitude, keeping its sign."""
     simu = solver(backend, n2=-1.6e-7)
@@ -158,12 +145,7 @@ def step_history(backend, delta_z, callback, args):
 
 
 def assert_mirrors_the_forward_run(backend, callback, args):
-    """Check that a backward run takes the forward run's steps, negated.
-
-    From a real field, the backward solution is the complex conjugate of the
-    forward one, so a callback that reads |A| or a norm sees the same values
-    and must ask for the same step sizes.
-    """
+    """Check that a backward run takes the forward run's steps, negated."""
     forward = step_history(backend, STEP, callback, args)
     backward = step_history(backend, -STEP, callback, args)
     name = callback.__name__
@@ -181,13 +163,11 @@ def assert_mirrors_the_forward_run(backend, callback, args):
     )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_adapt_delta_z_keeps_a_backward_run_backward(backend):
     """adapt_delta_z returns a size; the run keeps its direction."""
     assert_mirrors_the_forward_run(backend, adapt_delta_z, (1, []))
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_adapt_delta_z_to_error_keeps_a_backward_run_backward(backend):
     """The error controller sizes a backward step like a forward one."""
     assert_mirrors_the_forward_run(backend, adapt_delta_z_to_error, ERROR_CONTROL_ARGS)

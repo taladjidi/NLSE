@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from helpers import as_numpy, assert_c_contiguous, gaussian_beam, random_field
 from NLSE import NLSE_3d
 from scipy.constants import c, epsilon_0
@@ -16,7 +17,6 @@ D0 = 1e-16
 vg = 1e-1 * c
 waist = 2.23e-3
 duration = 2e-6
-waist2 = 70e-6
 window = np.array([4 * waist, 8 * duration])  # 4*waist transverse, 10e-6 s temporal
 energy = 1.05 * duration
 Isat = 10e4  # saturation intensity in W/m^2
@@ -74,12 +74,7 @@ def make_solver(backend="CPU", n=N, **overrides):
 
 
 def test_build_propagator(backend) -> None:
-    """Both dispersions advance by the step, because both are rates.
-
-    This asserted the temporal factor without the step, matching a propagator
-    that left it out. ``D0`` is documented in s^2/m, so ``D0/2 * Omega**2`` is
-    a phase per metre and the exponent is not dimensionless without a length.
-    """
+    """Both dispersions advance by the step, because both are rates."""
     simu = make_solver(backend, D0=D0_VISIBLE)
     prop = as_numpy(simu, simu._build_propagator(np.complex64, DZ_TEST))
     spatial = -1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k
@@ -92,23 +87,7 @@ def test_build_propagator(backend) -> None:
 
 
 def test_a_linear_run_does_not_depend_on_the_step_count(backend) -> None:
-    """With no nonlinearity there is nothing for the splitting to get wrong.
-
-    The linear operator is applied exactly and there is no second operator for
-    it to fail to commute with, so the answer over a fixed distance is the same
-    however many steps it is taken in -- to round-off, not to a tolerance.
-
-    ``alpha`` has to go as well as ``n2``. Loss is saturable here, so with a
-    finite Isat it depends on the intensity, does not commute with the linear
-    part either, and leaves a splitting error of its own -- 1.2e-4, enough to
-    look exactly like the bug this is here to catch.
-
-    That makes this the test for a propagator that has lost its step. The
-    temporal dispersion here used to be applied whole every step, so the phase
-    a run picked up followed the number of steps rather than the distance:
-    four steps against sixteen differed by 2.6e-4 where complex64 round-off is
-    1e-7, and halving the step doubled the dispersion.
-    """
+    """With no nonlinearity there is nothing for the splitting to get wrong."""
     x = np.linspace(-window[0] / 2, window[0] / 2, 16)
     t = np.linspace(-window[1] / 2, window[1] / 2, 16)
     X, Y, T = np.meshgrid(x, x, t)
@@ -199,74 +178,30 @@ def test_prepare_output_array(backend) -> None:
     )
 
 
-def test_send_arrays_to_gpu() -> None:
-    if NLSE_3d.__CUPY_AVAILABLE__:
-        alpha = 20
-        Isat = 10e4
-        n2 = -1.6e-9
-        V = 1e-4 * np.random.random((N, N, NZ)).astype(np.float32)
-        alpha = np.repeat(alpha, 2)
-        alpha = alpha[..., np.newaxis, np.newaxis]
-        n2 = np.repeat(n2, 2)
-        n2 = n2[..., np.newaxis, np.newaxis]
-        Isat = np.repeat(Isat, 2)
-        Isat = Isat[..., np.newaxis, np.newaxis]
-        simu = make_solver("CUPY", alpha=alpha, n2=n2, V=V, Isat=Isat)
-        simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
-        simu._send_arrays_to_gpu()
-        assert isinstance(simu.propagator, cp.ndarray), (
-            "propagator is not a cp.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.V, cp.ndarray), "V is not a cp.ndarray. (Backend GPU)"
-        assert isinstance(simu.alpha, cp.ndarray), (
-            "alpha is not a cp.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.n2, cp.ndarray), "n2 is not a cp.ndarray. (Backend GPU)"
-        assert isinstance(simu.I_sat, cp.ndarray), (
-            "I_sat is not a cp.ndarray. (Backend GPU)"
-        )
-    else:
-        pass
-
-
+@pytest.mark.skipif(not NLSE_3d.__CUPY_AVAILABLE__, reason="CuPy not available")
 def test_retrieve_arrays_from_gpu() -> None:
-    if NLSE_3d.__CUPY_AVAILABLE__:
-        alpha = 20
-        Isat = 10e4
-        n2 = -1.6e-9
-        V = 1e-4 * np.random.random((N, N, NZ)).astype(np.float32)
-        alpha = np.repeat(alpha, 2)
-        alpha = alpha[..., np.newaxis, np.newaxis]
-        n2 = np.repeat(n2, 2)
-        n2 = n2[..., np.newaxis, np.newaxis]
-        Isat = np.repeat(Isat, 2)
-        Isat = Isat[..., np.newaxis, np.newaxis]
-        simu = make_solver("CUPY", alpha=alpha, n2=n2, V=V, Isat=Isat)
-        simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
-        simu._send_arrays_to_gpu()
-        simu._retrieve_arrays_from_gpu()
-        assert isinstance(simu.propagator, np.ndarray), (
-            "propagator is not a np.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.V, np.ndarray), "V is not a np.ndarray. (Backend GPU)"
-        assert isinstance(simu.alpha, np.ndarray), (
-            "alpha is not a np.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.n2, np.ndarray), "n2 is not a np.ndarray. (Backend GPU)"
-        assert isinstance(simu.I_sat, np.ndarray), (
-            "I_sat is not a np.ndarray. (Backend GPU)"
-        )
-    else:
-        pass
+    alpha = 20
+    Isat = 10e4
+    n2 = -1.6e-9
+    V = 1e-4 * np.random.random((N, N, NZ)).astype(np.float32)
+    alpha = np.repeat(alpha, 2)
+    alpha = alpha[..., np.newaxis, np.newaxis]
+    n2 = np.repeat(n2, 2)
+    n2 = n2[..., np.newaxis, np.newaxis]
+    Isat = np.repeat(Isat, 2)
+    Isat = Isat[..., np.newaxis, np.newaxis]
+    simu = make_solver("CUPY", alpha=alpha, n2=n2, V=V, Isat=Isat)
+    simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
+    simu._send_arrays_to_gpu()
+    for name in ("propagator", "V", "alpha", "n2", "I_sat"):
+        assert isinstance(getattr(simu, name), cp.ndarray), f"{name} not on the GPU"
+    simu._retrieve_arrays_from_gpu()
+    for name in ("propagator", "V", "alpha", "n2", "I_sat"):
+        assert isinstance(getattr(simu, name), np.ndarray), f"{name} not back on host"
 
 
 def test_split_step(backend) -> None:
-    """One linear step of a Rayleigh length lands on the Gaussian beam.
-
-    Uniform in time, so only the transverse dispersion acts, and lossless and
-    linear, so the step is exact. The complex field is compared, so a
-    transverse propagator of the wrong sign fails too.
-    """
+    """One linear step of a Rayleigh length lands on the Gaussian beam."""
     simu = make_solver(backend, n2=0, alpha=0)
     r_sq = simu.XX**2 + simu.YY**2
     z_rayleigh = simu.k * BEAM_WAIST**2 / 2

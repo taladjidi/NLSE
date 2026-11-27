@@ -6,18 +6,10 @@ from scipy.constants import c, epsilon_0
 if CNLSE_1d.__CUPY_AVAILABLE__:
     pass
 PRECISION_COMPLEX = np.complex64
-PRECISION_REAL = np.float32
 
 N = 256
-n2 = -1.6e-9
-n12 = -1e-10
 waist = 2.23e-3
-waist2 = 70e-6
 window = 4 * waist
-power = 1.05
-Isat = 10e4  # saturation intensity in W/m^2
-L = 1e-3
-alpha = 20
 
 # Step used wherever a test builds a propagator or takes a step by hand.
 DZ_TEST = 1e-4
@@ -79,12 +71,7 @@ def test_prepare_output_array(backend) -> None:
 
 
 def test_split_step(backend) -> None:
-    """One linear step lands each component on its own Gaussian beam.
-
-    Lossless and linear, so the step is diffraction alone and exact. The two
-    components have different wavelengths, so swapping them fails, and the
-    complex field is compared, so a propagator of the wrong sign fails too.
-    """
+    """One linear step lands each component on its own Gaussian beam."""
     simu = make_solver(backend, symmetric=False, n2=0, n12=0, alpha=0)
     r_sq = simu.X**2
     z_rayleigh = simu.k * BEAM_WAIST**2 / 2

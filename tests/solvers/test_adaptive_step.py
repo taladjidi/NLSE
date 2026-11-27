@@ -1,21 +1,4 @@
-"""Tests for choosing the step from a measured error.
-
-``adapt_delta_z`` reads the step off the peak nonlinear index and divides by
-twelve, which is a rate rather than an error. ``adapt_delta_z_to_error``
-measures instead: it takes the same distance whole and in halves and compares.
-
-The tests worth having here are about the two ways that goes wrong, both of
-which were found by running it:
-
-- **The estimate has a floor.** Below roughly 0.8 rad per step the difference
-  between one step and two halves is complex64 round-off, not splitting error.
-  A tolerance above that floor therefore reads as "no error at all" and asks
-  for a bigger step however big the step is, so the controller has to be
-  capped by the physics or it doubles until the answer is unrecognisable.
-- **A tolerance below the floor cannot be met at any step**, so the controller
-  has to stop shrinking or the run never ends. It is not a divergence and
-  nothing raises; the propagation simply does not return.
-"""
+"""Tests for choosing the step from a measured error."""
 
 import numpy as np
 import pytest
@@ -82,18 +65,7 @@ def prepared_solver():
 
 
 def test_the_step_never_passes_the_solvers_own_ceiling():
-    """The estimate cannot see past its floor, so the physics has to cap it.
-
-    Driven directly and from a step already at the ceiling, because a
-    propagation only reaches the cap if it runs long enough to double its way
-    there -- a run that never gets close leaves the cap untested, which is how
-    removing it first went unnoticed.
-
-    Without the cap the controller reads round-off as "no error", doubles
-    every time it fires, and three adjustments in the answer is worthless:
-    0.38 relative against a converged reference, where the fixed default
-    gives 8e-5.
-    """
+    """The adapted step never passes the solver's own ceiling."""
     simu, prepared = prepared_solver()
     ceiling = simu._split_step_max_dz(prepared)
     simu._step_in_force = ceiling
@@ -106,11 +78,7 @@ def test_the_step_never_passes_the_solvers_own_ceiling():
 
 
 def test_an_unreachable_tolerance_stops_shrinking():
-    """It must settle at the floor rather than halve for ever.
-
-    Driven directly: the failure this guards against is a propagation that
-    never returns, and a test that can only time out is not a test.
-    """
+    """With an unreachable tolerance the step settles at its floor."""
     simu, prepared = prepared_solver()
     floor = L / 1e4
     step = L / 100
@@ -171,11 +139,7 @@ def test_it_beats_the_fixed_default_it_replaces():
 
 
 def test_a_trial_leaves_the_run_untouched():
-    """Measuring must not perturb what it measures.
-
-    The trial propagates at another step, which needs a propagator of its
-    own; the run's has to come back whichever way the trial goes.
-    """
+    """A trial step leaves the run untouched."""
     from NLSE.callbacks import _trial_propagation
 
     simu = solver()
@@ -207,15 +171,7 @@ def test_the_run_stays_finite(tolerance):
 
 
 def test_a_run_whose_step_grows_still_lands_on_z():
-    """The distance asked for is the distance propagated.
-
-    The loop divides z into steps before it starts, so a callback that grows
-    the step used to leave it taking one that did not fit: the run overshot by
-    up to a step and came back with a phase error the size of the extra
-    propagation, the field otherwise looking entirely reasonable. Checked
-    against a fine fixed-step run, because that is the symptom -- summing the
-    steps a callback saw misses the partial one at the end.
-    """
+    """The distance asked for is the distance propagated."""
     simu = solver()
     reference = np.asarray(
         solver().out_field(
@@ -253,12 +209,7 @@ def keep_step_and_record(simu, A, z, i, taken):
 
 
 def test_a_cut_step_is_not_what_the_controller_scales():
-    """After the step cut at L, the run goes on at the step in force.
-
-    The controller scaled its proposal from the step just taken. A cut one is
-    a sliver, so the run restarted from it: with bounds that keep the step, it
-    went on at the sliver's size for the rest of the run.
-    """
+    """After the step cut at L, the run goes on at the step in force."""
     simu = solver()
     taken: list = []
     simu.out_field(

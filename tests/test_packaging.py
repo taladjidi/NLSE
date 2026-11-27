@@ -1,9 +1,4 @@
-"""Tests that the built distribution contains what the package needs at runtime.
-
-These build a real wheel rather than inspecting the source tree, because an
-editable install (which is what CI uses) resolves every path against the
-repository and therefore cannot catch a file that fails to ship.
-"""
+"""Tests that the built distribution contains what the package needs at runtime."""
 
 import email
 import re
@@ -18,11 +13,8 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# setuptools staged builds through build/lib/ and copied sources over whatever
-# an earlier build left there, so a checkout that once held a different layout
-# kept shipping the old modules. hatchling builds straight from the source tree
-# and has no staging directory, so this cannot recur; the assertions below stay
-# as a backstop in case the build backend is ever changed back.
+# setuptools once shipped stale modules from build/lib/; hatchling has no
+# staging directory, so these assertions are a backstop if that changes.
 STALE_BUILD_DIR = PROJECT_ROOT / "build" / "lib" / "NLSE"
 
 
@@ -72,15 +64,7 @@ PUBLISHED_EXTRAS = {"gpu", "mlx", "opencl"}
 
 
 def _build_wheel_command(outdir: Path) -> list[str]:
-    """Return the command that builds a wheel straight from the source tree.
-
-    Prefers ``uv build --wheel`` and falls back to ``pip wheel``. Both build
-    the wheel directly from the source tree, which is the path an ordinary
-    ``pip install .`` takes; the sdist route is covered separately.
-
-    ``--no-build-isolation`` keeps the build offline and deterministic; the
-    dev dependency group pins the hatchling it needs.
-    """
+    """Return the command that builds a wheel straight from the source tree."""
     if shutil.which("uv"):
         return [
             "uv",
@@ -105,13 +89,7 @@ def _build_wheel_command(outdir: Path) -> list[str]:
 
 
 def _require_hatchling() -> None:
-    """Fail, rather than skip, when the build backend is missing.
-
-    These tests exist to catch a file that fails to ship. Skipping them is
-    indistinguishable from passing in a summary, so an environment without
-    the backend would report a clean run having checked nothing. hatchling is
-    a declared dev dependency, so its absence is a setup problem to fix.
-    """
+    """Fail, rather than skip, when the build backend is missing."""
     try:
         import hatchling  # noqa: F401
     except ImportError:
@@ -159,12 +137,7 @@ def _run(command: list[str], what: str) -> None:
 
 
 def _build_sdist_and_wheel(outdir: Path) -> None:
-    """Build an sdist into outdir, then a wheel from that sdist.
-
-    ``uv build`` does both in one command where it is installed. Otherwise
-    the backend builds the sdist and pip builds the wheel from it, so this
-    needs nothing beyond the dev dependency group.
-    """
+    """Build an sdist into outdir, then a wheel from that sdist."""
     if shutil.which("uv"):
         _run(
             ["uv", "build", "--out-dir", str(outdir), str(PROJECT_ROOT)],
@@ -196,13 +169,7 @@ def _build_sdist_and_wheel(outdir: Path) -> None:
 
 @pytest.fixture(scope="module")
 def sdist_build(tmp_path_factory):
-    """Build an sdist and then a wheel from it; return (sdist names, wheel names).
-
-    Exercises the path a source install takes. It is separate from the
-    in-tree wheel build because the failure modes differ: the sdist has to
-    be self-contained, and nothing in the source tree can stand in for a
-    file it forgot to include.
-    """
+    """Build an sdist and then a wheel from it; return (sdist names, wheel names)."""
     _require_hatchling()
 
     outdir = tmp_path_factory.mktemp("sdist")
@@ -304,11 +271,7 @@ def ignored_package_dirs() -> tuple[str, ...]:
 
 
 def test_every_source_module_is_packaged(wheel_contents):
-    """A module left out imports on an editable install and fails on a real one.
-
-    Sources .gitignore excludes, such as a local Metal backend, are not
-    shipped on purpose (hatchling reads .gitignore, with or without git).
-    """
+    """Every source module is in the wheel, not only in the editable install."""
     source = {
         path.relative_to(PROJECT_ROOT).as_posix()
         for path in (PROJECT_ROOT / "NLSE").rglob("*.py")
@@ -320,13 +283,7 @@ def test_every_source_module_is_packaged(wheel_contents):
 
 
 def test_cache_dir_is_outside_the_installed_package(tmp_path, monkeypatch):
-    """The runtime cache must never be written inside the package directory.
-
-    Writing there fails on read-only installs, and on uninstall pip leaves
-    the runtime-created files behind. What remains is a directory named
-    after the package with no __init__.py, which Python imports as a
-    namespace package, so `import NLSE` resolves to an empty module.
-    """
+    """The runtime cache must never be written inside the package directory."""
     import NLSE
     from NLSE.utils import get_cache_dir
 
@@ -351,22 +308,11 @@ def test_cache_dir_is_outside_the_installed_package(tmp_path, monkeypatch):
 
 
 def test_the_package_version_matches_the_project_metadata():
-    """``__version__`` and the build's version have to be the same string.
-
-    They are written in two places and nothing joined them up, so they drifted:
-    release 3.0.0 was tagged and published from a tree whose ``pyproject.toml``
-    and ``__init__.py`` both said ``2.3.0``, and every install from it reported
-    2.3.0. Whichever is bumped, this fails until the other is.
-
-    Read with a regular expression rather than ``tomllib``, which arrived in
-    3.11 while this package supports 3.10 -- written the obvious way first, it
-    passed on the development machine and took out all three 3.10 jobs. One
-    field of one table does not need a parser, and a dependency for a
-    single-line read is worse than the regex.
-    """
+    """``__version__`` and the build's version have to be the same string."""
     from NLSE import __version__
 
     text = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    # A regex, not tomllib: tomllib is 3.11+ and the package supports 3.10.
     found = re.findall(r'^version *= *"([^"]+)"', text, re.MULTILINE)
     assert len(found) == 1, (
         f"expected exactly one top-level version in pyproject.toml, found "

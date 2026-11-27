@@ -1,13 +1,8 @@
-"""Tests for solver state that must stay consistent across out_field calls.
-
-The solver caches a lot onto ``self`` (propagator, precomputed step constants,
-device copies of arrays). These tests pin down the cases where that cached
-state has to be refreshed rather than silently reused.
-"""
+"""Tests for solver state that must stay consistent across out_field calls."""
 
 import numpy as np
 import pytest
-from helpers import as_numpy, make
+from helpers import AVAILABLE_BACKENDS, as_numpy, make
 from NLSE import CNLSE, DDGPE, GPE, NLSE
 from NLSE.backends import get_backend, list_available_backends
 from NLSE.callbacks import adapt_delta_z
@@ -21,7 +16,6 @@ from scipy.constants import atomic_mass
 
 PRECISION_COMPLEX = np.complex64
 
-AVAILABLE_BACKENDS = list_available_backends()
 # Backends whose solvers bypass apply_propagator for the fused linear step.
 LINEAR_STEP_BACKENDS = [
     name for name in AVAILABLE_BACKENDS if get_backend(name).has_linear_step
@@ -99,15 +93,6 @@ class TestPropagatorRefresh:
     @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
     def test_changing_delta_z_between_runs_rebuilds_propagator(self, backend_name):
         """Reusing a solver after changing delta_z must not reuse the old propagator.
-
-        The propagator carries exp(-i K^2 dz / 2k), so a stale one silently
-        applies the wrong step size for the whole run.
-
-        On every backend, because what could go stale is not the arithmetic
-        but where the propagator is kept: the device backends hold it on the
-        device and derive a pre-normalized twin beside it, and both have to be
-        rebuilt when the step changes. Only the CPU was checked, which is the
-        case with the least to get wrong.
 
         Parameters
         ----------
@@ -211,18 +196,7 @@ class TestLinearConstruction:
 
 
 class TestPropagationDistance:
-    """A run lands on z, rather than past it.
-
-    Taking ceil(z / delta_z) whole steps overshoots unless the step divides
-    z, and the error is the phase the medium imprints over the excess: the
-    excess as a fraction of z, times the total nonlinear phase.
-
-    Floating point makes it worse than it sounds. A step derived from the
-    physics rarely divides z, and even one that should can fail to: for 237
-    steps of this case, z / delta_z comes to 237.00000000000003, so ceil asks
-    for 238 and the run goes 0.42% too far. That put a 285x error spike at one
-    step count, with its neighbours unaffected.
-    """
+    """A run lands on z, rather than past it."""
 
     Z = 5e-3
 
@@ -259,13 +233,7 @@ class TestPropagationDistance:
         )
 
     def test_neighbouring_step_counts_agree_without_callbacks(self):
-        """The no-callback path must land on z too.
-
-        This is where the spike was: with no callback the loop runs
-        ceil(z / delta_z) whole steps through the backend, so 237 steps of
-        z/237 became 238 and the result was 285x further from a converged
-        reference than 236 or 238 steps were.
-        """
+        """Neighbouring step counts land on z without callbacks too."""
         E = gaussian_input()
         results = {
             steps: np.asarray(
@@ -301,12 +269,7 @@ class TestPropagationDistance:
 
 
 class TestCallbackArguments:
-    """Callbacks are handed the position the field they receive is at.
-
-    Every callback docstring and the README call it "the current propagation
-    distance", so it has to advance. No built-in callback reads it -- they all
-    key off the step index -- which leaves these tests as the only check.
-    """
+    """Callbacks are handed the position the field they receive is at."""
 
     def test_z_advances_with_the_field(self):
         """The position must run from one step up to the whole distance."""
@@ -346,12 +309,7 @@ class TestCallbackArguments:
 
 
 class TestAdaptiveStep:
-    """A callback changes the step by returning it, and the propagator follows.
-
-    Both halves have to follow. The propagator is built from the step, so a
-    new step that reaches the nonlinear half but not a propagator rebuild
-    leaves the linear half advancing the wrong distance.
-    """
+    """A callback changes the step by returning it, and the propagator follows."""
 
     Z = 2e-3
     DZ = 1e-5
@@ -416,22 +374,12 @@ class TestAdaptiveStep:
 
 
 class TestDefaultStep:
-    """delta_z is derived from the field's energy unless the caller sets one.
-
-    The step limits are ceilings, and running just under one is the largest
-    step that does not fail rather than a sensible default. The default aims
-    instead at a fixed phase per step, against the same rates the ceiling for
-    that method is built from.
-    """
+    """delta_z is derived from the field's energy unless the caller sets one."""
 
     Z = 2e-3
 
     def propagate(self, simu, **kwargs):
-        """Propagate the module's Gaussian and return the step that was used.
-
-        Deliberately passes no delta_z: what is under test is the one the
-        solver derives.
-        """
+        """Propagate the module's Gaussian and return the step that was used."""
         simu.out_field(gaussian_input(), self.Z, verbose=False, plot=False, **kwargs)
         return simu._current_delta_z
 
@@ -449,13 +397,7 @@ class TestDefaultStep:
         )
 
     def test_the_rk4_step_hits_its_own_target_phase_per_step(self):
-        """RK4 aims at a tighter phase, and against every rate rather than two.
-
-        The split-step version of this above pinned ``DEFAULT_PHASE_PER_STEP``
-        and left ``RK4_PHASE_PER_STEP`` to a documentation test, which checks
-        that the docs quote the constant rather than that the solver uses it.
-        Loosening it ten-fold changed no numerical test.
-        """
+        """The RK4 step hits its own target phase, weighing every rate."""
         simu = make_solver(n2=-1.6e-8)
         used = self.propagate(simu, method="RK4")
         rates = simu._energy_rates(
@@ -473,11 +415,7 @@ class TestDefaultStep:
         ids=["loss", "potential"],
     )
     def test_the_rk4_step_counts_the_loss_and_the_potential(self, term):
-        """With either as the only term, it alone sets RK4's default step.
-
-        The test above runs without loss or potential, so it reads the same
-        whether RK4 sums every rate or leaves those two out.
-        """
+        """Loss or the potential, as the only term, alone sets RK4's default step."""
         if "V" in term:
             term = {"V": np.full((N, N), term["V"], dtype=np.float32)}
         simu = make_solver(n2=0.0, **term)
@@ -509,11 +447,7 @@ class TestDefaultStep:
         )
 
     def test_a_weak_nonlinearity_still_takes_several_steps(self):
-        """A step comparable to the distance asked for overshoots it.
-
-        The loop runs whole steps of delta_z, so nothing here may reduce to
-        one or two of them however little there is to resolve.
-        """
+        """A weak nonlinearity still takes several steps over the distance asked for."""
         for weak in (-1e-11, -1e-14, 0.0):
             simu = make_solver(n2=weak)
             used = self.propagate(simu)
@@ -550,16 +484,7 @@ class TestDefaultStep:
         assert used < 1.0, "a step past the accuracy limit was left alone"
 
     def test_the_step_responds_to_the_field_not_just_the_parameters(self):
-        """Two fields of the same power but different peak intensity differ.
-
-        This is what reading the field buys over the constructor's estimate,
-        which had only power over the window area to go on.
-
-        Over a long enough distance that the phase target is what sets the
-        step: DEFAULT_MIN_STEPS also bounds it, and where that binds both
-        fields get the same step for a reason that has nothing to do with
-        either of them.
-        """
+        """Fields of equal power but different peak intensity get different steps."""
         broad = make_solver()
         narrow = make_solver()
         E_broad = np.exp(-(broad.XX**2 + broad.YY**2) / waist**2).astype(
@@ -633,17 +558,7 @@ class TestNonlinearityCutoff:
 
     @pytest.mark.parametrize("beyond", [1, 2, 5])
     def test_the_absorption_stops_at_the_medium_as_well(self, beyond):
-        """A beam that has left the medium is not in anything that absorbs.
-
-        The cutoff used to zero the nonlinear coupling alone, so a run past L
-        stopped accruing nonlinear phase and went on losing intensity to a
-        medium it was no longer in -- which also broke the identity relating
-        the two (see tests/physics/test_closed_forms.py).
-
-        Asserted as Beer's law over the medium and nothing after it: a uniform
-        field has no transverse structure, so the linear step past L is the
-        identity and whatever is left has to be exactly exp(-alpha L).
-        """
+        """Absorption stops at the end of the medium, as the nonlinearity does."""
         absorbing = make_solver(alpha=20.0, n2=0.0, L=L)
         field = np.ones((N, N), dtype=PRECISION_COMPLEX)
         out = as_numpy(
@@ -681,11 +596,7 @@ class TestNonlinearityCutoff:
         )
 
     def test_callback_loop_cuts_off_at_the_same_place(self):
-        """The callback loop and the fast loop must agree past L.
-
-        Both split the run at L and cut the step that would cross it; the fast
-        loop hands each segment to execute_loop, the callback loop steps it.
-        """
+        """The callback loop and the fast loop must agree past L."""
         E = gaussian_input()
         z = 3 * L
 
@@ -721,11 +632,7 @@ class TestNonlinearityCutoff:
         assert simu.n2 == n2, "n2 was not restored after propagating past L"
 
     def test_zero_L_disables_the_cutoff(self):
-        """L=0 means 'no finite medium', not 'everything is linear'.
-
-        GPE passes L=0, so a cutoff keyed on `z > L` alone would make every
-        GPE run fully linear.
-        """
+        """L=0 means 'no finite medium', not 'everything is linear'."""
         E = gaussian_input()
         simu = make_solver(L=0.0)
         got = simu.out_field(E.copy(), 2 * L, verbose=False, plot=False, delta_z=L / 20)
@@ -744,12 +651,7 @@ class TestNonlinearityCutoff:
 
 
 class TestStepLimitWithBatchedParameters:
-    """The step limiter must cope with per-simulation parameter arrays.
-
-    Broadcasting a parameter across a batch makes the precomputed constants
-    arrays rather than scalars, so any scalar comparison inside the limiter
-    raises "truth value of an array is ambiguous".
-    """
+    """The step limiter must cope with per-simulation parameter arrays."""
 
     @staticmethod
     def batched_n2(count=3):
@@ -794,11 +696,7 @@ class TestStepLimitWithBatchedParameters:
         )
 
     def test_the_interaction_rate_is_the_strongest_members(self):
-        """A batch's interaction rate is that of its strongest n2 alone.
-
-        The limit test above has the dispersion limit binding at these n2,
-        so it reads the same whichever member the rate is taken from.
-        """
+        """A batch's interaction rate is that of its strongest n2 alone."""
         simu = make_solver(n2=self.batched_n2())
         E = self.batched_input(simu)
         simu._precompute_step_constants(None, np.complex64)
@@ -813,14 +711,7 @@ class TestStepLimitWithBatchedParameters:
 
     @pytest.mark.parametrize("backend_name", list_available_backends())
     def test_batched_run_matches_individual_runs(self, backend_name):
-        """Each slice of a batched run must equal running that case alone.
-
-        Broadcasting is what makes a parameter sweep cheap, so the batch has
-        to be equivalent to the individual runs, not merely finite. The
-        earlier failure was silent: apply_propagator indexed a shared
-        propagator with the batched field's flat index, so every slice after
-        the first came back as NaN or garbage.
-        """
+        """Each slice of a batched run must equal running that case alone."""
         # Keep the run short and the step well inside the accuracy limit, so
         # the limiter clamps nothing. It reduces over the batch, so a batched
         # run and a weak individual one would otherwise take different steps
@@ -880,15 +771,7 @@ class TestStepLimitWithBatchedParameters:
 
     @pytest.mark.parametrize("backend_name", LINEAR_STEP_BACKENDS)
     def test_linear_step_broadcasts_a_shared_propagator(self, backend_name):
-        """The fused linear step must broadcast like apply_propagator does.
-
-        Backends declaring has_linear_step never reach apply_propagator from
-        the solver, so fixing the batch handling there left linear_step
-        reading past the end of a shared propagator. Whether that shows up as
-        NaN depends on what the device allocator left behind, which is why it
-        looked like test-ordering flakiness rather than a plain out-of-bounds
-        read.
-        """
+        """The fused linear step must broadcast like apply_propagator does."""
         backend = get_backend(backend_name)
         axes = (-2, -1)
         rng = np.random.default_rng(0)
@@ -943,12 +826,6 @@ class TestPrecomputedConstants:
     ):
         """Changing a physical parameter between runs must change the result.
 
-        On every backend, because a stale value is not a property of the
-        arithmetic but of where the value is kept: a scalar is reread each
-        step, a potential is sent to the device once and a propagator is
-        cached by a key that has to mention everything it was built from.
-        Only the CPU was checked, which is the case with nothing to go stale.
-
         Parameters
         ----------
         attr : str
@@ -992,21 +869,7 @@ class TestPrecomputedConstants:
 
 
 class TestStepLimitEnergies:
-    """Both limiters must weigh every term the integrator actually applies.
-
-    The rates are expectation values — the energy in each term, weighted by
-    where the field has support — rather than a maximum over the grid. A
-    maximum is a property of the grid, not of the solution: a tall potential
-    in a corner the field never reaches would otherwise set the step for a
-    run it has no effect on. That holds for accuracy. RK4's stability bound
-    takes its linear terms at their grid maximum all the same, because past
-    the radius it amplifies round-off wherever it sits.
-
-    RK4 diverged to NaN under any potential because its limit counted the
-    dispersion alone, and V is scaled by k/2 ~ 4e6. Split-step omitted V
-    entirely, on the argument that it is applied exactly; exact is not free,
-    because what aliases is the phase the step imprints.
-    """
+    """Both limiters must weigh every term the integrator actually applies."""
 
     @staticmethod
     def ring(simu, amplitude=1e-2):
@@ -1023,13 +886,7 @@ class TestStepLimitEnergies:
         return simu, A
 
     def test_the_split_step_limit_is_pi_of_real_space_phase(self):
-        """At the limit one step imprints pi of interaction phase.
-
-        The rate is ``k |n2|`` times the saturated intensity averaged over the
-        beam's own intensity; for a Gaussian of power P, waist w and peak
-        ``I0 = 2 P / (pi w^2)`` that is ``Isat^2 (x - ln(1 + x)) pi w^2 / (2 P)``
-        with ``x = I0 / Isat``.
-        """
+        """At the limit one step imprints pi of interaction phase."""
         simu, A = self.prepared(None, n2=PHASE_LIMIT_N2)
         ratio = 2 * simu.power / (np.pi * waist**2) / simu.I_sat
         mean = simu.I_sat**2 * (ratio - np.log1p(ratio)) * np.pi * waist**2
@@ -1117,12 +974,7 @@ class TestStepLimitEnergies:
 
     @staticmethod
     def stable_coupled_run(simu):
-        """Run a linear coupled solver by RK4 and return the norm's growth.
-
-        The caller's step is far past the bound, so the run must say it
-        lowered it. Inside its stability region RK4 cannot raise the norm of
-        a lossless linear field.
-        """
+        """Run a linear coupled solver by RK4 and return the norm's growth."""
         beam = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2)
         E = np.array([beam, beam]).astype(PRECISION_COMPLEX)
         with pytest.warns(UserWarning, match="RK4 stability"):
@@ -1166,12 +1018,7 @@ class TestStepLimitEnergies:
         )
 
     def test_the_rates_are_energies_not_grid_maxima(self):
-        """A potential where the field is absent must barely count.
-
-        Two potentials of equal peak height, one on top of the beam and one
-        far outside it, would give the same limit under a max reduction. The
-        field-weighted rate distinguishes them, which is the whole point.
-        """
+        """A potential where the field is absent barely counts in the step limit."""
         probe = make_solver()
         r = np.sqrt(probe.XX**2 + probe.YY**2)
         on_beam = np.exp(-(r**2) / (5e-4) ** 2)
@@ -1193,22 +1040,7 @@ class TestStepLimitEnergies:
         )
 
     def test_dispersion_limits_split_step_too_but_for_stability(self):
-        """Both methods are limited by the kinetic term, for opposite reasons.
-
-        Split-step applies the linear part exactly in Fourier space, so a
-        purely linear problem is solved exactly at any step and dispersion
-        cannot limit its *accuracy* -- this test once asserted that it
-        therefore imposed no limit at all. It does. On a finite-amplitude
-        background the real-space step couples modes and the linear phase at
-        the shortest resolved wave resonates with that coupling, so the
-        kinetic term binds split-step as a *stability* condition, at about a
-        radian per step rather than RK4's 2.83.
-
-        The two limits are read off different quantities and the test pins
-        that: split-step needs the grid maximum, since the resonant mode grows
-        out of round-off whether or not the field has weight there, while
-        RK4's is a field-weighted eigenvalue.
-        """
+        """Both methods are limited by the kinetic term, for opposite reasons."""
         linear, A = self.prepared(None)
         linear.n2 = 0.0
         linear._precompute_step_constants(None, np.complex64)
@@ -1231,12 +1063,7 @@ class TestStepLimitEnergies:
         )
 
     def test_absorption_counts_for_rk4_only(self):
-        """A purely absorbing V limits RK4 but imprints no phase.
-
-        Its imaginary part is gain/loss: RK4 approximates it, so it is part
-        of the eigenvalue, while split-step applies it exactly and only the
-        phase can alias.
-        """
+        """A purely absorbing V limits RK4 but imprints no phase."""
         probe = make_solver()
         absorbing = (1j * self.ring(probe)).astype(np.complex64)
         simu, A = self.prepared(absorbing)
@@ -1256,13 +1083,7 @@ class TestStepLimitEnergies:
 
 
 class TestStepConstantTable:
-    """Each step constant is defined once, by ``_step_constants``.
-
-    ``_precompute_step_constants`` writes the table onto the solver as
-    fixed-splitting attributes for the kernels. Readers that run before a
-    propagation go through ``_constant``, which returns the attribute once it
-    exists and the table's value until then. The two must agree.
-    """
+    """Each step constant is defined once, by ``_step_constants``."""
 
     @staticmethod
     def solvers():
@@ -1318,11 +1139,7 @@ class TestStepConstantTable:
             )
 
     def test_reading_a_constant_gives_the_same_value_either_side_of_a_run(self, simu):
-        """``_constant`` is the table before a run and the attribute after it.
-
-        They have to agree, or a step chosen before propagating is not the
-        step the kernels then take.
-        """
+        """``_constant`` is the table before a run and the attribute after it."""
         before = {k: float(np.asarray(v)) for k, v in simu._step_constants().items()}
         simu._precompute_step_constants(None, np.complex64)
 
@@ -1346,13 +1163,7 @@ class TestStepConstantTable:
 
 
 def test_ddgpe_couplings_are_not_scaled_by_the_optical_constant():
-    """DDGPE's ``g`` reaches the kernels as given, not as an optical n2.
-
-    CNLSE converts a nonlinear index with ``k / 2 * c * epsilon_0``, and
-    DDGPE's ``k`` comes from a wavelength it supplies only to satisfy the base
-    constructor, about 6e30. Applying that conversion here inflates the
-    interaction rate by ~1e26 and collapses the step limit with it.
-    """
+    """DDGPE's ``g`` reaches the kernels as given, not as an optical n2."""
     h_bar = 0.654
     g = 1e-2 / h_bar
     simu = TestStepConstantTable.solvers()["DDGPE"]
@@ -1369,14 +1180,7 @@ def test_ddgpe_couplings_are_not_scaled_by_the_optical_constant():
 
 
 class TestArraysComeBackFromTheDevice:
-    """A run leaves the solver's arrays on the host, however it ends.
-
-    ``out_field`` moves V, the propagator and any batched
-    parameter onto the device for the duration of a run. Left there, the next
-    run is what breaks: ``from_numpy`` is handed a device array. On CL that
-    surfaced as ``ValueError: setting an array element with a sequence`` from
-    a call that had nothing to do with the failure.
-    """
+    """A run leaves the solver's arrays on the host, however it ends."""
 
     @staticmethod
     def solver(backend_name):

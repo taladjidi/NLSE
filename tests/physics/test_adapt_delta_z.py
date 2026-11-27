@@ -1,19 +1,10 @@
-"""``adapt_delta_z`` against the nonlinear length, in each solver's own units.
-
-The callback returns a twelfth of ``1 / max(rate)``, with the rate the phase
-the nonlinearity turns per unit of the propagation variable: ``k |n2| I /
-(1 + I / Isat)`` per metre for NLSE, ``|g| n`` per second for GPE. A uniform
-field makes the maximum the value everywhere, so the step has a closed form.
-"""
+"""``adapt_delta_z`` against the nonlinear length, in each solver's own units."""
 
 import numpy as np
 import pytest
 from NLSE import GPE, NLSE
-from NLSE.backends import list_available_backends
 from NLSE.callbacks import adapt_delta_z
 from scipy.constants import atomic_mass, c, epsilon_0
-
-AVAILABLE_BACKENDS = list_available_backends()
 
 STEPS_PER_LENGTH = 12  # steps per nonlinear length, NLSE/callbacks.py:173
 N_GRID = 32  # grid points per axis
@@ -53,7 +44,6 @@ def step_for(simu, amplitude):
     return adapt_delta_z(simu, simu._backend.from_numpy(A), 0.0, 0, 1, [])
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_the_gpe_step_is_a_twelfth_of_one_over_g_n(backend):
     """``dt = 1 / (12 g n)`` s for a uniform gas, 8.3e-5 s here."""
     simu = GPE(
@@ -71,7 +61,6 @@ def test_the_gpe_step_is_a_twelfth_of_one_over_g_n(backend):
     assert step_for(simu, np.sqrt(DENSITY)) == pytest.approx(expected, rel=STEP_REL_TOL)
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_the_nlse_step_is_a_twelfth_of_the_nonlinear_length(backend):
     """``dz = 1 / (12 k |n2| I / (1 + I / Isat))`` m for a uniform beam."""
     simu = NLSE(

@@ -1,28 +1,11 @@
-"""The built-in callbacks work on every backend, not only the CPU one.
-
-``sample``, ``norm`` and ``evaluate_delta_n`` are exported from the package
-and documented as built-ins, and nothing exercised them. All three took the
-field as though it were a numpy array -- ``A.copy()``, ``.sum()``, arithmetic
-assigned straight into a numpy buffer -- which is true only of the CPU
-backend. CuPy mimics numpy closely enough to have carried them too, which is
-presumably why it lasted: the one example that uses a callback asks for CUPY.
-
-On the others they raised, each differently and none informatively:
-``TypeError: must be real number, not Array`` from ``sample`` on CL,
-``AttributeError: 'Array' object has no attribute 'sum'`` from ``norm`` on CL,
-``AttributeError: 'mlx.core.array' object has no attribute 'copy'`` from
-``sample`` on MLX.
-
-So what is checked here is that they run at all, and then that they agree with
-the CPU across backends -- a callback that ran but recorded the wrong thing
-would be worse than one that raised.
-"""
+"""The built-in callbacks work on every backend, not only the CPU one."""
 
 import functools
 import warnings
 
 import numpy as np
 import pytest
+from helpers import AVAILABLE_BACKENDS
 from NLSE import (
     NLSE,
     adapt_delta_z,
@@ -32,10 +15,7 @@ from NLSE import (
     norm,
     sample,
 )
-from NLSE.backends import list_available_backends
 from scipy.constants import c, epsilon_0
-
-AVAILABLE_BACKENDS = list_available_backends()
 
 N = 32
 WAIST = 2.23e-3
@@ -177,11 +157,7 @@ def test_a_builtin_callback_runs_on_this_backend(backend_name, which):
 @pytest.mark.parametrize("backend_name", [b for b in AVAILABLE_BACKENDS if b != "CPU"])
 @pytest.mark.parametrize("which", sorted(CALLBACKS))
 def test_a_builtin_callback_records_what_the_cpu_records(backend_name, which):
-    """Running is not enough: it has to record the same physics.
-
-    Compared as magnitudes and loosely, because the backends differ in
-    summation order and in how they round a single-precision step, not
-    because the quantity is approximate.
+    """A built-in callback records on this backend what it records on the CPU.
 
     Parameters
     ----------
@@ -209,12 +185,6 @@ ADAPTIVE = {
 @pytest.mark.parametrize("which", sorted(ADAPTIVE))
 def test_an_adaptive_callback_drives_a_run_on_this_backend(which, backend_name):
     """The callbacks that choose the step must also survive a device array.
-
-    These two were left out when the other three were fixed, because unlike
-    them they had tests -- which build the solver with its default backend and
-    so only ever ran on the CPU. ``adapt_delta_z`` reads the peak nonlinear
-    index with ``delta_n.max()``, and pyopencl's array has no ``max``, so it
-    raised AttributeError there and nowhere else.
 
     Parameters
     ----------
@@ -248,15 +218,7 @@ def test_an_adaptive_callback_drives_a_run_on_this_backend(which, backend_name):
 
 
 def test_sample_writes_each_step_to_its_own_slot():
-    """Which slot a sample lands in is the thing ``sample`` is for.
-
-    The tests above pin that it runs and that every backend records the same
-    physics. Neither reads the slot: shifting the destination by one leaves
-    both passing, because every slot is still written and every backend is
-    still shifted the same way. What pins it is the field itself -- a lossy
-    run decays monotonically, so slot k must hold the field at step
-    ``k * save_every`` and nothing else.
-    """
+    """``sample`` writes each step to its own slot."""
     simu = NLSE(backend="CPU", **{**BASE, "alpha": 20.0})
     field = np.exp(-(simu.XX**2 + simu.YY**2) / WAIST**2).astype(np.complex64)
     buffer = np.zeros((SLOTS, N, N), dtype=np.complex64)
@@ -289,10 +251,7 @@ def test_sample_writes_each_step_to_its_own_slot():
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("isat", [BASE["Isat"], np.inf], ids=["I=3Isat", "Isat=inf"])
 def test_evaluate_delta_n_is_the_saturated_kerr_index(backend_name, isat):
-    """``n2 I / (1 + I/Isat)`` with ``I = c eps0 |A|^2 / 2``, on a uniform field.
-
-    It divided ``|A|^2``, in V^2/m^2, by ``Isat``, in W/m^2, so at three
-    saturation intensities it returned 0.0018 of this.
+    """``evaluate_delta_n`` gives ``n2 I / (1 + I/Isat)`` on a uniform field.
 
     Parameters
     ----------
@@ -339,10 +298,7 @@ def test_adapt_delta_z_steps_by_a_twelfth_of_the_nonlinear_length(backend_name):
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_adapt_delta_z_to_error_follows_the_step_rule(backend_name, monkeypatch):
-    """``h safety (tolerance / error) ** (1 / (p + 1))``, with p = 2 for Strang.
-
-    The trial propagations are replaced by a whole step that differs from the
-    halves by exactly ``TRIAL_ERROR`` relative, so the rule is checked alone.
+    """``adapt_delta_z_to_error`` returns ``h safety (tol / error) ** (1 / 3)``.
 
     Parameters
     ----------
@@ -373,8 +329,6 @@ def test_adapt_delta_z_to_error_follows_the_step_rule(backend_name, monkeypatch)
 def scaled_trial(simu, A, step, count, error):
     """Return a whole step ``error`` away from its halves, as the trial does.
 
-    Stands in for ``callbacks._trial_propagation`` through ``functools.partial``.
-
     Parameters
     ----------
     simu : NLSE
@@ -398,11 +352,7 @@ def scaled_trial(simu, A, step, count, error):
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_sample_records_the_field_as_it_is(backend_name):
-    """The slot holds the field passed in, value for value.
-
-    Every point differs and none is real, so a transposed, conjugated or
-    real-part copy fails.
-    """
+    """The slot holds the field passed in, value for value."""
     simu = NLSE(backend=backend_name, **BASE)
     ramp = np.arange(N * N).reshape(N, N)
     field = (QUADRATURES * ramp).astype(np.complex64)

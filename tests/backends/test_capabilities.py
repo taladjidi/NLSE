@@ -1,10 +1,4 @@
-"""Tests that backend capability flags match what the kernels actually provide.
-
-The solvers pick their fused fast paths from the flags declared on the
-Backend subclasses. A flag set to True with no matching kernel method is an
-AttributeError at propagation time, and a method present with the flag left
-False is silently dead code. Both are caught here rather than on hardware.
-"""
+"""Tests that backend capability flags match what the kernels actually provide."""
 
 import ast
 import inspect
@@ -12,8 +6,9 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from helpers import AVAILABLE_BACKENDS
 from NLSE import NLSE
-from NLSE.backends import Backend, get_backend, list_available_backends
+from NLSE.backends import Backend, get_backend
 from NLSE.backends.backend import Timing
 from scipy.constants import c, epsilon_0
 
@@ -52,8 +47,6 @@ REQUIRED_METHODS = [
     "rk4_nl_rhs_c_v",
 ]
 
-AVAILABLE_BACKENDS = list_available_backends()
-
 
 def test_every_capability_is_declared_on_the_base_class():
     """The flags the tests know about must exist on Backend with a default."""
@@ -88,19 +81,7 @@ def test_required_kernels_are_present(backend_name):
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_an_unnormalized_ifft_really_skips_the_factor(backend_name):
-    """A backend claiming the capability must actually honour it.
-
-    The caller folds 1/N into the propagator and then asks the transform to
-    skip it, so a backend that accepts ``normalize=False`` and normalizes
-    anyway divides the field by N twice -- which no correctness test would
-    attribute to the transform. Round-tripping is the direct check: with the
-    factor skipped the field comes back N times larger.
-
-    This replaces an assertion that the capability implied has_linear_step.
-    That was true only while the fused kernels were the sole consumer; the
-    generic linear step reads the pre-normalized propagator too, which is
-    how the CPU backend gets the saving without a fused entry point.
-    """
+    """A backend claiming the capability must actually honour it."""
     backend = get_backend(backend_name)
     if not backend.supports_unnormalized_ifft:
         return
@@ -127,19 +108,12 @@ def test_an_unnormalized_ifft_really_skips_the_factor(backend_name):
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_fused_signatures_accept_the_documented_arguments(backend_name):
-    """Fused entry points must share one signature across backends.
-
-    The solvers call them with a single argument list, so a backend that
-    renames or reorders a parameter breaks silently on that backend only.
-    """
+    """Fused entry points must share one signature across backends."""
     backend = get_backend(backend_name)
     kernels = backend.kernels
     expected = {
-        # Every entry point the base class documents a signature for, not the
-        # three that used to be here. That gap is how MLX's linear_step came
-        # to take (A, propagator, axes) with no unnorm_ifft while CUPY and CL
-        # took the documented four: nothing compared them, and the solvers
-        # passed the argument only when it was True, which on MLX is never.
+        # Every documented entry point: MLX's linear_step once dropped
+        # unnorm_ifft because nothing compared the signatures.
         "linear_step": ["A", "propagator", "plan", "unnorm_ifft"],
         "split_step_fused": [
             "A",
@@ -299,13 +273,7 @@ def test_the_timing_line_names_a_device_only_when_there_is_one():
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_the_buffer_route_carries_the_field_through(backend_name):
-    """Every backend stages through its pre-allocated buffer.
-
-    MLX used to skip that and let each operation allocate. Measured, the two
-    are within noise on MLX at every size and method, and staging keeps the
-    buffer a run owns identifiable across a step. So there is one route, and
-    this checks it.
-    """
+    """Every backend stages through its pre-allocated buffer."""
     waist = 2.23e-3
     simu = NLSE(
         alpha=0,
@@ -367,14 +335,7 @@ def test_normalizing_gives_the_same_answer_by_either_route(backend_name):
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_exp_stays_on_the_backend(backend_name):
-    """Every backend must exponentiate a complex array where it lives.
-
-    The propagator is exp(theta * dz), and building it on the host costs the
-    exponential over the grid plus a transfer -- 9.7 ms at 512x512 against a
-    0.16 ms step. The base class falls back to that round trip, so a backend
-    that does not override this is correct but slow, and one whose override is
-    wrong is neither: the check is against numpy on the same input.
-    """
+    """Every backend must exponentiate a complex array where it lives."""
     backend = get_backend(backend_name)
     operator = (-1j * np.linspace(0, 5, 4096).reshape(64, 64)).astype(np.complex64)
     got = np.asarray(backend.to_numpy(backend.exp(backend.from_numpy(operator))))
@@ -386,14 +347,7 @@ def test_exp_stays_on_the_backend(backend_name):
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_norm_agrees_with_numpy(backend_name):
-    """Reducing on the device must give what reducing on the host gives.
-
-    Only the scalar should cross, but the answer has to be the same one. This
-    was missing, and the OpenCL override shipped broken: pyopencl builds its
-    reductions from a mako template, mako is not one of its hard dependencies,
-    and without it the reduction raises the first time it is asked for --
-    which was inside a callback, partway through a propagation.
-    """
+    """Reducing on the device must give what reducing on the host gives."""
     backend = get_backend(backend_name)
     field = (
         np.linspace(-1, 1, 4096).reshape(64, 64)
@@ -406,15 +360,7 @@ def test_norm_agrees_with_numpy(backend_name):
 
 
 def test_a_backend_without_its_reduction_falls_back(monkeypatch):
-    """A missing optional dependency must cost speed, not the run.
-
-    pyopencl builds its reductions from a mako template and does not require
-    mako, so on a machine without it every reduction raises the first time one
-    is asked for -- inside a callback, partway through a propagation. With
-    mako installed the fallback is unreachable, so the failure is forced here:
-    otherwise this passes whether the fallback exists or not, which is how the
-    override shipped broken in the first place.
-    """
+    """A missing optional dependency must cost speed, not the run."""
     if "CL" not in AVAILABLE_BACKENDS:
         pytest.skip("no OpenCL backend")
     from NLSE.backends import opencl as opencl_backend

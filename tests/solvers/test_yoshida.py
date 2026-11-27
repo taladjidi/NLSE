@@ -1,12 +1,4 @@
-"""The fourth-order splitting, and when it is the wrong tool.
-
-Yoshida composes three Strang sub-steps with weights summing to one, the
-middle one backwards. Two things are worth pinning: that it really converges
-at fourth order rather than merely running, and that it says so when the float
-width or the physics makes it the wrong choice — a negative sub-step in a
-lossy medium amplifies, and in complex64 the order is bought with three
-transform pairs for accuracy round-off will not let the field hold.
-"""
+"""The fourth-order splitting, and when it is the wrong tool."""
 
 import warnings
 
@@ -69,12 +61,7 @@ def test_the_weights_compose_a_whole_step():
 
 
 def test_it_converges_at_fourth_order():
-    """Halving the step must cut the error by about sixteen, not four.
-
-    Measured against Strang on the same problem, which is second order: if
-    the composition were wrong in a way that still ran, the most likely
-    outcome is that it stays second order.
-    """
+    """Halving the step must cut the error by about sixteen, not four."""
     reference = propagate("yoshida", L / 512)
     coarse, fine = L / 8, L / 16
     orders = {}
@@ -138,12 +125,7 @@ def test_an_absorbing_potential_warns_like_a_loss():
 
 
 def test_the_longest_sub_step_stays_inside_the_split_step_limit():
-    """A step far past the limit is lowered until ``YOSHIDA_SPAN`` of it fits.
-
-    The limit holds per real-space application, and Yoshida's middle one is
-    ``YOSHIDA_SPAN`` (1.70) times the step: the ordinary cap alone would leave
-    it at 1.53 times the limit.
-    """
+    """A step far past the limit is lowered until ``YOSHIDA_SPAN`` of it fits."""
     simu = solver()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")

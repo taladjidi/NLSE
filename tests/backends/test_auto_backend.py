@@ -93,12 +93,7 @@ class TestAutoBackendSelection:
 
 
 class TestEnvironmentVariables:
-    """Test environment variable control.
-
-    Both variables are read when NLSE.backends is imported, so each test
-    reloads it with the variable set, and again without it in a ``finally``,
-    so a failed assertion does not leave the variable in force for later tests.
-    """
+    """Test environment variable control."""
 
     def test_env_backend_override(self, monkeypatch):
         """NLSE_BACKEND wins over "auto", which then benchmarks nothing."""

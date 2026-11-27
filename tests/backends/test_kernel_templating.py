@@ -1,12 +1,4 @@
-"""The generated kernel variants must be well-formed, on every dialect.
-
-Each V-reading kernel is written once and compiled three times: with no
-potential, with a real one and with a complex one. The generation is plain
-text substitution, so it can be checked without a device — which is the point
-of testing it here. The CUDA half otherwise has no local coverage at all: it
-compiles on a machine with an NVIDIA card and nowhere else, so a mistake in
-the template reaches a person rather than a test.
-"""
+"""The generated kernel variants must be well-formed, on every dialect."""
 
 import re
 import struct
@@ -96,11 +88,7 @@ def preprocessed(dialect, **kwargs):
 
 
 def marked_bases(dialect):
-    """Return the base name of every VBLOCK-marked kernel in a template.
-
-    A marked block that declares no kernel -- the CUDA step's shared
-    __device__ function -- has twins that are overloads, and is skipped.
-    """
+    """Return the base name of every VBLOCK-marked kernel in a template."""
     template, decl, _ = DIALECTS[dialect]
     blocks = templating.VBLOCK.findall(template)
     return [
@@ -147,11 +135,7 @@ def test_every_marked_kernel_gets_three_twins(dialect):
 
 @pytest.mark.parametrize("dialect", list(DIALECTS))
 def test_generated_names_are_unique(dialect):
-    """Two kernels sharing a name would silently shadow one another.
-
-    A base whose name already ends in _v or _cv would collide with another
-    base's twin, which the compiler reports only as a redefinition.
-    """
+    """Two kernels sharing a name would silently shadow one another."""
     names = templating.kernel_names(expanded(dialect), DIALECTS[dialect][1])
     duplicates = sorted({n for n in names if names.count(n) > 1})
     assert not duplicates, f"{dialect}: kernels declared more than once: {duplicates}"
@@ -170,11 +154,7 @@ def test_the_no_potential_twin_takes_no_potential(dialect):
 
 @pytest.mark.parametrize("dialect", list(DIALECTS))
 def test_the_complex_twin_widens_the_potential(dialect):
-    """A complex V must arrive as the two-component type, not the scalar one.
-
-    This is what the absorbing part rides on: read at the real width, the
-    imaginary component is not merely ignored, it is misread.
-    """
+    """A complex V must arrive as the two-component type, not the scalar one."""
     sigs = signatures(dialect)
     for base in marked_bases(dialect):
         real = sigs[base + templating.REAL_V_SUFFIX]
@@ -190,11 +170,7 @@ def test_the_complex_twin_widens_the_potential(dialect):
 
 @pytest.mark.parametrize("dialect", list(DIALECTS))
 def test_the_no_potential_twin_drops_the_potential_terms(dialect):
-    """With no potential, nothing of it may survive into the arithmetic.
-
-    An added zero would be correct but not free, which is why V_PHASE and
-    V_LOSS are additive terms rather than values.
-    """
+    """With no potential, nothing of it may survive into the arithmetic."""
     for base, body in ((b, bodies(dialect)[b]) for b in marked_bases(dialect)):
         assert not re.search(r"\bV\d?\[", body), (
             f"{dialect}: {base}'s no-potential twin still reads a potential"
@@ -217,11 +193,7 @@ def test_the_macros_do_not_leak_past_their_block(dialect):
 
 @pytest.mark.parametrize("dialect", list(DIALECTS))
 def test_templates_use_only_known_placeholders(dialect):
-    """A placeholder nobody substitutes reaches the device compiler verbatim.
-
-    It surfaces there as a syntax error with no hint of where it came from, so
-    the vocabulary is fixed and checked here instead.
-    """
+    """A placeholder nobody substitutes reaches the device compiler verbatim."""
     unknown = set(templating.PLACEHOLDER.findall(DIALECTS[dialect][0]))
     unknown -= templating.PLACEHOLDERS
     assert not unknown, (
@@ -232,11 +204,7 @@ def test_templates_use_only_known_placeholders(dialect):
 
 @pytest.mark.parametrize("dialect", list(DIALECTS))
 def test_the_block_markers_are_consumed(dialect):
-    """Expansion must leave no marker behind.
-
-    An unbalanced marker would leave one in the emitted source, where it is a
-    stray token rather than a comment.
-    """
+    """Expansion must leave no marker behind."""
     source = expanded(dialect)
     assert "VBLOCK}}" not in source, (
         f"{dialect}: a VBLOCK marker survived expansion, so its block was "
@@ -251,11 +219,7 @@ def element_overloads(source):
 
 
 def test_the_shared_step_has_one_overload_per_potential():
-    """The step's three forms are told apart by V alone, as overloads.
-
-    The kernels and the store callback each call the one their own V picks,
-    so a form that took the wrong V would be a silent misread, not an error.
-    """
+    """The step's three forms are told apart by V alone, as overloads."""
     overloads = element_overloads(preprocessed("CUDA"))
     assert len(overloads) == len(SUFFIXES), (
         f"expected {len(SUFFIXES)} overloads, found {len(overloads)}"
@@ -273,11 +237,7 @@ def test_the_shared_step_has_one_overload_per_potential():
 
 
 def test_the_step_is_written_once():
-    """kernels.cu and fft_callbacks.cu call the step rather than restating it.
-
-    Two copies would drift, and the callback path is checked bitwise against
-    the kernel one only on a machine with an NVIDIA card.
-    """
+    """kernels.cu and fft_callbacks.cu call the step rather than restating it."""
     kernels = code_of((SOURCES / "cuda_source" / "kernels.cu").read_text())
     callbacks = code_of(templating.CALLBACK_SOURCE.read_text())
     assert "nlse_loss_factor(" not in kernels, "kernels.cu restates the step"
@@ -315,11 +275,7 @@ def step_calls(source, decl, callee):
     ids=["kernels", "callbacks"],
 )
 def test_each_twin_hands_the_step_its_potential(source, decl, bases, callee):
-    """A twin that takes a potential must pass it on, and one without, none.
-
-    Dropped, the call still compiles -- it resolves to the no-potential
-    overload -- and the potential silently leaves the step.
-    """
+    """A twin that takes a potential must pass it on, and one without, none."""
     calls = step_calls(source, decl, callee)
     assert set(calls) == {base + suffix for base in bases for suffix in SUFFIXES}
     for base in bases:
@@ -338,11 +294,7 @@ def test_each_twin_hands_the_step_its_potential(source, decl, bases, callee):
 
 
 def test_the_out_of_line_step_hands_on_its_potential():
-    """Between a callback and the step: each overload passes on the V it takes.
-
-    The pattern also pins ``__noinline__``, which no test here can time: inlined,
-    the step costs the callback more than the pass it saves.
-    """
+    """Between a callback and the step: each overload passes on the V it takes."""
     source = with_v_macros(templating.store_callbacks_source("complex64"))
     pattern = rf"__device__ __noinline__ \w+ {OUT_OF_LINE}\((.*?)\)\s*\{{(.*?)\n\}}"
     overloads = re.findall(pattern, source, re.DOTALL)
@@ -404,12 +356,7 @@ def test_a_double_field_has_no_float_literal():
 
 
 def code_of(source):
-    """Return the source without its comments.
-
-    The comments in fft_callbacks.cu name both widths, to say why the element
-    type is spelled as a vector type at all. Asserting against the file as
-    written therefore fails on the explanation rather than on the code.
-    """
+    """Return the source without its comments."""
     return re.sub(r"//[^\n]*", "", source)
 
 
@@ -451,11 +398,7 @@ def test_the_callback_names_are_distinct():
 
 
 def test_only_the_batched_callback_wraps_the_propagator():
-    """The remainder belongs to the batched callback and nowhere else.
-
-    It is the identity in every non-batched case and a 64-bit remainder per
-    element is not free, which is why there are two callbacks at all.
-    """
+    """Only the batched store callback takes the propagator index modulo."""
     source = templating.store_callbacks_source("complex64")
     bodies = {
         b.split("(", 1)[0]: b for b in code_of(source).split("__device__ void ")[1:]
@@ -490,11 +433,7 @@ def nonlinear_struct(dtype):
 
 @pytest.mark.parametrize("dtype", list(templating.CUDA_TYPES))
 def test_the_words_are_the_struct_the_callback_reads(dtype):
-    """nonlinear_words against struct.pack of NlseNonlinear as rendered.
-
-    The host writes the block as words and the device reads it as the struct:
-    a field out of place, or at the other width, reads as another scalar.
-    """
+    """nonlinear_words packs the bytes of the rendered NlseNonlinear struct."""
     pointer, *scalars = nonlinear_struct(dtype)
     fp = templating.CUDA_TYPES[dtype]["FP_TYPE"]
     assert pointer == ("void", "V"), f"NlseNonlinear opens with {pointer}"

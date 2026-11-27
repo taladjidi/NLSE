@@ -1,10 +1,4 @@
-"""Example scripts must write through ``examples/_output.output_path``.
-
-A bare filename lands in whatever directory the script was run from, which
-is what these check. Whether the scripts still *run* is the docs build in CI:
-sphinx-gallery executes every one of them bar ``juliaGPE_vs_NLSE.py`` and
-``profile_cupy.py`` (``filename_pattern`` in ``docs/conf.py``).
-"""
+"""Example scripts must write through ``examples/_output.output_path``."""
 
 import ast
 import re
@@ -69,11 +63,7 @@ def test_a_script_that_writes_imports_the_helper(script):
 
 
 def test_the_helper_stays_out_of_the_working_directory(tmp_path, monkeypatch):
-    """The resolved path does not depend on the working directory.
-
-    The directory is then created under tmp_path, not in the checkout, so the
-    test leaves nothing behind whether it passes or fails.
-    """
+    """The resolved path does not depend on the working directory."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.syspath_prepend(str(EXAMPLES))
     import _output
@@ -85,11 +75,8 @@ def test_the_helper_stays_out_of_the_working_directory(tmp_path, monkeypatch):
     assert (tmp_path / "output").is_dir(), "output_path did not create the directory"
 
 
-# sphinx-gallery builds the gallery from examples/ itself, so a script cannot
-# be missing from it and a link cannot rot: both were real faults under the
-# hand-written page this replaced, which listed a script that had been renamed
-# and left four others out. What it can still get wrong is the header, because
-# an example with no reStructuredText title renders in the grid unnamed.
+# sphinx-gallery builds the gallery from examples/, so only the header can be
+# wrong: an example with no reStructuredText title renders unnamed.
 
 # The docstring may be raw: a page whose text carries LaTeX needs it.
 TITLE_RULE = re.compile(r'^(?:#![^\n]*\n)?r?"""\n(.+)\n(=+)\n', re.M)

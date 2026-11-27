@@ -1,17 +1,8 @@
-"""The dispersion eigenvalues are built once, not on every call.
-
-The step limiters read them on every ``out_field`` call and built them twice
-per call on the host, 4.8 ms each at 2048x2048: a large part of the fixed
-cost of a short run. They depend only on the grid and the wavenumber, the
-key they are kept under.
-"""
+"""The dispersion eigenvalues are built once, not on every call."""
 
 import numpy as np
 import pytest
 from NLSE import NLSE
-from NLSE.backends import list_available_backends
-
-AVAILABLE_BACKENDS = list_available_backends()
 
 N = 32
 WAIST = 2.23e-3  # m
@@ -52,7 +43,6 @@ def make_solver(backend):
     )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("delta_z", [None, DELTA_Z])
 def test_repeated_runs_build_the_dispersion_eigenvalues_once(
     backend, delta_z, monkeypatch
@@ -70,7 +60,6 @@ def test_repeated_runs_build_the_dispersion_eigenvalues_once(
     assert len(builds) == 1
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_a_new_wavenumber_rebuilds_them(backend):
     """Built once per wavenumber: after k changes, the rate is ``K^2 / (2 k)``."""
     simu = make_solver(backend)

@@ -1,10 +1,4 @@
-"""The profiling tools in benchmarks/ have one fiddly part worth pinning.
-
-Parsing `nsys stats --format csv` means skipping a heading, coping with
-thousands separators, and column names that have changed between nsys
-releases. None of that can be exercised on a machine without CUDA, and a
-silent misparse would produce a plausible-looking table of wrong numbers.
-"""
+"""Tests of the nsys CSV parsing in benchmarks/nsys_summary.py."""
 
 import sys
 from pathlib import Path

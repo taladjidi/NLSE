@@ -1,36 +1,10 @@
-"""Tests for the fused kernel paths: same answer, and actually taken.
-
-A device backend can serve a step at several levels of fusion, and the solver
-picks the highest one the run qualifies for. On CUPY an RK4 step has three:
-
-  ``stage``    one kernel per stage -- linear part, slope and stage update,
-               with the slope never reaching memory
-  ``rhs``      the slope fused with the transform that produces it, and the
-               stage update fused into one launch, but written out between
-  ``generic``  a copy into the stage buffer, a kernel per component, and a
-               kernel per stage update
-
-and a coupled split step has two, ``fused`` and ``generic``.
-
-**A test that means to exercise one level has to switch off every level above
-it**, which is what ``fusion`` below is for. Toggling only the flag whose name
-matches the kernel under test is not enough and does not fail loudly: it
-compares the top level against itself and passes. That is what these tests did
-before ``stage`` existed, and the RK4 half of them went quietly vacuous the
-moment it did -- caught by mutating a kernel and finding that the file named
-after it no longer noticed.
-
-The fused levels are expected to agree with ``generic`` *bit for bit*, not to
-within a tolerance: the arithmetic is meant to be unchanged, so any difference
-is a re-association, which is how a fused kernel usually goes wrong. The one
-exception is noted where it is asserted.
-"""
+"""Tests for the fused kernel paths: same answer, and actually taken."""
 
 import numpy as np
 import pytest
-from helpers import gaussian as beam, make as build
+from helpers import AVAILABLE_BACKENDS, gaussian as beam, make as build
 from NLSE import CNLSE, NLSE, CNLSE_1d, NLSE_1d
-from NLSE.backends import get_backend, list_available_backends
+from NLSE.backends import get_backend
 
 # Every flag that puts a step on a shorter path than the generic one. A level
 # is defined by which of these are left on, so a new capability has to be
@@ -51,7 +25,6 @@ LEVELS = {
     "generic": (),
 }
 
-AVAILABLE_BACKENDS = list_available_backends()
 FUSED_BACKENDS = [
     name
     for name in AVAILABLE_BACKENDS
@@ -65,7 +38,6 @@ pytestmark = pytest.mark.skipif(
 N = 64
 L = 1e-3
 waist = 2.23e-3
-waist2 = 70e-6
 window = 4 * waist
 SOLVERS = [NLSE, NLSE_1d, CNLSE, CNLSE_1d]
 COUPLED = [CNLSE, CNLSE_1d]
@@ -87,13 +59,7 @@ def grid_shape(cls):
 
 
 def make(cls, backend, **overrides):
-    """Return a solver of this class, its two components not alike.
-
-    ``symmetric=False`` is the point: the constructor sets alpha2 = alpha,
-    n22 = n2, I_sat2 = I_sat and k2 = k, so with the default every kernel
-    here reads the same number whichever component's parameter it means, and
-    swapping them changes nothing. Five such mutations survived the suite.
-    """
+    """Return a solver of this class, its two components not alike."""
     return build(cls, backend, n=N, symmetric=False, **overrides)
 
 
@@ -104,13 +70,7 @@ def gaussian(cls, dtype=np.complex64):
 
 
 def fusion(monkeypatch, backend, level):
-    """Restrict a backend to one level of fusion, for the rest of the test.
-
-    Only ever switches a flag *off*. Switching one on would claim a kernel
-    the backend has not written -- setting ``has_fused_rk4_stage`` on the
-    OpenCL backend sends the coupled solver to a method that is not there --
-    and the resulting AttributeError looks like a product bug.
-    """
+    """Restrict a backend to one level of fusion, for the rest of the test."""
     keep = LEVELS[level]
     for flag in FUSION_FLAGS:
         if not getattr(type(backend), flag, False):
@@ -151,14 +111,7 @@ def propagate(cls, backend_name, level, monkeypatch, method="RK4", dtype=None, *
 def test_each_rk4_level_matches_the_generic_one(
     backend_name, cls, level, kind, monkeypatch
 ):
-    """Every level of RK4 fusion must give the generic answer.
-
-    To a tolerance rather than exactly, because for the coupled solvers the
-    generic path is not the same arithmetic: it runs a kernel per component
-    and hands the second one its parameters in the opposite order, so the
-    saturation factor is summed the other way round. The sharp check that the
-    fused levels do not re-associate anything is the next test.
-    """
+    """Every level of RK4 fusion must give the generic answer."""
     if not getattr(get_backend(backend_name), "has_fused_rk4_stage", False):
         pytest.skip(f"{backend_name} has no fused RK4 stage")
     V = potential(kind, cls)
@@ -180,12 +133,7 @@ def test_each_rk4_level_matches_the_generic_one(
 @pytest.mark.parametrize("cls", SOLVERS, ids=lambda c: c.__name__)
 @pytest.mark.parametrize("kind", ["none", "real", "complex"])
 def test_the_fused_levels_agree_bitwise(backend_name, cls, kind, monkeypatch):
-    """The whole-stage kernels must not re-associate what the rhs ones do.
-
-    Both levels compute the slope the same way -- the stage one just keeps it
-    in registers -- so this is exact for every solver, coupled included, and
-    a tolerance here would hide the one mistake these kernels invite.
-    """
+    """The whole-stage kernels must not re-associate what the rhs ones do."""
     if not getattr(get_backend(backend_name), "has_fused_rk4_stage", False):
         pytest.skip(f"{backend_name} has no fused RK4 stage")
     V = potential(kind, cls)
@@ -222,12 +170,7 @@ def test_each_rk4_level_matches_in_double(backend_name, cls, level, monkeypatch)
 def test_the_coupled_split_step_matches_the_generic_one(
     backend_name, cls, kind, monkeypatch
 ):
-    """The interleaved split step must give the generic answer.
-
-    Not bitwise here: the generic path runs one kernel per component and
-    hands the second its parameters in the opposite order, so the saturation
-    factor is summed the other way round.
-    """
+    """The interleaved split step must give the generic answer."""
     if not getattr(get_backend(backend_name), "has_fused_coupled_split_step", False):
         pytest.skip(f"{backend_name} has no fused coupled split step")
     V = potential(kind, cls)
@@ -268,11 +211,7 @@ def test_the_fused_split_step_carries_the_rabi_coupling(backend_name, monkeypatc
 @pytest.mark.parametrize("backend_name", FUSED_BACKENDS)
 @pytest.mark.parametrize("cls", SOLVERS, ids=lambda c: c.__name__)
 def test_the_top_level_is_the_one_taken(backend_name, cls, monkeypatch):
-    """The most fused path must be the one a plain run gets.
-
-    Correctness cannot see this: every level gives the same answer, so a gate
-    that stops matching costs only speed, silently, and the copies come back.
-    """
+    """The most fused path must be the one a plain run gets."""
     if not getattr(get_backend(backend_name), "has_fused_rk4_stage", False):
         pytest.skip(f"{backend_name} has no fused RK4 stage")
     solver = make(cls, backend_name)

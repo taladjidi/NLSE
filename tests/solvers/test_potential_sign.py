@@ -1,11 +1,4 @@
-"""The sign and scale of the potential, in DDGPE and in CNLSE.
-
-DDGPE's equation is ``i dpsi/dt = (V + g |psi|**2) psi + ...``
-(docs/solvers_overview.md), so on a uniform exciton field with nothing else
-acting the phase after a time t is ``-(V + g n) t``. CNLSE's is the paraxial
-``i dE/dz = -(k / 2) V E + ...`` (docs/physics_problem.md), a phase of
-``+(k / 2) V z`` per component, each with its own k.
-"""
+"""The sign and scale of the potential, in DDGPE and in CNLSE."""
 
 import warnings
 
@@ -50,11 +43,7 @@ def ddgpe(backend, V=None, g=0.0):
 
 
 def exciton_phase(simu, splitting):
-    """Run a uniform exciton field over T; return its phase and the last step.
-
-    A capped step is an error here: at the asked DT the run is exact, and a
-    cap that binds means the potential was scaled as an NLSE wavenumber.
-    """
+    """Run a uniform exciton field over T; return its phase and the last step."""
     field = np.zeros((2, N, N), np.complex64)
     field[0] = 1
     zero = np.zeros((N, N), np.complex64)

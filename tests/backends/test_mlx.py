@@ -247,15 +247,7 @@ class TestMLXKernels:
 
 
 class TestMLXLosslessStep:
-    """A lossless step must not pay for the solved lossy one.
-
-    ``_nl_factor`` decides between the solved and the frozen step with
-    ``mx.where``, and MLX evaluates both arms. At ``alpha = 0`` the answer is
-    unchanged, so nothing was wrong -- but a lossless split step measured
-    1.45x slower than before the solved step landed, on every grid tried.
-    The fix picks the factor when the graph is compiled, which only works
-    while ``alpha`` is read on the host.
-    """
+    """A lossless step must not pay for the solved lossy one."""
 
     def test_a_host_zero_is_lossless_and_a_device_scalar_is_not(self):
         """Only a value numpy can read decides the branch."""
@@ -284,11 +276,7 @@ class TestMLXLosslessStep:
     def test_the_lossless_graph_answers_exactly_as_the_general_one(
         self, splitting, with_V
     ):
-        """Bit-identical, or the fast path is a different solver.
-
-        Not approximately: at ``u = 0`` the iteration returns ``sat`` and the
-        decay is exactly 1, so the two graphs are the same arithmetic.
-        """
+        """The lossless graph is bit-identical to the general one."""
         from NLSE import NLSE
         from NLSE.kernels import mlx_kernels
 
@@ -346,23 +334,11 @@ class TestMLXLosslessStep:
 
 
 class TestMLXSolvedStepKernel:
-    """The solved lossy step is a Metal kernel, and a sixth copy of one formula.
-
-    ``test_every_backend_solves_the_step_the_same_way`` is what stops the
-    other five drifting apart, and it skips MLX -- it scores in double
-    precision and MLX has none. So the agreement has to be checked here
-    instead, against the MLX graph that expresses the same iteration, in the
-    only width either of them has.
-    """
+    """The solved lossy step is a Metal kernel, and a sixth copy of one formula."""
 
     @pytest.mark.parametrize("with_V", [False, True], ids=["no_V", "V"])
     def test_the_kernel_agrees_with_the_graph_it_replaces(self, with_V):
-        """Written twice, in Metal and in MLX ops, so they must agree.
-
-        To float32 round-off, not to the bit: the kernel evaluates the
-        polynomial in Horner form and keeps everything in registers, so the
-        rounding differs even though the arithmetic does not.
-        """
+        """The solved lossy step agrees between its Metal and MLX-ops versions."""
         import mlx.core as mx
         from NLSE.kernels import mlx_kernels
 
@@ -386,12 +362,7 @@ class TestMLXSolvedStepKernel:
         )
 
     def test_a_lossy_run_takes_the_kernel_and_still_decays(self):
-        """The mode has to be reached by a real run, not only by a unit call.
-
-        And loss has to remain loss: the iteration is a contraction only
-        inside its range, and outside it returns a larger field than it was
-        given, so a lossy run whose peak grows is the failure to catch.
-        """
+        """A real lossy run takes the Metal kernel, and its peak decays."""
         from NLSE import NLSE
         from NLSE.kernels import mlx_kernels
 

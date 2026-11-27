@@ -1,17 +1,8 @@
-"""The default step follows the potential of the run that takes it.
-
-The step estimate keeps the potential's grids where the field is, under a key
-that names the grid and not the potential. A second run with another ``V``
-took the step the first one's allowed: 2.4e-6 m where a solver that had never
-seen the first potential took 1.7e-4 m.
-"""
+"""The default step follows the potential of the run that takes it."""
 
 import numpy as np
 import pytest
 from NLSE import NLSE
-from NLSE.backends import list_available_backends
-
-AVAILABLE_BACKENDS = list_available_backends()
 
 N = 32
 WINDOW = 4e-3  # m
@@ -103,7 +94,6 @@ def first_step(simu, V):
     return steps[0]
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("in_place", [False, True])
 def test_a_second_run_takes_the_step_of_its_own_potential(backend, in_place):
     """A solver that ran under ``DEEP`` steps under ``SHALLOW`` as a new one.

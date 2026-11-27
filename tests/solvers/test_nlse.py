@@ -10,17 +10,11 @@ if NLSE.__CUPY_AVAILABLE__:
 if NLSE.__PYOPENCL_AVAILABLE__:
     from NLSE.backends.opencl import _VkFFTPlan
 PRECISION_COMPLEX = np.complex64
-PRECISION_REAL = np.float32
 
 N = 256
-n2 = -1.6e-9
 waist = 2.23e-3
-waist2 = 70e-6
 window = 4 * waist
-power = 1.05
-Isat = 10e4  # saturation intensity in W/m^2
 L = 10e-3
-alpha = 20
 
 # Step used wherever a test builds a propagator or takes a step by hand.
 DZ_TEST = 1e-4
@@ -83,6 +77,7 @@ def test_prepare_output_array(backend) -> None:
     if backend == "CPU":
         assert out.flags.aligned, f"Output array is not aligned. (Backend {backend})"
         assert out_sq.flags.aligned, f"Output array is not aligned. (Backend {backend})"
+        assert isinstance(out, np.ndarray), "Output array type wrong"
     out_np = as_numpy(simu, out)
     integral = (
         (out_np.real * out_np.real + out_np.imag * out_np.imag)
@@ -107,73 +102,30 @@ def test_prepare_output_array(backend) -> None:
     )
 
 
-def test_send_arrays_to_gpu() -> None:
-    if NLSE.__CUPY_AVAILABLE__:
-        alpha = 20
-        Isat = 10e4
-        n2 = -1.6e-9
-        V = 1e-4 * np.random.random((N, N)).astype(np.float32)
-        alpha = np.repeat(alpha, 2)
-        alpha = alpha[..., cp.newaxis, cp.newaxis]
-        n2 = np.repeat(n2, 2)
-        n2 = n2[..., cp.newaxis, cp.newaxis]
-        Isat = np.repeat(Isat, 2)
-        Isat = Isat[..., cp.newaxis, cp.newaxis]
-        simu = make_solver("CUPY", alpha=alpha, n2=n2, V=V, Isat=Isat)
-        simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
-        simu._send_arrays_to_gpu()
-        assert isinstance(simu.propagator, cp.ndarray), (
-            "propagator is not a cp.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.V, cp.ndarray), "V is not a cp.ndarray. (Backend GPU)"
-        assert isinstance(simu.alpha, cp.ndarray), (
-            "alpha is not a cp.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.n2, cp.ndarray), "n2 is not a cp.ndarray. (Backend GPU)"
-        assert isinstance(simu.I_sat, cp.ndarray), (
-            "I_sat is not a cp.ndarray. (Backend GPU)"
-        )
-    else:
-        pass
-
-
+@pytest.mark.skipif(not NLSE.__CUPY_AVAILABLE__, reason="CuPy not available")
 def test_retrieve_arrays_from_gpu() -> None:
-    if NLSE.__CUPY_AVAILABLE__:
-        alpha = 20
-        Isat = 10e4
-        n2 = -1.6e-9
-        V = 1e-4 * np.random.random((N, N)).astype(np.float32)
-        alpha = np.repeat(alpha, 2)
-        alpha = alpha[..., cp.newaxis, cp.newaxis]
-        n2 = np.repeat(n2, 2)
-        n2 = n2[..., cp.newaxis, cp.newaxis]
-        Isat = np.repeat(Isat, 2)
-        Isat = Isat[..., cp.newaxis, cp.newaxis]
-        simu = make_solver("CUPY", alpha=alpha, n2=n2, V=V, Isat=Isat)
-        simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
-        simu._send_arrays_to_gpu()
-        simu._retrieve_arrays_from_gpu()
-        assert isinstance(simu.propagator, np.ndarray), (
-            "propagator is not a np.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.V, np.ndarray), "V is not a np.ndarray. (Backend GPU)"
-        assert isinstance(simu.alpha, np.ndarray), (
-            "alpha is not a np.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.n2, np.ndarray), "n2 is not a np.ndarray. (Backend GPU)"
-        assert isinstance(simu.I_sat, np.ndarray), (
-            "I_sat is not a np.ndarray. (Backend GPU)"
-        )
-    else:
-        pass
+    alpha = 20
+    Isat = 10e4
+    n2 = -1.6e-9
+    V = 1e-4 * np.random.random((N, N)).astype(np.float32)
+    alpha = np.repeat(alpha, 2)
+    alpha = alpha[..., cp.newaxis, cp.newaxis]
+    n2 = np.repeat(n2, 2)
+    n2 = n2[..., cp.newaxis, cp.newaxis]
+    Isat = np.repeat(Isat, 2)
+    Isat = Isat[..., cp.newaxis, cp.newaxis]
+    simu = make_solver("CUPY", alpha=alpha, n2=n2, V=V, Isat=Isat)
+    simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
+    simu._send_arrays_to_gpu()
+    for name in ("propagator", "V", "alpha", "n2", "I_sat"):
+        assert isinstance(getattr(simu, name), cp.ndarray), f"{name} not on the GPU"
+    simu._retrieve_arrays_from_gpu()
+    for name in ("propagator", "V", "alpha", "n2", "I_sat"):
+        assert isinstance(getattr(simu, name), np.ndarray), f"{name} not back on host"
 
 
 def test_split_step(backend) -> None:
-    """One linear step of a Rayleigh length lands on the Gaussian beam.
-
-    Lossless and linear, so the step is diffraction alone and exact. The
-    complex field is compared, so a propagator of the wrong sign fails too.
-    """
+    """One linear step of a Rayleigh length lands on the Gaussian beam."""
     simu = make_solver(backend, n2=0, alpha=0)
     r_sq = simu.XX**2 + simu.YY**2
     z_rayleigh = simu.k * BEAM_WAIST**2 / 2
@@ -247,13 +199,7 @@ def test_cuda_graph() -> None:
 
 
 def test_lossless_kernels_match_the_general_formula():
-    """Alpha == 0 takes a branch that drops the exponential.
-
-    exp(0) is 1, so the lossless step is a pure rotation and the branch is
-    exact rather than an approximation. It is worth ~1.5x on the CPU kernels,
-    which is only worth having if it computes the same thing: this checks the
-    branch against the formula it replaces, evaluated in double precision.
-    """
+    """The lossless kernel branch (alpha == 0) matches the general formula."""
     from NLSE.kernels import cpu as cpu_kernels
 
     n = 128
@@ -304,16 +250,7 @@ def test_a_lossy_run_still_loses_power():
 
 
 def test_a_field_with_no_power_survives_normalization(backend) -> None:
-    """Normalizing a zero field must leave it zero, not make it NaN.
-
-    There is no factor that scales an empty field to a target power, and
-    dividing anyway gives infinity, which multiplies the zeros it came from
-    into NaN. Nothing downstream notices: the run completes and returns a
-    field of NaN, having said no more than "divide by zero encountered".
-
-    It is a legitimate initial condition -- a driven cavity starts from one --
-    so the field is left as it is.
-    """
+    """Normalizing a zero field must leave it zero, not make it NaN."""
     import warnings
 
     simu = make_solver(backend, n=32)

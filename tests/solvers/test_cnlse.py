@@ -8,19 +8,12 @@ if CNLSE.__CUPY_AVAILABLE__:
     import cupy as cp
 
 PRECISION_COMPLEX = np.complex64
-PRECISION_REAL = np.float32
 
 N = 256
-n2 = -1.6e-9
 n12 = -1e-10
 waist = 2.23e-3
-waist2 = 70e-6
 window = 4 * waist
-power = 1.05
-Isat = 10e4  # saturation intensity in W/m^2
-Isat2 = waist / waist2 * Isat
 L = 1e-3
-alpha = 20
 
 # Step used wherever a test builds a propagator or takes a step by hand.
 DZ_TEST = 1e-4
@@ -83,11 +76,7 @@ def test_prepare_output_array(backend) -> None:
 
 
 def test_each_component_normalizes_to_its_own_power(backend) -> None:
-    """``power2`` defaults to ``power``, which hides a shared target.
-
-    With the two equal, normalizing both components to the first one's power
-    gives the right answer for the wrong reason, so this sets them apart.
-    """
+    """Each component normalizes to its own power, ``power2`` unlike ``power``."""
     simu = make_solver(backend)
     simu.power2 = 4 * simu.power
     A = np.ones((2, N, N), dtype=PRECISION_COMPLEX)
@@ -105,77 +94,29 @@ def test_each_component_normalizes_to_its_own_power(backend) -> None:
     )
 
 
-def test_send_arrays_to_gpu() -> None:
-    if CNLSE.__CUPY_AVAILABLE__:
-        alpha = 20
-        Isat = 10e4
-        n2 = -1.6e-9
-        n12 = -1e-10
-        V = 1e-4 * np.random.random((N, N)).astype(np.float32)
-        alpha = np.repeat(alpha, 2)
-        alpha = alpha[..., np.newaxis, np.newaxis, np.newaxis]
-        n2 = np.repeat(n2, 2)
-        n2 = n2[..., np.newaxis, np.newaxis, np.newaxis]
-        n12 = np.repeat(n2, 2)
-        n12 = n12[..., np.newaxis, np.newaxis, np.newaxis]
-        Isat = np.repeat(Isat, 2)
-        Isat = Isat[..., np.newaxis, np.newaxis, np.newaxis]
-        simu = make_solver("CUPY", alpha=alpha, n2=n2, n12=n12, V=V, Isat=Isat)
-        simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
-        simu._send_arrays_to_gpu()
-        assert isinstance(simu.propagator, cp.ndarray), (
-            "propagator is not a cp.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.V, cp.ndarray), "V is not a cp.ndarray. (Backend GPU)"
-        assert isinstance(simu.alpha, cp.ndarray), (
-            "alpha is not a cp.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.n2, cp.ndarray), "n2 is not a cp.ndarray. (Backend GPU)"
-        assert isinstance(simu.n12, cp.ndarray), (
-            "n12 is not a cp.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.I_sat, cp.ndarray), (
-            "I_sat is not a cp.ndarray. (Backend GPU)"
-        )
-    else:
-        pass
-
-
+@pytest.mark.skipif(not CNLSE.__CUPY_AVAILABLE__, reason="CuPy not available")
 def test_retrieve_arrays_from_gpu() -> None:
-    if CNLSE.__CUPY_AVAILABLE__:
-        alpha = 20
-        Isat = 10e4
-        n2 = -1.6e-9
-        n12 = -1e-10
-        V = 1e-4 * np.random.random((N, N)).astype(np.float32)
-        alpha = np.repeat(alpha, 2)
-        alpha = alpha[..., np.newaxis, np.newaxis, np.newaxis]
-        n2 = np.repeat(n2, 2)
-        n2 = n2[..., np.newaxis, np.newaxis, np.newaxis]
-        n12 = np.repeat(n2, 2)
-        n12 = n12[..., np.newaxis, np.newaxis, np.newaxis]
-        Isat = np.repeat(Isat, 2)
-        Isat = Isat[..., np.newaxis, np.newaxis, np.newaxis]
-        simu = make_solver("CUPY", alpha=alpha, n2=n2, n12=n12, V=V, Isat=Isat)
-        simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
-        simu._send_arrays_to_gpu()
-        simu._retrieve_arrays_from_gpu()
-        assert isinstance(simu.propagator, np.ndarray), (
-            "propagator is not a np.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.V, np.ndarray), "V is not a np.ndarray. (Backend GPU)"
-        assert isinstance(simu.alpha, np.ndarray), (
-            "alpha is not a np.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.n2, np.ndarray), "n2 is not a np.ndarray. (Backend GPU)"
-        assert isinstance(simu.n12, np.ndarray), (
-            "n12 is not a np.ndarray. (Backend GPU)"
-        )
-        assert isinstance(simu.I_sat, np.ndarray), (
-            "I_sat is not a np.ndarray. (Backend GPU)"
-        )
-    else:
-        pass
+    alpha = 20
+    Isat = 10e4
+    n2 = -1.6e-9
+    n12 = -1e-10
+    V = 1e-4 * np.random.random((N, N)).astype(np.float32)
+    alpha = np.repeat(alpha, 2)
+    alpha = alpha[..., np.newaxis, np.newaxis, np.newaxis]
+    n2 = np.repeat(n2, 2)
+    n2 = n2[..., np.newaxis, np.newaxis, np.newaxis]
+    n12 = np.repeat(n2, 2)
+    n12 = n12[..., np.newaxis, np.newaxis, np.newaxis]
+    Isat = np.repeat(Isat, 2)
+    Isat = Isat[..., np.newaxis, np.newaxis, np.newaxis]
+    simu = make_solver("CUPY", alpha=alpha, n2=n2, n12=n12, V=V, Isat=Isat)
+    simu.propagator = simu._build_propagator(np.complex64, DZ_TEST)
+    simu._send_arrays_to_gpu()
+    for name in ("propagator", "V", "alpha", "n2", "n12", "I_sat"):
+        assert isinstance(getattr(simu, name), cp.ndarray), f"{name} not on the GPU"
+    simu._retrieve_arrays_from_gpu()
+    for name in ("propagator", "V", "alpha", "n2", "n12", "I_sat"):
+        assert isinstance(getattr(simu, name), np.ndarray), f"{name} not back on host"
 
 
 def test_take_components(backend) -> None:
@@ -197,12 +138,7 @@ def test_take_components(backend) -> None:
 
 
 def test_split_step(backend) -> None:
-    """One linear step lands each component on its own Gaussian beam.
-
-    Lossless and linear, so the step is diffraction alone and exact. The two
-    components have different wavelengths, so swapping them fails, and the
-    complex field is compared, so a propagator of the wrong sign fails too.
-    """
+    """One linear step lands each component on its own Gaussian beam."""
     simu = make_solver(backend, symmetric=False, n2=0, n12=0, alpha=0)
     r_sq = simu.XX**2 + simu.YY**2
     z_rayleigh = simu.k * BEAM_WAIST**2 / 2
@@ -245,25 +181,7 @@ def test_out_field(backend) -> None:
 
 
 def test_components_round_trip_when_taken_by_copy(monkeypatch) -> None:
-    """Components taken by copy must be written back.
-
-    On a device backend ``_take_components`` copies, so the result of a
-    nonlinear step reaches the field only through ``_set_components``.
-
-    On the CPU it depends on the shape, which is not what this said and is
-    the reason a bug got past it. An unbatched component is contiguous and
-    comes back as a view, so the write-back is a no-op there and dropping it
-    would not show. A batched one is strided, and since the numba kernels
-    flatten with ravel -- a view of a contiguous array, a copy of a strided
-    one -- it has to be copied as well, or the step is applied to a temporary
-    and lost. Both are exercised below.
-
-    Monkeypatching is_device_backend forces the copy branch, which covers
-    CUPY from a machine without it. It also means this test passed throughout
-    the period when the host branch was returning strided views and every
-    batched coupled run on the CPU was dropping its real-space step: the
-    branch under test was not the broken one.
-    """
+    """Components taken by copy must be written back."""
     from NLSE.backends.backend import Backend
 
     simu = make_solver("CPU")
@@ -284,14 +202,7 @@ def test_components_round_trip_when_taken_by_copy(monkeypatch) -> None:
 
 
 def test_an_array_norm_target_reaches_the_backend(monkeypatch) -> None:
-    """A per-component target must be moved to the device before it is used.
-
-    ``_norm_target`` is one power per component, a numpy array, and it divides
-    an integral that lives wherever the field does. CuPy rejects a numpy
-    operand against a device array outright; on CPU ``from_numpy`` is the
-    identity, so nothing here would notice the missing conversion. Asserting
-    the conversion happens is what covers CuPy from a machine without it.
-    """
+    """A per-component target must be moved to the device before it is used."""
     simu = make_solver("CPU")
     seen = []
     original = simu._backend.from_numpy
@@ -312,15 +223,7 @@ def test_an_array_norm_target_reaches_the_backend(monkeypatch) -> None:
 
 
 def test_each_component_propagates_at_its_own_wavenumber(backend) -> None:
-    """Both propagators must read the wavenumber of their own component.
-
-    ``CNLSE.__init__`` sets ``k2 = k``, so a propagator built from ``k``
-    where it should use ``k2`` gives the right answer for every test that
-    leaves the default alone -- and the tests that check the formula take
-    their own expectation from ``simu.k2``, so they agree with it. Both
-    mutations survived the suite. This gives the second component a
-    different wavenumber, which is the only way the difference shows.
-    """
+    """Both propagators must read the wavenumber of their own component."""
     simu = make_solver(backend)
     simu.k2 = 2 * np.pi / 795e-9
     assert simu.k2 != simu.k, "the components must differ for this to test anything"
@@ -338,23 +241,7 @@ def test_each_component_propagates_at_its_own_wavenumber(backend) -> None:
 
 @pytest.mark.parametrize("method", ["split_step", "RK4"])
 def test_each_component_cross_phases_at_its_own_wavenumber(backend, method) -> None:
-    """The index one component writes must phase the other at that other's k.
-
-    ``n12`` is one index coefficient, but it enters two equations, and each
-    turns an index into a phase rate at its own wavenumber: ``k * n12 * I2``
-    for the first component, ``k2 * n12 * I1`` for the second. The solver
-    built one constant from ``k`` and handed it to both, so the second
-    component cross-phased at the first's wavenumber.
-
-    Nothing else in the suite could see it. ``k2 = k`` by construction, the
-    asymmetry helper varies ``n22``, ``alpha2`` and ``I_sat2`` but not the
-    cross coupling, and every backend carried the same wrong constant, so the
-    cross-backend comparisons agreed with each other.
-
-    Two uniform components with the self-interactions and the losses switched
-    off leave only the cross terms, and a uniform field neither diffracts nor
-    saturates unevenly, so each component's phase is the closed form above.
-    """
+    """The index one component writes must phase the other at that other's k."""
     simu = make_solver(backend, n2=0.0, alpha=0.0, Isat=np.inf)
     simu.n22 = 0.0
     simu.alpha2 = 0.0
@@ -415,14 +302,7 @@ def uniform_run(simu, method, normalize=True):
 
 @pytest.mark.parametrize("method", ["split_step", "RK4"])
 def test_each_component_self_phases_at_its_own_constants(backend, method) -> None:
-    """Component i's self-phase is ``k_i n_ii I_i L / (1 + I1/I_sat + I2/I_sat2)``.
-
-    Both components saturate on the same sum. The asymmetric factory gives
-    component 2 its own ``n22`` and ``I_sat2``, and a wavenumber twice the
-    first's, so reading ``k``, ``n2`` or ``I_sat`` in their place moves a phase
-    by a fifth or more. Lossless and uncoupled, a uniform field keeps its
-    intensity, read off the output.
-    """
+    """Component i's self-phase is ``k_i n_ii I_i L / (1 + I1/I_sat + I2/I_sat2)``."""
     simu = make_solver(backend, n=UNIFORM_N, symmetric=False, n12=0.0, alpha=0.0)
     simu.alpha2 = 0.0
     simu.k2 = 2 * np.pi / SHORT_WAVELENGTH
@@ -440,11 +320,7 @@ def test_each_component_self_phases_at_its_own_constants(backend, method) -> Non
 
 @pytest.mark.parametrize("method", ["split_step", "RK4"])
 def test_each_component_decays_at_its_own_rate(backend, method) -> None:
-    """Each component's intensity falls as ``exp(-alpha_i L)``, linear medium.
-
-    The asymmetric factory halves ``alpha2``, so component 2 reading ``alpha``
-    loses e^-0.1 = 10% too much.
-    """
+    """Each component's intensity falls as ``exp(-alpha_i L)``, linear medium."""
     simu = make_solver(
         backend,
         n=UNIFORM_N,

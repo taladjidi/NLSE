@@ -1,16 +1,4 @@
-"""The medium acts over exactly its length L, whatever the step.
-
-A run past L leaves the medium at L: the step that would cross it is cut there,
-the medium is switched off, and the run goes on to z on the caller's step. It
-used to round the in-medium step count up, so the medium acted over
-ceil(L / dz) * dz instead: 1.2 L for dz = 3e-3 or 4e-3 with L = 1e-2.
-
-Checked on a uniform field, where the linear step is the identity and the
-answer is closed-form in the physical variables: the medium imprints the phase
-k * n2 * I * L with I = c * epsilon_0 * |E|^2 / 2 (the intensity
-``_g = k / 2 * n2 * c * epsilon_0`` multiplies, NLSE/solvers/nlse.py), and an
-absorbing one leaves the intensity I0 * exp(-alpha * L) (Beer's law).
-"""
+"""The medium acts over exactly its length L, whatever the step."""
 
 import math
 import warnings
@@ -18,10 +6,7 @@ import warnings
 import numpy as np
 import pytest
 from NLSE import NLSE
-from NLSE.backends import list_available_backends
 from scipy.constants import c, epsilon_0
-
-AVAILABLE_BACKENDS = list_available_backends()
 
 N = 16
 WINDOW = 1e-2  # m; coarse enough that dispersion does not cap the steps below
@@ -114,7 +99,6 @@ def record_step(simu, A, z, i, steps):
     steps.append(simu._current_delta_z)
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("scheme", SCHEMES)
 @pytest.mark.parametrize("delta_z", [3e-3, 4e-3, 1e-3, -3e-3])
 def test_the_medium_imprints_its_phase_over_l(backend, scheme, delta_z):
@@ -129,7 +113,6 @@ def test_the_medium_imprints_its_phase_over_l(backend, scheme, delta_z):
     )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("scheme", SCHEMES)
 @pytest.mark.parametrize("delta_z", [1e-3, -1e-3])
 def test_a_step_grown_by_a_callback_is_cut_at_l(backend, scheme, delta_z):
@@ -149,16 +132,10 @@ def test_a_step_grown_by_a_callback_is_cut_at_l(backend, scheme, delta_z):
     )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("scheme", SCHEMES)
 @pytest.mark.parametrize("delta_z", [3e-3, -3e-3])
 def test_callbacks_see_the_step_just_taken(backend, scheme, delta_z):
-    """The steps the callbacks are shown add up to the distance run.
-
-    A cut step -- at L, and the last one -- used to be shown as a whole one, so
-    a callback that integrates over the step (DDGPE's pump and noise) added
-    F * dz where the run had covered less.
-    """
+    """The steps the callbacks are shown add up to the distance run."""
     steps = []
     propagate(backend, scheme, delta_z, callback=record_step, callback_args=(steps,))
     assert sum(steps) == pytest.approx(math.copysign(Z, delta_z), rel=1e-12), (
@@ -167,7 +144,6 @@ def test_callbacks_see_the_step_just_taken(backend, scheme, delta_z):
     )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("scheme", SCHEMES)
 @pytest.mark.parametrize("delta_z", [3e-3, 4e-3])
 def test_absorption_stops_at_l(backend, scheme, delta_z):

@@ -1,29 +1,11 @@
-"""A lossy real-space step must be solved, not frozen, or nothing keeps order.
-
-The real-space step applies ``exp(-alpha*s*dz + i*g*|A|^2*s*dz)`` with ``|A|^2``
-read once, entering. That is the exact solution of the real-space equation only
-while the step preserves ``|A|^2`` -- true of a pure rotation, false the moment
-there is loss, because the amplitude decays *inside* the step while the
-interaction goes on turning the phase at the rate the step began with.
-
-Frozen, the sub-step is O(dz^2) locally and O(dz) over a run, and that ceiling
-lands on the composition wrapped around it: Strang and Yoshida both came out
-**first order** on a lossy problem, which is what these tests would catch a
-return of. See ``_loss_factor`` in kernels/cpu.py for what replaced it.
-
-The order tests use a smooth beam rather than anything turbulent. Order is only
-readable where the error is neither saturated nor at the round-off floor, and a
-chaotic problem is in the first of those within a few steps.
-"""
+"""A lossy real-space step must be solved, not frozen, or nothing keeps order."""
 
 import numpy as np
 import pytest
-from helpers import make
+from helpers import AVAILABLE_BACKENDS, make
 from NLSE import NLSE
-from NLSE.backends import get_backend, list_available_backends
+from NLSE.backends import get_backend
 from NLSE.kernels.cpu import _LOSS_SOLVED_LIMIT
-
-AVAILABLE_BACKENDS = list_available_backends()
 
 N = 32
 WAIST = 2.23e-3
@@ -106,12 +88,7 @@ def drift_ratio(alpha, splitting, backend="CPU"):
     "splitting,expected", [("lie", 2.0), ("strang", 4.0), ("yoshida", 16.0)]
 )
 def test_loss_does_not_cost_the_splitting_its_order(splitting, expected):
-    """Each composition must converge at its own order, loss or no loss.
-
-    The number is the claim: before the sub-step was solved, Strang and Yoshida
-    both returned 2.0 here -- first order -- while their lossless twins
-    returned 4 and 16.
-    """
+    """Each composition must converge at its own order, loss or no loss."""
     ratio = drift_ratio(ALPHA, splitting)
     assert ratio == pytest.approx(expected, rel=0.25), (
         f"{splitting} with loss converges at a ratio of {ratio:.2f} where "
@@ -122,12 +99,7 @@ def test_loss_does_not_cost_the_splitting_its_order(splitting, expected):
 
 @pytest.mark.parametrize("splitting", ["strang", "yoshida"])
 def test_loss_converges_like_no_loss(splitting):
-    """The lossy and lossless orders must be the same order.
-
-    A tighter statement than the one above and the reason it holds: what the
-    solved step buys is that loss stops being visible to the composition at
-    all.
-    """
+    """The lossy and lossless orders must be the same order."""
     lossy = drift_ratio(ALPHA, splitting)
     lossless = drift_ratio(0.0, splitting)
     assert lossy == pytest.approx(lossless, rel=0.25), (
@@ -138,17 +110,7 @@ def test_loss_converges_like_no_loss(splitting):
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_every_backend_solves_the_step_the_same_way(backend_name):
-    """Five implementations of one iteration have to agree.
-
-    The formula is written out once per dialect -- numba, CUDA C, OpenCL C,
-    MLX, and the fused CuPy kernels for broadcasting -- so this is the test
-    that stops one of them drifting from the others.
-
-    In double precision, because the agreement worth checking is closer than
-    float32 round-off. That rules the comparison out where there is no double
-    to be had: MLX is single-precision throughout, and Apple's OpenCL ships no
-    fp64, so both would be scored against a reference of another width.
-    """
+    """The five implementations of the lossy step's iteration agree."""
     if not solver(ALPHA, backend_name)._backend.supports_double_precision():
         pytest.skip(f"{backend_name} has no double precision to agree in")
     reference = propagate(solver(ALPHA, "CPU"), PHASES[-1], "strang")
@@ -160,14 +122,7 @@ def test_every_backend_solves_the_step_the_same_way(backend_name):
 
 
 def test_a_step_too_lossy_to_solve_still_decays():
-    """The iteration has a range, and outside it the field must not grow.
-
-    It is a contraction only while the step takes out a small fraction of the
-    intensity. Past that it walks away and returns a *larger* field than it was
-    given -- which is worse than an inaccurate answer, because a growing field
-    does not look like a step-size problem. Outside its range the kernels fall
-    back to the frozen step, which at least only ever decays.
-    """
+    """A step too lossy for the iteration's range still decays rather than grows."""
     from NLSE.kernels import cpu as cpu_kernels
 
     field = np.ones((8, 8), dtype=np.complex64)
@@ -191,25 +146,7 @@ def test_a_step_too_lossy_to_solve_still_decays():
 
 @pytest.mark.parametrize("requested", [1e-3, 1e-2, 1.0])
 def test_the_solver_caps_a_step_that_would_leave_the_solved_range(requested):
-    """The caller's step is lowered until ``u = 2*alpha*dz`` is inside it.
-
-    The test above pins the *kernel* fallback, which is the last line of
-    defence and returns a frozen step rather than a wrong one. This pins the
-    ceiling that stops a propagation reaching it at all.
-
-    Scored against the kernel's limit and not against ``LOSS_PER_STEP_LIMIT``
-    itself. Reading the constant under test out of the module makes the
-    assertion move with it -- written that way first, it passed with the
-    ceiling raised ten-fold, which is the whole failure it exists to catch.
-    The kernel's threshold is an independent number and the one that means
-    something: past it the solver is handing the kernel steps it will refuse
-    to solve and silently freeze instead.
-
-    The nonlinearity is made negligible so that the loss ceiling is the one
-    that binds. At the ``n2`` the rest of this file uses, the phase ceiling
-    comes out just below it and sets the step on its own -- so the cap can be
-    raised ten-fold without changing the step, and the test sees nothing.
-    """
+    """The caller's step is lowered until ``u = 2*alpha*dz`` is in range."""
     simu = make(NLSE, "CPU", n=N, alpha=ALPHA, **{**PHYSICS, "n2": -1e-15})
     simu.out_field(
         beam().astype(np.complex64),
@@ -238,11 +175,6 @@ def test_a_lossless_run_is_not_capped_by_the_loss_ceiling():
 
 def test_a_frozen_step_applies_loss_interaction_and_potential(backend):
     """Past the solved range the step is ``exp(dz (-alpha s + i g |A|^2 s + i V))``.
-
-    Every propagation stays inside the range, capped by the loss ceiling, so
-    only a direct kernel call reaches this arm, with ``s = 1 / (1 + |A|^2 /
-    Isat)`` read once entering. ``test_a_step_too_lossy_to_solve_still_decays``
-    bounds its amplitude; this checks its value, phase included.
 
     Parameters
     ----------

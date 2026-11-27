@@ -1,10 +1,7 @@
-"""Cross-backend correctness tests.
-
-CPU is the reference backend. All other backends are compared against it.
-Also validates CPU backend internals (FFT plans, propagator, conservation laws).
-"""
+"""Cross-backend correctness tests."""
 
 import matplotlib
+from helpers import AVAILABLE_BACKENDS
 
 matplotlib.use("Agg")  # non-interactive backend for plot tests
 
@@ -12,63 +9,75 @@ import numpy as np
 import pytest
 from helpers import as_numpy, make
 from NLSE import CNLSE, GPE, NLSE, CNLSE_1d, NLSE_1d, NLSE_3d
-from NLSE.backends import list_available_backends
 from scipy.constants import c, epsilon_0
 
-AVAILABLE_BACKENDS = list_available_backends()
 GPU_BACKENDS = [b for b in AVAILABLE_BACKENDS if b != "CPU"]
 
 PRECISION_COMPLEX = np.complex64
-PRECISION_REAL = np.float32
 
 # Physical parameters matching reference
 N = 128
-n2 = -1.6e-9
 waist = 2.23e-3
-waist2 = 70e-6
 window = 4 * waist
-power = 1.05
-Isat = 10e4
 L = 1e-3
-alpha = 20
 n12 = 0.5e-9
 
 # Step used wherever a test builds a propagator or takes a step by hand.
 DZ_TEST = 1e-4
+# Small grid for fast tests
+S = 64
+# The test potential: a Gaussian bump of this height (a.u., as V is documented
+# at NLSE/solvers/cnlse.py:53) and 1/e radius (m), as the tests this file
+# replaced built it (e60e2a4, this file:166).
+V_HEIGHT = 1e-4
+V_RADIUS = 2e-3
+# Weak nonlinearities (m^2/W) and the step (m) at which CNLSE split step and RK4
+# agree, from the test this file replaced (e60e2a4, this file:575-577).
+N2_WEAK = -1e-10
+N12_WEAK = 1e-10
+DZ_FINE = 1e-5
 
 
 def make_nlse(backend="CPU", n=N, **overrides):
-    """Return an NLSE with this module's parameters.
-
-    Ninety-odd solver constructions in this file differed only in backend,
-    grid size and one or two parameters; spelling each out in full made the
-    difference between two tests the hardest thing to see in them.
-    """
+    """Return an NLSE with this module's parameters."""
     return make(NLSE, backend, n=n, **overrides)
 
 
 def make_cnlse(backend="CPU", n=N, **overrides):
-    """Return a CNLSE with this module's parameters.
-
-    Ninety-odd solver constructions in this file differed only in backend,
-    grid size and one or two parameters; spelling each out in full made the
-    difference between two tests the hardest thing to see in them.
-    """
+    """Return a CNLSE with this module's parameters."""
     return make(CNLSE, backend, n=n, **{"n12": n12, **overrides})
+
+
+def beam(simu):
+    """Return the Gaussian test field on the solver's grid."""
+    XX, YY = np.meshgrid(simu.X, simu.Y)
+    return np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
+
+
+def beam_pair(simu):
+    """Return the coupled test field: two Gaussians of different widths."""
+    XX, YY = np.meshgrid(simu.X, simu.Y)
+    E_in = np.zeros((2, *XX.shape), dtype=PRECISION_COMPLEX)
+    E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
+    E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
+    return E_in
+
+
+def bump(n):
+    """Return the test potential on an n x n grid spanning the window, float64."""
+    x = np.linspace(-window / 2, window / 2, n)
+    XX, YY = np.meshgrid(x, x)
+    return V_HEIGHT * np.exp(-(XX**2 + YY**2) / V_RADIUS**2)
+
+
+def grid_bump(simu):
+    """Return the test potential on the solver's own grid, float32."""
+    V = V_HEIGHT * np.exp(-(simu.XX**2 + simu.YY**2) / V_RADIUS**2)
+    return V.astype(np.float32)
 
 
 class TestCPUCorrectness:
     """Tests that validate CPU backend internals."""
-
-    def test_build_fft_plan(self):
-        """The plan carries the axes to transform over."""
-        simu = make_nlse()
-        A = np.random.random((N, N)) + 1j * np.random.random((N, N))
-        A = A.astype(PRECISION_COMPLEX)
-        plans = simu._build_fft_plan(A)
-
-        assert len(plans) == 1, "Number of plans is wrong"
-        assert plans[0].axes == (-2, -1), "Plan axes are wrong"
 
     def test_fft_roundtrip(self):
         """FFT then IFFT returns the original array."""
@@ -91,576 +100,133 @@ class TestCPUCorrectness:
             err_msg="FFT roundtrip failed to recover original array",
         )
 
-    def test_propagator_correctness(self):
-        """Propagator matches analytical formula."""
-        simu = make_nlse()
-        prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
-        expected = np.exp(-1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * DZ_TEST)
-        assert np.allclose(prop, expected), "Propagator is wrong (CPU)"
 
-    def test_prepare_output_array(self):
-        """Output array is normalized, aligned, and contiguous."""
-        simu = make_nlse()
-        A_in = np.random.random((N, N)) + 1j * np.random.random((N, N))
-        A_in = A_in.astype(PRECISION_COMPLEX)
-        out, out_sq = simu._prepare_output_array(A_in, normalize=True)
+def test_power_conservation(backend):
+    """Propagation with alpha=0 conserves the norm."""
+    simu = make_nlse(backend, alpha=0)
+    E_in = np.ones((N, N), dtype=PRECISION_COMPLEX)
+    E_out = simu.out_field(E_in, L, verbose=False, plot=False, splitting="lie")
+    norm = np.sum(np.abs(E_out) ** 2 * simu.delta_X * simu.delta_Y)
+    norm *= c * epsilon_0 / 2
+    np.testing.assert_allclose(
+        norm,
+        simu.power,
+        rtol=1e-4,
+        err_msg=f"Norm not conserved on {backend} (alpha=0)",
+    )
 
-        assert out.flags.c_contiguous, "Output array is not C-contiguous"
-        assert out_sq.flags.c_contiguous, "Output sq array is not C-contiguous"
-        assert out.flags.aligned, "Output array is not aligned"
-        assert out_sq.flags.aligned, "Output sq array is not aligned"
-        assert out.shape == (N, N), "Output array has wrong shape"
-        assert isinstance(out, np.ndarray), "Output array type wrong"
 
-        # Check normalization
-        integral = (
-            (out.real * out.real + out.imag * out.imag) * simu.delta_X * simu.delta_Y
-        ).sum(axis=simu._last_axes)
-        integral = integral * c * epsilon_0 / 2
-        np.testing.assert_allclose(
-            integral,
-            simu.power,
-            rtol=1e-4,
-            err_msg="Normalization failed",
-        )
-
-    def test_power_conservation(self):
-        """Propagation with alpha=0 conserves the norm."""
-        simu = make_nlse("CPU", alpha=0)
-
-        E_in = np.ones((N, N), dtype=PRECISION_COMPLEX)
-        E_out = simu.out_field(E_in, L, verbose=False, plot=False, splitting="lie")
-
-        norm = np.sum(np.abs(E_out) ** 2 * simu.delta_X * simu.delta_Y)
-        norm *= c * epsilon_0 / 2
-
-        np.testing.assert_allclose(
-            norm,
-            simu.power,
-            rtol=1e-4,
-            err_msg="Norm not conserved on CPU (alpha=0)",
-        )
-
-    def test_power_decay(self):
-        """Propagation with alpha>0 gives expected exponential power decay."""
-        test_alpha = 10.0
-        simu = make_nlse("CPU", n=64, alpha=test_alpha, n2=1e-10, Isat=1e20)
-
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
-        E_out = simu.out_field(E_in, L, verbose=False, plot=False, normalize=False)
-
-        power_in = np.sum(np.abs(E_in) ** 2) * simu.delta_X * simu.delta_Y
-        power_out = np.sum(np.abs(E_out) ** 2) * simu.delta_X * simu.delta_Y
-
-        expected_ratio = np.exp(-test_alpha * L)
-        actual_ratio = power_out / power_in
-        rel_error = np.abs(actual_ratio - expected_ratio) / expected_ratio
-        assert rel_error < 0.01, f"Power decay incorrect on CPU: {rel_error:.2%} error"
-
-    def test_propagation_with_potential(self):
-        """CPU propagation with V produces a valid result."""
-        NX = NY = 64
-        simu = make_nlse("CPU", n=NX)
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        simu.V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2)
-        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
-
-        E_out = simu.out_field(E_in, L, verbose=False, plot=False)
-        assert E_out.shape == (NX, NY)
-        assert np.isfinite(E_out).all(), "Output contains NaN/Inf"
-
-    def test_coupled_propagation(self):
-        """CPU CNLSE propagation produces a valid result."""
-        NX = NY = 64
-        simu = make_cnlse("CPU", n=NX)
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        E_in = np.zeros((2, NX, NY), dtype=PRECISION_COMPLEX)
-        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
-        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
-
-        E_out = simu.out_field(E_in, L, verbose=False, plot=False)
-        assert E_out.shape == (2, NX, NY)
-        assert np.isfinite(E_out).all(), "CNLSE output contains NaN/Inf"
+@pytest.mark.parametrize("method", ["split_step", "RK4"])
+def test_power_decay(method):
+    """Propagation with alpha>0 gives expected exponential power decay."""
+    test_alpha = 10.0
+    simu = make_nlse("CPU", n=S, alpha=test_alpha, n2=1e-10, Isat=1e20)
+    E_in = beam(simu)
+    E_out = simu.out_field(
+        E_in, L, verbose=False, plot=False, normalize=False, method=method
+    )
+    power_in = np.sum(np.abs(E_in) ** 2) * simu.delta_X * simu.delta_Y
+    power_out = np.sum(np.abs(E_out) ** 2) * simu.delta_X * simu.delta_Y
+    expected_ratio = np.exp(-test_alpha * L)
+    rel_error = np.abs(power_out / power_in - expected_ratio) / expected_ratio
+    assert rel_error < 0.01, f"{method} power decay incorrect: {rel_error:.2%} error"
 
 
 @pytest.mark.parametrize("backend", GPU_BACKENDS)
-class TestNLSEvsReference:
-    """Compare each backend against the CPU reference for split-step."""
+@pytest.mark.parametrize("method", ["split_step", "RK4"])
+@pytest.mark.parametrize("with_V", [False, True], ids=["no_V", "V"])
+def test_nlse_matches_the_cpu(backend, method, with_V):
+    """NLSE on each backend matches the CPU reference."""
+    V = bump(N) if with_V else None
+    simu_ref = make_nlse("CPU", V=V)
+    simu_test = make_nlse(backend, V=V)
+    E_in = beam(simu_ref)
+    E_ref = simu_ref.out_field(E_in.copy(), L, verbose=False, plot=False, method=method)
+    E_test = simu_test.out_field(
+        E_in.copy(), L, verbose=False, plot=False, method=method
+    )
+    np.testing.assert_allclose(
+        E_test,
+        E_ref,
+        rtol=1.5e-2,
+        atol=1e-4,
+        err_msg=f"{method} {backend} does not match CPU reference (V: {with_V})",
+    )
 
-    def test_propagation_without_potential(self, backend):
-        """Results without potential match CPU reference."""
-        simu_ref = make_nlse()
-        simu_test = make_nlse(backend)
 
-        XX, YY = np.meshgrid(simu_ref.X, simu_ref.Y)
-        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
-
-        E_ref = simu_ref.out_field(E_in.copy(), L, verbose=False, plot=False)
-        E_test = simu_test.out_field(E_in.copy(), L, verbose=False, plot=False)
-
-        np.testing.assert_allclose(
-            E_test,
-            E_ref,
-            rtol=1.5e-2,
-            atol=1e-4,
-            err_msg=f"{backend} does not match CPU reference (no potential)",
-        )
-
-    def test_propagation_with_potential(self, backend):
-        """Results with potential match CPU reference."""
-        XX_v, YY_v = np.meshgrid(
-            np.linspace(-window / 2, window / 2, N),
-            np.linspace(-window / 2, window / 2, N),
-        )
-        V = 1e-4 * np.exp(-(XX_v**2 + YY_v**2) / (2e-3) ** 2)
-
-        simu_ref = make_nlse("CPU", V=V)
-        simu_test = make_nlse(backend, V=V)
-
-        XX, YY = np.meshgrid(simu_ref.X, simu_ref.Y)
-        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
-
-        E_ref = simu_ref.out_field(E_in.copy(), L, verbose=False, plot=False)
-        E_test = simu_test.out_field(E_in.copy(), L, verbose=False, plot=False)
-
-        np.testing.assert_allclose(
-            E_test,
-            E_ref,
-            rtol=1.5e-2,
-            atol=1e-4,
-            err_msg=f"{backend} does not match CPU reference (with potential)",
-        )
-
-    def test_power_conservation(self, backend):
-        """Power conservation (alpha=0) matches CPU reference."""
-        simu = make_nlse(backend, alpha=0)
-
-        E_in = np.ones((N, N), dtype=PRECISION_COMPLEX)
-        E_out = simu.out_field(E_in, L, verbose=False, plot=False, splitting="lie")
-
-        norm = np.sum(np.abs(E_out) ** 2 * simu.delta_X * simu.delta_Y)
-        norm *= c * epsilon_0 / 2
-
-        np.testing.assert_allclose(
-            norm,
-            simu.power,
-            rtol=1e-4,
-            err_msg=f"Norm not conserved on {backend} (alpha=0)",
-        )
-
-    def test_propagator_correctness(self, backend):
-        """Propagator matches analytical formula on each backend."""
-        simu = make_nlse(backend)
-        prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
-        expected = np.exp(-1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * DZ_TEST)
-        assert np.allclose(prop, expected), f"Propagator is wrong (Backend {backend})"
+# Old test name -> (constructor overrides, out_field keywords, potential or not).
+CNLSE_VS_CPU = {
+    "coupled_propagation": ({}, {}, False),
+    "cnlse_rk4": ({}, {"method": "RK4"}, False),
+    "cnlse_rk4_with_potential": ({}, {"method": "RK4"}, True),
+    "coupled_propagation_with_potential": ({}, {}, True),
+    "coupled_propagation_with_omega": ({"omega": 1e3}, {}, False),
+    "coupled_propagation_double_split_step": ({}, {"splitting": "strang"}, False),
+}
 
 
 @pytest.mark.parametrize("backend", GPU_BACKENDS)
-class TestCNLSEvsReference:
-    """Compare CNLSE on each backend against the CPU reference."""
-
-    def test_coupled_propagation(self, backend):
-        """Coupled NLSE results match CPU reference."""
-        NX = NY = 64
-
-        simu_ref = make_cnlse("CPU", n=NX)
-        simu_test = make_cnlse(backend, n=NX)
-
-        XX, YY = np.meshgrid(simu_ref.X, simu_ref.Y)
-        E_in = np.zeros((2, NX, NY), dtype=PRECISION_COMPLEX)
-        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
-        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
-
-        E_ref = simu_ref.out_field(E_in.copy(), L, verbose=False, plot=False)
-        E_test = simu_test.out_field(E_in.copy(), L, verbose=False, plot=False)
-
-        np.testing.assert_allclose(
-            E_test,
-            E_ref,
-            rtol=1e-2,
-            atol=1e-4,
-            err_msg=f"CNLSE {backend} does not match CPU reference",
-        )
-
-
-@pytest.mark.parametrize("backend", GPU_BACKENDS)
-class TestNLSERK4vsReference:
-    """Compare RK4 on each backend against the CPU reference."""
-
-    def test_rk4_without_potential(self, backend):
-        """RK4 results without potential match CPU reference."""
-        simu_ref = make_nlse()
-        simu_test = make_nlse(backend)
-
-        XX, YY = np.meshgrid(simu_ref.X, simu_ref.Y)
-        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
-
-        E_ref = simu_ref.out_field(
-            E_in.copy(), L, verbose=False, plot=False, method="RK4"
-        )
-        E_test = simu_test.out_field(
-            E_in.copy(), L, verbose=False, plot=False, method="RK4"
-        )
-
-        np.testing.assert_allclose(
-            E_test,
-            E_ref,
-            rtol=1.5e-2,
-            atol=1e-4,
-            err_msg=f"RK4 {backend} does not match CPU reference (no potential)",
-        )
-
-    def test_rk4_with_potential(self, backend):
-        """RK4 results with potential match CPU reference."""
-        XX_v, YY_v = np.meshgrid(
-            np.linspace(-window / 2, window / 2, N),
-            np.linspace(-window / 2, window / 2, N),
-        )
-        V = 1e-4 * np.exp(-(XX_v**2 + YY_v**2) / (2e-3) ** 2)
-
-        simu_ref = make_nlse("CPU", V=V)
-        simu_test = make_nlse(backend, V=V)
-
-        XX, YY = np.meshgrid(simu_ref.X, simu_ref.Y)
-        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
-
-        E_ref = simu_ref.out_field(
-            E_in.copy(), L, verbose=False, plot=False, method="RK4"
-        )
-        E_test = simu_test.out_field(
-            E_in.copy(), L, verbose=False, plot=False, method="RK4"
-        )
-
-        np.testing.assert_allclose(
-            E_test,
-            E_ref,
-            rtol=1.5e-2,
-            atol=1e-4,
-            err_msg=f"RK4 {backend} does not match CPU reference (with potential)",
-        )
-
-
-@pytest.mark.parametrize("backend", GPU_BACKENDS)
-class TestCNLSERK4vsReference:
-    """Compare CNLSE RK4 on each backend against the CPU reference."""
-
-    def test_cnlse_rk4(self, backend):
-        """CNLSE RK4 results match CPU reference."""
-        NX = NY = 64
-
-        simu_ref = make_cnlse("CPU", n=NX)
-        simu_test = make_cnlse(backend, n=NX)
-
-        XX, YY = np.meshgrid(simu_ref.X, simu_ref.Y)
-        E_in = np.zeros((2, NX, NY), dtype=PRECISION_COMPLEX)
-        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
-        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
-
-        E_ref = simu_ref.out_field(
-            E_in.copy(), L, verbose=False, plot=False, method="RK4"
-        )
-        E_test = simu_test.out_field(
-            E_in.copy(), L, verbose=False, plot=False, method="RK4"
-        )
-
-        np.testing.assert_allclose(
-            E_test,
-            E_ref,
-            rtol=1e-2,
-            atol=1e-4,
-            err_msg=f"CNLSE RK4 {backend} does not match CPU reference",
-        )
-
-    def test_cnlse_rk4_with_potential(self, backend):
-        """CNLSE RK4 with potential matches CPU reference."""
-        NX = NY = 64
-        XX_v, YY_v = np.meshgrid(
-            np.linspace(-window / 2, window / 2, NX),
-            np.linspace(-window / 2, window / 2, NY),
-        )
-        V = 1e-4 * np.exp(-(XX_v**2 + YY_v**2) / (2e-3) ** 2)
-
-        simu_ref = make_cnlse("CPU", n=NX, V=V)
-        simu_test = make_cnlse(backend, n=NX, V=V)
-
-        XX, YY = np.meshgrid(simu_ref.X, simu_ref.Y)
-        E_in = np.zeros((2, NX, NY), dtype=PRECISION_COMPLEX)
-        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
-        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
-
-        E_ref = simu_ref.out_field(
-            E_in.copy(), L, verbose=False, plot=False, method="RK4"
-        )
-        E_test = simu_test.out_field(
-            E_in.copy(), L, verbose=False, plot=False, method="RK4"
-        )
-
-        np.testing.assert_allclose(
-            E_test,
-            E_ref,
-            rtol=1e-2,
-            atol=1e-4,
-            err_msg=f"CNLSE RK4 {backend} with V does not match CPU reference",
-        )
-
-
-@pytest.mark.parametrize("backend", GPU_BACKENDS)
-class TestCNLSEvsReferenceExtended:
-    """Extended CNLSE cross-backend tests (potential, omega, double precision)."""
-
-    def test_coupled_propagation_with_potential(self, backend):
-        """CNLSE with potential matches CPU reference."""
-        NX = NY = 64
-        XX_v, YY_v = np.meshgrid(
-            np.linspace(-window / 2, window / 2, NX),
-            np.linspace(-window / 2, window / 2, NY),
-        )
-        V = 1e-4 * np.exp(-(XX_v**2 + YY_v**2) / (2e-3) ** 2)
-
-        simu_ref = make_cnlse("CPU", n=NX, V=V)
-        simu_test = make_cnlse(backend, n=NX, V=V)
-
-        XX, YY = np.meshgrid(simu_ref.X, simu_ref.Y)
-        E_in = np.zeros((2, NX, NY), dtype=PRECISION_COMPLEX)
-        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
-        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
-
-        E_ref = simu_ref.out_field(E_in.copy(), L, verbose=False, plot=False)
-        E_test = simu_test.out_field(E_in.copy(), L, verbose=False, plot=False)
-
-        np.testing.assert_allclose(
-            E_test,
-            E_ref,
-            rtol=1e-2,
-            atol=1e-4,
-            err_msg=f"CNLSE {backend} with V does not match CPU reference",
-        )
-
-    def test_coupled_propagation_with_omega(self, backend):
-        """CNLSE with Rabi coupling matches CPU reference."""
-        NX = NY = 64
-        omega = 1e3
-
-        simu_ref = make_cnlse("CPU", n=NX, omega=omega)
-        simu_test = make_cnlse(backend, n=NX, omega=omega)
-
-        XX, YY = np.meshgrid(simu_ref.X, simu_ref.Y)
-        E_in = np.zeros((2, NX, NY), dtype=PRECISION_COMPLEX)
-        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
-        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
-
-        E_ref = simu_ref.out_field(E_in.copy(), L, verbose=False, plot=False)
-        E_test = simu_test.out_field(E_in.copy(), L, verbose=False, plot=False)
-
-        np.testing.assert_allclose(
-            E_test,
-            E_ref,
-            rtol=1e-2,
-            atol=1e-4,
-            err_msg=f"CNLSE {backend} with omega does not match CPU reference",
-        )
-
-    def test_coupled_propagation_double_split_step(self, backend):
-        """CNLSE with the double-order split step matches the CPU reference.
-
-        splitting="strang" is the *splitting order* — the nonlinear step is
-        applied around the linear one rather than once per step. It is not
-        float64, and with a complex64 field it needs no fp64 support, so
-        every backend runs it.
-
-        Skipping it on fp64 support would be wrong, and a NaN result is a
-        real failure rather than a driver limitation: the GPU kernels pick
-        their precision from the field, then read the propagator with it, so
-        a complex128 propagator under a complex64 field returns NaN.
-        """
-        NX = NY = 64
-
-        simu_test = make_cnlse(backend, n=NX)
-        simu_ref = make_cnlse("CPU", n=NX)
-
-        XX, YY = np.meshgrid(simu_ref.X, simu_ref.Y)
-        E_in = np.zeros((2, NX, NY), dtype=PRECISION_COMPLEX)
-        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
-        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
-
-        E_ref = simu_ref.out_field(
-            E_in.copy(), L, verbose=False, plot=False, splitting="strang"
-        )
-        E_test = simu_test.out_field(
-            E_in.copy(), L, verbose=False, plot=False, splitting="strang"
-        )
-
-        assert not np.any(np.isnan(E_test)), (
-            f"{backend} returned NaN: the propagator dtype no longer matches "
-            f"the field, so the kernels are reading it at the wrong width"
-        )
-
-        np.testing.assert_allclose(
-            E_test,
-            E_ref,
-            rtol=1e-2,
-            atol=1e-4,
-            err_msg=f"CNLSE {backend} double precision does not match CPU reference",
-        )
-
-
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
-class TestNLSECrossMethod:
-    """Compare split_step vs RK4 on same backend (both solve same equation)."""
-
-    def test_split_step_vs_rk4_without_potential(self, backend):
-        """Split-step and RK4 converge to same result (no potential)."""
-        simu_ss = make_nlse(backend)
-        simu_rk = make_nlse(backend)
-
-        XX, YY = np.meshgrid(simu_ss.X, simu_ss.Y)
-        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
-
-        E_ss = simu_ss.out_field(
-            E_in.copy(), L, verbose=False, plot=False, splitting="lie"
-        )
-        E_rk = simu_rk.out_field(
-            E_in.copy(), L, verbose=False, plot=False, method="RK4"
-        )
-
-        np.testing.assert_allclose(
-            E_rk,
-            E_ss,
-            rtol=5e-2,
-            atol=1e-3,
-            err_msg=f"RK4 vs split_step mismatch on {backend} (no potential)",
-        )
-
-    def test_split_step_vs_rk4_with_potential(self, backend):
-        """Split-step and RK4 converge to same result (with potential)."""
-        XX_v, YY_v = np.meshgrid(
-            np.linspace(-window / 2, window / 2, N),
-            np.linspace(-window / 2, window / 2, N),
-        )
-        V = 1e-4 * np.exp(-(XX_v**2 + YY_v**2) / (2e-3) ** 2)
-
-        simu_ss = make_nlse(backend, V=V)
-        simu_rk = make_nlse(backend, V=V)
-
-        XX, YY = np.meshgrid(simu_ss.X, simu_ss.Y)
-        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
-
-        E_ss = simu_ss.out_field(
-            E_in.copy(), L, verbose=False, plot=False, splitting="lie"
-        )
-        E_rk = simu_rk.out_field(
-            E_in.copy(), L, verbose=False, plot=False, method="RK4"
-        )
-
-        np.testing.assert_allclose(
-            E_rk,
-            E_ss,
-            rtol=5e-2,
-            atol=1e-3,
-            err_msg=f"RK4 vs split_step mismatch on {backend} (with potential)",
-        )
-
-
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
-class TestCNLSECrossMethod:
-    """Compare CNLSE split_step vs RK4 on same backend.
-
-    Uses weak nonlinearity so both O(dz) split-step and O(dz^4) RK4 converge
-    to the same result within tolerance.
-    """
-
-    # Weak NL for method convergence
-    n2_weak = -1e-10
-    n12_weak = 1e-10
-    dz_fine = 1e-5
-
-    def test_cnlse_split_step_vs_rk4(self, backend):
-        """CNLSE split-step and RK4 converge to same result."""
-        NX = NY = 64
-
-        simu_ss = make_cnlse(backend, n=NX, n2=self.n2_weak, n12=self.n12_weak)
-        simu_rk = make_cnlse(backend, n=NX, n2=self.n2_weak, n12=self.n12_weak)
-
-        XX, YY = np.meshgrid(simu_ss.X, simu_ss.Y)
-        E_in = np.zeros((2, NX, NY), dtype=PRECISION_COMPLEX)
-        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
-        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
-
-        E_ss = simu_ss.out_field(
-            E_in.copy(),
-            L,
-            verbose=False,
-            plot=False,
-            splitting="lie",
-            delta_z=self.dz_fine,
-        )
-        E_rk = simu_rk.out_field(
-            E_in.copy(),
-            L,
-            verbose=False,
-            plot=False,
-            method="RK4",
-            delta_z=self.dz_fine,
-        )
-
-        np.testing.assert_allclose(
-            E_rk,
-            E_ss,
-            rtol=5e-2,
-            atol=1e-3,
-            err_msg=f"CNLSE RK4 vs split_step mismatch on {backend}",
-        )
-
-    def test_cnlse_split_step_vs_rk4_with_potential(self, backend):
-        """CNLSE split-step and RK4 with potential converge to same result."""
-        NX = NY = 64
-        XX_v, YY_v = np.meshgrid(
-            np.linspace(-window / 2, window / 2, NX),
-            np.linspace(-window / 2, window / 2, NY),
-        )
-        V = 1e-4 * np.exp(-(XX_v**2 + YY_v**2) / (2e-3) ** 2)
-
-        simu_ss = make_cnlse(backend, n=NX, n2=self.n2_weak, n12=self.n12_weak, V=V)
-        simu_rk = make_cnlse(backend, n=NX, n2=self.n2_weak, n12=self.n12_weak, V=V)
-
-        XX, YY = np.meshgrid(simu_ss.X, simu_ss.Y)
-        E_in = np.zeros((2, NX, NY), dtype=PRECISION_COMPLEX)
-        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
-        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
-
-        E_ss = simu_ss.out_field(
-            E_in.copy(),
-            L,
-            verbose=False,
-            plot=False,
-            splitting="lie",
-            delta_z=self.dz_fine,
-        )
-        E_rk = simu_rk.out_field(
-            E_in.copy(),
-            L,
-            verbose=False,
-            plot=False,
-            method="RK4",
-            delta_z=self.dz_fine,
-        )
-
-        np.testing.assert_allclose(
-            E_rk,
-            E_ss,
-            rtol=5e-2,
-            atol=1e-3,
-            err_msg=f"CNLSE RK4 vs split_step with V mismatch on {backend}",
-        )
-
-
-# Small grid for fast tests
-S = 64
-
-# Step used wherever a test builds a propagator or takes a step by hand.
-DZ_TEST = 1e-4
+@pytest.mark.parametrize("case", sorted(CNLSE_VS_CPU))
+def test_cnlse_matches_the_cpu(backend, case):
+    """CNLSE on each backend matches the CPU reference."""
+    overrides, run, with_V = CNLSE_VS_CPU[case]
+    if with_V:
+        overrides = {**overrides, "V": bump(S)}
+    simu_ref = make_cnlse("CPU", n=S, **overrides)
+    simu_test = make_cnlse(backend, n=S, **overrides)
+    E_in = beam_pair(simu_ref)
+    E_ref = simu_ref.out_field(E_in.copy(), L, verbose=False, plot=False, **run)
+    E_test = simu_test.out_field(E_in.copy(), L, verbose=False, plot=False, **run)
+    assert not np.any(np.isnan(E_test)), (
+        f"{backend} returned NaN: the propagator dtype no longer matches "
+        f"the field, so the kernels are reading it at the wrong width"
+    )
+    np.testing.assert_allclose(
+        E_test,
+        E_ref,
+        rtol=1e-2,
+        atol=1e-4,
+        err_msg=f"CNLSE {backend} does not match CPU reference ({case})",
+    )
+
+
+@pytest.mark.parametrize("with_V", [False, True], ids=["no_V", "V"])
+def test_split_step_vs_rk4(backend, with_V):
+    """Split-step and RK4 converge to same result."""
+    V = bump(N) if with_V else None
+    simu_ss = make_nlse(backend, V=V)
+    simu_rk = make_nlse(backend, V=V)
+    E_in = beam(simu_ss)
+    E_ss = simu_ss.out_field(E_in.copy(), L, verbose=False, plot=False, splitting="lie")
+    E_rk = simu_rk.out_field(E_in.copy(), L, verbose=False, plot=False, method="RK4")
+    np.testing.assert_allclose(
+        E_rk,
+        E_ss,
+        rtol=5e-2,
+        atol=1e-3,
+        err_msg=f"RK4 vs split_step mismatch on {backend} (V: {with_V})",
+    )
+
+
+@pytest.mark.parametrize("with_V", [False, True], ids=["no_V", "V"])
+def test_cnlse_split_step_vs_rk4(backend, with_V):
+    """CNLSE split-step and RK4 converge to same result, at weak nonlinearity."""
+    overrides = {"n2": N2_WEAK, "n12": N12_WEAK}
+    if with_V:
+        overrides["V"] = bump(S)
+    simu_ss = make_cnlse(backend, n=S, **overrides)
+    simu_rk = make_cnlse(backend, n=S, **overrides)
+    E_in = beam_pair(simu_ss)
+    run = {"verbose": False, "plot": False, "delta_z": DZ_FINE}
+    E_ss = simu_ss.out_field(E_in.copy(), L, splitting="lie", **run)
+    E_rk = simu_rk.out_field(E_in.copy(), L, method="RK4", **run)
+    np.testing.assert_allclose(
+        E_rk,
+        E_ss,
+        rtol=5e-2,
+        atol=1e-3,
+        err_msg=f"CNLSE RK4 vs split_step mismatch on {backend} (V: {with_V})",
+    )
 
 
 class TestCPUBackendMethods:
@@ -755,13 +321,7 @@ class TestNLSEPropagator:
         assert prop1 is prop2  # same object from cache
 
     def test_propagator_double_precision(self):
-        """Double precision propagator has complex128 dtype.
-
-        This one really is about the dtype asked for, unlike the split-step
-        tests nearby, which passed complex128 here and a complex64 field to
-        the kernel: splitting="strang" is the order of the splitting, not the
-        width of anything.
-        """
+        """Double precision propagator has complex128 dtype."""
         simu = make_nlse("CPU", n=S)
         prop = as_numpy(simu, simu._build_propagator(np.complex128, DZ_TEST))
         assert prop.dtype == np.complex128
@@ -779,135 +339,94 @@ class TestNLSEPropagator:
         )
 
 
-class TestNLSESplitStep:
-    """Tests for split_step code paths."""
+# Old test name -> (constructor overrides, potential or not, splitting).
+NLSE_SPLIT_STEPS = {
+    "double_precision_without_V": ({}, False, "strang"),
+    "double_precision_with_V": ({}, True, "strang"),
+    "single_precision_with_V": ({}, True, "lie"),
+    "nonlocal_propagation": ({"nl_length": 1e-3}, False, "lie"),
+    "nonlocal_with_V": ({"nl_length": 1e-3}, True, "lie"),
+    "nonlocal_double_precision": ({"nl_length": 1e-3}, False, "strang"),
+}
 
-    def test_double_precision_without_V(self):
-        """Double precision split step without potential."""
-        simu = make_nlse("CPU", n=S)
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
-        A, A_sq = simu._prepare_output_array(E_in, normalize=True)
-        plans = simu._build_fft_plan(A)
-        prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
 
-        simu.split_step(A, A_sq, None, prop, plans, DZ_TEST, splitting="strang")
-        assert np.isfinite(A).all(), "Double precision split step produced NaN/Inf"
+@pytest.mark.parametrize("case", sorted(NLSE_SPLIT_STEPS))
+def test_nlse_split_step_is_finite(case):
+    """One CPU split step on each code path leaves the field finite."""
+    overrides, with_V, splitting = NLSE_SPLIT_STEPS[case]
+    simu = make_nlse("CPU", n=S, **overrides)
+    V = grid_bump(simu) if with_V else None
+    A, A_sq = simu._prepare_output_array(beam(simu), normalize=True)
+    plans = simu._build_fft_plan(A)
+    prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
+    simu.split_step(A, A_sq, V, prop, plans, DZ_TEST, splitting=splitting)
+    assert np.isfinite(A).all(), f"split step produced NaN/Inf ({case})"
 
-    def test_double_precision_with_V(self):
-        """Double precision split step with potential."""
-        simu = make_nlse("CPU", n=S)
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
-        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
-        A, A_sq = simu._prepare_output_array(E_in, normalize=True)
-        plans = simu._build_fft_plan(A)
-        prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
 
-        simu.split_step(A, A_sq, V, prop, plans, DZ_TEST, splitting="strang")
-        assert np.isfinite(A).all()
+# Old test name -> (constructor overrides, potential or not, out_field keywords).
+NLSE_RUNS = {
+    "propagation_with_potential": ({}, True, {}),
+    "rk4_propagation": ({}, False, {"splitting": "RK4"}),
+    "rk4_nonlocal": ({"nl_length": 1e-3}, False, {"splitting": "RK4"}),
+    "normalize_false": ({}, False, {"normalize": False}),
+    "double_precision_out_field": ({}, False, {"splitting": "strang"}),
+    "double_precision_with_potential": ({}, True, {"splitting": "strang"}),
+}
 
-    def test_single_precision_with_V(self):
-        """Single precision split step with potential."""
-        simu = make_nlse("CPU", n=S)
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
-        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
-        A, A_sq = simu._prepare_output_array(E_in, normalize=True)
-        plans = simu._build_fft_plan(A)
-        prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
 
-        simu.split_step(A, A_sq, V, prop, plans, DZ_TEST, splitting="lie")
-        assert np.isfinite(A).all()
+@pytest.mark.parametrize("case", sorted(NLSE_RUNS))
+def test_nlse_run_is_finite(case):
+    """A CPU run on each code path returns a finite field of the input's shape."""
+    overrides, with_V, run = NLSE_RUNS[case]
+    simu = make_nlse("CPU", n=S, **overrides)
+    if with_V:
+        simu.V = grid_bump(simu)
+    E_out = simu.out_field(beam(simu), L, verbose=False, plot=False, **run)
+    assert E_out.shape == (S, S)
+    assert np.isfinite(E_out).all(), f"output contains NaN/Inf ({case})"
 
-    def test_nonlocal_propagation(self):
-        """Split step with nl_length > 0 smooths the intensity in Fourier space."""
-        simu = make_nlse("CPU", n=S, nl_length=1e-3)
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
-        A, A_sq = simu._prepare_output_array(E_in, normalize=True)
-        plans = simu._build_fft_plan(A)
-        prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
 
-        # Single precision path with nl_length
-        simu.split_step(A, A_sq, None, prop, plans, DZ_TEST, splitting="lie")
-        assert np.isfinite(A).all()
+# Old test name -> (constructor overrides, potential or not, out_field keywords).
+CNLSE_RUNS = {
+    "coupled_propagation": ({}, False, {}),
+    "cnlse_rk4_propagation": ({}, False, {"method": "RK4"}),
+    "cnlse_rk4_nonlocal": ({"nl_length": 1e-3}, False, {"method": "RK4"}),
+    "double_precision_without_V": ({}, False, {"splitting": "strang"}),
+    "single_precision_with_V": ({}, True, {"splitting": "lie"}),
+    "double_precision_with_V": ({}, True, {"splitting": "strang"}),
+    "rabi_coupling": ({"omega": 1e3}, False, {"splitting": "lie"}),
+    "nonlocal_propagation": ({"nl_length": 1e-3}, False, {}),
+    "nonlocal_double_precision": ({"nl_length": 1e-3}, False, {"splitting": "strang"}),
+    "nonlocal_with_V": ({"nl_length": 1e-3}, True, {}),
+}
 
-    def test_nonlocal_with_V(self):
-        """Split step with nl_length > 0 and potential."""
-        simu = make_nlse("CPU", n=S, nl_length=1e-3)
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
-        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
-        A, A_sq = simu._prepare_output_array(E_in, normalize=True)
-        plans = simu._build_fft_plan(A)
-        prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
 
-        simu.split_step(A, A_sq, V, prop, plans, DZ_TEST, splitting="lie")
-        assert np.isfinite(A).all()
-
-    def test_nonlocal_double_precision(self):
-        """Double precision split step with nl_length > 0."""
-        simu = make_nlse("CPU", n=S, nl_length=1e-3)
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
-        A, A_sq = simu._prepare_output_array(E_in, normalize=True)
-        plans = simu._build_fft_plan(A)
-        prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
-
-        simu.split_step(A, A_sq, None, prop, plans, DZ_TEST, splitting="strang")
-        assert np.isfinite(A).all()
+@pytest.mark.parametrize("case", sorted(CNLSE_RUNS))
+def test_cnlse_run_is_finite(case):
+    """A CPU CNLSE run on each code path returns finite, non-empty components."""
+    overrides, with_V, run = CNLSE_RUNS[case]
+    simu = make_cnlse("CPU", n=S, **overrides)
+    if with_V:
+        simu.V = grid_bump(simu)
+    E_out = simu.out_field(beam_pair(simu), L, verbose=False, plot=False, **run)
+    assert E_out.shape == (2, S, S)
+    assert np.isfinite(E_out).all(), f"CNLSE output contains NaN/Inf ({case})"
+    assert np.sum(np.abs(E_out[0]) ** 2) > 0, "Component 0 has zero power"
+    assert np.sum(np.abs(E_out[1]) ** 2) > 0, "Component 1 has zero power"
 
 
 class TestNLSERK4:
     """Tests for RK4 propagation scheme."""
 
-    def test_rk4_propagation(self):
-        """RK4 scheme produces valid output."""
-        simu = make_nlse("CPU", n=S)
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
-
-        E_out = simu.out_field(
-            E_in,
-            L,
-            verbose=False,
-            plot=False,
-            splitting="RK4",
-        )
-        assert E_out.shape == (S, S)
-        assert np.isfinite(E_out).all(), "RK4 output contains NaN/Inf"
-
     def test_rk4_single_step_with_potential(self):
         """RK4 single step with potential exercises the V code path."""
         simu = make_nlse("CPU", n=S)
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
-        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
-        A, _A_sq = simu._prepare_output_array(E_in, normalize=True)
+        A, _A_sq = simu._prepare_output_array(beam(simu), normalize=True)
         plans = simu._build_fft_plan(A)
         prop = simu._build_propagator_rk4(np.complex64)
-
-        # Just one step to exercise the code path
         A_before = A.copy()
-        simu.split_step_RK4(A, V, prop, plans, DZ_TEST)
-        # Field should have changed
+        simu.split_step_RK4(A, grid_bump(simu), prop, plans, DZ_TEST)
         assert not np.allclose(A, A_before)
-
-    def test_rk4_nonlocal(self):
-        """RK4 scheme with nl_length > 0."""
-        simu = make_nlse("CPU", n=S, nl_length=1e-3)
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
-
-        E_out = simu.out_field(
-            E_in,
-            L,
-            verbose=False,
-            plot=False,
-            splitting="RK4",
-        )
-        assert np.isfinite(E_out).all()
 
     def test_rk4_power_conservation(self):
         """RK4 with alpha=0 conserves the norm."""
@@ -925,37 +444,15 @@ class TestNLSERK4:
             err_msg="Norm not conserved with RK4 (alpha=0)",
         )
 
-    def test_rk4_power_decay(self):
-        """RK4 with alpha>0 gives expected exponential power decay."""
-        test_alpha = 10.0
-        simu = make_nlse("CPU", n=S, alpha=test_alpha, n2=1e-10, Isat=1e20)
-
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
-        E_out = simu.out_field(
-            E_in, L, verbose=False, plot=False, normalize=False, method="RK4"
-        )
-
-        power_in = np.sum(np.abs(E_in) ** 2) * simu.delta_X * simu.delta_Y
-        power_out = np.sum(np.abs(E_out) ** 2) * simu.delta_X * simu.delta_Y
-
-        expected_ratio = np.exp(-test_alpha * L)
-        actual_ratio = power_out / power_in
-        rel_error = np.abs(actual_ratio - expected_ratio) / expected_ratio
-        assert rel_error < 0.01, f"RK4 power decay incorrect: {rel_error:.2%} error"
-
     def test_rk4_method_parameter(self):
         """method='RK4' produces same result as splitting='RK4' (backward compat)."""
         simu1 = make_nlse("CPU", n=S)
         simu2 = make_nlse("CPU", n=S)
-        XX, YY = np.meshgrid(simu1.X, simu1.Y)
-        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
-
+        E_in = beam(simu1)
         E_old = simu1.out_field(
             E_in.copy(), L, verbose=False, plot=False, splitting="RK4"
         )
         E_new = simu2.out_field(E_in.copy(), L, verbose=False, plot=False, method="RK4")
-
         np.testing.assert_allclose(
             E_new,
             E_old,
@@ -967,49 +464,16 @@ class TestNLSERK4:
 class TestCNLSERK4:
     """Tests for CNLSE RK4 propagation scheme."""
 
-    def test_cnlse_rk4_propagation(self):
-        """CNLSE RK4 produces valid output."""
-        n12_local = 0.5e-9
-        simu = make_cnlse("CPU", n=S, n12=n12_local)
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        E_in = np.zeros((2, S, S), dtype=PRECISION_COMPLEX)
-        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
-        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
-
-        E_out = simu.out_field(E_in, L, verbose=False, plot=False, method="RK4")
-        assert E_out.shape == (2, S, S)
-        assert np.isfinite(E_out).all(), "CNLSE RK4 output contains NaN/Inf"
-
     def test_cnlse_rk4_with_potential(self):
         """CNLSE RK4 single step with potential exercises the V code path."""
-        n12_local = 0.5e-9
-        simu = make_cnlse("CPU", n=S, n12=n12_local)
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
-        E_in = np.zeros((2, S, S), dtype=PRECISION_COMPLEX)
-        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
-        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
-        A, _A_sq = simu._prepare_output_array(E_in, normalize=True)
+        simu = make_cnlse("CPU", n=S)
+        A, _A_sq = simu._prepare_output_array(beam_pair(simu), normalize=True)
         plans = simu._build_fft_plan(A)
         prop = simu._build_propagator_rk4(np.complex64)
-
         A_before = A.copy()
-        simu.split_step_RK4(A, V, prop, plans, DZ_TEST)
+        simu.split_step_RK4(A, grid_bump(simu), prop, plans, DZ_TEST)
         assert np.isfinite(A).all(), "CNLSE RK4 with V produced NaN/Inf"
         assert not np.allclose(A, A_before), "Field unchanged after RK4 step with V"
-
-    def test_cnlse_rk4_nonlocal(self):
-        """CNLSE RK4 with nl_length > 0."""
-        n12_local = 0.5e-9
-        simu = make_cnlse("CPU", n=S, n12=n12_local, nl_length=1e-3)
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        E_in = np.zeros((2, S, S), dtype=PRECISION_COMPLEX)
-        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
-        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
-
-        E_out = simu.out_field(E_in, L, verbose=False, plot=False, method="RK4")
-        assert E_out.shape == (2, S, S)
-        assert np.isfinite(E_out).all()
 
 
 class TestNLSEOutField:
@@ -1018,10 +482,7 @@ class TestNLSEOutField:
     def test_verbose_output(self, capsys):
         """Verbose mode prints timing info."""
         simu = make_nlse("CPU", n=S)
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
-
-        simu.out_field(E_in, L, verbose=True, plot=False)
+        simu.out_field(beam(simu), L, verbose=True, plot=False)
         captured = capsys.readouterr()
         assert "Time spent to solve" in captured.out
 
@@ -1033,10 +494,7 @@ class TestNLSEOutField:
             call_count[0] += 1
 
         simu = make_nlse("CPU", n=S)
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
-
-        simu.out_field(E_in, L, verbose=False, plot=False, callback=my_callback)
+        simu.out_field(beam(simu), L, verbose=False, plot=False, callback=my_callback)
         assert call_count[0] > 0, "Callback was never called"
 
     def test_callback_list(self):
@@ -1050,11 +508,8 @@ class TestNLSEOutField:
             counts[idx] += 1
 
         simu = make_nlse("CPU", n=S)
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
-
         simu.out_field(
-            E_in,
+            beam(simu),
             L,
             verbose=False,
             plot=False,
@@ -1078,59 +533,27 @@ class TestNLSEOutField:
                 callback="not_a_callable",
             )
 
-    def test_normalize_false(self):
-        """normalize=False skips power normalization."""
-        simu = make_nlse("CPU", n=S)
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
-
-        E_out = simu.out_field(E_in, L, verbose=False, plot=False, normalize=False)
-        assert E_out.shape == (S, S)
-        assert np.isfinite(E_out).all()
-
-    def test_double_precision_out_field(self):
-        """Double precision propagation produces valid result."""
-        simu = make_nlse("CPU", n=S)
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
-
-        E_out = simu.out_field(E_in, L, verbose=False, plot=False, splitting="strang")
-        assert np.isfinite(E_out).all()
-
-    def test_double_precision_with_potential(self):
-        """Double precision propagation with V."""
-        simu = make_nlse("CPU", n=S)
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        simu.V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
-        E_in = np.exp(-(XX**2 + YY**2) / waist**2).astype(PRECISION_COMPLEX)
-
-        E_out = simu.out_field(E_in, L, verbose=False, plot=False, splitting="strang")
-        assert np.isfinite(E_out).all()
-
 
 class TestCNLSEExtended:
     """Extended CNLSE coverage tests on CPU."""
 
     def test_build_propagator(self):
         """CNLSE propagator has two components."""
-        n12_local = 0.5e-9
-        simu = make_cnlse("CPU", n=S, n12=n12_local)
+        simu = make_cnlse("CPU", n=S)
         prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
         assert prop.shape == (2, S, S)
         assert np.isfinite(prop).all()
 
     def test_propagator_caching(self):
         """CNLSE propagator is cached."""
-        n12_local = 0.5e-9
-        simu = make_cnlse("CPU", n=S, n12=n12_local)
+        simu = make_cnlse("CPU", n=S)
         prop1 = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
         prop2 = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
         assert prop1 is prop2
 
     def test_propagator_rk4(self):
         """CNLSE RK4 propagator."""
-        n12_local = 0.5e-9
-        simu = make_cnlse("CPU", n=S, n12=n12_local)
+        simu = make_cnlse("CPU", n=S)
         prop = simu._build_propagator_rk4(np.complex64)
         assert prop.shape == (2, S, S)
         # RK4 propagator should not be exponential (no delta_z)
@@ -1138,8 +561,7 @@ class TestCNLSEExtended:
 
     def test_take_components_cpu(self):
         """_take_components returns views on CPU."""
-        n12_local = 0.5e-9
-        simu = make_cnlse("CPU", n=S, n12=n12_local)
+        simu = make_cnlse("CPU", n=S)
         A = np.ones((2, S, S), dtype=PRECISION_COMPLEX)
         A[0] *= 2.0
         A[1] *= 3.0
@@ -1149,70 +571,9 @@ class TestCNLSEExtended:
         np.testing.assert_allclose(A1, 2.0)
         np.testing.assert_allclose(A2, 3.0)
 
-    def test_double_precision_without_V(self):
-        """CNLSE double precision split step without V."""
-        n12_local = 0.5e-9
-        simu = make_cnlse("CPU", n=S, n12=n12_local)
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        E_in = np.zeros((2, S, S), dtype=PRECISION_COMPLEX)
-        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
-        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
-
-        E_out = simu.out_field(E_in, L, verbose=False, plot=False, splitting="strang")
-        assert E_out.shape == (2, S, S)
-        assert np.isfinite(E_out).all()
-
-    def test_single_precision_with_V(self):
-        """CNLSE single precision with potential."""
-        n12_local = 0.5e-9
-        simu = make_cnlse("CPU", n=S, n12=n12_local)
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        simu.V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
-        E_in = np.zeros((2, S, S), dtype=PRECISION_COMPLEX)
-        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
-        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
-
-        E_out = simu.out_field(E_in, L, verbose=False, plot=False, splitting="lie")
-        assert E_out.shape == (2, S, S)
-        assert np.isfinite(E_out).all()
-
-    def test_double_precision_with_V(self):
-        """CNLSE double precision with potential."""
-        n12_local = 0.5e-9
-        simu = make_cnlse("CPU", n=S, n12=n12_local)
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        simu.V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
-        E_in = np.zeros((2, S, S), dtype=PRECISION_COMPLEX)
-        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
-        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
-
-        E_out = simu.out_field(E_in, L, verbose=False, plot=False, splitting="strang")
-        assert E_out.shape == (2, S, S)
-        assert np.isfinite(E_out).all()
-
-    def test_rabi_coupling(self):
-        """CNLSE with Rabi coupling (omega != None)."""
-        n12_local = 0.5e-9
-        omega = 1e3
-        simu = make_cnlse("CPU", n=S, n12=n12_local, omega=omega)
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        E_in = np.zeros((2, S, S), dtype=PRECISION_COMPLEX)
-        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
-        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
-
-        E_out = simu.out_field(E_in, L, verbose=False, plot=False, splitting="lie")
-        assert E_out.shape == (2, S, S)
-        assert np.isfinite(E_out).all()
-        # Rabi coupling should transfer some power between components
-        power_0 = np.sum(np.abs(E_out[0]) ** 2)
-        power_1 = np.sum(np.abs(E_out[1]) ** 2)
-        assert power_0 > 0, "Component 0 has zero power"
-        assert power_1 > 0, "Component 1 has zero power"
-
     def test_cnlse_prepare_output_normalize(self):
         """CNLSE _prepare_output_array normalizes both components."""
-        n12_local = 0.5e-9
-        simu = make_cnlse("CPU", n=S, n12=n12_local)
+        simu = make_cnlse("CPU", n=S)
         E_in = np.ones((2, S, S), dtype=PRECISION_COMPLEX)
         out, out_sq = simu._prepare_output_array(E_in, normalize=True)
 
@@ -1230,50 +591,9 @@ class TestCNLSEExtended:
             err_msg="CNLSE normalization failed",
         )
 
-    def test_nonlocal_propagation(self):
-        """CNLSE with nl_length > 0."""
-        n12_local = 0.5e-9
-        simu = make_cnlse("CPU", n=S, n12=n12_local, nl_length=1e-3)
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        E_in = np.zeros((2, S, S), dtype=PRECISION_COMPLEX)
-        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
-        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
-
-        E_out = simu.out_field(E_in, L, verbose=False, plot=False)
-        assert E_out.shape == (2, S, S)
-        assert np.isfinite(E_out).all()
-
-    def test_nonlocal_double_precision(self):
-        """CNLSE with nl_length > 0 and double precision."""
-        n12_local = 0.5e-9
-        simu = make_cnlse("CPU", n=S, n12=n12_local, nl_length=1e-3)
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        E_in = np.zeros((2, S, S), dtype=PRECISION_COMPLEX)
-        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
-        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
-
-        E_out = simu.out_field(E_in, L, verbose=False, plot=False, splitting="strang")
-        assert E_out.shape == (2, S, S)
-        assert np.isfinite(E_out).all()
-
-    def test_nonlocal_with_V(self):
-        """CNLSE with nl_length > 0 and potential."""
-        n12_local = 0.5e-9
-        simu = make_cnlse("CPU", n=S, n12=n12_local, nl_length=1e-3)
-        XX, YY = np.meshgrid(simu.X, simu.Y)
-        simu.V = 1e-4 * np.exp(-(XX**2 + YY**2) / (2e-3) ** 2).astype(np.float32)
-        E_in = np.zeros((2, S, S), dtype=PRECISION_COMPLEX)
-        E_in[0] = np.exp(-(XX**2 + YY**2) / waist**2)
-        E_in[1] = 0.5 * np.exp(-(XX**2 + YY**2) / (1.5 * waist) ** 2)
-
-        E_out = simu.out_field(E_in, L, verbose=False, plot=False)
-        assert E_out.shape == (2, S, S)
-        assert np.isfinite(E_out).all()
-
     def test_cnlse_power_conservation(self):
         """CNLSE with alpha=0 conserves total power."""
-        n12_local = 0.5e-9
-        simu = make_cnlse("CPU", n=S, alpha=0, n12=n12_local)
+        simu = make_cnlse("CPU", n=S, alpha=0)
         E_in = np.ones((2, S, S), dtype=PRECISION_COMPLEX)
         E_out = simu.out_field(E_in, L, verbose=False, plot=False)
 
@@ -1304,15 +624,6 @@ RK4_SOLVERS = {
 @pytest.mark.parametrize("solver_name", sorted(RK4_SOLVERS))
 def test_rk4_agrees_with_the_cpu(solver_name, backend_name):
     """RK4 must integrate the same equation on every backend.
-
-    Nothing compared RK4 across backends for the coupled 1d solver, and the
-    fused-path tests skip MLX for RK4, so CNLSE_1d on MLX ran 5% away from the
-    CPU without anything noticing. The cause was a shape test: the whole-step
-    fused kernel is for a single component and asked `A.ndim == 2`, which a
-    coupled 1d field (2, NX) also satisfies.
-
-    Every solver here, not only that one, because the guard it got wrong is
-    shared by all of them and each has a different field shape.
 
     Parameters
     ----------
@@ -1410,13 +721,6 @@ PLOTTABLE = {
 def test_plot_field_accepts_the_field_the_backend_holds(solver_name, backend_name):
     """plot_field is handed the running field, not a numpy copy of it.
 
-    The tests above pass a numpy array and run on the CPU, so they never saw
-    what plot_field is actually called with during a run: whatever array type
-    the backend keeps. NLSE_1d was the one solver not routing its argument
-    through _to_plot_array first, and called np.abs and np.angle straight on
-    it -- fine on the CPU and on MLX, "setting an array element with a
-    sequence" on CL.
-
     Parameters
     ----------
     solver_name : str
@@ -1438,31 +742,12 @@ def test_plot_field_accepts_the_field_the_backend_holds(solver_name, backend_nam
 class TestPlotField:
     """Tests for plot_field methods (uses Agg backend)."""
 
-    def test_nlse_plot_field(self):
-        """NLSE plot_field runs without error."""
-        import matplotlib.pyplot as plt
-
-        simu = make_nlse("CPU", n=S)
-        A = np.ones((S, S), dtype=PRECISION_COMPLEX)
-        simu.plot_field(A, L)
-        plt.close("all")
-
     def test_nlse_plot_field_3d(self):
         """NLSE plot_field with >2D array drops dims."""
         import matplotlib.pyplot as plt
 
         simu = make_nlse("CPU", n=S)
         A = np.ones((3, S, S), dtype=PRECISION_COMPLEX)
-        simu.plot_field(A, L)
-        plt.close("all")
-
-    def test_cnlse_plot_field(self):
-        """CNLSE plot_field runs without error."""
-        import matplotlib.pyplot as plt
-
-        n12_local = 0.5e-9
-        simu = make_cnlse("CPU", n=S, n12=n12_local)
-        A = np.ones((2, S, S), dtype=PRECISION_COMPLEX)
         simu.plot_field(A, L)
         plt.close("all")
 
@@ -1479,21 +764,8 @@ class TestPlotField:
         plt.close("all")
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 class TestPropagatorMatchesFieldDtype:
-    """The propagator must carry the same dtype as the field it multiplies.
-
-    The GPU kernels select their single- or double-precision variant from the
-    *field*, then index the propagator with that same variant. A complex128
-    propagator against a complex64 field is therefore read as pairs of
-    float32: CUPY returned NaN and it was written off as a driver limitation,
-    and Apple OpenCL, which has no fp64 at all, could not even build the
-    propagator.
-
-    The cause was `splitting`, which meant two things at once: the split-step
-    order (what the docstring documents) and the propagator's float width.
-    Only the first is `splitting` now; the width follows the input field.
-    """
+    """The propagator must carry the same dtype as the field it multiplies."""
 
     def test_propagator_follows_a_single_precision_field(self, backend):
         """A complex64 field must not produce a complex128 propagator."""
@@ -1509,11 +781,7 @@ class TestPropagatorMatchesFieldDtype:
         )
 
     def test_precision_double_needs_no_fp64(self, backend):
-        """The double-order split step must run on a device without fp64.
-
-        splitting="strang" is the splitting order, not float64. Requiring
-        fp64 for it made every fp64-less backend skip tests it could run.
-        """
+        """The double-order split step must run on a device without fp64."""
         simu = make_nlse(backend, n=64)
         E = np.exp(-(simu.XX**2 + simu.YY**2) / (2.23e-3) ** 2).astype(np.complex64)
         out = simu.out_field(E.copy(), L, verbose=False, plot=False, splitting="strang")

@@ -1,27 +1,9 @@
-"""Tests for merging the half steps of consecutive Strang steps.
-
-A Strang step is ``N(h/2) L(h) N(h/2)``, so a run of them is
-
-    N(h/2) [L(h) N(h)] ... [L(h) N(h)] N(-h/2)
-
-and the bracketed body is exactly a Lie step. Merging costs one nonlinear
-application for the whole run rather than one per step, and the loop body
-becomes the one ``splitting="lie"`` already runs.
-
-It is exact only where ``N(a) N(b) == N(a + b)``, which needs ``N`` to be the
-exact solution of the real-space equation over its own step: an absorbing
-potential breaks that, and plain loss used to. The tests that matter here are
-the ones checking the merge *declines*, because taking it where it does not
-hold changes the answer without failing anything else.
-"""
+"""Tests for merging the half steps of consecutive Strang steps."""
 
 import numpy as np
 import pytest
-from helpers import make
+from helpers import AVAILABLE_BACKENDS, make
 from NLSE import CNLSE, NLSE
-from NLSE.backends import list_available_backends
-
-AVAILABLE_BACKENDS = list_available_backends()
 
 N = 64
 L = 1e-3
@@ -69,12 +51,7 @@ def propagate(solver, coupled=False, phase=0.1):
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_merging_does_not_change_the_answer(backend_name):
-    """The merged run must agree with the unmerged one it stands for.
-
-    To round-off rather than exactly: the two compute the same rotation with
-    a different number of exponentials, and complex64 does not care that the
-    algebra is an identity.
-    """
+    """The merged run must agree with the unmerged one it stands for."""
     merged = propagate(build(backend_name))
     plain = build(backend_name)
     plain._lie_step_is_strang_body = False
@@ -88,11 +65,7 @@ def test_merging_does_not_change_the_answer(backend_name):
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_merging_keeps_the_accuracy_of_the_step_it_replaces(backend_name):
-    """Both must sit the same distance from a converged reference.
-
-    Agreeing with each other is not enough: two runs that made the same
-    mistake would agree too.
-    """
+    """Merged and unmerged runs sit the same distance from a converged reference."""
     reference = propagate(build(backend_name), phase=2e-3).astype(np.complex128)
 
     def distance(solver):
@@ -113,12 +86,7 @@ def test_merging_keeps_the_accuracy_of_the_step_it_replaces(backend_name):
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_the_loop_body_becomes_a_lie_step(backend_name):
-    """A merged run must actually take the cheaper body.
-
-    Nothing about the answer reveals this: the unmerged run gives the same
-    one, so a gate that stops matching costs only the nonlinear step it was
-    supposed to save.
-    """
+    """A merged run must actually take the cheaper body."""
     solver = build(backend_name)
     seen = []
     original = type(solver).split_step
@@ -153,16 +121,7 @@ def test_the_loop_body_becomes_a_lie_step(backend_name):
     ],
 )
 def test_the_merge_declines_where_it_is_not_exact(reason, overrides, cls):
-    """N(a) N(b) is N(a+b) only while N solves its own step exactly.
-
-    An absorbing potential's decay is applied frozen, so a second half step
-    sees an intensity the first one changed and the two are not one whole step.
-    Non-locality convolves the intensity, which the Lie body does too, but
-    the fast loop it needs is not taken there anyway.
-
-    Plain loss used to be on this list. It is not any more -- see
-    ``test_the_merge_is_taken_with_loss``.
-    """
+    """N(a) N(b) is N(a+b) only while N solves its own step exactly."""
     if overrides.get("V") == "complex":
         overrides = dict(overrides)
         overrides["V"] = (np.ones((N, N)) * 1e-3 + 1j * np.ones((N, N)) * 1e-4).astype(
@@ -176,18 +135,7 @@ def test_the_merge_declines_where_it_is_not_exact(reason, overrides, cls):
 
 
 def test_the_merge_is_taken_with_loss():
-    """Loss is no longer a reason to decline, and this is why it was.
-
-    A lossy run used to be refused the merge because the second half step saw
-    an intensity the first had damped, which cost real accuracy -- the test
-    that stood here measured it. What removed the reason is that the real-space
-    step is now solved rather than frozen (``_loss_factor`` in
-    kernels/cpu.py): both halves telescope, exactly, so the merged run and the
-    unmerged one are the same answer and the merge saves a kernel per step.
-
-    Measured rather than asserted structurally, in both directions: the merge
-    is taken, and taking it costs nothing against the run that does not.
-    """
+    """The merge is taken with loss, and costs nothing against the unmerged run."""
     solver = build("CPU", alpha=20)
     solver._precompute_step_constants(solver.V, np.complex64)
     assert solver._merges_strang_halves("strang"), (

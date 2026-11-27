@@ -1,15 +1,4 @@
-"""Comprehensive benchmarks for NLSE kernels and solvers.
-
-Benchmarks:
-1. Individual kernel functions (CPU backend, N=64)
-2. Single-component solver split_step methods (all backends)
-3. Coupled solver split_step methods (all backends)
-
-Every solver benchmark pins delta_z through _propagate, so a run is a fixed
-number of steps rather than however many the solver would choose. Left to the
-default, the workload moves whenever the way delta_z is derived moves, and
-timings stop being comparable across versions without anything looking wrong.
-"""
+"""Comprehensive benchmarks for NLSE kernels and solvers."""
 
 import numpy as np
 import pytest
@@ -47,18 +36,8 @@ g_k = 1e-3
 Isat_k = 1e4
 omega_k = 1e3
 
-# Steps a solver benchmark takes, per backend. Changing any of these changes
-# the timings here, so numbers either side of such a change are not comparable.
-#
-# One out_field call is a fixed setup -- FFT planning, propagator build, host
-# to device transfer -- plus the steps. Measured at NX=NY=64, the setup is
-# ~2.2 ms on MLX and ~2.8 ms on CL against per-step costs of 0.022 ms and
-# 0.37 ms. At ten steps for everyone, propagation was 9% of the MLX benchmark
-# and 57% of the CL one: they timed the constructor, not the solver, and no
-# regression alert could be set tight enough to mean anything.
-#
-# These give propagation at least ~80% of each run while keeping every
-# benchmark well under a second.
+# Steps per backend, so that propagation is >= 80% of each run (setup is
+# ~2-3 ms, a step 0.02-0.4 ms). Changing them breaks comparison with older numbers.
 BENCH_STEPS = {"CPU": 20, "CUPY": 200, "CL": 60, "MLX": 400}
 DEFAULT_BENCH_STEPS = 100
 
@@ -127,10 +106,6 @@ def _gaussian_field_2d(waist: float, x: np.ndarray, y: np.ndarray) -> np.ndarray
 
 def assert_written(out, before, name):
     """Fail unless a kernel's output is finite and no longer its input.
-
-    The kernels write in place into copies, so the arrays the test holds stay
-    as they were whatever the kernel does: only the copy it wrote can show
-    one that does nothing.
 
     Parameters
     ----------
@@ -500,12 +475,8 @@ class TestCoupledSolverBenchmark:
 
 
 # ── Coverage of the axes the benchmarks above leave out ──────────────────────
-#
-# Those cover one grid size, one method, one precision and no potential. The
-# groups below sweep the axes that actually change the cost, so a regression
-# in any of them shows up as a number rather than as a surprise in a user's
-# run. They are deliberately one axis at a time: a full cross product is
-# thousands of cases and nobody would run it.
+# One axis at a time (grid, method, precision, potential): a full cross
+# product would be thousands of cases.
 
 
 def _solver(backend, n, V=None, **overrides):
@@ -544,11 +515,7 @@ def _timed(benchmark, fn, rounds=10):
 
 @pytest.mark.benchmark(group="grid-scaling")
 class TestGridScaling:
-    """Cost against grid size.
-
-    FFT cost is O(N^2 log N) in the number of points, so a backend that
-    looks good at 64 can lose at 1024 and vice versa. One size hides that.
-    """
+    """Cost against grid size."""
 
     @pytest.mark.parametrize("n", [64, 128, 256, 512])
     @pytest.mark.parametrize("backend", BACKENDS)
@@ -567,12 +534,7 @@ class TestGridScaling:
 
 @pytest.mark.benchmark(group="methods")
 class TestMethodAndOrder:
-    """split_step against RK4, and the two split-step orders.
-
-    splitting="strang" splits the nonlinear step around the linear one, so
-    it costs a second nonlinear application per step; RK4 is four stages.
-    Neither was benchmarked.
-    """
+    """split_step against RK4, and the two split-step orders."""
 
     @pytest.mark.parametrize("splitting", ["lie", "strang"])
     @pytest.mark.parametrize("backend", BACKENDS)
@@ -599,13 +561,7 @@ class TestMethodAndOrder:
 
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_rk4_with_a_potential(self, benchmark, backend):
-        """Benchmark RK4 under a potential.
-
-        A potential dominates RK4's stability bound, so the step collapses
-        and this is far slower than the same run without one. That gap is
-        the point: it is what makes split_step the better choice whenever a
-        potential is strong, and it should be visible rather than folklore.
-        """
+        """Benchmark RK4 under a potential."""
         skip_if_backend_unavailable(backend)
         probe = _solver(backend, N)
         XX, YY = np.meshgrid(probe.X, probe.Y)
@@ -621,12 +577,7 @@ class TestMethodAndOrder:
 
 @pytest.mark.benchmark(group="potential")
 class TestPotential:
-    """No potential against a real one against a complex one.
-
-    A complex V takes a separate kernel that loads twice the data. The point
-    of benchmarking all three is to confirm the real path is not paying for
-    the complex one existing.
-    """
+    """No potential against a real one against a complex one."""
 
     @pytest.mark.parametrize("kind", ["none", "real", "complex"])
     @pytest.mark.parametrize("backend", BACKENDS)
@@ -648,13 +599,7 @@ class TestPotential:
 
 @pytest.mark.benchmark(group="batching")
 class TestBatching:
-    """Cost against batch size.
-
-    Broadcasting exists to make a parameter sweep cheaper than N separate
-    runs. That claim is worth measuring: CPU and CL loop over the batch per
-    kernel launch, so their gain is only in the FFTs, while CUPY and MLX
-    broadcast inside the kernels.
-    """
+    """Cost against batch size."""
 
     @pytest.mark.parametrize("count", [1, 2, 4, 8])
     @pytest.mark.parametrize("backend", BACKENDS)
@@ -669,12 +614,7 @@ class TestBatching:
 
 @pytest.mark.benchmark(group="float-width")
 class TestFloatWidth:
-    """complex64 against complex128 fields.
-
-    The field's dtype now drives the propagator's and the potential's, so
-    double precision is a real end-to-end fp64 run rather than a mixed one.
-    Skipped where the device has no fp64.
-    """
+    """complex64 against complex128 fields."""
 
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_double_precision_field(self, benchmark, backend):
@@ -689,12 +629,7 @@ class TestFloatWidth:
 
 @pytest.mark.benchmark(group="kernels-backend")
 class TestKernelsAcrossBackends:
-    """The individual kernels, on every backend rather than only CPU.
-
-    The kernel group above imports the CPU implementations directly, so a
-    change to a GPU kernel is invisible to it. These go through the backend's
-    own kernel object.
-    """
+    """The individual kernels, on every backend rather than only CPU."""
 
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_square_mod_nl_prop(self, benchmark, backend):

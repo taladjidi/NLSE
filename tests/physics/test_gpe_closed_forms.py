@@ -1,23 +1,9 @@
-"""GPE against closed forms, in the units it documents.
-
-The equation, with ``V`` and ``g`` the energies divided by hbar (rad/s and
-rad/s*m^2)::
-
-    i hbar dpsi/dt = -hbar^2/(2m) grad^2 psi + hbar (V + g|psi|^2) psi
-
-so a uniform condensate turns at ``-(V + g n)`` rad/s, ``V > 0`` repels,
-``g > 0`` is repulsive, and ``gamma`` empties the gas as
-``N(t) = N(0) exp(-gamma t)``. Each test isolates one term against that, on
-every backend, for the three splittings and for RK4.
-"""
+"""GPE against closed forms, in the units it documents."""
 
 import numpy as np
 import pytest
 from NLSE import GPE
-from NLSE.backends import list_available_backends
 from scipy.constants import atomic_mass, hbar
-
-AVAILABLE_BACKENDS = list_available_backends()
 
 # (method, splitting) pairs out_field accepts; RK4 ignores the splitting.
 SCHEMES = [
@@ -128,7 +114,6 @@ def evolve(simu, psi, t, method, splitting, delta_z=None):
     return np.asarray(simu._backend.to_numpy(out))
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize(("method", "splitting"), SCHEMES, ids=SCHEME_IDS)
 def test_a_uniform_gas_turns_at_minus_g_n(backend, method, splitting):
     """``psi(t) = sqrt(n) exp(-i g n t)``: repulsive g lowers the phase."""
@@ -144,7 +129,6 @@ def test_a_uniform_gas_turns_at_minus_g_n(backend, method, splitting):
     np.testing.assert_allclose(np.abs(out) ** 2, DENSITY, rtol=DENSITY_REL_TOL)
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize(("method", "splitting"), SCHEMES, ids=SCHEME_IDS)
 def test_saturation_divides_the_interaction_by_one_plus_n_over_sat(
     backend, method, splitting
@@ -162,7 +146,6 @@ def test_saturation_divides_the_interaction_by_one_plus_n_over_sat(
     np.testing.assert_allclose(np.abs(out) ** 2, DENSITY, rtol=DENSITY_REL_TOL)
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize(("method", "splitting"), SCHEMES, ids=SCHEME_IDS)
 def test_a_uniform_potential_turns_the_phase_at_minus_v(backend, method, splitting):
     """``psi(t) = psi(0) exp(-i V0 t)`` with V0 in rad/s."""
@@ -178,14 +161,9 @@ def test_a_uniform_potential_turns_the_phase_at_minus_v(backend, method, splitti
     )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize(("method", "splitting"), SCHEMES, ids=SCHEME_IDS)
 def test_gamma_empties_the_gas_exponentially(backend, method, splitting):
-    """``N(t) = N0 exp(-gamma t)``, and the phase ``-g n0 (1 - exp(-gamma t))/gamma``.
-
-    The phase is the interaction integrated over the decaying density, which
-    is what the lossy real-space step is solved from.
-    """
+    """Loss empties the gas as ``N0 exp(-gamma t)``, and its phase follows."""
     simu = uniform_gas(backend, g=G_INTERACTION, gamma=GAMMA)
     psi = np.ones((N_UNIFORM, N_UNIFORM), dtype=np.complex64)
     out = evolve(simu, psi, T_LOSS, method, splitting)
@@ -204,17 +182,11 @@ def test_gamma_empties_the_gas_exponentially(backend, method, splitting):
     )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize(("method", "splitting"), SCHEMES, ids=SCHEME_IDS)
 def test_the_trap_ground_state_turns_at_the_zero_point_energy(
     backend, method, splitting
 ):
-    """``V = m w^2 r^2 / (2 hbar)``: the ground state is stationary at ``-w t``.
-
-    ``exp(-r^2 / (2 l^2))`` with ``l = sqrt(hbar / (m w))`` is the 2D ground
-    state, of energy ``hbar w``: over several periods its density stays put
-    and its overlap with the initial state turns as ``exp(-i w t)``.
-    """
+    """The trap's ground state is stationary, its phase turning at ``-w t``."""
     simu = GPE(
         gamma=0,
         N=1.0,
@@ -249,13 +221,8 @@ def test_the_trap_ground_state_turns_at_the_zero_point_energy(
     )
 
 
-@pytest.mark.parametrize("backend", AVAILABLE_BACKENDS)
 def test_the_step_limits_see_the_rates_in_rad_per_s(backend):
-    """The step size is built from ``g n`` and ``V``, not a converted copy.
-
-    With the optical conversion left in, the potential came out 7e-26 of this
-    and the interaction 2e-28.
-    """
+    """The step size is built from ``g n`` and ``V``, not a converted copy."""
     simu = uniform_gas(backend, g=G_INTERACTION)
     simu.V = np.full((N_UNIFORM, N_UNIFORM), V_UNIFORM)
     psi = np.ones((N_UNIFORM, N_UNIFORM), dtype=np.complex64)

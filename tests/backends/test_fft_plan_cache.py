@@ -1,21 +1,10 @@
-"""FFT plans are built once per transform, not once per propagation.
-
-A plan depends only on the shape, the axes and the dtype, so rebuilding one
-per ``out_field`` call bought nothing and cost a great deal: VkFFT compiles
-its own kernels, and cuFFT allocates its work area.
-
-Caching is only safe because a plan is not bound to the array it was built
-with: FFTW, cuFFT and VkFFT all take their arrays at call time. The tests
-below pin that, since a plan that did capture its array would couple two
-solvers silently rather than fail.
-"""
+"""FFT plans are built once per transform, not once per propagation."""
 
 import numpy as np
 import pytest
+from helpers import AVAILABLE_BACKENDS
 from NLSE import NLSE
-from NLSE.backends import get_backend, list_available_backends
-
-AVAILABLE_BACKENDS = list_available_backends()
+from NLSE.backends import get_backend
 
 N = 32
 WAIST = 2.23e-3
@@ -99,11 +88,7 @@ def test_solvers_on_one_grid_share_a_plan(backend_name):
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_a_shared_plan_does_not_couple_solvers(backend_name):
-    """Sharing a plan must not let one solver's field reach another.
-
-    This is what makes the cache safe. A plan that captured the array it was
-    built with would silently mix two runs rather than fail.
-    """
+    """Sharing a plan must not let one solver's field reach another."""
     strong = solver(backend_name)
     weak = NLSE(NX=N, NY=N, backend=backend_name, **{**BASE, "n2": -1e-12})
     E = gaussian(strong)
@@ -137,13 +122,7 @@ def test_a_shared_plan_does_not_couple_solvers(backend_name):
 
 @pytest.mark.skipif("CL" not in AVAILABLE_BACKENDS, reason="OpenCL not available")
 def test_vkfft_apps_are_built_on_demand():
-    """Only the apps a run actually uses may be compiled.
-
-    _VkFFTPlan wraps three VkFFTApps and each compiles its own kernels. A
-    split-step run needs the in-place one, and the unnormalized one only
-    where the 1/N is folded into the propagator; the out-of-place one is
-    for RK4.
-    """
+    """Only the apps a run actually uses may be compiled."""
     backend = get_backend("CL")
     backend.clear_fft_plans()
     plan = backend.build_fft((N, N), (-2, -1), np.complex64)[0]

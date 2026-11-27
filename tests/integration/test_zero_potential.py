@@ -1,24 +1,9 @@
-"""A zero potential must propagate exactly like no potential at all.
-
-Every backend carries two spellings of each nonlinear kernel: one that reads
-``V`` and one that does not. The solvers pick between them on whether ``V`` is
-None, so the two are never exercised against each other by an ordinary run —
-they can drift apart, and a divergence shows up as a physics bug under a
-potential rather than as a failure here.
-
-Setting ``V = 0`` puts the two on the same physics, so they must agree to the
-last bit the arithmetic allows. That is the invariant that lets the no-V
-kernels be *generated* from the V ones rather than written out again: with V
-removed, the generated twin is the same instruction stream, so the check is
-also what pins the generation itself.
-"""
+"""A zero potential must propagate exactly like no potential at all."""
 
 import numpy as np
 import pytest
+from helpers import AVAILABLE_BACKENDS
 from NLSE import CNLSE, GPE, NLSE
-from NLSE.backends import list_available_backends
-
-AVAILABLE_BACKENDS = list_available_backends()
 
 N = 64
 WAIST = 2.23e-3
@@ -95,11 +80,7 @@ def test_nlse_zero_potential_matches_no_potential(backend_name, method):
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_nlse_zero_potential_matches_under_saturation(backend_name):
-    """The saturated branch must agree too.
-
-    Isat scales the whole nonlinear coefficient, so a kernel that mishandled
-    it would still pass the unsaturated check above.
-    """
+    """A zero potential matches no potential under saturation too."""
     params = {**BASE, "Isat": 1e2}
     bare = NLSE(V=None, backend=backend_name, **params)
     E = field(bare)
@@ -114,11 +95,7 @@ def test_nlse_zero_potential_matches_under_saturation(backend_name):
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_nlse_zero_potential_matches_with_loss(backend_name):
-    """A nonzero alpha must agree too.
-
-    Loss shares the real part of the exponent with the imaginary part of V, so
-    it is the term a complex-V twin is most likely to disturb.
-    """
+    """A zero potential matches no potential under loss too."""
     params = {**BASE, "alpha": 1.0}
     bare = NLSE(V=None, backend=backend_name, **params)
     E = field(bare)
@@ -180,11 +157,7 @@ def test_cnlse_zero_potential_matches_no_potential(backend_name, method):
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_cnlse_zero_potential_matches_under_rabi_coupling(backend_name):
-    """Rabi coupling routes CNLSE through the interleaved coupled kernels.
-
-    Those are a separate pair from the ones above, and only a run with omega
-    set reaches them.
-    """
+    """A zero potential matches no potential in CNLSE under Rabi coupling."""
     params = {**BASE, "n12": -1e-10, "omega": 1e3}
     bare = CNLSE(V=None, backend=backend_name, **params)
     E = np.zeros((2, N, N), dtype=np.complex64)

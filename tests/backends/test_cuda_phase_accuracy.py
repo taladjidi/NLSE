@@ -1,10 +1,4 @@
-"""The CUDA kernels' exp(i*phase) holds float32 accuracy at large phases.
-
-``--use_fast_math`` turned sincosf into __sincosf, whose error is 2^-21.41 on
-[-pi, pi] and grows with the phase outside it: 1.4e-4 at 1e3 rad on an RTX 3050.
-nl_prop with A = 1, |A|^2 = 0, no loss and dz = 1 returns exactly exp(i*V), so
-the potential carries the phase to sincosf unchanged.
-"""
+"""The CUDA kernels' exp(i*phase) holds float32 accuracy at large phases."""
 
 import numpy as np
 import pytest
