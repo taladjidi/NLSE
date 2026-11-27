@@ -35,6 +35,12 @@ from .step_size import (
 # every few steps, and an unbounded cache then holds a field per distinct step.
 PROPAGATOR_CACHE_SIZE = 8
 
+# Largest departure of the dispersion operator from one term per axis, as a
+# fraction of its largest element, at which the propagator is still built as a
+# product of one factor per axis. NLSE's and GPE's sit at round-off, 1.8e-16 to
+# 3.0e-16 measured at 256 to 4096 points; a cross term sits orders above.
+SEPARABLE_RTOL = 1e-12
+
 # Yoshida's triple jump, which makes a fourth-order step out of three Strang
 # ones: S4(h) = S2(w1 h) S2(w0 h) S2(w1 h), with 2*w1 + w0 = 1. The middle
 # weight is negative, which is what buys the order and what makes the scheme
@@ -117,8 +123,16 @@ class NLSE(StepSize):
     # plain attribute access rather than a getattr with a default at each site.
     _V_scaled: Any = None
     _propagator_fft: Any = None
+    # (twin, dtype, delta_z, cache_key): a twin _update_propagator_fft made
+    # from a propagator _build_propagator built, what for and under which
+    # state. Factors only while the twin and the state are both still these.
+    _propagator_fft_origin: tuple | None = None
     # Run state besides the step constants; _forget_run_state clears it.
-    _run_state_attrs: tuple[str, ...] = ("_V_scaled", "_propagator_fft")
+    _run_state_attrs: tuple[str, ...] = (
+        "_V_scaled",
+        "_propagator_fft",
+        "_propagator_fft_origin",
+    )
     # Key, dispersion eigenvalues and their largest magnitude, for the last
     # configuration only: one float64 grid, 33.5 MB at 2048x2048.
     _eigenvalues: tuple[tuple, np.ndarray, float] | None = None
@@ -605,6 +619,7 @@ class NLSE(StepSize):
                 self._constant("_alpha_half"),
                 self._constant("_g"),
                 self._constant("_Isat_conv"),
+                factors=self._propagator_fft_factors(prop, A.size // A.shape[-1]),
             ):
                 return A
         A = self._apply_linear_step(A, propagator, plans)
@@ -704,6 +719,7 @@ class NLSE(StepSize):
         its pre-normalized twin because ``_fused_propagator`` reads that twin
         off the solver rather than off its argument, so swapping one without
         the other would hand a kernel a propagator built for another distance.
+        The twin's origin goes with it, or the sub-step is offered no factors.
 
         Parameters
         ----------
@@ -715,18 +731,18 @@ class NLSE(StepSize):
         Returns
         -------
         list
-            ``(propagator, propagator_fft)`` for each sub-step, in order.
+            ``_linear_state()`` for each sub-step, in order.
         """
-        saved = (self.propagator, self._propagator_fft)
-        pairs = []
+        saved = self._linear_state()
+        states = []
         try:
             for weight in YOSHIDA_WEIGHTS:
                 self.propagator = self._build_propagator(dtype, weight * delta_z)
                 self._send_propagator_to_gpu()
-                pairs.append((self.propagator, self._propagator_fft))
+                states.append(self._linear_state())
         finally:
-            self.propagator, self._propagator_fft = saved
-        return pairs
+            self._restore_linear_state(saved)
+        return states
 
     def split_step_yoshida(
         self,
@@ -753,8 +769,7 @@ class NLSE(StepSize):
         V : np.ndarray or None
             Potential.
         propagators : list
-            ``(propagator, propagator_fft)`` per sub-step, from
-            ``_yoshida_propagators``.
+            ``_linear_state()`` per sub-step, from ``_yoshida_propagators``.
         plans : list
             FFT plans.
         delta_z : float
@@ -765,17 +780,15 @@ class NLSE(StepSize):
         np.ndarray
             The field.
         """
-        saved = (self.propagator, self._propagator_fft)
+        saved = self._linear_state()
         try:
-            for (propagator, propagator_fft), weight in zip(
-                propagators, YOSHIDA_WEIGHTS
-            ):
-                self.propagator, self._propagator_fft = propagator, propagator_fft
+            for state, weight in zip(propagators, YOSHIDA_WEIGHTS):
+                self._restore_linear_state(state)
                 A = self.split_step(
-                    A, A_sq, V, propagator, plans, weight * delta_z, "strang"
+                    A, A_sq, V, self.propagator, plans, weight * delta_z, "strang"
                 )
         finally:
-            self.propagator, self._propagator_fft = saved
+            self._restore_linear_state(saved)
         return A
 
     def split_step_RK4(
@@ -1274,13 +1287,136 @@ class NLSE(StepSize):
         cache_key = self._propagator_cache_key(dtype, delta_z)
         if cache_key in self._propagator_cache:
             self._propagator_cache.move_to_end(cache_key)
-            return self._propagator_cache[cache_key]
+            return self._propagator_cache[cache_key][0]
         operator = self._dispersion_on_device(dtype)
         propagator = self._backend.exp(operator * np.dtype(dtype).type(delta_z))
-        self._propagator_cache[cache_key] = propagator
+        # Kept with what it was built for, so that _built_step can name the
+        # step of an array from its identity alone.
+        self._propagator_cache[cache_key] = (propagator, np.dtype(dtype), delta_z)
         while len(self._propagator_cache) > PROPAGATOR_CACHE_SIZE:
             self._propagator_cache.popitem(last=False)
         return propagator
+
+    def _built_step(self, propagator: Any) -> tuple | None:
+        """Return what ``_build_propagator`` built this very array for.
+
+        By identity against the arrays it still holds, so an array assigned
+        by hand, or one a subclass's override made of its own, has none.
+
+        Parameters
+        ----------
+        propagator : Any
+            The array to look up.
+
+        Returns
+        -------
+        tuple or None
+            ``(dtype, delta_z, cache_key)``, the key being the solver's state
+            at the build; None for an array it did not build.
+        """
+        for cache_key, (built, dtype, delta_z) in self._propagator_cache.items():
+            if built is propagator:
+                return dtype, delta_z, cache_key
+        return None
+
+    def _dispersion_axes(self) -> tuple | None:
+        """Split the dispersion operator into one term per axis, if it is so.
+
+        Returns
+        -------
+        tuple or None
+            ``(along_y, along_x)``, complex128, with the operator equal to
+            ``along_y[:, None] + along_x[None, :]`` to within SEPARABLE_RTOL;
+            None for an operator with a cross term, or not of one 2D grid.
+        """
+        cache_key = (*self._propagator_rk4_cache_key(), "axes")
+        if cache_key in self._dispersion_cache:
+            return self._dispersion_cache[cache_key]
+        operator = np.ascontiguousarray(
+            self._compute_propagator_rk4(), dtype=np.complex128
+        )
+        if operator.ndim == FUSED_TRANSFORM_AXES:
+            # Copied, or the cache would keep the whole grid alive through a view.
+            along_x = operator[0, :].copy()
+            along_y = operator[:, 0] - operator[0, 0]
+            departure = np.subtract(operator, along_x[None, :])
+            departure -= along_y[:, None]
+            residual = self._largest_modulus(departure, departure)
+            if residual <= SEPARABLE_RTOL * self._largest_modulus(operator, departure):
+                axes = (along_y, along_x)
+            else:
+                axes = None
+        else:
+            axes = None
+        self._dispersion_cache[cache_key] = axes
+        return axes
+
+    @staticmethod
+    def _largest_modulus(values: np.ndarray, scratch: np.ndarray) -> float:
+        """Return ``max |values|`` without allocating a grid.
+
+        Squares the real and imaginary parts into ``scratch`` and sums them in
+        place there, so ``scratch`` is overwritten; it may be ``values``.
+
+        Parameters
+        ----------
+        values : np.ndarray
+            C-contiguous complex128 grid.
+        scratch : np.ndarray
+            C-contiguous complex128 grid of the same shape.
+
+        Returns
+        -------
+        float
+            The largest modulus.
+        """
+        parts = scratch.view(np.float64)
+        np.square(values.view(np.float64), out=parts)
+        np.add(parts[..., 0::2], parts[..., 1::2], out=parts[..., 0::2])
+        return float(np.sqrt(parts[..., 0::2].max()))
+
+    def _separable_propagator(
+        self, dtype: np.dtype, delta_z: float, rows: int
+    ) -> tuple | None:
+        """Return the propagator as one factor per axis, on the device.
+
+        The product of the two is the propagator divided by the transform
+        size, as ``_propagator_fft`` is. Each factor is exponentiated in
+        complex128 and rounded once, to the field's width.
+
+        Parameters
+        ----------
+        dtype : np.dtype
+            Complex dtype of the field.
+        delta_z : float
+            Step the propagator advances by.
+        rows : int
+            Rows of the field, over the whole of a batch.
+
+        Returns
+        -------
+        tuple or None
+            ``(rows, columns)`` factors, or None where the dispersion has a
+            cross term.
+        """
+        axes = self._dispersion_axes()
+        if axes is None:
+            return None
+        cache_key = (*self._propagator_cache_key(dtype, delta_z), rows)
+        if cache_key in self._separable_cache:
+            self._separable_cache.move_to_end(cache_key)
+            return self._separable_cache[cache_key]
+        along_y, along_x = axes
+        n_fft = along_y.size * along_x.size
+        row_factors = np.tile(np.exp(along_y * delta_z) / n_fft, rows // along_y.size)
+        factors = (
+            self._backend.from_numpy(row_factors.astype(dtype)),
+            self._backend.from_numpy(np.exp(along_x * delta_z).astype(dtype)),
+        )
+        self._separable_cache[cache_key] = factors
+        while len(self._separable_cache) > PROPAGATOR_CACHE_SIZE:
+            self._separable_cache.popitem(last=False)
+        return factors
 
     def _dispersion_on_device(self, dtype: np.dtype) -> Any:
         """Return the dispersion operator, where the backend can use it.
@@ -1376,6 +1512,8 @@ class NLSE(StepSize):
 
         Must be called whenever ``self.propagator`` changes, otherwise the
         fused kernels keep using a propagator derived from the previous one.
+        Records the twin's origin where ``_build_propagator`` built the
+        propagator, which is what ``_propagator_fft_factors`` offers from.
         """
         if self._backend.supports_unnormalized_ifft and self.propagator is not None:
             N_fft = 1
@@ -1387,8 +1525,66 @@ class NLSE(StepSize):
                 else np.float64(1.0 / N_fft)
             )
             self._propagator_fft = self.propagator * inv_N
+            built = self._built_step(self.propagator)
+            self._propagator_fft_origin = (
+                None if built is None else (self._propagator_fft, *built)
+            )
         else:
             self._propagator_fft = None
+            self._propagator_fft_origin = None
+
+    def _propagator_fft_factors(self, propagator_fft: Any, rows: int) -> tuple | None:
+        """Return the twin a kernel is handed as one factor per axis, if known.
+
+        Only for the twin ``_update_propagator_fft`` recorded an origin for,
+        only while it is that very array, and only while the solver's cache
+        key for it is unchanged. Anything else gets None and the kernel reads
+        the full array.
+
+        Parameters
+        ----------
+        propagator_fft : Any
+            The pre-normalized propagator the kernel is handed.
+        rows : int
+            Rows of the field, over the whole of a batch.
+
+        Returns
+        -------
+        tuple or None
+            ``(rows, columns)`` from ``_separable_propagator``, or None.
+        """
+        origin = self._propagator_fft_origin
+        if origin is None or origin[0] is not propagator_fft:
+            return None
+        _, dtype, delta_z, cache_key = origin
+        # The factors are computed from the solver as it is now: a k or a grid
+        # changed since the build would give those of another propagator.
+        if self._propagator_cache_key(dtype, delta_z) != cache_key:
+            return None
+        return self._separable_propagator(dtype, delta_z, rows)
+
+    def _linear_state(self) -> tuple:
+        """Return what the linear step reads off the solver, to restore later.
+
+        A step on a propagator of its own swaps all three and puts them back
+        as one, so the twin's origin cannot describe another twin.
+
+        Returns
+        -------
+        tuple
+            ``(propagator, _propagator_fft, _propagator_fft_origin)``.
+        """
+        return (self.propagator, self._propagator_fft, self._propagator_fft_origin)
+
+    def _restore_linear_state(self, state: tuple) -> None:
+        """Put back what ``_linear_state`` returned.
+
+        Parameters
+        ----------
+        state : tuple
+            ``(propagator, _propagator_fft, _propagator_fft_origin)``.
+        """
+        self.propagator, self._propagator_fft, self._propagator_fft_origin = state
 
     # Choosing the step. The rates are expectation values over the field, and
     # everything else here is derived from them: the default, the two limits,
@@ -1773,8 +1969,11 @@ class NLSE(StepSize):
         # Bounded, least-recently-used. Dispersion operators live apart:
         # there are only a handful, one per grid and splitting, and evicting
         # one would cost the host build the propagators no longer pay.
-        self._propagator_cache: OrderedDict[tuple, Any] = OrderedDict()
+        self._propagator_cache: OrderedDict[tuple, tuple] = OrderedDict()
         self._dispersion_cache: dict[tuple, Any] = {}
+        # The propagator as one factor per axis, keyed as the propagators are
+        # and by the rows of a batch, bounded the same way.
+        self._separable_cache: OrderedDict[tuple, Any] = OrderedDict()
         # Host array and device copy of each attribute a run sent, by name.
         self._sent_arrays: dict[str, tuple[Any, Any]] = {}
         # The RK4 steppers reallocate every buffer when _rk4_k is missing.
@@ -2110,7 +2309,7 @@ class NLSE(StepSize):
         # Swapped rather than rebuilt afterwards: the solver should describe
         # the run it just did, not the sliver at the end of it.
         in_force = self._current_delta_z
-        saved = (self.propagator, self._propagator_fft)
+        saved = self._linear_state()
         if method != "RK4":
             self.propagator = self._build_propagator(dtype, remainder)
             self._send_propagator_to_gpu()
@@ -2119,7 +2318,7 @@ class NLSE(StepSize):
             step_factory(remainder)()
         finally:
             self._current_delta_z = in_force
-            self.propagator, self._propagator_fft = saved
+            self._restore_linear_state(saved)
 
     # The propagation loop, and what it switches off along the way.
     #

@@ -107,3 +107,32 @@ __device__ void nlse_store_nonlinear(void *dataOut, unsigned long long offset,
         info->dz, info->alpha, info->g, info->Isat);
 }
 // {{END_VBLOCK}}
+
+// The propagator of a dispersion that is one term per axis is one factor per
+// axis, rows[iy] * columns[ix], read from one value per row and per column
+// rather than per element. rows carries the 1/N and repeats over a batch.
+struct NlseSeparablePropagator {
+    const {{FP2_TYPE}} *rows;
+    const {{FP2_TYPE}} *columns;
+    unsigned long long nx;
+};
+
+__device__ void nlse_store_propagator_separable(void *dataOut,
+                                                unsigned long long offset,
+                                                {{FP2_TYPE}} element,
+                                                void *callerInfo,
+                                                void *sharedPointer) {
+    const NlseSeparablePropagator *info =
+        (const NlseSeparablePropagator *)callerInfo;
+    unsigned long long iy = offset / info->nx;
+    unsigned long long ix = offset - iy * info->nx;
+    {{FP2_TYPE}} a = info->rows[iy];
+    {{FP2_TYPE}} b = info->columns[ix];
+    {{FP2_TYPE}} p;
+    p.x = a.x * b.x - a.y * b.y;
+    p.y = a.x * b.y + a.y * b.x;
+    {{FP2_TYPE}} out;
+    out.x = element.x * p.x - element.y * p.y;
+    out.y = element.x * p.y + element.y * p.x;
+    (({{FP2_TYPE}} *)dataOut)[offset] = out;
+}

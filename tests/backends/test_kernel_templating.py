@@ -416,6 +416,7 @@ def code_of(source):
 # Every symbol cuFFT may be asked to link, from the source.
 CALLBACK_SYMBOLS = [
     *templating.STORE_CALLBACKS.values(),
+    templating.SEPARABLE_CALLBACK,
     *(templating.NONLINEAR_CALLBACK + suffix for suffix in SUFFIXES),
 ]
 

@@ -34,7 +34,12 @@ import pytest
 from helpers import WAIST, gaussian, make
 from NLSE import CNLSE, NLSE, NLSE_1d
 from NLSE.backends import get_backend, list_available_backends
-from NLSE.kernels.templating import NONLINEAR_CALLBACK, STORE_CALLBACKS, v_suffix
+from NLSE.kernels.templating import (
+    NONLINEAR_CALLBACK,
+    SEPARABLE_CALLBACK,
+    STORE_CALLBACKS,
+    v_suffix,
+)
 
 pytestmark = pytest.mark.skipif(
     "CUPY" not in list_available_backends(),
@@ -62,7 +67,20 @@ COMPLEX_V = (REAL_V * ABSORBING).astype(np.complex64)
 K_HALF = 1e6
 
 
-def propagate(fuse, cls=NLSE, shape=(N, N), dtype=np.complex64, physics=(), **kw):
+def no_separable_propagator(dtype, delta_z, rows):
+    """Stand-in for ``NLSE._separable_propagator`` that offers no factors."""
+    return None
+
+
+def propagate(
+    fuse,
+    cls=NLSE,
+    shape=(N, N),
+    dtype=np.complex64,
+    physics=(),
+    separable=False,
+    **kw,
+):
     """Propagate with the fusion allowed or not, and report what fused.
 
     ``NLSE_FUSE_PROPAGATOR`` is read when a plan is built and plans outlive the
@@ -82,6 +100,9 @@ def propagate(fuse, cls=NLSE, shape=(N, N), dtype=np.complex64, physics=(), **kw
         Complex width of the field.
     physics : dict
         Constructor arguments to override.
+    separable : bool
+        Whether the propagator may be read as one factor per axis. Off by
+        default, so that the comparisons here stay bitwise.
     **kw
         Passed on to ``out_field``.
 
@@ -95,6 +116,8 @@ def propagate(fuse, cls=NLSE, shape=(N, N), dtype=np.complex64, physics=(), **kw
     try:
         get_backend("CUPY").clear_fft_plans()
         simu = make(cls, "CUPY", n=N, **dict(physics))
+        if not separable:
+            simu._separable_propagator = no_separable_propagator
         out = simu.out_field(
             gaussian(shape, dtype=dtype),
             STEPS * DELTA_Z,
@@ -303,6 +326,9 @@ def test_one_dimension_still_propagates():
 # solved, and past it where it is frozen. All three run on one plan, so the
 # block's rewrite between them is under test too.
 STEP_PARAMETERS = [(1e-4, 0.0), (2e-4, 25.0), (1e-4, 1000.0)]
+# Largest ratio of the separable propagator's error to the full one's, both
+# against complex128. Measured 0.92-1.10 (numpy emulation, see the test).
+SEPARABLE_ERROR_RATIO = 1.5
 G = 1e3  # about 0.1 rad per 1e-4 step on a unit field
 ISAT = 1.0  # saturation at the field's own scale, so it is not the identity
 
@@ -352,3 +378,175 @@ def test_the_nonlinear_callback_is_the_kernel(monkeypatch, dtype, kind):
             f"dz={dz}, alpha={alpha}: the callback differs from the kernel by "
             f"{float(cp.abs(got - expected).max()):.3e}"
         )
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [{}, {"splitting": "yoshida", "physics": {"alpha": 0.0}}],
+    ids=["lie", "yoshida"],
+)
+def test_the_separable_propagator_is_as_accurate(kw):
+    """One factor per axis must cost no accuracy against a complex128 run.
+
+    Not bitwise: the factors are rounded on their own and multiplied per
+    element. Measured in a numpy emulation of this step, 5 to 50 steps at 64
+    to 1024 points, its error against complex128 was 0.92 to 1.10 times the
+    full propagator's; 1.5 leaves room and still catches a wrong factor.
+    Yoshida's sub-steps take factors of their own, at weight * delta_z, so
+    a factor built for the wrong sub-step fails it too.
+    """
+    reference, _ = propagate(True, dtype=np.complex128, **kw)
+    full, _ = propagate(True, **kw)
+    separable, kinds = propagate(True, separable=True, **kw)
+    assert SEPARABLE_CALLBACK in kinds, "the separable propagator was not taken"
+    scale = np.abs(reference).max()
+    err_full = np.abs(full - reference).max() / scale
+    err_separable = np.abs(separable - reference).max() / scale
+    assert err_separable <= SEPARABLE_ERROR_RATIO * err_full, (
+        f"separable error {err_separable:.2e} against full {err_full:.2e}"
+    )
+
+
+# Rows of the field the separable callback is checked on: half its columns, so
+# a callback that swaps the two axes reads past the end of one of its factors.
+NY = N // 2
+BATCH = 3  # fields on one plan, over which the row factors repeat
+# Largest difference between the separable and the full propagator's forward
+# transform, in eps of its largest element. Closed form: 2 for the factors'
+# product, rounded with or without a fused multiply-add, and 2 for the multiply
+# by the element that follows; doubled, since neither side is exact.
+SEPARABLE_ULPS = 8
+SENTINEL = 7 + 7j  # what a refused transform must leave in its output
+# How each refused call departs from one the plan takes.
+REFUSALS = [
+    "field shape",
+    "field dtype",
+    "field not contiguous",
+    "factor dtype",
+    "factor not 1D",
+    "factor not contiguous",
+    "columns size",
+    "rows size",
+    "fusion off",
+]
+
+
+def separable_arguments(cp, shape, dtype):
+    """Return a random field and random factors of its rows and its columns.
+
+    Parameters
+    ----------
+    cp : module
+        CuPy.
+    shape : tuple
+        Shape of the field, its last two axes the transformed ones.
+    dtype : np.dtype
+        Complex width of the field and the factors.
+
+    Returns
+    -------
+    tuple
+        ``(a, rows, columns)`` on the device; ``rows`` carries 1/N and
+        repeats over the batch, as ``NLSE._separable_propagator``'s does.
+    """
+    rng = np.random.default_rng(0)
+    host = rng.normal(size=shape) + 1j * rng.normal(size=shape)
+    n_fft = shape[-2] * shape[-1]
+    row_phase = np.exp(1j * rng.uniform(0, 2 * np.pi, size=shape[-2])) / n_fft
+    column_phase = np.exp(1j * rng.uniform(0, 2 * np.pi, size=shape[-1]))
+    rows = np.tile(row_phase, int(np.prod(shape[:-2], dtype=int)))
+    return (
+        cp.asarray(host.astype(dtype)),
+        cp.asarray(rows.astype(dtype)),
+        cp.asarray(column_phase.astype(dtype)),
+    )
+
+
+@pytest.mark.parametrize("dtype", [np.complex64, np.complex128])
+@pytest.mark.parametrize("shape", [(NY, N), (BATCH, NY, N)], ids=["one", "batch"])
+def test_the_separable_callback_is_the_full_propagator(monkeypatch, dtype, shape):
+    """The forward transform with the factors, against the one with their product.
+
+    Not bitwise: the callback forms each element's product itself.
+    """
+    cp = pytest.importorskip("cupy")
+    from NLSE.backends.cupy_backend import _CuFFTPlan
+
+    monkeypatch.delenv("NLSE_FUSE_PROPAGATOR", raising=False)
+    a, rows, columns = separable_arguments(cp, shape, dtype)
+    full = (rows[:, None] * columns[None, :]).reshape(shape)
+    plan = _CuFFTPlan(a, axes=(-2, -1))
+    expected = cp.empty_like(a)
+    got = cp.empty_like(a)
+    if not plan.fft_propagate(a, expected, full):
+        pytest.skip("this cuFFT will not fold the propagator into a transform")
+    if not plan.fft_propagate_separable(a, got, rows, columns):
+        if SEPARABLE_CALLBACK in plan._refused:
+            pytest.skip(f"this cuFFT will not link {SEPARABLE_CALLBACK}")
+        else:
+            pytest.fail(f"declined although cuFFT did not refuse {SEPARABLE_CALLBACK}")
+    bound = SEPARABLE_ULPS * np.finfo(dtype).eps * float(cp.abs(expected).max())
+    difference = float(cp.abs(got - expected).max())
+    assert difference <= bound, f"differs by {difference:.3e}, bound {bound:.3e}"
+
+
+def refused_arguments(cp, refusal, dtype):
+    """Return ``(a, rows, columns)`` departing from a taken call as named.
+
+    Parameters
+    ----------
+    cp : module
+        CuPy.
+    refusal : str
+        One of REFUSALS.
+    dtype : np.dtype
+        Complex width of the field the plan is built for.
+
+    Returns
+    -------
+    tuple
+        ``(a, rows, columns)`` on the device.
+    """
+    a, rows, columns = separable_arguments(cp, (NY, N), dtype)
+    wide = np.complex128
+    if refusal == "field shape":
+        a, rows, columns = separable_arguments(cp, (NY, N // 2), dtype)
+    elif refusal == "field dtype":
+        a, rows, columns = a.astype(wide), rows.astype(wide), columns.astype(wide)
+    elif refusal == "field not contiguous":
+        a = cp.asfortranarray(a)
+    elif refusal == "factor dtype":
+        rows = rows.astype(wide)
+    elif refusal == "factor not 1D":
+        rows = rows.reshape(NY, 1)
+    elif refusal == "factor not contiguous":
+        rows = cp.repeat(rows, 2)[::2]
+    elif refusal == "columns size":
+        columns = cp.ascontiguousarray(columns[1:])
+    elif refusal == "rows size":
+        rows = cp.ascontiguousarray(rows[1:])
+    elif refusal == "fusion off":
+        pass
+    else:
+        raise ValueError(f"no refusal named {refusal}")
+    return a, rows, columns
+
+
+@pytest.mark.parametrize("refusal", REFUSALS)
+def test_the_separable_callback_refuses_what_it_cannot_read(monkeypatch, refusal):
+    """Declined, with the output untouched, so the caller's fallback is whole."""
+    cp = pytest.importorskip("cupy")
+    from NLSE.backends.cupy_backend import _CuFFTPlan
+
+    if refusal == "fusion off":
+        monkeypatch.setenv("NLSE_FUSE_PROPAGATOR", "0")
+    else:
+        monkeypatch.delenv("NLSE_FUSE_PROPAGATOR", raising=False)
+    # complex64, so that "field dtype" and "factor dtype" can widen to differ.
+    plan = _CuFFTPlan(cp.zeros((NY, N), np.complex64), axes=(-2, -1))
+    a, rows, columns = refused_arguments(cp, refusal, np.complex64)
+    out = cp.full(a.shape, SENTINEL, dtype=a.dtype)
+    assert not plan.fft_propagate_separable(a, out, rows, columns), (
+        f"took a call with its {refusal}"
+    )
+    assert bool(cp.all(out == SENTINEL)), f"wrote the output with its {refusal}"

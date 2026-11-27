@@ -203,7 +203,7 @@ def _trial_propagation(simu: NLSE, A: np.ndarray, step: float, count: int):
     )
     # The propagator is built from the step, so a trial at another step needs
     # its own, and the run's has to come back whatever happens.
-    saved = (simu.propagator, simu._propagator_fft)
+    saved = simu._linear_state()
     try:
         simu.propagator = simu._build_propagator(dtype, step)
         simu._send_propagator_to_gpu()
@@ -212,7 +212,7 @@ def _trial_propagation(simu: NLSE, A: np.ndarray, step: float, count: int):
                 trial, scratch, simu.V, simu.propagator, simu.plans, step, "strang"
             )
     finally:
-        simu.propagator, simu._propagator_fft = saved
+        simu._restore_linear_state(saved)
     return trial
 
 

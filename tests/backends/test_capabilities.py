@@ -162,6 +162,7 @@ def test_fused_signatures_accept_the_documented_arguments(backend_name):
             "alpha",
             "g",
             "Isat",
+            "factors",
         ],
         "rk4_rhs_fused": [
             "A_in",

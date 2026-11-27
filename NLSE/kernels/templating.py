@@ -193,6 +193,9 @@ CUDA_TYPES = {
 # carry the suffix ``v_suffix`` gives the potential.
 NONLINEAR_CALLBACK = "nlse_store_nonlinear"
 
+# The store callback that builds the propagator from one factor per axis.
+SEPARABLE_CALLBACK = "nlse_store_propagator_separable"
+
 # NlseNonlinear's scalars after the potential's address, in order. The struct
 # in fft_callbacks.cu is rendered from this and nonlinear_words packs from it,
 # so the device and the host cannot read the block in different orders.
@@ -286,8 +289,8 @@ def store_callbacks_source(dtype) -> str:
     Returns
     -------
     str
-        The CUDA C defining every callback in ``STORE_CALLBACKS`` and the
-        three twins of ``NONLINEAR_CALLBACK``.
+        The CUDA C defining every callback in ``STORE_CALLBACKS``,
+        ``SEPARABLE_CALLBACK`` and the three twins of ``NONLINEAR_CALLBACK``.
 
     """
     source = NONLINEAR_SOURCE.read_text() + CALLBACK_SOURCE.read_text()
