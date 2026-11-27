@@ -200,6 +200,21 @@ def test_a_coupled_strang_run_keeps_its_cross_coupling(backend_name):
     )
 
 
+def run_rk4(backend_name, splitting):
+    """Return an RK4 run of the solver's own step, asked for this splitting."""
+    solver = build(backend_name)
+    out = solver.out_field(
+        beam(), L, verbose=False, plot=False, splitting=splitting, method="RK4"
+    )
+    return np.asarray(solver._backend.to_numpy(out))
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_an_rk4_run_ignores_the_splitting(backend_name):
+    """RK4 does not split, so no half step may bracket its run."""
+    assert np.array_equal(run_rk4(backend_name, "strang"), run_rk4(backend_name, "lie"))
+
+
 def test_a_driven_solver_opts_out():
     """DDGPE's step drives and adds noise, so it is not such a product."""
     from NLSE import DDGPE

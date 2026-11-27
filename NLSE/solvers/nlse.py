@@ -2517,7 +2517,8 @@ class NLSE(StepSize):
         V : np.ndarray or None
             Potential, needed to re-derive the constants outside the medium.
         """
-        merged = self._merges_strang_halves(splitting)
+        # RK4 does not split: bracketing its steps would change the run.
+        merged = method == "split_step" and self._merges_strang_halves(splitting)
         step = step_factory(delta_z, "lie" if merged else splitting)
         self._current_delta_z = delta_z
         start = 0.0
