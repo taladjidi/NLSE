@@ -76,16 +76,9 @@ def get_optimal_backend(
     return get_fastest_backend(grid_size, force_benchmark)
 
 
-# One backend instance per resolved name, shared by every solver.
-#
-# A backend owns a device connection, not per-simulation state: nothing
-# assigns to its attributes, and its kernels are compiled once and cached on
-# it. Handing out a fresh one per solver therefore bought nothing and cost a
-# whole OpenCL context and command queue each time, none of which are ever
-# released. A parameter sweep that builds a solver per point ran the process
-# out of file descriptors ("OSError: [Errno 24] Too many open files"), which
-# surfaces as every later test erroring in setup rather than as anything to
-# do with the solver that leaked.
+# One backend instance per resolved name, shared by every solver. A backend
+# holds a device connection and compiled kernels, not simulation state; one per
+# solver leaked an OpenCL context each and ran sweeps out of file descriptors.
 _BACKEND_CACHE: dict[str, Backend] = {}
 
 
@@ -133,11 +126,9 @@ def get_backend(name: str, grid_size: tuple = (2048, 2048)) -> Backend:
         name = get_optimal_backend(grid_size, force_benchmark=_FORCE_BENCHMARK)
         say(f"Auto-selected FFT backend: {name}")
 
-    # A backend that is not installed is answered with the fastest one that
-    # is, rather than by refusing: the backend is how a run goes, not what it
-    # computes, and a script that names one is portable only if naming it is
-    # a preference. A name that is not a backend at all is still an error --
-    # that is a typo, and guessing at it would hide the typo.
+    # A backend that is not installed falls back to the fastest one that is: the
+    # backend is how a run goes, not what it computes. An unknown name is a typo
+    # and still raises.
     builders: dict = {"CPU": (True, CPUBackend, "")}
     if _CUPY_AVAILABLE:
         builders["CUPY"] = (True, CUPYBackend, "")
@@ -189,26 +180,10 @@ def list_available_backends() -> list[str]:
     return backends
 
 
-# Fastest first, for when there is nothing measured to go on. A prior rather
-# than a measurement, and a coarse one, but not an arbitrary one: a device
-# backend beats the host at any grid worth using a device for, and the vendor's
-# own runtime beats a portable layer over the same device. Putting one step on
-# the GPU costs 0.011 ms through CuPy and 0.05 ms through MLX against 0.44 ms
-# through Apple's OpenCL (docs/optimization-log.md). CUPY and MLX never coexist,
-# so which of those two leads decides nothing.
-#
-# This is the order a *fallback* lands on, which is why it matters. Ranked by
-# availability instead -- which is what this did, and that list opens with CPU
-# -- asking for MLX on a CUDA box was answered with the host, past two device
-# backends that were installed and faster.
+# Fastest first, a prior for when nothing is measured (docs/optimization-log.md):
+# a device beats the host and a vendor runtime beats a portable layer. It is
+# what a fallback lands on, so it must not open with CPU.
 _ASSUMED_SPEED_ORDER = ("CUPY", "MLX", "CL", "CPU")
-
-
-def _assumed_rank(name: str) -> int:
-    """Return where a backend sits in the static order; unknown names last."""
-    if name in _ASSUMED_SPEED_ORDER:
-        return _ASSUMED_SPEED_ORDER.index(name)
-    return len(_ASSUMED_SPEED_ORDER)
 
 
 def backends_by_speed(grid_size: tuple = (2048, 2048)) -> list[str]:
@@ -239,7 +214,7 @@ def backends_by_speed(grid_size: tuple = (2048, 2048)) -> list[str]:
     available = list_available_backends()
     cache = load_benchmark_cache()
     if cache is None or tuple(cache.get("grid_size", [])) != tuple(grid_size):
-        return sorted(available, key=_assumed_rank)
+        return sorted(available, key=_ASSUMED_SPEED_ORDER.index)
     times = {
         name: entry.get("time_ms")
         for name, entry in (cache.get("results") or {}).items()
@@ -250,7 +225,7 @@ def backends_by_speed(grid_size: tuple = (2048, 2048)) -> list[str]:
         key=lambda name: (
             times.get(name) is None,
             times.get(name, 0.0),
-            _assumed_rank(name),
+            _ASSUMED_SPEED_ORDER.index(name),
         ),
     )
 

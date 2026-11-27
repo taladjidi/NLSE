@@ -15,14 +15,10 @@ import numpy as np
 
 from ..utils import machine_identity, say, write_json_atomically
 
-# Bumped whenever a cached timing stops meaning what it meant, so that a cache
-# written before the change is discarded rather than believed. It was written
-# into every cache from the start and never read, which is the same as not
-# having one: at 2 because the CPU backend's transform moved from pyFFTW to
-# scipy and got several times faster, and until this was compared, "auto"
-# would go on preferring whatever had beaten the old CPU timing -- for the
-# thirty days the only other check, the cache's age, allowed.
-CACHE_VERSION = "2"
+# Bumped whenever a cached timing stops meaning what it meant, so an older
+# cache is discarded rather than believed. 2: the CPU FFT moved from pyFFTW to
+# scipy. 3: the CUPY timing waits on the stream instead of copying to the host.
+CACHE_VERSION = "3"
 
 
 class BackendResult(TypedDict):
@@ -50,26 +46,6 @@ class BenchmarkResults(TypedDict):
     platform: PlatformInfo
     results: dict[str, BackendResult]
     fastest: str | None
-
-
-def _synchronize_backend(backend: Any, array: Any) -> None:
-    """Ensure GPU operations complete before timing.
-
-    Parameters
-    ----------
-    backend : Any
-        Backend instance
-    array : Any
-        Array to synchronize
-    """
-    if backend.name == "MLX":
-        import mlx.core as mx
-
-        mx.eval(array)
-    elif hasattr(array, "get"):  # CuPy
-        array.get()
-    elif hasattr(array, "queue"):  # OpenCL
-        array.queue.finish()
 
 
 def benchmark_backend(
@@ -111,7 +87,7 @@ def benchmark_backend(
             backend.ifft(A, plans)
 
         # Synchronize for GPU backends
-        _synchronize_backend(backend, A)
+        backend.synchronize(A)
 
         # Timed trials
         times = []
@@ -119,7 +95,7 @@ def benchmark_backend(
             t0 = time.perf_counter()
             backend.fft(A, plans)
             backend.ifft(A, plans)
-            _synchronize_backend(backend, A)
+            backend.synchronize(A)
             times.append((time.perf_counter() - t0) * 1000)
 
         return float(np.median(times))

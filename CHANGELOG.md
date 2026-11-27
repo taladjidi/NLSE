@@ -117,6 +117,9 @@ come first.
 
 ### Changed
 
+- **Backend benchmark caches are measured again, once.** The CuPy timing now
+  waits on the stream instead of copying the result to the host, so a cached
+  timing no longer compares with a new one; `CACHE_VERSION` 3 discards it.
 - **Development tooling runs from the lock.** The `dev` and `docs` extras are
   now dependency groups, so they no longer appear in the published metadata.
   `uv sync` installs the package with the dev tools on the Python in
