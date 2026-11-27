@@ -52,8 +52,14 @@ threading layer decides (`fix/ci-threading-layer-tests`). Still open:
   - `chore/debloat-repo`: done. Dead code in the examples and
     `benchmarks/roofline.py`, a duplicate image, dead CI and Sphinx settings,
     `.gitignore`. Reviewer: pass. `pyproject.toml` (task T6 of `repo.md`)
-    waits for the two packages below, since two of its ruff ignores depend
-    on them.
+    followed on `chore/pyproject-noop-settings`: 11 settings that change
+    nothing are gone (ruff, format, ty and the lock clean, 1930 tests
+    collected and `tests/test_packaging.py` 24 passed, before and after),
+    and the coverage pattern `"pass"` is anchored (B8: 4435 statements, 1397
+    missed becomes 4441 and 1400 on the same run). Not reviewed: one config
+    file, checked by those measurements. `CLAUDE.md` lines 86-87 still name
+    the `D100-D104` and `__init__.py` F401 ignores, of which `D101` and the
+    `__init__.py` one no longer exist: the owner's to update.
   - `test/debloat-tests`: done. `tests/` goes from 20558 to 17429 lines:
     duplicated cross-backend cases merged, 32 unread constants deleted,
     `AVAILABLE_BACKENDS` and the `backend` fixture defined once
