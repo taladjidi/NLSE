@@ -31,7 +31,9 @@ from scipy import fft as scipy_fft
 
 from .cpu import _square_mod_nl_prop_span, _square_mod_nl_prop_v_span
 
-ANONYMOUS = -1  # the fileno mmap takes for memory backed by no file
+# The fileno mmap takes for memory backed by no file:
+# https://docs.python.org/3/library/mmap.html#mmap.mmap
+ANONYMOUS = -1
 
 
 @numba.njit(nogil=True, cache=True, boundscheck=False)
