@@ -114,15 +114,11 @@ intersphinx_mapping = {
     "scipy": ("https://docs.scipy.org/doc/scipy/", None),
 }
 
-templates_path = ["_templates"]
 # myst-nb registers .ipynb as a source suffix, and sphinx-gallery writes one
 # next to every .rst it generates, so Sphinx sees two candidate documents
 # per example. The notebooks are downloads, not pages.
 exclude_patterns = [
     "_build",
-    "Thumbs.db",
-    ".DS_Store",
-    "README.md",
     "auto_examples/**/*.ipynb",
     "auto_examples/*.ipynb",
 ]

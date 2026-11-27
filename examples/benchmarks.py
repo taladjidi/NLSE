@@ -94,28 +94,17 @@ custom_cycler = (
 )
 plt.rc("axes", prop_cycle=custom_cycler)
 
-PRECISION = "lie"
-if PRECISION == "strang":
-    PRECISION_REAL = np.float64
-    PRECISION_COMPLEX = np.complex128
-else:
-    PRECISION_REAL = np.float32
-    PRECISION_COMPLEX = np.complex64
+PRECISION_COMPLEX = np.complex64
 
 n2 = -1.99e-9
-n12 = -0.75e-10
 waist = 2.29e-3
-waist_d = 70e-6
 nl_length = 0
 d_real = 3.76e-6
-d_fourier = 5.5e-6
-f_fourier = 200e-3
 window = 3008 * d_real
 puiss = 1.05
 Isat = 3.92e4  # saturation intensity in W/m^2
 L = 2e-3
 alpha = 22
-dn = None
 N_avg = 2
 # A documentation build sets NLSE_DOCS_BUILD and gets the small sweep, so the
 # gallery shows a real graph made by this script rather than a placeholder.

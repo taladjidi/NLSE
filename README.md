@@ -415,7 +415,7 @@ from a measured error.
 ### Inheritance
 
 In order to minimize duplication, all classes inherit from the main `NLSE` class according to the following graph:
-![inheritance](img/inheritance_graph.png)
+![inheritance](docs/img/inheritance_graph.png)
 
 Each solver's propagation equation is written out in
 [Solvers Overview](docs/solvers_overview.md#the-equation-each-solver-integrates),

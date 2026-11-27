@@ -314,50 +314,6 @@ def cl_ceilings(working_bytes):
     return {"stream": stream, "fma": fma, "trans": m * int(tr) / t / 1e9}
 
 
-def mlx_ceilings(working_bytes):
-    """Measure the GPU's ceilings through MLX.
-
-    Every op feeds the next, so none can be dropped: a chain whose
-    intermediates nothing reads gets discarded and reports absurd rates.
-    """
-    import mlx.core as mx
-
-    n = max(working_bytes // 8, 1 << 14)
-    a = mx.random.uniform(shape=(n,)).astype(mx.complex64)
-    mx.eval(a)
-    noop = lambda: None  # noqa: E731
-
-    def chain(reps):
-        out = a
-        for _ in range(reps):
-            out = mx.multiply(out, complex(1.0000001))
-        mx.eval(out)
-
-    t = slope(chain, 8, noop)
-    stream = 2 * n * 8 / t / 1e9
-
-    real = mx.random.uniform(shape=(n,))
-    mx.eval(real)
-
-    def fma_chain(reps):
-        out = real
-        for _ in range(reps):
-            out = out * 1.0000001 + 1e-7
-        mx.eval(out)
-
-    t = slope(fma_chain, 8, noop)
-    fma = n * 2 / t / 1e9
-
-    def trans_chain(reps):
-        out = real
-        for _ in range(reps):
-            out = mx.sin(out) * mx.cos(out) * mx.exp(-mx.abs(out) * 1e-3)
-        mx.eval(out)
-
-    t = slope(trans_chain, 4, noop)
-    return {"stream": stream, "fma": fma, "trans": n / t / 1e9}
-
-
 def cupy_ceilings(working_bytes):
     """Measure the GPU's ceilings through CUDA C."""
     import cupy as cp

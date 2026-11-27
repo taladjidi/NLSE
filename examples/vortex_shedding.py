@@ -74,7 +74,6 @@ from NLSE import CNLSE
 from scipy.constants import c, epsilon_0
 from scipy.integrate import solve_ivp
 from scipy.ndimage import uniform_filter
-from scipy.optimize import brentq
 
 # The group's house style for curves.
 tab_colors = [
@@ -204,28 +203,6 @@ def transmission_of(alpha, peak, waist):
         return np.trapezoid(profile_r * 2 * np.pi * r, r)
 
     return power(solution.y[:, -1]) / power(profile)
-
-
-def alpha_for(transmission, peak, waist):
-    """Invert :func:`transmission_of` for the small-signal coefficient.
-
-    Parameters
-    ----------
-    transmission : float
-        Measured power transmission through the cell.
-    peak : float
-        Peak input intensity in W/m^2.
-    waist : float
-        Beam waist in m.
-
-    Returns
-    -------
-    float
-        The small-signal absorption coefficient in 1/m.
-    """
-    return brentq(
-        lambda a: transmission_of(a, peak, waist) - transmission, 1e-3, 5e3, xtol=1e-8
-    )
 
 
 def delta_n(intensity):
