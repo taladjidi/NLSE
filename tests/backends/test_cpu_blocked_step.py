@@ -27,7 +27,7 @@ from helpers import WINDOW, make
 from NLSE import GPE, NLSE
 from NLSE.backends import cpu_tuning, tune_cpu_step
 from NLSE.backends.cpu import CPUBackend
-from NLSE.kernels import cpu as kernels
+from NLSE.kernels import cpu as kernels, cpu_blocked
 from NLSE.kernels.cpu_blocked import HUGE_PAGE, BlockedStep, _shares, _wait
 from NLSE.utils import get_blocking_cache_path
 from scipy.constants import c, epsilon_0
@@ -65,6 +65,8 @@ THREADED_STEPS = 200  # steps each of two threads takes: long enough to overlap
 FORK_TIMEOUT = 60  # s a forked child gets for SOLVER_STEPS steps: ~1 s needed
 SLOW_SHARE = 0.05  # s a share still runs after another has failed
 PARENT_MARK, CHILD_MARK = 1, 2  # what each side of a fork fills its scratch with
+# Two blocks of one huge page each: scratch with no spare room of its own.
+WHOLE_PAGES = (2, (1, HUGE_PAGE // np.dtype(np.complex128).itemsize))
 # s a step of each candidate takes: the fastest neither first nor last.
 CANDIDATE_SECONDS = {"slow": 3.0, "fast": 1.0, "middling": 2.0}
 # s a step of each takes, round by round: the best of "early" is not its last.
@@ -354,6 +356,22 @@ def test_the_scratch_is_one_mapping_from_a_huge_page_boundary():
     assert starts[0] % HUGE_PAGE == 0
     assert np.diff(starts).tolist() == [blocks[0].nbytes] * (len(blocks) - 1)
     assert all(block.shape == (ROWS, NY) and block.flags.writeable for block in blocks)
+
+
+def off_boundary(size):
+    """Return ``size`` B of buffer starting one page past a huge-page boundary."""
+    mapped = mmap.mmap(cpu_blocked.ANONYMOUS, size + HUGE_PAGE)
+    address = np.frombuffer(mapped, np.uint8).ctypes.data
+    return memoryview(mapped)[-address % HUGE_PAGE + mmap.PAGESIZE :][:size]
+
+
+def test_the_scratch_fits_wherever_its_mapping_starts(monkeypatch):
+    """Catches a mapping without the huge page it takes to start on a boundary."""
+    monkeypatch.setattr(cpu_blocked, "_private_mapping", off_boundary)
+    count, shape = WHOLE_PAGES
+    blocks = cpu_blocked._scratch(count, shape, np.complex128)
+    assert blocks.shape == (count, *shape)
+    assert blocks.ctypes.data % HUGE_PAGE == 0
 
 
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="no fork on this platform")

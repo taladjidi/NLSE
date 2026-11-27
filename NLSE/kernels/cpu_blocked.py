@@ -34,6 +34,7 @@ from .cpu import _square_mod_nl_prop_span, _square_mod_nl_prop_v_span
 # B, the huge page of x86-64 and of arm64 on 4 KiB pages, where the scratch starts:
 # https://docs.kernel.org/admin-guide/mm/transhuge.html
 HUGE_PAGE = 2**21
+ANONYMOUS = -1  # the fileno mmap takes for memory backed by no file
 
 
 @numba.njit(nogil=True, cache=True, boundscheck=False)
@@ -185,8 +186,8 @@ def _private_mapping(size: int) -> mmap.mmap:
         The mapping, unmapped once nothing views it.
     """
     if sys.platform == "win32":
-        return mmap.mmap(-1, size)  # no flags there, and no fork to share over
-    mapped = mmap.mmap(-1, size, access=mmap.ACCESS_COPY)
+        return mmap.mmap(ANONYMOUS, size)  # shared, with no fork to share it over
+    mapped = mmap.mmap(ANONYMOUS, size, access=mmap.ACCESS_COPY)
     if hasattr(mmap, "MADV_HUGEPAGE"):
         try:
             mapped.madvise(mmap.MADV_HUGEPAGE)
@@ -218,7 +219,7 @@ def _scratch(count: int, shape: tuple, dtype: np.dtype) -> np.ndarray:
     np.ndarray
         ``(count, *shape)`` of zeros, starting on a ``HUGE_PAGE`` boundary.
     """
-    size = count * math.prod(shape) * dtype.itemsize
+    size = count * math.prod(shape) * np.dtype(dtype).itemsize
     # Whole huge pages, and one more to start on a boundary wherever it lands.
     mapped = _private_mapping(-(-size // HUGE_PAGE) * HUGE_PAGE + HUGE_PAGE)
     whole = np.frombuffer(mapped, np.uint8)
