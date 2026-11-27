@@ -312,6 +312,7 @@ def test_the_package_version_matches_the_project_metadata():
     from NLSE import __version__
 
     text = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    # A regex, not tomllib: tomllib is 3.11+ and the package supports 3.10.
     found = re.findall(r'^version *= *"([^"]+)"', text, re.MULTILINE)
     assert len(found) == 1, (
         f"expected exactly one top-level version in pyproject.toml, found "
