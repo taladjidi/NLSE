@@ -348,25 +348,99 @@ Decisions taken by the user:
   sizes, 20-26% slower is bearable. The most used config is power of 2 !" The
   shipped callback has no such gap (it was the stack spill); what is left is
   256², 3 µs a step slower, which the one-path decision keeps.
+- "Typical sizes are 1024, 2048 and 4096": a change is accepted or rejected
+  on those three grids. Other sizes are side information. 4096² needs 12
+  rounds or more on the RTX 3050 (8 rounds gave 0.88x and 0.99x for a 1.05x).
 
-Open, in this order:
+In progress, in this order:
 
-- **CuPy, a separable propagator** (spec 2:
-  `~/Documents/LKB/NLSE_tangui_fix_specs/cuda_fewer_passes_spec_2.{md,patch}`).
-  The forward callback would build the propagator from two vectors: 72 → 64
-  bytes a point, 0.89 to 0.95x of today's step in the prototype, not bitwise.
-  The patch no longer applies on top of spec 1 as merged
-  (`cupy_backend.py`, `templating.py`, `nlse.py`, the fusion tests): rebase
-  it, then implementer, reviewer, and the box. Drop it if the solver does not
-  show the prototype's gain.
-- Box scratch trees to delete once spec 2 is settled: `~/Documents/nlse_cpu32`
-  (`main` before spec 1), `nlse_cuda_fp` (this tree), `nlse_cuda_fp_x`,
-  `nlse_cuda_fp_lean` (a wrong-physics bisection copy).
-- **The CPU transform.** It is 60% of a step on the Mac and 90% on the box.
-  The log's rejections (pyFFTW on arm64, vDSP, thread counts) are being
-  re-checked against current libraries, and a hand-threaded transform that
-  owns its passes (and can fuse the propagator and the nonlinear step into
-  them) is to be prototyped. Not measured on x86 at all.
+- **CuPy, a separable propagator** (spec 2b, for `main` at 5113580):
+  `~/Documents/LKB/NLSE_tangui_fix_specs/cuda_fewer_passes_spec_2b.{md,patch}`
+  and `mutants_spec_2.py`. The forward store callback multiplies
+  `rows[iy] * columns[ix]` instead of reading the propagator: 72 → 64 bytes a
+  point. Not merged; on no branch yet.
+  - The tie between the twin the kernel would read and the factors it gets:
+    `_build_propagator` caches `(array, dtype, delta_z)`; `_built_step` finds
+    an array by identity; `_update_propagator_fft` records
+    `_propagator_fft_origin`; `_propagator_fft_factors` returns None unless
+    the origin is that very array. Every swap of the linear state goes
+    through `_linear_state` / `_restore_linear_state`. Any doubt gives None
+    and the kernel reads the full array.
+  - Measured on the patch as first delivered. Mac: suite 1492 passed, 155
+    skipped; 14 of 14 mutants killed. Box (RTX 3050, CuPy 14.2.0): suite 1468
+    passed, 67 skipped; the fusion file 41 passed, six times out of six.
+    complex64, lie, lossless, interleaved in one process, ms a step, full
+    against separable: 512² 0.088 / 0.079 (1.11x), 1024² 0.405 / 0.384
+    (1.05x, 16 rounds, twice), 2048² 1.629 / 1.552 (1.05x, 12 rounds), 4096²
+    8.876 / 8.484 (1.05x, 12 rounds). complex128: 0.99x. About 0.88x at 256².
+    Not bitwise: 8e-6 of max|A| in complex64, 1.3e-14 in complex128.
+  - Spec review: the design holds; six findings sent back to the architect
+    (agent `ad1da302c32593064`) in one round on 2026-11-27: a `k` changed
+    between the build and the step gets factors for the new `k`; two
+    untested expressions (`- operator[0, 0]`, `rows` in the cache key);
+    `_dispersion_axes` peaks at 1.8 GB at 4096²; duplicated test constants;
+    acceptance wording. Its answer was not back when this was written.
+  - Left: the architect's round, then implementer tasks A, B, C from the
+    spec in a worktree, reviewer, and on the box `ncu` (72 → 64 bytes), the
+    five CUDA-only mutants by hand, the share of the 208 GB/s peak. Then the
+    optimization log, CHANGELOG, `docs/backends.md`, merge.
+- Scratch to delete once it is merged. Box: `~/Documents/nlse_cuda_sp2`,
+  `nlse_cuda_sp2x`, `nlse_cuda_sp2b`, `nlse_cpu32`, `nlse_cuda_fp` (= `main`,
+  the tree the CPU prototypes import), `nlse_cuda_fp_x`, `nlse_cuda_fp_lean`.
+  Mac: worktrees `spec2` and `spec2b` in this session's scratchpad
+  (`git worktree list`), and older ones (`docs_tree`, `fix_tree`, `old_tree`,
+  `~/Documents/LKB/NLSE_wt/p1a…p7`) from earlier sessions.
+- **CPU: a step that owns its passes.** Measured as a prototype, not
+  designed or implemented. Three passes a step, each over blocks that fit a
+  core's cache, the field back in real space after each: transform the rows
+  | gather a block of columns, transform, multiply by the `y` factor,
+  transform back, scatter times the `x` factor | transform the rows back and
+  apply the nonlinear kernel. Python threads over static shares; every call
+  inside releases the GIL (scipy.fft 1D with `workers=1`, serial `nogil`
+  numba kernels). It fits the hook spec 2b adds
+  (`linear_nonlinear_step(..., factors=...)`), so it comes after it.
+  - Box (Ryzen 3 4100, 4 threads, lossless Kerr, ms a step, today's step
+    against the prototype, best of 4 rounds of 20 steps), each work buffer
+    512 KiB: complex64 1024² 8.23 / 6.80 (1.21x), 2048² 35.09 / 24.98
+    (1.40x), 4096² 145.4 / 98.3 (1.48x); complex128 13.82 / 10.63 (1.30x),
+    58.80 / 41.02 (1.43x), 279.0 / 179.4 (1.55x).
+  - The buffer must fit the core's L2 (512 KiB on the box): 1 MiB gives
+    0.58x at 4096² complex64. 128 KiB gives 1.01 to 1.15x. Eight logical
+    threads lose to four (1.17 to 1.30x): a pair shares one L2.
+  - Mac (M3 Max, 12 to 16 threads, machine not idle, the chunk rule not yet
+    run there): complex64 0.77x at 1024², 0.98x at 2048², 1.41x at 4096²;
+    complex128 0.92x, 1.21x, 1.46x. The field fits the 16 MiB L2 at 1024²
+    and three thread dispatches weigh on a 1.6 ms step. So a gate on the
+    field's size is likely, which is a split of paths: the user decides.
+  - The same passes threaded by scipy and numba alone (no Python threads)
+    do not win: 0.79 to 1.03x on the box in complex64. The gain is each
+    thread keeping its block in its own cache across the transform and the
+    kernel.
+  - A serial numba loop keeps Python's division check and does not
+    vectorize (15 against 2.5 ns a point on the box): the serial kernels
+    need `error_model="numpy"`. Two dispatchers made from one Python function
+    with `cache=True` share one cache entry on disk, whatever their options:
+    the second loads the first's machine code (reproduced). Serial twins of
+    the parallel kernels cannot be cached that way.
+  - ducc0 is 5 to 8% faster than scipy's transforms here, and GPL: not taken.
+  - Scripts and reports: `~/Documents/LKB/NLSE_tangui_fix_specs/cpu_fft/`
+    (`fused_proto.py`, `nl_serial_check.py`, `results_*.txt`), and on the box
+    `~/Documents/nlse_scratch_scripts/rep/cpu_fused*.txt`. The box venv is
+    `~/Documents/nlse_scratch_scripts/fftw_venv`.
+- **The CPU transform libraries**, re-checked on 2026-11-27, not yet in the
+  optimization log. Box, `fft2` + `ifft2` round trip against scipy 1.18.1:
+  at 2048² every library is within the floor (ducc0 0.98x, FFTW 1.00x in
+  complex64), which is where the transform is bound by memory; below, MKL is
+  1.56x at 1024² and 2.18x at 512² complex64, ducc0 1.12 to 1.23x, FFTW 1.80x
+  at 512² only. MKL returned a wrong result at 2048² complex64 on 4 threads
+  or more (round trip off by 1.4), so it is out. On the Mac, vDSP threaded by
+  hand stops scaling at 2 threads. Nothing taken: the gain at the typical
+  sizes is in the passes, above. Tables: `cpu_fft/results_box_libs.txt`,
+  `results_mac_vdsp.txt`. The docs call the
+  CPU transform "pocketfft"; the wording is to be checked against scipy's
+  docs (`NLSE/backends/cpu.py:14,67`, `docs/backends.md:9,109`,
+  `docs/installation.md:96`, `README.md:136`, `CLAUDE.md:77`). The log says
+  the box has 8 MB of L3; it has 4 MiB.
 - **complex64 accuracy is set by the transforms**, not the kernels: a round
   trip loses 2.8 units of 2^-24 of power, every step. Writing the linear step
   as `A + ifft((P - 1) fft(A))` cuts the field error 40 to 390 times for 7 to
@@ -374,6 +448,7 @@ Open, in this order:
   decided.
 - Per-call costs from the CUDA-box profile, below: the propagator download,
   `_energy_rates` twice, the potential grids.
+- MLX and OpenCL: the fewer-passes lessons are not ported.
 
 ### Performance profiles (started 2026-11-26, not finished)
 
