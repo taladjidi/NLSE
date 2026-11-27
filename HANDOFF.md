@@ -34,8 +34,8 @@ review pass. Merged tonight: the uv, ruff and ty switch (`62bd2e8`, the
 untracked `CLAUDE.md` and the git hooks follow it), the CPU batch fix
 over several parameter axes (`496cd96`), the transform wording with the
 log entry of the library re-measure (`c04afd7`) and the same batch fix for
-the OpenCL loop (`fix/cl-multi-axis-batch`), and the tests that bite
-(`test/tests-that-bite`). Still open:
+the OpenCL loop (`fix/cl-multi-axis-batch`), the tests that bite
+(`test/tests-that-bite`) and the CPU blocked step (`7518025`). Still open:
 
 - **Order set by the owner (2026-11-27), all after a `/clear`:** first the
   GPU patches, then the thread counts per machine (both described below),
@@ -48,7 +48,7 @@ the OpenCL loop (`fix/cl-multi-axis-batch`), and the tests that bite
   time: interleaved timings at 1024², 2048², 4096² before and after. The
   kernel modules were already audited for duplication (nothing to merge
   there).
-- The CPU blocked step (`perf/cpu-blocked-step`): three passes in
+- The CPU blocked step, merged (`7518025`): three passes in
   `NLSE/kernels/cpu_blocked.py`, chosen per machine and grid by
   `NLSE/backends/cpu_tuning.py` and cached in `cpu_blocking.json`; spec in
   `NLSE_tangui_fix_specs/cpu_blocked_step_spec.md`. Reviewed twice (second
@@ -233,6 +233,13 @@ the OpenCL loop (`fix/cl-multi-axis-batch`), and the tests that bite
 
 ### Verification of the final tree
 
+- At `7518025` (2026-11-27), Mac (M3 Max, CPU and MLX): `uv run --locked
+  pytest tests/ -q -m "not benchmark"` gives 1735 passed, 156 skipped;
+  `ruff check`, `ruff format --check` and `ty check` are clean. CuPy on the
+  box, on the blocked-step tree before its last edits (`MARGIN` back to
+  0.10, four tests of the tuner): 1802 passed, 68 skipped, one run. OpenCL
+  was not run on this tree; its last full run is the one below. The lines
+  below are from the audit, at `4ac2bb2`.
 - Mac (M3 Max, CPU and MLX, `.venv`), at `4ac2bb2`: `pytest tests/ -q -m "not
   benchmark" --ignore=tests/test_packaging.py` gives 1404 passed, 126 skipped;
   `ruff check`, `ruff format --check` and `mypy NLSE/` are clean. Five of
