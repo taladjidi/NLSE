@@ -302,8 +302,8 @@ class NLSE(StepSize):
             - "lie": one nonlinear application per step, O(dz), one
               transform pair.
             - "strang": the nonlinear step split around the linear one,
-              O(dz^2) globally, and merged between consecutive steps so it
-              still costs one transform pair.
+              O(dz^2) globally, one transform pair. The scalar solvers
+              also merge the touching half steps of consecutive steps.
             - "yoshida": three Strang sub-steps composed to O(dz^4), three
               transform pairs. Worth it only in complex128 -- see the
               warning it raises otherwise.
@@ -517,7 +517,7 @@ class NLSE(StepSize):
 
         Both halves of a Strang step do exactly this and differed only in the
         distance, so they are one method. It is also what brackets a merged
-        run -- see ``_merged_strang_bracket``.
+        run -- see ``_open_strang_bracket`` and ``_close_strang_bracket``.
 
         Parameters
         ----------
@@ -2324,7 +2324,7 @@ class NLSE(StepSize):
 
     # Whether this solver's Lie step is exactly the inside of its Strang step.
     # DDGPE's is not: it drives and it adds noise, so its steps are not a
-    # product of the same two operators.
+    # product of the same two operators. The coupled solvers opt out too.
     _lie_step_is_strang_body = True
 
     def _merges_strang_halves(self, splitting: str) -> bool:

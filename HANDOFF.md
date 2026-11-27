@@ -80,6 +80,24 @@ conclusions, and do not read this file.
    MLX and OpenCL, the Mac profiles, a closing review pass and the final
    report. Version 5.0.0 is neither bumped nor published.
 
+#### Night of 2026-11-27: landed, decided, left
+
+- **Coupled Strang runs were wrong in 4.0.0 and 4.1.0** (`fix/cnlse-strang-merge`,
+  found by the solver reviewer, reproduced on both tags): `CNLSE` and
+  `CNLSE_1d` with `splitting="strang"` and no callback bracketed the run with
+  the scalar `_nonlinear_step` (no `n12`, no `alpha2`). Fixed by opting the
+  coupled solvers out of the merge (`_lie_step_is_strang_body = False`), the
+  smallest correct fix. Reviewed (SHIP). Left:
+  - A coupled `_nonlinear_step` would let lossless coupled runs merge again.
+    The cost of not merging is not measured: one real-space pass per step.
+  - `_merges_strang_halves` still declines on `omega`, which now only
+    `NLSE_3d` trips, by a name clash (its `omega` is the frequency axis): it
+    would merge correctly (3.5e-15 in complex128, the reviewer's run). No
+    test covers that branch since the Rabi test went.
+  - `docs/optimization-log.md:210-212` ("Already built") still reads as if
+    the coupled solvers merged.
+  - Not run: CuPy and OpenCL (the box was timing); DDGPE read only.
+
 The final report has to say, beyond what "Review findings left as they are"
 and "Still open" list:
 
@@ -101,8 +119,11 @@ and "Still open" list:
   architect's 64² smoke run may have left an entry in the default NLSE cache;
   an architect deleted a scratch directory named `r2` by mistake (only its
   own transcript names it).
-- The owner's to edit: `CLAUDE.md` lines 86-87 (stale ruff ignores) and line
-  7 (CuPy uses cuFFT, not VkFFT); the debloat and docs decisions left open.
+- The owner's to edit: `CLAUDE.md` lines 86-87 (stale ruff ignores), line
+  7 (CuPy uses cuFFT, not VkFFT), lines 34-35 (ruff now also takes
+  `benchmarks/ docs/`) and line 57 (Strang is one pair per step with or
+  without the merge, and only the scalar solvers merge); the debloat and
+  docs decisions left open.
 
 ## Open work
 
