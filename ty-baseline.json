@@ -264,6 +264,18 @@
     "NLSE/solvers/step_size.py": [
       {
         "rule": "missing-attribute",
+        "startColumn": 30,
+        "endColumn": 49,
+        "lineCount": 1
+      },
+      {
+        "rule": "missing-attribute",
+        "startColumn": 50,
+        "endColumn": 64,
+        "lineCount": 1
+      },
+      {
+        "rule": "missing-attribute",
         "startColumn": 11,
         "endColumn": 21,
         "lineCount": 1
@@ -350,18 +362,6 @@
         "rule": "missing-attribute",
         "startColumn": 41,
         "endColumn": 55,
-        "lineCount": 1
-      },
-      {
-        "rule": "missing-attribute",
-        "startColumn": 26,
-        "endColumn": 45,
-        "lineCount": 1
-      },
-      {
-        "rule": "missing-attribute",
-        "startColumn": 46,
-        "endColumn": 60,
         "lineCount": 1
       },
       {
@@ -468,18 +468,6 @@
       },
       {
         "rule": "missing-attribute",
-        "startColumn": 21,
-        "endColumn": 40,
-        "lineCount": 1
-      },
-      {
-        "rule": "missing-attribute",
-        "startColumn": 41,
-        "endColumn": 55,
-        "lineCount": 1
-      },
-      {
-        "rule": "missing-attribute",
         "startColumn": 57,
         "endColumn": 63,
         "lineCount": 1
@@ -548,18 +536,6 @@
         "rule": "missing-attribute",
         "startColumn": 15,
         "endColumn": 40,
-        "lineCount": 1
-      },
-      {
-        "rule": "missing-attribute",
-        "startColumn": 26,
-        "endColumn": 45,
-        "lineCount": 1
-      },
-      {
-        "rule": "missing-attribute",
-        "startColumn": 46,
-        "endColumn": 60,
         "lineCount": 1
       }
     ]

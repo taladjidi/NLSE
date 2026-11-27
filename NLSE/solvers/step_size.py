@@ -1,6 +1,6 @@
 """How big a step the solver may take.
 
-Ten methods that answer one question, and answer it in three stages: what the
+Methods that answer one question, and answer it in three stages: what the
 field's energy is in each term of the equation, what step those energies allow,
 and whether the step the caller asked for is inside that. They came out of
 NLSE, where they sat between the propagator and the propagation loop and
@@ -71,6 +71,16 @@ class StepSize:
     # Step constants each holding one component's loss as the kernels take it,
     # alpha / 2 (NLSE._step_constants). CNLSE adds its second component's.
     _loss_constants = ("_alpha_half",)
+
+    def _peak_loss_half(self) -> float:
+        """Return the largest ``alpha / 2`` over the components and the batch."""
+        # Through the host: a batched run holds its constants on the device.
+        return float(
+            max(
+                np.max(np.abs(self._as_host_array(self._constant(name))))
+                for name in self._loss_constants
+            )
+        )
 
     def _energy_rates(self, A: np.ndarray) -> dict[str, float]:
         """Return the phase rate each term contributes, weighted by the field.
@@ -195,14 +205,11 @@ class StepSize:
         mean_intensity = backend.sum(saturated) / total
         interaction = g * mean_intensity
 
-        alpha_half = float(
-            np.max(np.abs(self._as_host_array(self._constant("_alpha_half"))))
-        )
         return {
             "kinetic": abs(kinetic),
             "potential": abs(potential),
             "interaction": interaction,
-            "loss": alpha_half + absorption,
+            "loss": self._peak_loss_half() + absorption,
         }
 
     def _grid_on_device(self, name: str, values: Any, real_dtype: Any, shape: tuple):
@@ -282,13 +289,11 @@ class StepSize:
         mean_intensity = float(np.sum(weight * weight / (1 + weight / Isat)) / total)
         interaction = float(np.max(np.abs(g) * mean_intensity))
 
-        alpha_half = self._as_host_array(self._constant("_alpha_half"))
-        loss = float(np.max(np.abs(alpha_half))) + absorption
         return {
             "kinetic": abs(kinetic),
             "potential": abs(potential),
             "interaction": interaction,
-            "loss": loss,
+            "loss": self._peak_loss_half() + absorption,
         }
 
     def _default_delta_z(
@@ -502,13 +507,14 @@ class StepSize:
         run: it binds only where a single step would take out a large fraction
         of the intensity.
 
-        The kernels solve the real-space step rather than freezing ``|A|^2``
-        through it (see ``_loss_factor`` in kernels/cpu.py), and the iteration
-        that does it contracts while ``u = 2*alpha*dz`` stays well below one.
-        ``LOSS_PER_STEP_LIMIT`` is where it is still comfortably converging;
-        past it the iteration walks away and the step returns a field larger
-        than the one it was given, which is a worse failure than a coarse
-        answer because it does not look like one.
+        The scalar kernels solve the real-space step rather than freezing
+        ``|A|^2`` through it (see ``_loss_factor`` in kernels/cpu.py), and the
+        iteration that does it contracts while ``u = 2*alpha*dz`` stays well
+        below one. ``LOSS_PER_STEP_LIMIT`` is where it is still comfortably
+        converging; past it the iteration walks away and the step returns a
+        field larger than the one it was given, which is a worse failure than
+        a coarse answer because it does not look like one. The coupled kernels
+        freeze the step, so there the same limit is an accuracy ceiling.
 
         Written against ``alpha`` and not against the loss energy rate, which
         carries the saturation: the rate is the average over the grid and the
@@ -524,12 +530,7 @@ class StepSize:
             iteration's region, or infinity for a lossless medium.
 
         """
-        # Through the host: a batched run holds its constants on the device.
-        halves = [
-            np.max(np.abs(self._as_host_array(self._constant(name))))
-            for name in self._loss_constants
-        ]
-        peak = 2 * float(max(halves))
+        peak = 2 * self._peak_loss_half()
         if peak == 0:
             return np.inf
         return LOSS_PER_STEP_LIMIT / (2 * peak)

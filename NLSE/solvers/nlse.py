@@ -726,7 +726,7 @@ class NLSE(StepSize):
 
     def _has_loss(self) -> bool:
         """Whether anything in the run removes norm from the field."""
-        if np.any(np.asarray(self.alpha) != 0):
+        if self._peak_loss_half() != 0:
             return True
         V = self.V
         return V is not None and np.iscomplexobj(V) and np.any(np.imag(V) != 0)

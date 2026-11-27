@@ -267,6 +267,43 @@ def test_the_second_component_loss_caps_the_step(backend):
     )
 
 
+def second_component_lossy(backend):
+    """Return a CNLSE that loses on its second component only, and its field."""
+    simu = make(CNLSE, backend, n=SECOND_N, alpha=0.0)
+    simu.alpha2 = SECOND_ALPHA
+    isat = 2 * simu.I_sat / (epsilon_0 * c)
+    return simu, np.full((2, SECOND_N, SECOND_N), np.sqrt(isat), dtype=np.complex64)
+
+
+def test_the_second_component_loss_enters_the_loss_rate(backend):
+    """The amplitude of the lossy component decays at ``alpha2 / 2``.
+
+    RK4's stability bound and the adaptive step read this rate.
+
+    Parameters
+    ----------
+    backend : str
+        Backend to run on.
+    """
+    simu, field = second_component_lossy(backend)
+    assert simu._energy_rates(field)["loss"] == pytest.approx(SECOND_ALPHA / 2)
+
+
+def test_yoshida_warns_about_the_second_component_loss(backend):
+    """A loss on either component runs backwards in Yoshida's middle sub-step.
+
+    Parameters
+    ----------
+    backend : str
+        Backend to run on.
+    """
+    simu, field = second_component_lossy(backend)
+    with pytest.warns(UserWarning, match="splitting='yoshida' with loss"):
+        simu.out_field(
+            field, SECOND_L, splitting="yoshida", verbose=False, normalize=False
+        )
+
+
 def test_the_cavity_loss_caps_the_step():
     """DDGPE's ``gamma2`` bounds the step: ``LOSS_PER_STEP_LIMIT / (2 gamma2)``."""
     simu = DDGPE(
