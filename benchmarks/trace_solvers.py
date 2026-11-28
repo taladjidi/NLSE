@@ -37,6 +37,7 @@ WAIST = 2.23e-3
 STEPS = 200
 # The solvers `build` knows the arguments of.
 SOLVERS = ("NLSE", "NLSE_1d", "CNLSE", "CNLSE_1d")
+METHODS = ("split_step", "RK4")  # what out_field's method takes
 
 # Kernel or backend call -> the phase it belongs to. Anything unlisted is
 # reported under its own name rather than silently folded away.
@@ -227,7 +228,11 @@ def tracing(simu, nvtx=False):
 
 
 def build(solver_name, backend, n):
-    """Return a solver of the requested kind on the requested backend."""
+    """Return a solver of the requested kind on the requested backend.
+
+    Raises if the solver came up on another one: a backend that is not
+    installed is replaced with a warning, and the row would carry its name.
+    """
     from NLSE import solvers
 
     cls = getattr(solvers, solver_name)
@@ -246,7 +251,10 @@ def build(solver_name, backend, n):
         kwargs["NY"] = n
     if solver_name.startswith("CNLSE"):
         kwargs["n12"] = -1e-10
-    return cls(**kwargs)
+    simu = cls(**kwargs)
+    if simu._backend.name != backend:
+        raise RuntimeError(f"asked for {backend}, built on {simu._backend.name}")
+    return simu
 
 
 def input_field(simu, solver_name):
@@ -403,7 +411,7 @@ def main(argv=None):
     parser.add_argument(
         "--solvers", nargs="*", default=["NLSE", "CNLSE"], choices=SOLVERS
     )
-    parser.add_argument("--methods", nargs="*", default=["split_step", "RK4"])
+    parser.add_argument("--methods", nargs="*", default=METHODS, choices=METHODS)
     parser.add_argument("--backends", nargs="*")
     parser.add_argument("--sizes", nargs="*", type=int, default=[1024])
     parser.add_argument("--nvtx", action="store_true", help="emit NVTX ranges for nsys")

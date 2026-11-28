@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from NLSE import NLSE
-from NLSE.backends import cpu_tuning
+from NLSE.backends import cpu_tuning, list_available_backends
 
 BENCHMARKS = Path(__file__).resolve().parent.parent / "benchmarks"
 sys.path.insert(0, str(BENCHMARKS))
@@ -41,6 +41,8 @@ API_SAMPLE = """ ** CUDA API Summary (cuda_api_sum):
 """
 # The smallest grid the tracer is run on in the tests (points per side).
 TRACED_N = 64
+# Every backend the package knows (NLSE/backends/__init__.py).
+BACKEND_NAMES = ("CPU", "CUPY", "CL", "MLX")
 
 # Hand counts of a complex64 step per grid point, each array read or written
 # once: c = 8 B a complex element, v = 4 B a float32 potential.
@@ -160,6 +162,23 @@ def test_the_fusion_benchmark_times_the_steps_it_asks(monkeypatch):
     with pytest.warns(UserWarning, match="Reducing"):
         with pytest.raises(RuntimeError, match="lowered the step"):
             propagator_fusion.time_run(NLSE, TRACED_N, 2, np.complex64)
+
+
+def test_the_tracer_refuses_a_backend_that_is_not_installed():
+    """The solver falls back to another backend, and the row would carry the name."""
+    missing = sorted(set(BACKEND_NAMES) - set(list_available_backends()))
+    if not missing:
+        pytest.skip("every backend is installed here")
+    with pytest.warns(UserWarning, match="not installed"):
+        with pytest.raises(RuntimeError, match="built on"):
+            trace_solvers.build("NLSE", missing[0], TRACED_N)
+
+
+def test_the_tracer_takes_only_the_methods_the_solver_has(capsys):
+    """Any other name runs split-step, under a label that says otherwise."""
+    with pytest.raises(SystemExit):
+        trace_solvers.main(["--methods", "rk4"])
+    assert "invalid choice" in capsys.readouterr().err
 
 
 def _failing_trace(*args):

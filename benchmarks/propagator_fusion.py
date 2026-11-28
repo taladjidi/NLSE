@@ -90,7 +90,7 @@ def time_run(cls, n, steps, dtype, **kw):
 def per_step(cls, n, fuse, dtype, **kw):
     """Return the cost of one step, as the slope between two step counts."""
     os.environ["NLSE_FUSE_PROPAGATOR"] = "1" if fuse else "0"
-    get_backend("CUPY").clear_fft_plans()
+    get_backend(BACKEND).clear_fft_plans()
     # Once through at the low count first: the first run of a size compiles
     # kernels and the callback, which belongs to neither point on the line.
     time_run(cls, n, STEPS_LOW, dtype, **kw)
@@ -102,7 +102,7 @@ def per_step(cls, n, fuse, dtype, **kw):
 def fused_kinds(cls, n, dtype, **kw):
     """Return what the plan ended up fusing, to prove the run took the path."""
     os.environ["NLSE_FUSE_PROPAGATOR"] = "1"
-    get_backend("CUPY").clear_fft_plans()
+    get_backend(BACKEND).clear_fft_plans()
     simu = build(cls, n)
     delta_z = step_for(simu)
     simu.out_field(

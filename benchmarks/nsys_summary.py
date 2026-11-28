@@ -262,7 +262,7 @@ def main(argv=None):
         )
         print(f"\n  CUDA API time: {api_ns / 1e6:.2f} ms")
         if not (api_ns and gpu_ns):
-            print("  no kernel time to set against it: no ratio")
+            print("  no ratio: the kernel time or the API time is zero")
         else:
             print(f"  GPU kernel time / CUDA API time: {gpu_ns / api_ns:.2f}")
             if traced_run(tables["nvtx"] or []):
