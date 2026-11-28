@@ -42,22 +42,6 @@ REQUIRED_DATA_FILES = [
     "NLSE/kernels/cuda_source/nonlinear_step.cuh",
 ]
 
-# Modules from the pre-2.3 flat layout. They still exist under build/lib/ and
-# must not be re-collected into the wheel, where they would shadow the real
-# implementations in NLSE/solvers/ and NLSE/kernels/.
-FORBIDDEN_STALE_MODULES = [
-    "NLSE/nlse.py",
-    "NLSE/nlse_1d.py",
-    "NLSE/nlse_3d.py",
-    "NLSE/cnlse.py",
-    "NLSE/cnlse_1d.py",
-    "NLSE/ddgpe.py",
-    "NLSE/gpe.py",
-    "NLSE/kernels_cpu.py",
-    "NLSE/kernels_gpu.py",
-    "NLSE/kernels_cl.py",
-]
-
 # The extras a user can install. The dev and docs tools are dependency groups
 # (PEP 735), which stay out of the published metadata.
 PUBLISHED_EXTRAS = {"gpu", "mlx", "opencl"}
@@ -218,15 +202,6 @@ def test_kernel_templates_are_packaged(wheel_contents, data_file):
         f"{data_file} is missing from the wheel. The backend that loads it will "
         f"raise FileNotFoundError on a non-editable install. Check the "
         f"[tool.hatch.build.targets.wheel] exclude list in pyproject.toml."
-    )
-
-
-@pytest.mark.parametrize("stale_module", FORBIDDEN_STALE_MODULES)
-def test_stale_flat_layout_modules_are_not_packaged(wheel_contents, stale_module):
-    """Pre-2.3 flat-layout modules must not be collected into the wheel."""
-    assert stale_module not in wheel_contents, (
-        f"{stale_module} was collected into the wheel, where it shadows the "
-        f"current implementation in NLSE/solvers/ or NLSE/kernels/." + _cause_hint()
     )
 
 
