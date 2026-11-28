@@ -24,8 +24,9 @@ from NLSE.solvers.step_size import (
 )
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+BUILT_DOCS = "_build"  # Sphinx's output, ignored by git: not the pages' source
 PAGES = [
-    *sorted((ROOT / "docs").rglob("*.md")),
+    *sorted(p for p in (ROOT / "docs").rglob("*.md") if BUILT_DOCS not in p.parts),
     ROOT / "README.md",
 ]
 IDS = [str(p.relative_to(ROOT)) for p in PAGES]
