@@ -284,9 +284,9 @@ class NLSE(StepSize):
         self._forget_device_state()
         self.nl_length = nl_length
 
-        # Pre-compute normalization factors to avoid runtime upcasting
-        self._norm_grid_factor = np.float32(self.delta_X * self.delta_Y)
-        self._norm_constant = np.float32(c * epsilon_0 / 2)
+        # Python floats, which take the field's precision in a product.
+        self._norm_grid_factor = float(self.delta_X * self.delta_Y)
+        self._norm_constant = c * epsilon_0 / 2
 
     # The public surface: a solver is built, asked to propagate, and plotted.
     # split_step and split_step_RK4 are the single-step primitives out_field
@@ -1802,7 +1802,6 @@ class NLSE(StepSize):
         if normalize:
             # normalization of the field (use contiguous formula)
             arr = (E_in * E_in.conj()).real
-            # Use pre-computed grid factor to avoid runtime upcasting
             arr = arr * self._norm_grid_factor
             if self._backend.normalizes_on_host:
                 arr_np = self._backend.to_numpy(arr)

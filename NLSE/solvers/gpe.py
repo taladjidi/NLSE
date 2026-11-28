@@ -103,7 +103,7 @@ class GPE(NLSE):
         self.sat = sat
         # |psi|^2 is a density in atoms/m^2, not an optical field, so the
         # norm_constant is 1.0
-        self._norm_constant = np.float32(1.0)
+        self._norm_constant = 1.0
 
     def _propagator_cache_key(self, dtype: np.dtype, delta_z: float) -> tuple:
         """Return cache key for GPE propagator."""

@@ -8,6 +8,10 @@ come first.
 
 ### Changed (breaking)
 
+- **NumPy 2 is required** (`numpy>=2`). The normalization keeps a
+  `complex64` field's bits through NumPy 2's promotion rules (NEP 50): on
+  NumPy 1.x a float32 scalar times a Python float is float64.
+
 - **`GPE` takes `V` and `g` as rates, in rad/s.** They went through the
   optical conversion, with a wavenumber `GPE` only passes to satisfy the base
   constructor: `g` reached the kernels 2e-28 times too small and with the
@@ -62,6 +66,12 @@ come first.
 - **`backends.clear_backend_cache` is removed.** Nothing called it.
 
 ### Fixed
+
+- **`normalize=True` sets the power to the field's precision.** The grid
+  and `c epsilon_0 / 2` factors were float32, so a `complex128` field was
+  normalized only to 2.5e-9 to 8.0e-8 of its power; it now lands within 2
+  float64 epsilons (4.4e-16, the worst over the seven solvers, batched or
+  not). A `complex64` field is normalized bit for bit as before.
 
 - **`get_backend` and `get_fastest_backend` refuse a grid size that is not
   two integers.** `get_backend("CPU", grid_size=256)`, `"256"`, `(256, 256.0)`

@@ -110,7 +110,7 @@ class NLSE_3d(NLSE):
         self._last_axes = (-3, -2, -1)  # Axes are x, y, t
 
         # Override normalization factor for 3D (includes delta_T)
-        self._norm_grid_factor = np.float32(self.delta_X * self.delta_Y * self.delta_T)
+        self._norm_grid_factor = float(self.delta_X * self.delta_Y * self.delta_T)
 
     def _propagator_cache_key(self, dtype: np.dtype, delta_z: float) -> tuple:
         """Return cache key for 3D propagator."""
