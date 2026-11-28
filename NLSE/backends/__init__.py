@@ -156,10 +156,15 @@ def get_backend(name: str, grid_size: tuple = (2048, 2048)) -> Backend:
 
     Raises
     ------
+    TypeError
+        If ``grid_size`` is not a tuple or list of two integers.
     ValueError
         If backend not available
 
     """
+    from .benchmark import check_grid_size
+
+    check_grid_size(grid_size)
     # Read per call, like the other NLSE_* variables: one set after the import
     # counts.
     forced = os.environ.get("NLSE_BACKEND", "").upper()

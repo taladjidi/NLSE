@@ -5,12 +5,14 @@ import platform
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 
+import NLSE.backends as backends
 import pytest
 from NLSE.backends import (
     _ASSUMED_SPEED_ORDER,
     backends_by_speed,
     benchmark,
     fastest_backend_supporting,
+    get_backend,
     list_available_backends,
 )
 from NLSE.utils import get_benchmark_cache_path, get_cache_dir
@@ -26,6 +28,8 @@ OLD_CACHE_VERSION = "2"
 SINGLE_GRID_CACHE_VERSION = "3"
 # Two grids asked for in turn: each should be measured once.
 ALTERNATING_GRIDS = [(64, 64), (128, 128), (64, 64), (128, 128)]
+# Grid sizes that are not two integers, each refused with a TypeError.
+BAD_GRID_SIZES = [256, (256,), None, "256", (256.0, 256), (256, 256.0)]
 CPU_SPEEDUP = 1.0  # the CPU against itself, as benchmark_all_backends computes it
 OTHER_SYSTEM = "Plan9"
 OTHER_PROCESSOR = "pdp11"
@@ -252,6 +256,25 @@ class TestGetFastestBackend:
         # Should be one of the available backends
         available = list_available_backends()
         assert fastest in available
+
+    @pytest.mark.parametrize("grid_size", BAD_GRID_SIZES)
+    def test_a_grid_size_that_is_not_two_integers_raises(self, grid_size):
+        """A wrongly typed grid size is refused by name, not crashed on."""
+        with pytest.raises(TypeError, match="grid_size must be a tuple of two"):
+            benchmark.get_fastest_backend(grid_size=grid_size)
+
+
+@pytest.mark.parametrize("name", ["CPU", "auto", "CUPY"])
+@pytest.mark.parametrize("grid_size", BAD_GRID_SIZES)
+def test_get_backend_refuses_a_grid_size_that_is_not_two_integers(
+    monkeypatch, name, grid_size
+):
+    """Named, auto or falling back from a missing backend, all refuse it."""
+    monkeypatch.delenv("NLSE_BACKEND", raising=False)
+    # CUPY uninstalled, so its name takes the fallback path on every machine.
+    monkeypatch.setattr(backends, "_CUPY_AVAILABLE", False)
+    with pytest.raises(TypeError, match="grid_size must be a tuple of two"):
+        get_backend(name, grid_size=grid_size)
 
 
 class TestCachePersistence:

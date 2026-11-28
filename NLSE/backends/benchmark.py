@@ -393,6 +393,29 @@ def invalidate_cache() -> None:
         say("No benchmark cache found")
 
 
+def check_grid_size(grid_size: Any) -> None:
+    """Raise unless ``grid_size`` is two integers, ``(NX, NY)``.
+
+    Parameters
+    ----------
+    grid_size : Any
+        The grid size a backend was asked for.
+
+    Raises
+    ------
+    TypeError
+        If ``grid_size`` is not a tuple or list of two integers.
+    """
+    if not (
+        isinstance(grid_size, (tuple, list))
+        and len(grid_size) == 2
+        and all(isinstance(n, (int, np.integer)) for n in grid_size)
+    ):
+        raise TypeError(
+            f"grid_size must be a tuple of two integers (NX, NY), not {grid_size!r}"
+        )
+
+
 def get_fastest_backend(
     grid_size: tuple[int, int] = (2048, 2048), force_benchmark: bool = False
 ) -> str:
@@ -413,9 +436,15 @@ def get_fastest_backend(
     str
         Name of fastest backend ("CPU", "CUPY", or "CL")
 
+    Raises
+    ------
+    TypeError
+        If ``grid_size`` is not a tuple or list of two integers.
+
     """
     from . import list_available_backends
 
+    check_grid_size(grid_size)
     # Check cache first (unless forced)
     if not force_benchmark:
         cache = load_benchmark_cache(grid_size)

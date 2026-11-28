@@ -63,6 +63,13 @@ come first.
 
 ### Fixed
 
+- **`get_backend` and `get_fastest_backend` refuse a grid size that is not
+  two integers.** `get_backend("CPU", grid_size=256)`, `"256"`, `(256, 256.0)`
+  or `None` returned a backend; a backend that is not installed crashed on
+  `256` in its fallback, and `get_fastest_backend` crashed on `256` or
+  `(256,)` or returned a backend for `"256"` without benchmarking anything.
+  Each now raises a `TypeError` that names the argument.
+
 - **Setting `wl` sets `k`.** `simu.wl = ...` stored a wavelength nothing
   read: runs went on at the old `k`. `wl` is now `2 pi / k`, read and
   written through it. On `CNLSE` and `CNLSE_1d`, `k2` follows `k` until it
