@@ -267,6 +267,12 @@ come first.
   still warns. The steps run are the same, and `DDGPE` still samples its
   drive at the default before the cap.
 
+- **`omega=0` costs the coupled solvers nothing.** A scalar zero Rabi
+  coupling went through two identity rotations per Strang step (one per Lie
+  step), fused or not; it is now skipped as `None` is, which saves 13 to 22%
+  of a Strang step at 512² on an Apple M3 Max (CPU, CL on its GPU, MLX). An
+  array `omega` rotates as before.
+
 - **`NLSE_BACKEND` and `NLSE_FORCE_BENCHMARK` are read when a backend is asked
   for**, not once when NLSE is imported, like the other `NLSE_*` variables: one
   set after the import now counts.

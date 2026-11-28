@@ -792,6 +792,8 @@ class CNLSE(NLSE):
         )
 
         kernels = self._backend.kernels
+        # A scalar zero coupling turns nothing: no rotations, as for None.
+        omega = None if np.isscalar(self.omega) and self.omega == 0 else self.omega
 
         # Fused fast path: zero component copies. It takes one field of
         # exactly the coupled rank and scalar parameters.
@@ -806,12 +808,12 @@ class CNLSE(NLSE):
                 g22,
                 Isat_conv,
                 Isat_conv2,
-                self.omega,
+                omega,
             ),
         ):
             dz = delta_z / 2 if splitting == "strang" else delta_z
             prop, unnorm = self._fused_propagator(propagator)
-            omega_half = None if self.omega is None else self.omega / 2
+            omega_half = None if omega is None else omega / 2
             return kernels.split_step_coupled_fused(
                 A,
                 prop,
@@ -834,7 +836,7 @@ class CNLSE(NLSE):
 
         # Half a Rabi rotation on each side keeps the Strang step symmetric,
         # hence second order, and Yoshida's sub-steps with it.
-        if splitting == "strang" and self.omega is not None:
+        if splitting == "strang" and omega is not None:
             A = self._rabi_rotation(A, delta_z / 2)
 
         # First half-step (Strang only)
@@ -855,10 +857,8 @@ class CNLSE(NLSE):
         dz_step = delta_z / 2 if splitting == "strang" else delta_z
         A1, A2 = self._apply_nl_prop_c(A1, A2, A_sq_1, A_sq_2, dz_step, *nl_args)
 
-        if self.omega is not None:
-            A1, A2 = self._backend.kernels.rabi_coupling(
-                A1, A2, dz_step, self.omega / 2
-            )
+        if omega is not None:
+            A1, A2 = kernels.rabi_coupling(A1, A2, dz_step, omega / 2)
 
         self._set_components(A, A1, A2)
         return A

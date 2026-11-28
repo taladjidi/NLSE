@@ -1,3 +1,5 @@
+from unittest.mock import Mock
+
 import numpy as np
 import pytest
 from helpers import WAVELENGTH2, as_numpy, assert_c_contiguous, gaussian_beam, make
@@ -36,6 +38,10 @@ DECAY_ALPHA = 200.0
 # (MLX split-step decay) over the two per-component tests, CPU and MLX. Smallest
 # effect guarded: component 2 losing at alpha, 10% of its intensity.
 COMPONENT_RTOL = 1e-5
+# Rabi coupling, in 1/m: any nonzero one, to show the rotations are counted.
+RABI_RATE = 1.0
+# Steps of the Rabi rotation test: enough to take both rotations of a step.
+RABI_STEPS = 4
 
 
 def make_solver(backend="CPU", n=N, **overrides):
@@ -362,3 +368,32 @@ def test_each_component_decays_at_its_own_rate(backend, method) -> None:
             f"component {i + 1} kept {got:.6f} of its intensity, not "
             f"{expected:.6f}. (Backend {backend}, {method})"
         )
+
+
+@pytest.mark.parametrize("omega, rotates", [(0.0, False), (RABI_RATE, True)])
+def test_a_zero_coupling_takes_no_rabi_rotation(backend, monkeypatch, omega, rotates):
+    """A scalar zero ``omega`` skips the Strang rotations, fused or not."""
+    simu = make(CNLSE, backend, n=UNIFORM_N, omega=omega)
+    kernels = simu._backend.kernels
+    rabi = Mock(wraps=kernels.rabi_coupling)
+    monkeypatch.setattr(kernels, "rabi_coupling", rabi)
+    fused = Mock(wraps=getattr(kernels, "split_step_coupled_fused", None))
+    if simu._backend.has_fused_coupled_split_step:
+        monkeypatch.setattr(kernels, "split_step_coupled_fused", fused)
+    field = np.ones((2, UNIFORM_N, UNIFORM_N), dtype=PRECISION_COMPLEX)
+    simu.out_field(
+        field,
+        RABI_STEPS * DZ_TEST,
+        delta_z=DZ_TEST,
+        splitting="strang",
+        verbose=False,
+        plot=False,
+    )
+    fused_rotations = [
+        call for call in fused.call_args_list if call.kwargs["omega"] is not None
+    ]
+    turned = rabi.call_count > 0 or len(fused_rotations) > 0
+    assert turned == rotates, (
+        f"{backend}: omega = {omega} took {rabi.call_count} Rabi rotations and "
+        f"{len(fused_rotations)} fused steps with one"
+    )
