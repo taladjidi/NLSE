@@ -16,7 +16,9 @@ n12 = -1e-10
 waist = 2.23e-3
 waist2 = 70e-6
 window = 4 * waist
-puiss = 1.05
+# W/m, per unit length: gives the first component, of waist, the 2D example's
+# peak intensity. The second, of waist2, peaks 32 times higher at this power.
+puiss = 376
 Isat = 10e4  # saturation intensity in W/m^2
 L = 1e-3
 alpha = 20
