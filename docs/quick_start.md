@@ -94,7 +94,7 @@ N = 4096
 n2 = -1.6e-9
 waist = 2.23e-3
 window = 4 * waist
-power = 1.05
+power = 376  # W/m, per unit length: gives the 2D beam above its peak intensity
 L = 10e-3
 
 simu = NLSE_1d(alpha=20, power=power, window=window, n2=n2, V=None, L=L, NX=N)

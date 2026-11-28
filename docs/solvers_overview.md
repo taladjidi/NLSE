@@ -34,7 +34,8 @@ NLSE (2D base class)
 [Physics Background](physics_problem.md); the rest specialise or extend it.
 
 - `NLSE_1d`: the same equation with $\partial_x^2$ in place of
-  $\nabla_\perp^2$.
+  $\nabla_\perp^2$. The beam is uniform along $y$, so `power` is per unit
+  length, in W/m; `CNLSE_1d` takes it so too.
 - `NLSE_3d`: the same equation with the dispersion term $D_0$. The field holds
   every time sample of every transverse point, so memory grows with
   `NX * NY * NZ`.

@@ -31,6 +31,8 @@ The constants are:
 
 The `NLSE` class solves the 2D transverse equation ($\nabla_\perp^2 = \partial_x^2 + \partial_y^2$), while `NLSE_1d` solves the 1D version and `NLSE_3d` includes the GVD term $D_0$.
 
+In `NLSE_1d` and `CNLSE_1d` the beam is uniform along $y$, so `power` is a power per unit length, $\int I\,\mathrm{d}x$ in $W/m$: a Gaussian of waist $w$ peaks at $\sqrt{2/\pi}\,P/w$, whatever `NX`.
+
 All NLSE solvers use **SI units** throughout.
 
 ### Non-local interactions
