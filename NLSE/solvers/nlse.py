@@ -2517,7 +2517,8 @@ class NLSE(StepSize):
             return _step
 
         is_scalar_n2 = isinstance(self.n2, (int, float, np.floating))
-        can_use_fast_loop = callback is None and is_scalar_n2 and self.nl_length == 0
+        no_callback = callback in (None, [], ())
+        can_use_fast_loop = no_callback and is_scalar_n2 and self.nl_length == 0
         # Zeroing the nonlinearity mutates self, so restore it afterwards.
         saved = {attr: getattr(self, attr) for attr in self._medium_attrs}
         try:

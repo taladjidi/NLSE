@@ -1,5 +1,7 @@
 """Tests for solver state that must stay consistent across out_field calls."""
 
+from unittest.mock import Mock
+
 import numpy as np
 import pytest
 from helpers import AVAILABLE_BACKENDS, as_numpy, make
@@ -331,8 +333,10 @@ class TestCallbackArguments:
         )
 
     @pytest.mark.parametrize("none", [[], ()], ids=["list", "tuple"])
-    def test_no_callbacks_is_a_run_without_one(self, none):
+    def test_no_callbacks_is_a_run_without_one(self, none, monkeypatch):
         """An empty list or tuple of callbacks runs as no callback does."""
+        per_step = Mock(side_effect=AssertionError("the per-step loop ran"))
+        monkeypatch.setattr(NLSE, "_loop_with_callbacks", per_step)
         runs = [
             make_solver().out_field(
                 gaussian_input(), 1e-3, delta_z=2e-4, verbose=False, callback=given
