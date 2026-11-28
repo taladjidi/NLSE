@@ -3,6 +3,8 @@ Driven-dissipative polaritons
 =============================
 
 ``DDGPE`` adds a drive and a decay, which is what an exciton-polariton fluid needs.
+A Gaussian pump is turned on over 10 ps and the exciton and cavity populations
+settle toward their driven steady state.
 """
 
 import matplotlib.pyplot as plt
@@ -30,7 +32,7 @@ def turn_on(
         step
     t_up : int, optional
         time taken to reach the maximum intensity (=F).
-        Defaults to 200.
+        Defaults to 10.
     """
     F_laser_t[time < t_up] = np.exp(
         -1 * (time[time < t_up] - t_up) ** 2 / (t_up / 2) ** 2
@@ -64,7 +66,7 @@ def main():
     omega_cav = 1482.76 / h_bar  # (meV/h_bar) cavity energy
     detuning = 0.17 / h_bar
     k_z = 27
-    gamma = 0 * 0.07 / h_bar
+    gamma = 0.07 / h_bar  # (1/ps) decay of both components
     waist = 50
     window = 256
     g = 1e-2 / h_bar
@@ -94,7 +96,7 @@ def main():
     sample3 = np.zeros(time.size // save_every, dtype=np.float32)
     E0 = np.zeros((2, dd.NY, dd.NX), dtype=np.complex64)
 
-    F_pump = 0
+    F_pump = 3  # pump amplitude, field per ps
     F_pump_r = F_pump * np.exp(-((dd.XX**2 + dd.YY**2) / waist**2)).astype(np.complex64)
     F_pump_t = np.zeros(time.shape, dtype=np.complex64)
     F_probe = 0
@@ -125,9 +127,12 @@ def main():
     )
 
     plt.figure("pump and field norm sum")
-    plt.plot(time, sample1 / (np.max(sample3) + 1e-30))
-    plt.plot(time, sample2 / (np.max(sample3) + 1e-30))
-    plt.plot(time, sample3 / (np.max(sample3) + 1e-30))
+    plt.plot(time, sample1 / (np.max(sample3) + 1e-30), label="exciton")
+    plt.plot(time, sample2 / (np.max(sample3) + 1e-30), label="cavity")
+    plt.plot(time, sample3 / (np.max(sample3) + 1e-30), label="total")
+    plt.xlabel("time (ps)")
+    plt.ylabel("population over the total's maximum")
+    plt.legend()
     plt.show()
 
 
