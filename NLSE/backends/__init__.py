@@ -12,7 +12,6 @@ __all__ = [
     "Backend",
     "CPUBackend",
     "backends_by_speed",
-    "clear_backend_cache",
     "fastest_backend_supporting",
     "get_backend",
     "get_optimal_backend",
@@ -45,10 +44,6 @@ try:
 except ImportError:
     _MLX_AVAILABLE = False
 
-# Environment variables for backend control
-_ENV_BACKEND = os.environ.get("NLSE_BACKEND", "").upper()
-_FORCE_BENCHMARK = os.environ.get("NLSE_FORCE_BENCHMARK", "0") == "1"
-
 
 def get_optimal_backend(
     grid_size: tuple = (2048, 2048), force_benchmark: bool = False
@@ -80,15 +75,6 @@ def get_optimal_backend(
 # holds a device connection and compiled kernels, not simulation state; one per
 # solver leaked an OpenCL context each and ran sweeps out of file descriptors.
 _BACKEND_CACHE: dict[str, Backend] = {}
-
-
-def clear_backend_cache() -> None:
-    """Drop the cached backend instances.
-
-    Only useful to a test that needs a device connection rebuilt; ordinary
-    code should let the cache do its job.
-    """
-    _BACKEND_CACHE.clear()
 
 
 def _backend_builders() -> dict:
@@ -174,15 +160,18 @@ def get_backend(name: str, grid_size: tuple = (2048, 2048)) -> Backend:
         If backend not available
 
     """
-    # Override from environment variable
-    if _ENV_BACKEND and _ENV_BACKEND != "AUTO":
-        name = _ENV_BACKEND
+    # Read per call, like the other NLSE_* variables: one set after the import
+    # counts.
+    forced = os.environ.get("NLSE_BACKEND", "").upper()
+    if forced and forced != "AUTO":
+        name = forced
 
     name = name.upper()
 
     # Auto-select optimal backend
     if name == "AUTO":
-        name = get_optimal_backend(grid_size, force_benchmark=_FORCE_BENCHMARK)
+        force = os.environ.get("NLSE_FORCE_BENCHMARK", "0") == "1"
+        name = get_optimal_backend(grid_size, force_benchmark=force)
         say(f"Auto-selected FFT backend: {name}")
 
     # A backend that is not installed falls back to the fastest one that is: the

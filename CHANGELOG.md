@@ -52,6 +52,8 @@ come first.
   run raises `ValueError`. The noise is a Wiener increment, `√|dt|` per step,
   so the intensity it adds per unit time no longer depends on the step.
 
+- **`backends.clear_backend_cache` is removed.** Nothing called it.
+
 ### Fixed
 
 - **A coupled Strang run without a callback keeps its cross coupling.**
@@ -185,6 +187,10 @@ come first.
   for both.
 
 ### Changed
+
+- **`NLSE_BACKEND` and `NLSE_FORCE_BENCHMARK` are read when a backend is asked
+  for**, not once when NLSE is imported, like the other `NLSE_*` variables: one
+  set after the import now counts.
 
 - **A `complex128` field on a backend without double precision moves to the
   fastest backend that has it, with a warning** (MLX, an OpenCL device

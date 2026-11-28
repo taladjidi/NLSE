@@ -74,9 +74,9 @@ MLX provides native GPU acceleration on Apple hardware.
 
 NLSE picks its default backend when it is imported: CUPY if CuPy imports,
 otherwise MLX if MLX imports, otherwise CPU. It checks only that the library
-imports, not that it finds a device. Set `NLSE_BACKEND` to a backend name before
-NLSE is imported to choose it for every solver in the process; it takes
-precedence over the `backend=` argument. `NLSE_BACKEND=auto` is ignored, so each
+imports, not that it finds a device. Set `NLSE_BACKEND` to a backend name to
+choose it for every solver built while it is set; it takes precedence over the
+`backend=` argument. `NLSE_BACKEND=auto` is ignored, so each
 solver keeps its own `backend=`:
 
 ```bash
