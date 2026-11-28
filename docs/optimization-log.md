@@ -480,6 +480,26 @@ about complex64 and wrong to stop there: the argument reverses entirely with
 the round-off floor removed, which is the whole reason the scheme is keyed to
 the float width rather than offered as a default.
 
+**`NLSE_3d` merges its Strang half steps — deployed** (2026-11-28). It never
+did: the merge declined for a solver with an `omega`, meant for a Rabi
+coupling, and `NLSE_3d` calls its frequency grid `omega`. The coupled solvers
+opt out by their class flag, so the check is gone. Merged against unmerged,
+same process, interleaved, slope between 20 and 60 steps, 5 rounds, complex64,
+lossy saturable medium (`benchmarks/strang_merge_3d.py`; M3 Max, numpy 2.4.6,
+scipy 1.18.0, numba 0.66.0, mlx 0.32.0, pyopencl 2026.1.2):
+
+| backend | grid | unmerged | merged | ratio |
+|---|---|---|---|---|
+| CPU | 128³ | 4.44 ms | 3.59 ms | 0.81 |
+| CPU | 256²×64 | 8.97 ms | 6.97 ms | 0.78 |
+| MLX | 128³ | 1.21 ms | 1.10 ms | 0.91 |
+| MLX | 256²×64 | 2.84 ms | 2.71 ms | 0.96 |
+| CL | 128³ | 1.61 ms | 0.91 ms | 0.57 |
+| CL | 256²×64 | 2.06 ms | 1.31 ms | 0.64 |
+
+The two runs differ by 3e-6 to 5e-6 of the peak after 20 steps, the rounding
+of complex64. Not run on CuPy.
+
 ## Solving the lossy real-space step
 
 Not an optimization, but it belongs with them: it is the largest change in

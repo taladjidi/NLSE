@@ -1,6 +1,6 @@
 """Tests of the tools in benchmarks/.
 
-nsys_summary, propagator_fusion, roofline and trace_solvers.
+nsys_summary, propagator_fusion, roofline, strang_merge_3d and trace_solvers.
 """
 
 import importlib
@@ -20,6 +20,7 @@ nsys_summary = pytest.importorskip("nsys_summary")
 # A plain import: the repository's own tool failing to import is a failure.
 propagator_fusion = importlib.import_module("propagator_fusion")
 roofline = importlib.import_module("roofline")
+strang_merge_3d = importlib.import_module("strang_merge_3d")
 trace_solvers = importlib.import_module("trace_solvers")
 
 # What `nsys stats --report cuda_gpu_kern_sum --format csv` actually emits:
@@ -280,3 +281,10 @@ def test_the_cpu_path_is_blocked_when_the_tuner_gives_a_step(monkeypatch):
     monkeypatch.setattr(cpu_tuning, "blocked_step", lambda *_: object())
     assert roofline.step_path(simu, "split_step") == "blocked"
     assert roofline.step_path(simu, "RK4") == "separate"
+
+
+def test_the_3d_merge_benchmark_compares_a_merged_run_with_an_unmerged_one(capsys):
+    """Its two sides differ by rounding: by more they are not the same method."""
+    strang_merge_3d.main(["--nx", "16", "--nt", "16", "--rounds", "1"])
+    apart = float(capsys.readouterr().out.split("results ")[1].split()[0])
+    assert 0 < apart < 1e-4

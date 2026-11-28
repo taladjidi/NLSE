@@ -295,6 +295,13 @@ come first.
   `NLSE.backends.tune_cpu_step(shape, dtype)` measures ahead of a run.
   Batches, array-valued parameters, non-local responses, 1D and 3D grids,
   coupled solvers and RK4 run as before. Figures in `docs/optimization-log.md`.
+- **`NLSE_3d` merges the half steps of consecutive Strang steps,** like
+  `NLSE` and `NLSE_1d`: a run without a callback, a non-local response or a
+  complex potential takes one real-space pass a step instead of two. It
+  never did, because the merge took the solver's frequency grid, `omega`,
+  for a Rabi coupling. A step takes 0.78 to 0.81 of its time on CPU, 0.91
+  to 0.96 on MLX and 0.57 to 0.64 on OpenCL (128³ and 256²×64, complex64);
+  the result moves by the rounding of the float width.
 - `Backend.has_nonlinear_store_callback` is renamed
   `has_linear_nonlinear_step`; it is now set on CPU as well as CUPY. The CPU
   backend's FFT plan is a `CPUPlan` with an `axes` attribute instead of the

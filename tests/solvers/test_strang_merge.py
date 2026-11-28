@@ -3,7 +3,8 @@
 import numpy as np
 import pytest
 from helpers import AVAILABLE_BACKENDS, make
-from NLSE import CNLSE, NLSE
+from NLSE import CNLSE, NLSE, NLSE_3d
+from scipy.constants import c
 
 N = 64
 L = 1e-3
@@ -16,6 +17,14 @@ COUPLED_TOLERANCE = 1e-5
 COUPLED_PHASE = 0.5
 # Loss of both components (1/m), so that the second one's is in the run too.
 COUPLED_ALPHA = 20
+# The 3D case: points per axis, steps over L, the pulse's window (s), energy
+# (J, 1 W over the window: about 1.5 rad of nonlinear phase over L) and
+# dispersion (s^2/m, that of tests/benchmarks).
+N_3D = 16
+STEPS_3D = 20
+WINDOW_T = 1e-12
+ENERGY_3D = 1e-12
+D0 = 1e-26
 
 
 def beam(coupled=False, dtype=np.complex64):
@@ -167,6 +176,62 @@ def test_the_merge_is_taken_with_loss():
     assert distance(merged) == pytest.approx(distance(separate), rel=0.05), (
         f"merging a lossy run should cost nothing: merged {distance(merged):.3e} "
         f"against separate {distance(separate):.3e}"
+    )
+
+
+def run_3d(merged):
+    """Run a Gaussian pulse over L on NLSE_3d in Strang splitting.
+
+    Parameters
+    ----------
+    merged : bool
+        Whether the run may merge its half steps.
+
+    Returns
+    -------
+    tuple
+        The solver and the propagated field.
+    """
+    solver = make(
+        NLSE_3d,
+        "CPU",
+        n=N_3D,
+        NZ=N_3D,
+        alpha=0,
+        energy=ENERGY_3D,
+        window=[WINDOW, WINDOW, WINDOW_T],
+        D0=D0,
+        vg=c,
+        L=L,
+        Isat=1e6,
+    )
+    solver._lie_step_is_strang_body = merged
+    X, Y, T = np.meshgrid(solver.X, solver.Y, solver.T)
+    pulse = np.exp(-(X**2 + Y**2) / WAIST**2 - T**2 / (WINDOW_T / 6) ** 2)
+    delta_z = L / STEPS_3D
+    out = solver.out_field(
+        pulse.astype(np.complex64),
+        L,
+        delta_z=delta_z,
+        verbose=False,
+        plot=False,
+        splitting="strang",
+    )
+    assert solver._current_delta_z == delta_z, "the solver lowered the step"
+    return solver, np.asarray(out)
+
+
+def test_a_3d_run_merges_its_half_steps():
+    """NLSE_3d's ``omega`` is its frequency grid, not a Rabi coupling."""
+    solver, merged = run_3d(merged=True)
+    assert solver._merges_strang_halves("strang"), (
+        "NLSE_3d should merge its Strang half steps: it has no Rabi coupling"
+    )
+    _, unmerged = run_3d(merged=False)
+    difference = np.max(np.abs(merged - unmerged)) / np.max(np.abs(unmerged))
+    assert 0 < difference < 1e-3, (
+        f"merging changed the 3D answer by {difference:.3e}: more than the "
+        f"round-off it should cost, or 0 if the two runs were the same one"
     )
 
 
