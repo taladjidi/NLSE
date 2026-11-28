@@ -61,7 +61,18 @@ def _drive_sample(profile: Any, simu: Any, t: float, i: int) -> Any:
 
 
 class DDGPE(CNLSE):
-    """A class to solve the 2D driven dissipative Gross-Pitaevskii equation."""
+    """A class to solve the 2D driven dissipative Gross-Pitaevskii equation.
+
+    The exciton and cavity equations are Eq. (1.87) of [1]_, here in the frame
+    of the pump and with a cross term ``g12`` and a saturation added. Its
+    Table 2.1 gives the parameters in ps, µm and meV over hbar.
+
+    References
+    ----------
+    .. [1] K. Guerrero-Feuillet, "Rotational superradiance in a polariton
+       quantum fluid", PhD thesis, Sorbonne Université, 2026.
+       https://theses.hal.science/tel-05677012
+    """
 
     # A polariton density on a time axis, with the two components named for
     # the exciton and the cavity. Everything else about the plot is CNLSE's.
