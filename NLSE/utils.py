@@ -91,15 +91,12 @@ def get_cache_dir() -> Path:
     """Get the directory for cached backend benchmarks.
 
     Uses the platform cache location rather than the package directory.
-    Writing inside the installed package fails outright on a read-only or
-    system-wide install, and even when it succeeds it leaves the directory
-    behind on uninstall, because pip only removes files it recorded at
-    install time. What is left is a directory named after the package with
-    no ``__init__.py``, which Python then imports as a namespace package,
-    so ``import NLSE`` silently resolves to an empty module.
+    A write there fails on a read-only install, and a directory left
+    behind on uninstall is imported as a namespace package, so
+    ``import NLSE`` resolves to an empty module.
 
-    Set ``NLSE_CACHE_DIR`` to override; the test suite does, so that no test
-    reads or writes the user's cache.
+    Set ``NLSE_CACHE_DIR`` to override; the test suite does, so that no
+    test reads or writes the user's cache.
 
     Returns
     -------

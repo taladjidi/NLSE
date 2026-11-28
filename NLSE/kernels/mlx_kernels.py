@@ -52,20 +52,16 @@ _LOSS_SOLVED_LIMIT = 0.1
 def _nl_factor(A_sq, dz, alpha, g, Isat, V=None):
     """Return what a real-space step multiplies the field by.
 
-    Every scalar real-space step in this file goes through here, because the
-    lossy part of it is not the exponential it looks like. ``_loss_factor`` in
-    kernels/cpu.py carries the derivation: freezing ``|A|^2`` across a step is
-    exact only while the step preserves it, which a pure rotation does and loss
-    does not, and the frozen form costs Lie, Strang and Yoshida alike their
-    order. With ``u = 2*alpha*dz`` the step applies ``g*|A|^2*P*dz`` for the
-    phase and ``sqrt(1 - P*u)`` for the amplitude.
+    Every scalar real-space step in this file goes through here. With
+    ``u = 2*alpha*dz`` the step applies ``g*|A|^2*P*dz`` for the phase and
+    ``sqrt(1 - P*u)`` for the amplitude, ``P`` being the solved lossy step
+    of ``_loss_factor`` in kernels/cpu.py.
 
-    Branch-free *per element*, since ``alpha`` may carry a batch axis and a
-    branch on a device value would mean a synchronization. At ``u = 0`` the
-    iteration returns ``sat`` and the amplitude factor is exactly 1, so a
-    lossless step is unchanged -- but it is not free, because both arms of
-    every ``mx.where`` are evaluated. ``_nl_factor_lossless`` is what a
-    lossless run actually takes; see ``_is_lossless``.
+    Branch-free *per element*, since ``alpha`` may carry a batch axis and
+    a branch on a device value would mean a synchronization. A lossless
+    step is unchanged but not free, because both arms of every
+    ``mx.where`` are evaluated: a lossless run takes
+    ``_nl_factor_lossless`` instead (see ``_is_lossless``).
 
     Parameters
     ----------
@@ -1381,19 +1377,15 @@ def split_step_rk4_fused(
 def _make_split_step_coupled(splitting, has_V, has_omega, axes):
     """Build the fused coupled step for one shape of the problem.
 
-    Six variants over three choices: a potential or not, Rabi coupling or not,
-    and a whole step (Lie) against a Strang pair of halves. They
-    were written out as six bodies, so the interaction, saturation and loss
-    terms appeared six times and could drift apart between them -- which is
-    the failure this shape invites, because a run only takes one of the six.
-    Here the arithmetic appears once and is traced into whichever variant asks
-    for it.
+    Six variants: a potential or not, times a whole step (Lie) with or
+    without Rabi coupling, or a Strang pair of halves, whose rotation the
+    caller applies outside the graph. The arithmetic is written once and
+    traced into whichever variant asks for it.
 
-    What still varies is the argument list, and it has to: mx.compile traces
-    the arguments it is handed, so a potential that is absent cannot be passed
-    as None. Hence six signatures over one set of terms rather than six of
-    each. ``nonlinear`` takes V1/V2 as None for the variants without one,
-    which is resolved while tracing rather than per step.
+    The argument list still varies: mx.compile traces the arguments it is
+    handed, so an absent potential cannot be passed as None. ``nonlinear``
+    takes V1/V2 as None for the variants without one, which is resolved
+    while tracing rather than per step.
     """
 
     def nonlinear(A1, A2, dz, alpha1, alpha2, g11, g12, g21, g22, Isat1, Isat2, V1, V2):
