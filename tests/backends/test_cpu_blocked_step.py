@@ -5,6 +5,9 @@ import mmap
 import multiprocessing
 import operator
 import os
+import shutil
+import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -19,7 +22,7 @@ from helpers import WINDOW, make
 from NLSE import GPE, NLSE
 from NLSE.backends import cpu_tuning, tune_cpu_step
 from NLSE.backends.cpu import CPUBackend
-from NLSE.kernels import cpu as kernels
+from NLSE.kernels import cpu as kernels, cpu_blocked
 from NLSE.kernels.cpu_blocked import BlockedStep, _shares, _wait
 from NLSE.utils import get_blocking_cache_path
 from scipy.constants import c, epsilon_0
@@ -59,6 +62,17 @@ OTHER_OWNER = "another-host 1 1"  # a lock another process holds, as _lock_token
 UNREADABLE_LOCK = b"\xff\xfe"  # not UTF-8: no token this library wrote
 SLOW_SHARE = 0.05  # s a share still runs after another has failed
 PARENT_MARK, CHILD_MARK = 1, 2  # what each side of a fork fills its scratch with
+# (fastest cores the OS reports, counts measured on ALL threads): an M3 Max's
+# 12, none, all of them, more than there are, and an M2 Pro's 8 = ALL // 2.
+ALL = 16
+REPORTED = [
+    (12, [16, 8, 12]),
+    (None, [16, 8]),
+    (16, [16, 8]),
+    (20, [16, 8]),
+    (8, [16, 8]),
+]
+SYSCTL_TIMEOUT = 10  # s for `sysctl -n`, which answers in milliseconds
 # s a step of each candidate takes: the fastest neither first nor last.
 CANDIDATE_SECONDS = {"slow": 3.0, "fast": 1.0, "middling": 2.0}
 # s a step of each takes, round by round: the best of "early" is not its last.
@@ -496,6 +510,7 @@ CORRUPT = {
     "not JSON": "{",
     "a list": [],
     "another version": "version",
+    "a version 1 cache, before the fastest cores' count": "version 1",
     "entries not a mapping": {"version": cpu_tuning.CACHE_VERSION, "entries": []},
     "rows a string": "rows",
     "rows zero": "zero",
@@ -526,6 +541,8 @@ def corrupt(name):
     }
     if content == "version":
         return {**cached(entry_with()), "version": "0"}
+    if content == "version 1":
+        return {**cached(entry_with()), "version": "1"}
     if isinstance(content, str) and content in entries:
         return cached(entries[content])
     return content
@@ -783,7 +800,91 @@ def test_candidates_are_the_block_sizes_every_thread_gets_one_of(dtype):
     assert candidates, "nothing to measure"
     assert all(rows in sizes for rows, _ in candidates)
     assert all(rows * count <= min(shape) for rows, count in candidates)
-    assert {count for _, count in candidates} <= {threads, threads // 2}
+    assert {count for _, count in candidates} <= set(cpu_tuning._thread_counts(threads))
+
+
+@pytest.mark.parametrize("reported,counts", REPORTED)
+def test_the_counts_are_the_divisors_then_the_fastest_cores(
+    monkeypatch, reported, counts
+):
+    """All threads first, so a tie keeps them, as before the fastest cores.
+
+    Catches the fastest cores' count left out, or past the threads usable.
+    """
+    monkeypatch.setattr(cpu_tuning, "_performance_threads", lambda: reported)
+    assert cpu_tuning._thread_counts(ALL) == counts
+
+
+def test_one_thread_is_measured_on_one():
+    """Catches a count of 0 from the divisors."""
+    assert cpu_tuning._thread_counts(1) == [1]
+
+
+def sysctl_count():
+    """Return what ``sysctl -n`` says of the fastest cores, or None if it cannot."""
+    tool = shutil.which("sysctl")
+    if tool is None:
+        return None
+    name = cpu_tuning.PERFORMANCE_CPUS_SYSCTL.decode()
+    done = subprocess.run(
+        [tool, "-n", name], capture_output=True, text=True, timeout=SYSCTL_TIMEOUT
+    )
+    return int(done.stdout) if done.returncode == 0 else None
+
+
+def test_the_fastest_cores_are_what_sysctl_says():
+    """On macOS the count ``sysctl -n`` prints, where it prints one; else None.
+
+    Catches a read that always fails, and a status or value read wrongly.
+    """
+    if sys.platform != "darwin":
+        assert cpu_tuning._performance_threads() is None
+        return
+    expected = sysctl_count()
+    if expected is None:
+        pytest.skip("sysctl knows no performance levels here")
+    assert cpu_tuning._performance_threads() == expected
+
+
+def test_a_name_the_os_lacks_reads_as_none(monkeypatch):
+    """MacOS 11, or a Mac of one kind of core: no count, not a crash."""
+    monkeypatch.setattr(cpu_tuning, "PERFORMANCE_CPUS_SYSCTL", b"hw.no.such.name")
+    cpu_tuning._performance_threads.cache_clear()
+    try:
+        assert cpu_tuning._performance_threads() is None
+    finally:
+        cpu_tuning._performance_threads.cache_clear()
+
+
+def record_pool(asked, threads):
+    """Stand in for ``cpu_blocked._thread_pool``: note the count, return the pool."""
+    asked.append(threads)
+    return REAL_POOL(threads)
+
+
+REAL_POOL = cpu_blocked._thread_pool
+
+
+def test_the_fastest_cores_count_is_measured_and_run_on(blocking, monkeypatch):
+    """A candidate on that count; an entry of it runs a pool of it, numba untouched.
+
+    Catches the count left out of the candidates, and a step that runs on
+    another count than the one cached (or leaves numba's count changed).
+    """
+    monkeypatch.setattr(cpu_tuning, "_performance_threads", lambda: THREADS)
+    width = np.dtype(np.complex64)
+    candidates = cpu_tuning._candidates((512, 512), width, TEST_THREADS)
+    assert THREADS in {count for _, count in candidates}, "not measured"
+    write_cache(cached(entry_with()))
+    step = settle()
+    asked: list = []
+    monkeypatch.setattr(cpu_blocked, "_thread_pool", partial(record_pool, asked))
+    before = numba.get_num_threads()
+    field, rows, columns, _ = problem(np.complex64, "none")
+    step(field, rows, columns, None, (DZ, 0.0, G, np.inf))
+    assert asked == [THREADS], "ran on another count"
+    assert len(step._row_shares) == len(step._column_shares) == THREADS
+    assert numba.get_num_threads() == before, "numba's count changed"
 
 
 @pytest.mark.parametrize(

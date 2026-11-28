@@ -348,7 +348,7 @@ come first.
   It now transforms blocks of rows and bands of columns sized to stay in
   cache, and applies the nonlinear step to each block as its inverse transform
   finishes. Whether to block, and how, is measured the first time a grid runs
-  (under 1 s at 1024², 7 to 12 s at 4096² on an M3 Max; 1 to 2 s and 21 to
+  (under 2 s at 1024², 9 to 18 s at 4096² on an M3 Max; 1 to 2 s and 21 to
   40 s on a Ryzen 3 4100) and kept in `cpu_blocking.json` in the cache
   directory, as the backend benchmark is. On a Ryzen 3 4100 a step is 1.14x,
   1.31x and 1.32x to 1.37x faster at 1024², 2048² and 4096² in complex64, and
@@ -363,6 +363,18 @@ come first.
   `NLSE.backends.tune_cpu_step(shape, dtype)` measures ahead of a run.
   Batches, array-valued parameters, non-local responses, 1D and 3D grids,
   coupled solvers and RK4 run as before. Figures in `docs/optimization-log.md`.
+- **On macOS the CPU tuner also measures the blocked step on the fastest
+  cores' threads** (`hw.perflevel0.logicalcpu`, 12 of 16 on an M3 Max), after
+  all and half the threads. Entries in
+  `cpu_blocking.json` from before are measured again (cache version 2). On an
+  M3 Max, through the solver, two interleaved runs: 2048² complex128 now
+  blocks 32 rows on 12 threads, 1.17-1.18x faster than the unblocked step it
+  took in two tunings here and 1.09-1.13x faster than the 64 rows on 16 it
+  once took; 4096² complex128 blocks 16 rows on 12 threads, 1.08-1.15x faster
+  than 32 on 16; 4096² complex64 blocks 32 rows on 12, 1.02-1.09x, inside
+  what the runs resolve (6%). 1024² and 2048² complex64 take the same step as
+  before. Tuning takes longer: 0.6-1.7 s at 1024² and 17-18 s at 4096²
+  complex128, from 0.5-0.8 s and 12-13 s. Other systems measure as before.
 - **`NLSE_3d` merges the half steps of consecutive Strang steps,** like
   `NLSE` and `NLSE_1d`: a run without a callback, a non-local response or a
   complex potential takes one real-space pass a step instead of two. It

@@ -1195,6 +1195,55 @@ grid, and the blocked candidates only try all and half the threads. The
 scripts and the box log are in
 `~/Documents/LKB/NLSE_tangui_fix_specs/cpu_blocked_step/`.
 
+**The blocked candidates add the fastest cores' count — deployed.** On macOS
+`sysctlbyname("hw.perflevel0.logicalcpu")` gives the logical CPUs of the
+fastest cores, 12 of 16 on the M3 Max, and every block size is measured on
+that count too, after all and half the threads
+(`_thread_counts` in `cpu_tuning.py`; cache version 2). Per step through the
+solver, ms, best of 7 rounds interleaved in one process, two runs (M3 Max, 16
+threads, numpy 2.4.6, scipy 1.18.0, numba 0.66.0):
+
+| grid | fcfba4a's step | ms | new step | ms | gain |
+|---|---|---|---|---|---|
+| 2048² complex128 | unblocked | 11.57, 11.49 | 32 rows × 12 | 9.77, 9.82 | 1.18x, 1.17x |
+| 2048² complex128 | 64 rows × 16 | 10.99, 10.75 | 32 rows × 12 | 9.77, 9.82 | 1.13x, 1.09x |
+| 4096² complex64 | 32 rows × 16 | 25.46, 23.68 | 32 rows × 12 | 23.45, 23.34 | 1.09x, 1.02x |
+| 4096² complex128 | 32 rows × 16 | 39.49, 40.23 | 16 rows × 12 | 36.66, 35.06 | 1.08x, 1.15x |
+
+At 2048² complex128 the gain is the count's: 32 rows on 16 threads took 11.12
+and 10.77 ms, no faster than 64 on 16. 1024², and 2048² complex64, stay
+unblocked on both; the same step timed twice there differed by up to 6%, the
+runs' resolution. fcfba4a tuned 2048² complex128 unblocked twice (64 × 16
+once on 402601a, the same tuner); the new tuner took 32 × 12 four times. Forced tuning, s,
+two runs each, alternated:
+
+| grid | complex64 | complex128 |
+|---|---|---|
+| 1024² | 0.5 → 0.6-1.0 | 0.7-0.8 → 1.0-1.7 |
+| 2048² | 1.7 → 2.4-3.0 | 2.9-3.2 → 4.1-4.2 |
+| 4096² | 6.8-7.9 → 9.1-9.3 | 12.0-13.0 → 17.0-18.1 |
+
+A third run (2026-11-28, same script and machine, 7 rounds, while a macOS
+indexing daemon held one core at 70-99%, which favours 12 threads): 2048²
+complex128 10.70 (64 × 16) and 10.64 (32 × 16) → 9.80 ms, 1.09x; 4096²
+complex64 24.99 → 24.31, 1.03x; 4096² complex128 39.25 (32 × 16) and 40.34
+(16 × 16) → 37.26, 1.05x and 1.08x; 2048² complex64 unblocked on both, 6.45
+and 6.44. The rounds spread 6 to 10%: the complex128 rows are a difference,
+the complex64 one is not.
+
+Scripts: `cpu_pcores_ab.py --side 2048:complex128:64:16
+2048:complex128:32:16 4096:complex64:32:16 4096:complex128:32:16
+4096:complex128:16:16` and `cpu_pcores_tuning_time.py`, in
+`~/Documents/LKB/NLSE_tangui_fix_specs/`. Linux hybrids are not read: they
+list their fast cores in `/sys/devices/cpu_core/cpus`, unmeasured here.
+
+*Open: the unblocked step's thread count.* It stays on all 16 threads
+(`workers=-1`, numba's default). A tight loop of it is 1.37x faster on 12 at
+1024² complex64 (1.56 against 1.14 ms, `cpu_pcores_probe_switch.py`), but
+through the solver it is 1.06x (1.82 against 1.71 ms, on the arrays the
+solver hands it, `cpu_pcores_probe_arrays.py`), and the cause is not
+established.
+
 ## OpenCL (PyOpenCL + VkFFT)
 
 **Native OpenCL C kernels instead of PyOpenCL array expressions — deployed.**
