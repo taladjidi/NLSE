@@ -123,8 +123,9 @@ State of the four, in the order they land:
    in the tests (one with a batched `n2` is bit-equal by hand); a batched
    `wvl` raises `TypeError` in the constructor, as it did before the series.
    Not run: the Sphinx build, the full suite on Python 3.10.
-3. *The column pass's scratch pad as a tuner decision: v3, on
-   `perf/cpu-tuned-scratch-pad`.* The tuner duels its best block with each
+3. *The column pass's scratch pad as a tuner decision: merged*
+   (`perf/cpu-tuned-scratch-pad`, v3 and a commit of mine correcting its
+   figures). The tuner duels its best block with each
    scratch row 128 B longer (`PAD_BYTES`) against the same block unpadded,
    keeps the pad only where it wins by `MARGIN`, then duels that side against
    the unblocked step; `cpu_blocking.json` stores `pad_bytes` (version 3).
@@ -141,7 +142,24 @@ State of the four, in the order they land:
    19.0 s on the Mac (17.3 to 17.8 on `main`) and 47.7 to 47.9 s on the
    Ryzen (40.4 to 43.0). Bits: 288 cases, none differ, on both machines.
    Why the M3 gains is not verified. The tiled moves lost and are logged as
-   rejected by the series' second commit.
+   rejected by the series' second commit. Box gates ran on v3 at `97ee1c7`
+   (2781 passed, the 13 packaging errors apart), not again after the rebase:
+   the small fixes touch none of its files. A fresh review of v3 gave no
+   CRITICAL or MAJOR. Open, not fixed:
+   - The two margins in a row drop a padded step that beats the unblocked
+     one by more than 10% when it beats the unpadded one by less than 10%
+     and the unpadded one beats the unblocked one by less than 10%. Under
+     load 14-15 the Mac's tuner left 2048² and 4096² complex64 unblocked.
+     The fix: duel unpadded against unblocked first, then the pad against
+     whichever won (`_measure` and `_padded_if_faster` in
+     `NLSE/backends/cpu_tuning.py`, with a test of that case).
+   - `LOCK_STALE_AFTER` (300 s) is 6 times the longest tuning measured
+     (48 s); a grid near 8192² complex128 could pass it.
+   - MINOR: `NLSE/backends/cpu.py:203` is 89 characters;
+     `benchmarks/cpu_blocked_step.py:153` labels a tuned grid without its
+     pad; `cpu_blocked.py`'s module docstring does not name the pad; no test
+     of an unblocked entry that carries a pad (`_usable` refuses it, checked
+     by hand).
 4. *Release 5.0.0: last.* The migration page (a draft of its constructor
    section exists only in the session's scratchpad: write it from
    `CHANGELOG.md`), the bump (`pyproject.toml:7`, `NLSE/__init__.py:8`, `uv
