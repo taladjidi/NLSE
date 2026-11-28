@@ -187,7 +187,13 @@ KERNEL void trans_k(GLOBAL const float* a, GLOBAL float* b, int n, int reps) {
 }
 """
 
-FMA_CHAINS = 8  # independent accumulators per work item in fma_k
+FMA_CHAINS = 8  # independent accumulators per work item in the GPU fma_k
+# Floats of FMA chains per block: 24 NEON or 12 AVX2 registers. 64 (8 AVX2)
+# read 80% of one Zen 2 core; 128 spills on both. Measured 2026-11-28.
+CPU_FMA_FLOATS = 96
+CPU_FMA_FASTMATH = {"nnan", "ninf", "nsz", "arcp", "contract", "afn"}  # no reassoc
+CPU_FMA_EPS = 1e-7  # relative growth per FMA: the chains stay near their start
+CPU_FMA_REPEATS = 300  # FMAs per float in the shorter of the slope's two runs
 
 CL_DIALECT = {
     "KERNEL": "__kernel",
@@ -270,17 +276,20 @@ def cpu_ceilings(working_bytes):
         for i in numba.prange(a.size):
             b[i] = a[i]
 
-    one, eps = np.float32(1.0000001), np.float32(1e-7)
-    blk = 64
+    eps = np.float32(CPU_FMA_EPS)
+    blk = CPU_FMA_FLOATS
 
-    @numba.njit(parallel=True, fastmath=True)
+    # acc + acc * eps keeps each chain the FMA's addend: arm64 needs no mov per
+    # fmla, which acc * one + eps did, at half the peak. Without reassociation
+    # LLVM cannot fold it into acc * (1 + eps), a multiply.
+    @numba.njit(parallel=True, fastmath=CPU_FMA_FASTMATH)
     def fma_k(a, reps):
         total = np.float32(0.0)
         for i in numba.prange(a.size // blk):
             acc = a[i * blk : (i + 1) * blk].copy()
             for _ in range(reps):
                 for j in range(blk):
-                    acc[j] = acc[j] * one + eps
+                    acc[j] = acc[j] + acc[j] * eps
             for j in range(blk):
                 total += acc[j]
         return total
@@ -308,10 +317,9 @@ def cpu_ceilings(working_bytes):
     big = rng.random(1 << 22, dtype=np.float32)
     out = np.empty_like(big)
     small = big[: 1 << 20].copy()
-    reps = 300
-    fma_k(small, 2)
-    t = min(_wall(lambda: fma_k(small, reps)) for _ in range(7))
-    fma = small.size * reps * 2 / t / 1e9
+    # Per repeat, by slope: on all cores one call is under a ms, near its launch.
+    t = slope(lambda r: fma_k(small, r), CPU_FMA_REPEATS, noop)
+    fma = small.size // blk * blk * 2 / t / 1e9 if t > 0 else 0.0
 
     t = slope(lambda r: [trans_k(big, out, np.float32(i)) for i in range(r)], 4, noop)
     return {"stream": stream, "fma": fma, "trans": big.size / t / 1e9}
