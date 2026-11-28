@@ -2,6 +2,7 @@
 
 import functools
 import warnings
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
@@ -77,6 +78,14 @@ DEFAULT_FLOOR_FRACTION = 1e-5
 ABOVE_FLOOR = 1.5
 # Relative error a trial reports to shrink by BOUNDS[0]: far above TOLERANCE.
 LARGE_ERROR = 1.0
+# adapt_delta_z_to_error measures on the steps i with i % CADENCE == 0: of the
+# first CADENCE_STEPS, these. Each measure is two trials, the whole step and its
+# halves (callbacks.py). The controller does not read z, in m.
+CADENCE = 3
+CADENCE_STEPS = 7
+MEASURED_STEPS = [0, 3, 6]
+TRIALS_PER_MEASURE = 2
+ANY_Z = 0.0
 
 
 def _buffers():
@@ -430,6 +439,30 @@ def test_adapt_delta_z_waits_for_its_cadence(backend_name):
     simu._current_delta_z = DELTA_Z
     field = simu._backend.from_numpy(uniform_field(INTENSITY))
     assert adapt_delta_z(simu, field, 0.0, 1, 2, []) is None
+
+
+def test_adapt_delta_z_to_error_measures_on_its_cadence_only(backend, monkeypatch):
+    """Only every ``update_every``-th step runs the trials and returns a step.
+
+    Parameters
+    ----------
+    backend : str
+        Backend to run on.
+    monkeypatch : pytest.MonkeyPatch
+        Replaces the trial propagation by a counted one.
+    """
+    simu = NLSE(backend=backend, **BASE)
+    field = simu._backend.from_numpy(uniform_field(INTENSITY))
+    simu._step_in_force = simu._split_step_max_dz(field) / CEILING_MARGIN
+    trial = Mock(wraps=functools.partial(scaled_trial, error=TRIAL_ERROR))
+    monkeypatch.setattr(callbacks, "_trial_propagation", trial)
+    measured = [
+        i
+        for i in range(CADENCE_STEPS)
+        if adapt_delta_z_to_error(simu, field, ANY_Z, i, TOLERANCE, CADENCE) is not None
+    ]
+    assert measured == MEASURED_STEPS
+    assert trial.call_count == TRIALS_PER_MEASURE * len(MEASURED_STEPS)
 
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)

@@ -10,6 +10,7 @@ from NLSE.backends import (
     _ASSUMED_SPEED_ORDER,
     backends_by_speed,
     benchmark,
+    fastest_backend_supporting,
     list_available_backends,
 )
 from NLSE.utils import get_benchmark_cache_path, get_cache_dir
@@ -36,6 +37,11 @@ AGAINST_THE_PRIOR = ["CPU", "CL", "MLX", "CUPY"]
 BY_THE_PRIOR = ["CUPY", "MLX", "CL", "CPU"]
 # A cache timing only the CPU: the CPU first, the others in the prior's order.
 CPU_TIMED_FIRST = ["CPU", "CUPY", "MLX", "CL"]
+# Three timed backends, ms, listed in neither the prior's order nor the times':
+# the CPU, last in the prior, is the fastest. Ranked by time they come out BY_TIME.
+THREE_LISTED = ["CL", "MLX", "CPU"]
+THREE_TIMES_MS = {"CPU": 1.0, "MLX": 2.0, "CL": 3.0}
+BY_TIME = ["CPU", "MLX", "CL"]
 NOT_A_BACKEND = "NO_SUCH_BACKEND"
 # The stand-in backend below allocates nothing, so any grid does.
 LAZY_GRID = (8, 8)
@@ -453,6 +459,19 @@ class TestCacheLoading:
         )
         write_cache(json.dumps(cache_file(valid_cache_record())))
         assert backends_by_speed(tuple(CACHED_GRID)) == CPU_TIMED_FIRST
+
+    def test_timed_backends_are_ranked_fastest_first(self, monkeypatch):
+        """Measured times, not the prior, order the backends and pick the first."""
+        monkeypatch.setattr(
+            "NLSE.backends.list_available_backends", lambda: THREE_LISTED
+        )
+        results = {name: {"time_ms": time} for name, time in THREE_TIMES_MS.items()}
+        record = {**valid_cache_record(), "results": results}
+        write_cache(json.dumps(cache_file(record)))
+        assert backends_by_speed(tuple(CACHED_GRID)) == BY_TIME
+        fastest = fastest_backend_supporting(lambda _: True, tuple(CACHED_GRID))
+        assert fastest is not None
+        assert fastest.name == BY_TIME[0]
 
     def test_a_cached_name_that_is_no_backend_is_measured_again(self):
         """A fastest backend this install does not have is not handed back."""
