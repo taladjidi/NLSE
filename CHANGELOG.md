@@ -12,9 +12,7 @@ come first.
   `NLSE_3d`, `CNLSE`, `CNLSE_1d`, `GPE` and `DDGPE` raise `TypeError` on a
   positional argument: a dozen of them in a fixed order, several floats of
   similar size, were easy to give in the wrong place without an error. Name
-  each one:
-
-  The keywords are the 4.1.0 parameter names, unchanged:
+  each one; the keywords are the 4.1.0 parameter names, unchanged:
 
   ```python
   simu = NLSE(20, 1.05, 8e-3, -1.6e-9, None, 1e-2, NX=256, NY=256)  # before
