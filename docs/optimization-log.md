@@ -486,7 +486,9 @@ coupling, and `NLSE_3d` calls its frequency grid `omega`. The coupled solvers
 opt out by their class flag, so the check is gone. Merged against unmerged,
 same process, interleaved, slope between 20 and 60 steps, 5 rounds, complex64,
 lossy saturable medium (`benchmarks/strang_merge_3d.py`; M3 Max, numpy 2.4.6,
-scipy 1.18.0, numba 0.66.0, mlx 0.32.0, pyopencl 2026.1.2):
+scipy 1.18.0, numba 0.66.0, mlx 0.32.0, pyopencl 2026.1.2; CUPY on an RTX
+3050, CuPy 14.2.0, repeated three times at 128³ and twice at 256²×64 with
+ratios within 0.01):
 
 | backend | grid | unmerged | merged | ratio |
 |---|---|---|---|---|
@@ -496,6 +498,8 @@ scipy 1.18.0, numba 0.66.0, mlx 0.32.0, pyopencl 2026.1.2):
 | MLX | 256²×64 | 2.84 ms | 2.71 ms | 0.96 |
 | CL | 128³ | 1.61 ms | 0.91 ms | 0.57 |
 | CL | 256²×64 | 2.06 ms | 1.31 ms | 0.64 |
+| CUPY | 128³ | 1.38 ms | 1.22 ms | 0.88 |
+| CUPY | 256²×64 | 2.78 ms | 2.46 ms | 0.89 |
 
 The two runs differ by 3e-6 to 5e-6 of the peak after 20 steps, the rounding
 of complex64. Not run on CuPy.
