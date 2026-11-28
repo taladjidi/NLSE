@@ -101,7 +101,9 @@ class StepSize:
         operator. A maximum is a property of the grid, not of the solution: a
         tall potential in a corner the field never reaches, or a high-K corner
         with no spectral weight, would set the step for a run it has no effect
-        on. Weighting by the field follows the physics instead.
+        on. Weighting by the field follows the physics instead. The potential
+        is weighted by its magnitude: a signed one whose mean over the beam
+        vanishes still turns the phase where the beam is.
 
         Parameters
         ----------
@@ -196,7 +198,7 @@ class StepSize:
             host_V = self._as_host_array(V_scaled)
             real_name, imag_name = POTENTIAL_GRIDS
             real_V = self._grid_on_device(
-                real_name, np.real(host_V), real_dtype, A.shape
+                real_name, np.abs(np.real(host_V)), real_dtype, A.shape
             )
             imag_V = self._grid_on_device(
                 imag_name, np.abs(np.imag(host_V)), real_dtype, A.shape
@@ -284,7 +286,7 @@ class StepSize:
         if V_scaled is None:
             potential = absorption = 0.0
         else:
-            potential = float(np.sum(weight * np.real(V_scaled)) / total)
+            potential = float(np.sum(weight * np.abs(np.real(V_scaled))) / total)
             absorption = float(np.sum(weight * np.abs(np.imag(V_scaled))) / total)
 
         g = self._as_host_array(self._constant("_g"))

@@ -13,6 +13,12 @@ L = 1e-3
 WAIST = 2.23e-3
 WINDOW = 4 * WAIST
 SOLVERS = [NLSE, NLSE_1d, CNLSE, CNLSE_1d]
+# Index change of the potential that is -SIGNED_V on one half of the window
+# and +SIGNED_V on the other: its mean over a centred beam vanishes.
+SIGNED_V = 1e-3
+# Its rate against its magnitude's: equal but for float32 sums (measured
+# below 1e-6, CPU).
+SIGNED_RTOL = 1e-5
 # Short enough that a call is a handful of steps on any backend.
 CALL_DISTANCE = L / 100
 
@@ -49,6 +55,13 @@ def prepared(cls, backend, potential=None):
     return solver, prepared_field
 
 
+def signed_potential(cls):
+    """Return a potential of both signs, antisymmetric across the window."""
+    x = np.linspace(-WINDOW / 2, WINDOW / 2, N)
+    step = np.where(x < 0, -SIGNED_V, SIGNED_V).astype(np.float32)
+    return np.broadcast_to(step, grid_shape(cls)).copy()
+
+
 def worst_disagreement(device, host):
     """Largest relative difference between two sets of rates."""
     return max(
@@ -58,7 +71,7 @@ def worst_disagreement(device, host):
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 @pytest.mark.parametrize("cls", SOLVERS, ids=lambda c: c.__name__)
-@pytest.mark.parametrize("kind", ["none", "real", "complex"])
+@pytest.mark.parametrize("kind", ["none", "real", "complex", "signed"])
 def test_the_device_rates_are_the_host_rates(backend_name, cls, kind):
     """Every rate, every solver, every kind of potential."""
     shape = grid_shape(cls)
@@ -68,6 +81,7 @@ def test_the_device_rates_are_the_host_rates(backend_name, cls, kind):
         "complex": (np.ones(shape) * 1e-3 + 1j * np.ones(shape) * 1e-4).astype(
             np.complex64
         ),
+        "signed": signed_potential(cls),
     }[kind]
     solver, field = prepared(cls, backend_name, potential)
     device = NLSE._energy_rates_on_device(solver, field)
@@ -76,6 +90,24 @@ def test_the_device_rates_are_the_host_rates(backend_name, cls, kind):
         f"{cls.__name__} on {backend_name} with a {kind} potential: the rates "
         f"differ between the device and host paths by "
         f"{worst_disagreement(device, host):.2e}\n  device {device}\n  host   {host}"
+    )
+
+
+@pytest.mark.parametrize("cls", SOLVERS, ids=lambda c: c.__name__)
+def test_a_signed_potential_counts_by_its_magnitude(cls):
+    """A potential whose mean over the beam vanishes still sets the rate."""
+    signed = signed_potential(cls)
+    rates = [
+        solver._energy_rates(field)["potential"]
+        for solver, field in (
+            prepared(cls, "CPU", signed),
+            prepared(cls, "CPU", np.abs(signed)),
+        )
+    ]
+    assert rates[1] > 0, "precondition: the potential turns the phase"
+    assert rates[0] == pytest.approx(rates[1], rel=SIGNED_RTOL), (
+        f"{cls.__name__}: a signed potential rates {rates[0]:.3e} rad/m, its "
+        f"magnitude {rates[1]:.3e}"
     )
 
 
