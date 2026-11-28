@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 from scipy.constants import atomic_mass, c, epsilon_0, hbar
@@ -6,6 +6,7 @@ from scipy.constants import atomic_mass, c, epsilon_0, hbar
 from ..utils import __BACKEND__
 from .nlse import NLSE
 from .parameter import Parameter
+from .units import Unit, in_units
 
 # i hbar dpsi/dt = hbar (V + g|psi|^2) psi turns the phase at -(V + g|psi|^2),
 # and the kernels rotate by +i times the rate they are given. Dimensionless.
@@ -30,8 +31,22 @@ class GPE(NLSE):
     g = Parameter("n2", "Interaction energy over hbar, in rad/s*m^2.")
     sat = Parameter("I_sat", "Saturation density in at/m^2.", scale=epsilon_0 * c / 2)
 
+    # SI, with rates in rad/s: |psi|^2 is a density in atoms/m^2.
+    UNITS: ClassVar[dict[str, Unit]] = {
+        "gamma": "1/s",
+        "N": "dimensionless",
+        "window": "m",
+        "g": "rad*m**2/s",
+        "V": "rad/s",
+        "m": "kg",
+        "sat": "1/m**2",
+        "nl_length": "m",
+    }
+
+    @in_units
     def __init__(
         self,
+        *,
         gamma: float,
         N: float,
         window: float,
@@ -45,6 +60,10 @@ class GPE(NLSE):
         backend: str = __BACKEND__,
     ) -> None:
         """Instantiate the simulation.
+
+        Each argument `UNITS` names also takes a pint quantity, as in `NLSE`.
+        pint gives Hz the dimension of rad/s, so a frequency in Hz is taken
+        without its 2 pi: pass ``2 * np.pi * f`` for an argument in rad/s.
 
         Solves i hbar dpsi/dt = -hbar^2/(2m) (d2/dx2 + d2/dy2) psi
         + hbar V psi + hbar g |psi|^2 psi, so V and g|psi|^2 are rates in

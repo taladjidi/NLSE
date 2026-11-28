@@ -19,9 +19,10 @@ To work on the package itself, see [Contributing](contributing.md#development-se
 | `gpu` | `cupy` | the CUPY backend, on NVIDIA GPUs (see below) |
 | `opencl` | `pyopencl`, `pyvkfft`, `mako` | the CL backend |
 | `mlx` | `mlx` | the MLX backend, on Apple silicon |
+| `units` | `pint` | constructor arguments given as quantities with units ([Units](solvers_overview.md#units)) |
 
-Combine them in one install: `pip install ".[opencl,mlx]"`, or in the
-development environment `uv sync --extra opencl --extra mlx`.
+Combine them in one install: `pip install ".[opencl,mlx,units]"`, or in the
+development environment `uv sync --extra opencl --extra mlx --extra units`.
 
 ## Requirements
 

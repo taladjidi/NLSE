@@ -1,16 +1,24 @@
+from typing import ClassVar
+
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.constants import c, epsilon_0
 
 from ..utils import __BACKEND__
 from .nlse import NLSE, show_if_possible
+from .units import Unit, in_units
 
 
 class NLSE_1d(NLSE):
     """A class to solve NLSE in 1d."""
 
+    # A line's power is per unit length.
+    UNITS: ClassVar[dict[str, Unit]] = {**NLSE.UNITS, "power": "W/m"}
+
+    @in_units
     def __init__(
         self,
+        *,
         alpha: float,
         power: float,
         window: float,
@@ -24,6 +32,8 @@ class NLSE_1d(NLSE):
         backend: str = __BACKEND__,
     ) -> None:
         """Instantiate the simulation.
+
+        Each argument `UNITS` names also takes a pint quantity, as in `NLSE`.
 
         Solves the equation of `NLSE` with one transverse dimension.
 

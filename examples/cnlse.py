@@ -25,13 +25,13 @@ alpha = 20
 
 def main():
     simu_c = CNLSE(
-        alpha,
-        puiss,
-        window,
-        n2,
-        n12,
-        None,
-        L,
+        alpha=alpha,
+        power=puiss,
+        window=window,
+        n2=n2,
+        n12=n12,
+        V=None,
+        L=L,
         NX=N,
         NY=N,
         Isat=Isat,

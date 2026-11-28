@@ -20,7 +20,17 @@ alpha = 20
 
 
 def main() -> None:
-    simu = NLSE_1d(alpha, puiss, window, n2, None, L, NX=N, Isat=Isat, backend="CUPY")
+    simu = NLSE_1d(
+        alpha=alpha,
+        power=puiss,
+        window=window,
+        n2=n2,
+        V=None,
+        L=L,
+        NX=N,
+        Isat=Isat,
+        backend="CUPY",
+    )
     E_0 = np.exp(-(simu.X**2) / waist**2).astype(PRECISION_COMPLEX)
     simu.out_field(E_0, L, verbose=True, plot=True, splitting="lie")
 

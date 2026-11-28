@@ -26,12 +26,12 @@ def main():
     from scipy.constants import c, epsilon_0
 
     simu = NLSE(
-        alpha,
-        puiss,
-        window,
-        n2,
-        None,
-        L,
+        alpha=alpha,
+        power=puiss,
+        window=window,
+        n2=n2,
+        V=None,
+        L=L,
         NX=N,
         NY=N,
         Isat=Isat,

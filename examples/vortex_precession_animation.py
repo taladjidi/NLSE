@@ -36,7 +36,18 @@ L = 5e-2
 alpha = 0
 SAVE_EVERY = 2
 
-simu = NLSE(alpha, power, window, n2, None, L, NX=N, NY=N, Isat=Isat, backend="MLX")
+simu = NLSE(
+    alpha=alpha,
+    power=power,
+    window=window,
+    n2=n2,
+    V=None,
+    L=L,
+    NX=N,
+    NY=N,
+    Isat=Isat,
+    backend="MLX",
+)
 cs = np.sqrt(abs(n2) * intensity) / (1 + intensity / Isat)
 delta_n = abs(n2) * intensity / (1 + intensity / Isat) ** 2
 xi = 1 / (simu.k * cs)

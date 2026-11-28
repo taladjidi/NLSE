@@ -1,9 +1,12 @@
+from typing import Any, ClassVar
+
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.constants import c, epsilon_0
 
 from ..utils import __BACKEND__
 from .nlse import NLSE, show_if_possible
+from .units import Unit, in_units
 
 
 class NLSE_3d(NLSE):
@@ -12,8 +15,20 @@ class NLSE_3d(NLSE):
     Propagation of pulses of light in nonlinear media.
     """
 
+    # An energy rather than a power, a window in m across and s along, and
+    # the dispersion.
+    UNITS: ClassVar[dict[str, Unit]] = {
+        **{name: unit for name, unit in NLSE.UNITS.items() if name != "power"},
+        "energy": "J",
+        "window": ("m", "s"),
+        "D0": "s**2/m",
+        "vg": "m/s",
+    }
+
+    @in_units
     def __init__(
         self,
+        *,
         alpha: float,
         energy: float,
         window: list | tuple,
@@ -31,6 +46,8 @@ class NLSE_3d(NLSE):
         backend: str = __BACKEND__,
     ) -> None:
         """Instantiate the simulation.
+
+        Each argument `UNITS` names also takes a pint quantity, as in `NLSE`.
 
         Solves the equation of `NLSE` with the dispersion term
         D0/2 d2/dt2 psi: docs/physics_problem.md has the whole equation.
@@ -111,6 +128,17 @@ class NLSE_3d(NLSE):
 
         # Override normalization factor for 3D (includes delta_T)
         self._norm_grid_factor = float(self.delta_X * self.delta_Y * self.delta_T)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the arguments that rebuild this solver, as `NLSE.to_dict`.
+
+        Returns
+        -------
+        dict
+            Argument or attribute name to value, the window with its time
+            extent last.
+        """
+        return {**super().to_dict(), "window": (*self.window, self.window_t)}
 
     def _propagator_cache_key(self, dtype: np.dtype, delta_z: float) -> tuple:
         """Return cache key for 3D propagator."""

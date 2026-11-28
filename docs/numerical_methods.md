@@ -145,7 +145,7 @@ step for a run it has no effect on.
 Pass the step you want:
 
 ```python
-E = simu.out_field(E_in, z, delta_z=1e-5)  # in meters (or seconds for GPE/DDGPE)
+E = simu.out_field(E_in, z, delta_z=1e-5)  # in m (in s for GPE, ps for DDGPE)
 ```
 
 ### Automatic step limit enforcement

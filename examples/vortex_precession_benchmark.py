@@ -44,7 +44,16 @@ BACKENDS = list_available_backends()
 # A solver at the reference size, only to get the healing length and the
 # nonlinear length the step and the vortex separation are written against.
 reference = NLSE(
-    alpha, power, window, n2, None, L, NX=N, NY=N, Isat=Isat, backend=BACKENDS[0]
+    alpha=alpha,
+    power=power,
+    window=window,
+    n2=n2,
+    V=None,
+    L=L,
+    NX=N,
+    NY=N,
+    Isat=Isat,
+    backend=BACKENDS[0],
 )
 cs = np.sqrt(abs(n2) * intensity) / (1 + intensity / Isat)
 delta_n = abs(n2) * intensity / (1 + intensity / Isat) ** 2
@@ -68,7 +77,16 @@ for b, backend in enumerate(BACKENDS):
     for i, n in enumerate(sizes):
         print(f"{backend} {n}")
         simu = NLSE(
-            alpha, power, window, n2, None, L, NX=n, NY=n, Isat=Isat, backend=backend
+            alpha=alpha,
+            power=power,
+            window=window,
+            n2=n2,
+            V=None,
+            L=L,
+            NX=n,
+            NY=n,
+            Isat=Isat,
+            backend=backend,
         )
         # A vortex pair, separated by four healing lengths.
         d = 4 * xi

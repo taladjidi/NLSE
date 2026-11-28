@@ -1,11 +1,12 @@
 from collections.abc import Callable
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 
 from ..utils import __BACKEND__, __CUPY_AVAILABLE__
 from .cnlse import CNLSE
 from .parameter import Parameter
+from .units import Unit, in_units
 
 if __CUPY_AVAILABLE__:
     import cupy as cp
@@ -86,11 +87,11 @@ class DDGPE(CNLSE):
     # Polariton physics on CNLSE's terms, sharing its storage. g carries the
     # sign: the two parametrisations write the interaction term opposite ways,
     # and the kernels want CNLSE's.
-    gamma = Parameter("alpha", "Losses in Hz.")
-    gamma2 = Parameter("alpha2", "Cavity losses in Hz.")
-    g = Parameter("n2", "Intra-component interaction parameter.", scale=-1)
-    g12 = Parameter("n12", "Inter-component interaction parameter.")
-    T = Parameter("L", "Total propagation time in s.")
+    gamma = Parameter("alpha", "Exciton losses in 1/ps.")
+    gamma2 = Parameter("alpha2", "Cavity losses in 1/ps.")
+    g = Parameter("n2", "Intra-component interaction in rad µm^2/ps.", scale=-1)
+    g12 = Parameter("n12", "Inter-component interaction in rad µm^2/ps.")
+    T = Parameter("L", "Total propagation time in ps.")
 
     # gamma, gamma2, g and g12 are not listed: views onto alpha, alpha2, n2, n12,
     # which the inherited tuples already carry, and transferring the same
@@ -107,9 +108,31 @@ class DDGPE(CNLSE):
     # g2 has storage of its own, so it is not covered by the inherited entries.
     # _step_constants passes n2 and n12, not g and g12 (NLSE sign convention).
     _medium_attrs = (*CNLSE._medium_attrs, "g2")
+    # omega_pump is worked out from the arguments once, so it travels as set.
+    _attribute_parameters = (*CNLSE._attribute_parameters, "g2", "omega_pump")
 
+    # ps and µm, the units of Table 2.1 of the thesis the class cites, with
+    # |psi|^2 a density in 1/µm^2. power has none: DDGPE never reads it.
+    UNITS: ClassVar[dict[str, Unit]] = {
+        "gamma": "1/ps",
+        "window": "um",
+        "g": "rad*um**2/ps",
+        "omega": "rad/ps",
+        "T": "ps",
+        "omega_exc": "rad/ps",
+        "omega_cav": "rad/ps",
+        "detuning": "rad/ps",
+        "k_z": "1/um",
+        "V": "rad/ps",
+        "g12": "rad*um**2/ps",
+        "Isat": "1/um**2",
+        "nl_length": "um",
+    }
+
+    @in_units
     def __init__(
         self,
+        *,
         gamma: float,
         power: float,
         window: float,
@@ -130,42 +153,47 @@ class DDGPE(CNLSE):
     ) -> None:
         """Instantiate the class with all the relevant physical parameters.
 
+        Each argument `UNITS` names also takes a pint quantity, as in `NLSE`.
+        pint gives Hz the dimension of rad/ps, so a frequency in Hz is taken
+        without its 2 pi: pass ``2 * np.pi * f`` for an argument in rad/ps.
+
         Parameters
         ----------
         gamma : float
-            Losses coefficient in s^-1.
+            Losses coefficient in 1/ps.
         power : float
-            Optical power in W.
+            Not read: a DDGPE run does not normalize its field. No unit, so
+            it takes no quantity.
         window : float
-            Computational window in m.
+            Computational window in µm.
         g : float
-            Interaction parameter.
+            Interaction parameter in rad µm^2/ps.
         omega : float
-            Rabi coupling strength.
+            Rabi coupling strength in rad/ps.
         T : float
-            Total propagation time in s.
+            Total propagation time in ps.
         omega_exc : float
-            Exciton frequency in rad/s.
+            Exciton frequency in rad/ps.
         omega_cav : float
-            Cavity frequency in rad/s.
+            Cavity frequency in rad/ps.
         detuning : float
-            Detuning from lower polariton in rad/s.
+            Detuning from lower polariton in rad/ps.
         k_z : float
-            Longitudinal wavevector in m^-1.
+            Longitudinal wavevector in 1/µm.
         V : np.ndarray, optional
-            Potential in rad/s: it advances the phase by -V t. Defaults to
+            Potential in rad/ps: it advances the phase by -V t. Defaults to
             None.
         g12 : float, optional
-            Inter component interaction parameter. Defaults to 0.
+            Inter component interaction in rad µm^2/ps. Defaults to 0.
         NX : int, optional
             Number of points along x. Defaults to 1024.
         NY : int, optional
             Number of points along y. Defaults to 1024.
         Isat : float, optional
-            Saturation intensity, assumed to be the same
+            Saturation density in 1/µm^2, assumed to be the same
             for both components. Defaults to infinity.
         nl_length : float, optional
-            Non-local length in m, of a diffusive non-locality: the
+            Non-local length in µm, of a diffusive non-locality: the
             interaction reads the intensity smoothed by
             1 / (1 + nl_length^2 K^2) in Fourier space. Defaults to 0, local.
         backend : str, optional
@@ -222,7 +250,7 @@ class DDGPE(CNLSE):
         A : np.ndarray
             Field array.
         t : float
-            Propagation time in s.
+            Propagation time in ps.
         i : int
             Propagation step.
         noise : float
@@ -447,7 +475,7 @@ class DDGPE(CNLSE):
             Input field where E_in[0] is the exciton field and
             E_in[1] is the cavity field.
         t : float
-            Time to propagate to in s.
+            Time to propagate to in ps.
         laser_excitation : callable or None
             The pump and probe, called as a callback before the others. None
             uses `DDGPE.laser_excitation`. Either way its arguments are the

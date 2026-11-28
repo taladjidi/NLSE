@@ -218,7 +218,16 @@ def singularities(field):
 # transition happens on screen.
 SEPARATION = 3.0 * XI
 simu = NLSE(
-    ALPHA, POWER, WINDOW, N2, None, LENGTH, NX=N_PTS, NY=N_PTS, Isat=I_SAT, wvl=WVL
+    alpha=ALPHA,
+    power=POWER,
+    window=WINDOW,
+    n2=N2,
+    V=None,
+    L=LENGTH,
+    NX=N_PTS,
+    NY=N_PTS,
+    Isat=I_SAT,
+    wvl=WVL,
 )
 envelope = np.exp(-(simu.XX**2 + simu.YY**2) / WAIST**2)
 E_in = (

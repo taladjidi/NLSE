@@ -8,6 +8,28 @@ come first.
 
 ### Changed (breaking)
 
+- **Every solver takes its arguments by keyword only.** `NLSE`, `NLSE_1d`,
+  `NLSE_3d`, `CNLSE`, `CNLSE_1d`, `GPE` and `DDGPE` raise `TypeError` on a
+  positional argument: a dozen of them in a fixed order, several floats of
+  similar size, were easy to give in the wrong place without an error. Name
+  each one; the keywords are the 4.1.0 parameter names, unchanged:
+
+  ```python
+  simu = NLSE(20, 1.05, 8e-3, -1.6e-9, None, 1e-2, NX=256, NY=256)  # before
+  simu = NLSE(alpha=20, power=1.05, window=8e-3, n2=-1.6e-9, V=None, L=1e-2, NX=256, NY=256)  # after
+  simu = GPE(0.1, 1e5, 1e-4, 1e-12, None, NX=256, NY=256)  # before
+  simu = GPE(gamma=0.1, N=1e5, window=1e-4, g=1e-12, V=None, NX=256, NY=256)  # after
+  simu = DDGPE(0.1, 1.0, 256.0, 0.015, 7.75, 100.0, 2270.0, 2267.4, 0.26, 27.0, NX=256, NY=256)  # before
+  simu = DDGPE(gamma=0.1, power=1.0, window=256.0, g=0.015, omega=7.75, T=100.0, omega_exc=2270.0, omega_cav=2267.4, detuning=0.26, k_z=27.0, NX=256, NY=256)  # after
+  ```
+
+  A subclass whose `__init__` calls `super().__init__` with positional
+  arguments raises the same `TypeError`. Each `__init__` is now wrapped by a
+  decorator (`functools.wraps`, so its name, docstring and
+  `inspect.signature` are unchanged). The classes gain the public names
+  `UNITS`, `to_dict` and `from_dict` (below): a subclass that defines one of
+  them for itself changes what its constructor converts or what saving
+  returns.
 - **NumPy 2 is required** (`numpy>=2`). The normalization keeps a
   `complex64` field's bits through NumPy 2's promotion rules (NEP 50): on
   NumPy 1.x a float32 scalar times a Python float is float64.
@@ -255,6 +277,61 @@ come first.
   the NLSE's `n2` as `g`, so it timed a linear run; it now takes `g n` = 1e3
   rad/s at the mean density, as `examples/gpe.py` does, and checks that the
   interaction turns the centre's phase.
+
+### Added
+
+- **Constructor arguments as pint quantities.** With the `units` extra
+  (`pip install "NLSE[units]"`), every argument with a unit also takes a
+  [pint](https://pint.readthedocs.io) quantity, such as
+  `alpha=0.2 / ureg.cm`. Each constructor of the chain checks its dimension,
+  converts it to the unit the solver's `UNITS` table gives and strips it
+  before its body runs, so the attributes hold plain numbers as before. A
+  plain number is taken in that unit, as it always was, and nothing imports
+  pint without the extra. What a 4.1.0 script can notice, once it imports
+  pint:
+  - a quantity, which 4.1.0 stored as given, arrives as a plain number in
+    the `UNITS` unit;
+  - a wrong dimension raises `pint.DimensionalityError` naming the argument
+    and its unit, and a quantity for an argument without a unit (`NX`, `NY`,
+    `NZ`, `backend`, `DDGPE`'s `power`) raises `TypeError`;
+  - a list or tuple holding a quantity comes back a new list, or a plain
+    tuple (a namedtuple included); one holding none is passed on as it is;
+  - Hz is not refused: pint counts a radian as 1, so `5 * ureg.Hz` becomes
+    5 rad/s, without its 2π. Pass `2 * np.pi * f` where `UNITS` says rad/s
+    or rad/ps;
+  - an attribute assigned after construction is not converted: it takes a
+    plain number in the `UNITS` unit.
+
+  `DDGPE`'s units are ps and µm, those of the
+  [thesis](https://theses.hal.science/tel-05677012) it follows (its
+  [Table 2.1](https://theses.hal.science/tel-05677012/file/158335_GUERRERO_FEUILLET_2026_archivage.pdf#page=78), [Table 3.1](https://theses.hal.science/tel-05677012/file/158335_GUERRERO_FEUILLET_2026_archivage.pdf#page=120) and
+  [Eq. (1.10)-(1.11)](https://theses.hal.science/tel-05677012/file/158335_GUERRERO_FEUILLET_2026_archivage.pdf#page=15); `V` and `Isat` derived, see
+  [The `DDGPE` class](docs/solvers_overview.md#the-ddgpe-class)): its
+  docstrings, which said s, m and rad/s, now say ps, µm and rad/ps. A plain
+  number reaches the equation as before, so no run changes.
+
+  A window may also be a length-2 array, so that `[4, 2] * ureg.mm` works;
+  it is stored as a list. A list or an object array of quantities is
+  converted element by element.
+- **`to_dict()` and `from_dict()`.** `simu.to_dict()` returns the constructor
+  arguments, read back from the solver as it now runs (`Isat` from `I_sat`,
+  `wvl` from `wl`), plus the attributes no argument sets (the coupled
+  solvers' `n22`, `alpha2`, `power2`, `I_sat2`, and `k2` once assigned;
+  DDGPE's `g2` and `omega_pump`); `type(simu).from_dict(d)` builds a solver
+  that propagates identically, whose `k2` follows `k` exactly when the
+  original's did. Values are plain numbers in the units of `UNITS`; the
+  attribute keys, which have no `UNITS` entry, hold the attribute as the run
+  reads it, in the unit of the one they mirror (`n22` as `n2`, `alpha2` as
+  `alpha`, `power2` as `power`, `I_sat2` as `I_sat`, `g2` as `g`;
+  `omega_pump` in rad/ps). Arrays are the solver's own, the `window` list a
+  copy, so the dict goes through `json` only without arrays. The dict also
+  holds `k`, which `from_dict` restores to its last bit, lost by
+  `wvl = 2 pi / k` (or `GPE`'s `m`); an edited `wvl` or `m` with the old `k`
+  raises `ValueError`, and a dict without `k` builds from `wvl` or `m` alone.
+  A subclass's own arguments come back when it stores each as an attribute
+  of the same name; its `*args` and `**kwargs` are left out, so one that
+  forwards its base's arguments through `**kwargs` cannot be rebuilt from
+  its dict. No public attribute is added for it.
 
 ### Changed
 

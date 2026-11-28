@@ -1,3 +1,5 @@
+from typing import ClassVar
+
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.constants import c, epsilon_0
@@ -5,13 +7,19 @@ from scipy.constants import c, epsilon_0
 from ..utils import __BACKEND__
 from .cnlse import CNLSE
 from .nlse import show_if_possible
+from .units import Unit, in_units
 
 
 class CNLSE_1d(CNLSE):
     """A class to solve the 1D coupled NLSE."""
 
+    # A line's power is per unit length, as in NLSE_1d.
+    UNITS: ClassVar[dict[str, Unit]] = {**CNLSE.UNITS, "power": "W/m"}
+
+    @in_units
     def __init__(
         self,
+        *,
         alpha: float,
         power: float,
         window: float,
@@ -28,10 +36,13 @@ class CNLSE_1d(CNLSE):
     ) -> None:
         """Instantiate the class with all the relevant physical parameters.
 
+        Each argument `UNITS` names also takes a pint quantity, as in `NLSE`.
+
         Parameters
         ----------
         alpha : float
-            Alpha through the cell.
+            Intensity loss of each component in 1/m, as in `NLSE`; `alpha2`
+            sets the second component's afterwards.
         power : float
             Power per unit length of each component in W/m, as in `NLSE_1d`;
             `power2` sets the second component's afterwards. The peak
@@ -50,7 +61,7 @@ class CNLSE_1d(CNLSE):
         NX : int, optional
             Number of points along x. Defaults to 1024.
         Isat : float, optional
-            Saturation intensity, assumed to be the same
+            Saturation intensity in W/m^2, assumed to be the same
             for both components. Defaults to infinity.
         nl_length : float
             Non-local length in m, of a diffusive non-locality: the
@@ -59,7 +70,9 @@ class CNLSE_1d(CNLSE):
         wvl : float, optional
             Wavelength in m. Defaults to 780 nm.
         omega : float, optional
-            Rabi coupling. Defaults to None.
+            Rabi coupling in rad/m, a rate along the propagation axis, so a
+            quantity in Hz, a rate in time, is refused with
+            `pint.DimensionalityError`. Defaults to None.
         backend : str, optional
             Backend name: "CPU", "CUPY", "CL", "MLX" or "auto" (the installed
             one with the fastest transform at this grid size). Defaults to

@@ -72,23 +72,74 @@ def modulated(coordinate, window):
 
 def make_2d(backend, nl_length):
     """Return the 2D solver on the module's anisotropic grid."""
-    return NLSE(0, 1, WINDOW, N2, None, 1, NX, NY, ISAT, nl_length, WVL, backend)
+    return NLSE(
+        alpha=0,
+        power=1,
+        window=WINDOW,
+        n2=N2,
+        V=None,
+        L=1,
+        NX=NX,
+        NY=NY,
+        Isat=ISAT,
+        nl_length=nl_length,
+        wvl=WVL,
+        backend=backend,
+    )
 
 
 def make_gpe(backend, nl_length):
     """Return the GPE on the 2D grid, lengths in m and DZ read as seconds."""
-    return GPE(0, 1, WINDOW, G_GPE, None, MASS, NX, NY, ISAT, nl_length, backend)
+    return GPE(
+        gamma=0,
+        N=1,
+        window=WINDOW,
+        g=G_GPE,
+        V=None,
+        m=MASS,
+        NX=NX,
+        NY=NY,
+        sat=ISAT,
+        nl_length=nl_length,
+        backend=backend,
+    )
 
 
 def make_1d(backend, nl_length):
     """Return the 1D solver on the module's x grid."""
-    return NLSE_1d(0, 1, WINDOW[0], N2, None, 1, NX, ISAT, nl_length, WVL, backend)
+    return NLSE_1d(
+        alpha=0,
+        power=1,
+        window=WINDOW[0],
+        n2=N2,
+        V=None,
+        L=1,
+        NX=NX,
+        Isat=ISAT,
+        nl_length=nl_length,
+        wvl=WVL,
+        backend=backend,
+    )
 
 
 def make_3d(backend, nl_length):
     """Return the 3D solver on the module's anisotropic grid."""
     return NLSE_3d(
-        0, 1, WINDOW_3D, N2, 0, 3e8, None, 1, NX, NY, NZ, ISAT, nl_length, WVL, backend
+        alpha=0,
+        energy=1,
+        window=WINDOW_3D,
+        n2=N2,
+        D0=0,
+        vg=3e8,
+        V=None,
+        L=1,
+        NX=NX,
+        NY=NY,
+        NZ=NZ,
+        Isat=ISAT,
+        nl_length=nl_length,
+        wvl=WVL,
+        backend=backend,
     )
 
 
@@ -192,14 +243,39 @@ def coupled_case(backend, cls):
     """
     if cls is CNLSE:
         simu = CNLSE(
-            0, 1, WINDOW, N2, N2, None, 1, NX, NY, ISAT, NL_LENGTH, WVL, None, backend
+            alpha=0,
+            power=1,
+            window=WINDOW,
+            n2=N2,
+            n12=N2,
+            V=None,
+            L=1,
+            NX=NX,
+            NY=NY,
+            Isat=ISAT,
+            nl_length=NL_LENGTH,
+            wvl=WVL,
+            omega=None,
+            backend=backend,
         )
         first, q1 = modulated(simu.XX, WINDOW[0])
         second, q2 = modulated(simu.YY, WINDOW[1])
         coordinates = (simu.XX, simu.YY)
     else:
         simu = CNLSE_1d(
-            0, 1, WINDOW[0], N2, N2, None, 1, NX, ISAT, NL_LENGTH, WVL, None, backend
+            alpha=0,
+            power=1,
+            window=WINDOW[0],
+            n2=N2,
+            n12=N2,
+            V=None,
+            L=1,
+            NX=NX,
+            Isat=ISAT,
+            nl_length=NL_LENGTH,
+            wvl=WVL,
+            omega=None,
+            backend=backend,
         )
         first, q1 = modulated(simu.X, WINDOW[0])
         second, q2 = first, q1

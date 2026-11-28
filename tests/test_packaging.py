@@ -23,9 +23,9 @@ REQUIRED_DATA_FILES = [
     "NLSE/kernels/cuda_source/nonlinear_step.cuh",
 ]
 
-# The extras a user can install. The dev and docs tools are dependency groups
-# (PEP 735), which stay out of the published metadata.
-PUBLISHED_EXTRAS = {"gpu", "mlx", "opencl"}
+# The extras a user can install: the backends, and pint for units. The dev and
+# docs tools are dependency groups (PEP 735), which stay out of the metadata.
+PUBLISHED_EXTRAS = {"gpu", "mlx", "opencl", "units"}
 
 
 def _build_wheel_command(outdir: Path) -> list[str]:
@@ -207,7 +207,7 @@ def test_the_wheel_holds_the_package_and_its_metadata_only(wheel_contents):
     assert not stray, f"the wheel carries {stray} next to NLSE/"
 
 
-def test_the_wheel_publishes_only_the_backend_extras(wheel_path):
+def test_the_wheel_publishes_only_the_user_extras(wheel_path):
     """The dev and docs tools must not come back as extras of the package."""
     with zipfile.ZipFile(wheel_path) as zf:
         names = [n for n in zf.namelist() if n.endswith(".dist-info/METADATA")]

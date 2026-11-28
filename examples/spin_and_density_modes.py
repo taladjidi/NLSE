@@ -167,7 +167,16 @@ def measure(i0, mode, k_xi=1.0, periods=12):
     delta_z = 1.0 * 2 * K0 / (np.pi / dx) ** 2
 
     simu = CNLSE_1d(
-        0, 1.0, window, N2, N12, None, length, NX=N_PTS, Isat=I_SAT, wvl=WVL
+        alpha=0,
+        power=1.0,
+        window=window,
+        n2=N2,
+        n12=N12,
+        V=None,
+        L=length,
+        NX=N_PTS,
+        Isat=I_SAT,
+        wvl=WVL,
     )
     simu.n22 = N2  # one medium: each component sees itself as it sees itself
     simu.I_sat2 = I_SAT

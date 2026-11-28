@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, ClassVar
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -7,6 +7,7 @@ from scipy.constants import c, epsilon_0
 from ..kernels.templating import Rk4StageMode
 from ..utils import __BACKEND__
 from .nlse import NLSE, show_if_possible
+from .units import Unit, in_units
 
 
 class CNLSE(NLSE):
@@ -25,9 +26,20 @@ class CNLSE(NLSE):
     # `_nonlinear_step`, which has neither the cross coupling nor the second
     # loss, so no coupled run merges.
     _lie_step_is_strang_body = False
+    # The second component's, which start as the first one's.
+    _attribute_parameters = ("n22", "alpha2", "k2", "power2", "I_sat2")
 
+    # The cross index, and the Rabi coupling per unit length.
+    UNITS: ClassVar[dict[str, Unit]] = {
+        **NLSE.UNITS,
+        "n12": "m**2/W",
+        "omega": "rad/m",
+    }
+
+    @in_units
     def __init__(
         self,
+        *,
         alpha: float,
         power: float,
         window: float,
@@ -45,10 +57,13 @@ class CNLSE(NLSE):
     ) -> None:
         """Instantiate the class with all the relevant physical parameters.
 
+        Each argument `UNITS` names also takes a pint quantity, as in `NLSE`.
+
         Parameters
         ----------
         alpha : float
-            Alpha through the cell.
+            Intensity loss of each component in 1/m, as in `NLSE`; `alpha2`
+            sets the second component's afterwards.
         power : float
             Optical power of each component in W; `power2` sets the second
             component's afterwards.
@@ -68,7 +83,7 @@ class CNLSE(NLSE):
         NY : int, optional
             Number of points along y. Defaults to 1024.
         Isat : float, optional
-            Saturation intensity, assumed to be the same
+            Saturation intensity in W/m^2, assumed to be the same
             for both components. Defaults to infinity.
         nl_length : float
             Non-local length in m, of a diffusive non-locality: the
@@ -77,7 +92,9 @@ class CNLSE(NLSE):
         wvl : float, optional
             Wavelength in m. Defaults to 780 nm.
         omega : float, optional
-            Rabi coupling. Defaults to None.
+            Rabi coupling in rad/m, a rate along the propagation axis, so a
+            quantity in Hz, a rate in time, is refused with
+            `pint.DimensionalityError`. Defaults to None.
         backend : str, optional
             Backend name: "CPU", "CUPY", "CL", "MLX" or "auto" (the installed
             one with the fastest transform at this grid size). Defaults to
@@ -112,6 +129,20 @@ class CNLSE(NLSE):
         self._k2: float | None = None
         # powers
         self.power2 = self.power
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the arguments that rebuild this solver, as `NLSE.to_dict`.
+
+        Returns
+        -------
+        dict
+            Argument or attribute name to value. ``k2`` is in it only once
+            assigned: until then it follows ``k``, as the rebuilt one will.
+        """
+        parameters = super().to_dict()
+        if self._k2 is None:
+            del parameters["k2"]
+        return parameters
 
     @property
     def k2(self) -> float:
