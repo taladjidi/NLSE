@@ -415,8 +415,7 @@ def _nl_prop(
     dz, alpha, g, Isat = ft(dz), ft(alpha), ft(g), ft(Isat)
     u = _TWO * alpha * dz
     if abs(u) > _LOSS_SOLVED_LIMIT:
-        # Either lossless, where freezing |A|^2 is exact, or a step so lossy
-        # that solving it is out of reach. See _LOSS_SOLVED_LIMIT.
+        # Too lossy a step to solve, so frozen. See _LOSS_SOLVED_LIMIT.
         for i in numba.prange(A_flat.size):
             # saturation
             sat = _ONE / (_ONE + A_sq_flat[i] / Isat)
@@ -841,7 +840,7 @@ def _square_mod_nl_prop_v_span(
     dz, alpha, g, Isat = ft(dz), ft(alpha), ft(g), ft(Isat)
     u = _TWO * alpha * dz
     if abs(u) > _LOSS_SOLVED_LIMIT:
-        # Lossless, or too lossy to solve. See _LOSS_SOLVED_LIMIT.
+        # Too lossy a step to solve, so frozen. See _LOSS_SOLVED_LIMIT.
         for i in range(part.size):
             A_sq_val = part[i].real * part[i].real + part[i].imag * part[i].imag
             sat = _ONE / (_ONE + A_sq_val / Isat)
