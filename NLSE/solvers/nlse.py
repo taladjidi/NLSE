@@ -3,12 +3,13 @@
 """NLSE Main module."""
 
 import contextlib
+import inspect
 import math
 import warnings
 from collections import OrderedDict
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from functools import partial
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypeVar
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -122,6 +123,18 @@ def show_if_possible() -> bool:
     return True
 
 
+# Whichever solver from_dict is called on, for the type it returns.
+Solver = TypeVar("Solver", bound="NLSE")
+# Parameter kinds to_dict leaves out: a subclass's *args and **kwargs, which
+# name no attribute to read back.
+VARIADIC_KINDS = (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+# Relative gap between a dict's k and the k its arguments rebuild that is
+# round-off: wvl = 2 pi / k in to_dict, k = 2 pi / wvl in the constructor (GPE:
+# m = k, wvl = 2 pi / m, k = 2 pi / wvl) are two divisions, each off by at
+# most u = eps / 2, so at most 2u = eps in all; twice that, for margin.
+K_RTOL = 2 * np.finfo(np.float64).eps
+
+
 class NLSE(StepSize):
     """A class to solve NLSE."""
 
@@ -194,6 +207,13 @@ class NLSE(StepSize):
         "nl_length": "m",
         "wvl": "m",
     }
+
+    # The attribute to_dict reads each constructor argument back from, where
+    # the two names differ; any other argument is read by its own name.
+    _argument_attributes: ClassVar[dict[str, str]] = {"Isat": "I_sat", "wvl": "wl"}
+    # Attributes a run reads that no constructor argument sets, which to_dict
+    # adds to the arguments: the coupled solvers' second component.
+    _attribute_parameters: tuple[str, ...] = ()
 
     @in_units
     def __init__(
@@ -340,6 +360,123 @@ class NLSE(StepSize):
         On the coupled solvers it moves ``k2`` too, unless ``k2`` was set.
         """
         self.k = 2 * np.pi / value
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the arguments that rebuild this solver as it now runs.
+
+        Each constructor argument is read back from the solver, so one
+        reassigned since is given as it now is, a plain number in its unit
+        in `UNITS`; the attributes no argument sets follow, then ``k``, the
+        wavenumber in force. ``wvl`` (GPE: ``m``) is ``2 pi / k``, which can
+        miss k's last bit on the way back, so `from_dict` restores ``k``.
+        Arrays are the solver's own, not copies; a list, the window, is a
+        copy. ``json.dumps`` takes the dict when it holds no array and no
+        float32; the default ``Isat`` is written Infinity.
+
+        An argument is read from the attribute of its own name, or from the
+        one `_argument_attributes` gives it. A subclass's own arguments must
+        be stored as attributes of the same name, or listed in its own
+        `_argument_attributes`; its ``*args`` and ``**kwargs`` are left out.
+        So a subclass that hands its base's arguments on through
+        ``**kwargs`` gets only its own back, and `from_dict` on that dict
+        raises the constructor's `TypeError` for the missing ones.
+
+        Returns
+        -------
+        dict
+            Argument or attribute name to value, as `from_dict` takes it.
+        """
+        arguments = {
+            name: self._argument_value(name) for name in self._argument_names()
+        }
+        attributes = {name: getattr(self, name) for name in self._attribute_parameters}
+        return {**arguments, **attributes, "k": self.k}
+
+    @classmethod
+    def _argument_names(cls) -> list[str]:
+        """Return the constructor's parameter names, the variadic ones left out.
+
+        Returns
+        -------
+        list of str
+            Parameter names, in the signature's order.
+        """
+        parameters = inspect.signature(cls).parameters.values()
+        return [p.name for p in parameters if p.kind not in VARIADIC_KINDS]
+
+    def _argument_value(self, name: str) -> Any:
+        """Return one constructor argument as the solver now holds it.
+
+        Parameters
+        ----------
+        name : str
+            The argument's name in the constructor.
+
+        Returns
+        -------
+        Any
+            The attribute's value; a list is copied, so that editing the dict
+            leaves the solver alone.
+        """
+        value = getattr(self, self._argument_attributes.get(name, name))
+        return list(value) if isinstance(value, list) else value
+
+    @classmethod
+    def from_dict(cls: type[Solver], parameters: Mapping[str, Any]) -> Solver:
+        """Return a solver built from what `to_dict` returned.
+
+        The solver is built from the constructor arguments. A ``k`` in the
+        dict then replaces the one they give if the two agree to round-off
+        (`K_RTOL`), which restores its last bit; a dict without ``k`` builds
+        from ``wvl`` (GPE: ``m``) alone.
+
+        Parameters
+        ----------
+        parameters : Mapping
+            Constructor arguments, and any of the attributes `to_dict` adds,
+            which are set once the solver is built.
+
+        Returns
+        -------
+        NLSE
+            The solver, of the class this is called on.
+
+        Raises
+        ------
+        ValueError
+            If the dict's ``k`` is not the one its arguments give, as when
+            ``wvl`` was edited and ``k`` was not.
+        """
+        attributes = [name for name in cls._attribute_parameters if name in parameters]
+        set_after = {*attributes, "k"}
+        simu = cls(**{n: v for n, v in parameters.items() if n not in set_after})
+        if "k" in parameters:
+            simu._restore_k(parameters["k"])
+        for name in attributes:
+            setattr(simu, name, parameters[name])
+        return simu
+
+    def _restore_k(self, k: float) -> None:
+        """Set a saved k that the rebuilt one matches up to round-off.
+
+        Parameters
+        ----------
+        k : float
+            The wavenumber `to_dict` saved.
+
+        Raises
+        ------
+        ValueError
+            If ``k`` is further than `K_RTOL` from the solver's own.
+        """
+        if abs(k - self.k) <= K_RTOL * abs(self.k):
+            self.k = k
+        else:
+            raise ValueError(
+                f"{type(self).__name__}.from_dict: k = {k!r} in the dict, but its "
+                f"other arguments give k = {self.k!r}; remove the key 'k' to "
+                "build from them alone"
+            )
 
     def out_field(
         self,

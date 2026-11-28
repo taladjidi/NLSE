@@ -108,6 +108,8 @@ class DDGPE(CNLSE):
     # g2 has storage of its own, so it is not covered by the inherited entries.
     # _step_constants passes n2 and n12, not g and g12 (NLSE sign convention).
     _medium_attrs = (*CNLSE._medium_attrs, "g2")
+    # omega_pump is worked out from the arguments once, so it travels as set.
+    _attribute_parameters = (*CNLSE._attribute_parameters, "g2", "omega_pump")
 
     # ps and µm, the units of Table 2.1 of the thesis the class cites, with
     # |psi|^2 a density in 1/µm^2. power has none: DDGPE never reads it.

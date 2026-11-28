@@ -26,6 +26,8 @@ class CNLSE(NLSE):
     # `_nonlinear_step`, which has neither the cross coupling nor the second
     # loss, so no coupled run merges.
     _lie_step_is_strang_body = False
+    # The second component's, which start as the first one's.
+    _attribute_parameters = ("n22", "alpha2", "k2", "power2", "I_sat2")
 
     # The cross index, and the Rabi coupling per unit length.
     UNITS: ClassVar[dict[str, Unit]] = {
@@ -127,6 +129,20 @@ class CNLSE(NLSE):
         self._k2: float | None = None
         # powers
         self.power2 = self.power
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the arguments that rebuild this solver, as `NLSE.to_dict`.
+
+        Returns
+        -------
+        dict
+            Argument or attribute name to value. ``k2`` is in it only once
+            assigned: until then it follows ``k``, as the rebuilt one will.
+        """
+        parameters = super().to_dict()
+        if self._k2 is None:
+            del parameters["k2"]
+        return parameters
 
     @property
     def k2(self) -> float:

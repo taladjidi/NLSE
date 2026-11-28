@@ -1,4 +1,4 @@
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -128,6 +128,17 @@ class NLSE_3d(NLSE):
 
         # Override normalization factor for 3D (includes delta_T)
         self._norm_grid_factor = float(self.delta_X * self.delta_Y * self.delta_T)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the arguments that rebuild this solver, as `NLSE.to_dict`.
+
+        Returns
+        -------
+        dict
+            Argument or attribute name to value, the window with its time
+            extent last.
+        """
+        return {**super().to_dict(), "window": (*self.window, self.window_t)}
 
     def _propagator_cache_key(self, dtype: np.dtype, delta_z: float) -> tuple:
         """Return cache key for 3D propagator."""
