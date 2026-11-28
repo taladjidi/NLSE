@@ -78,7 +78,7 @@ in kernels of their own. It is read when an FFT plan is built, so a session
 that changes it also has to call `simu._backend.clear_fft_plans()`.
 
 `cpu_blocking.json`, beside `fft_benchmark.json`, is
-`{"version": "1", "entries": {key: entry}}`. The key is
+`{"version": "2", "entries": {key: entry}}`. The key is
 `system/machine/cpu/NYxNX/dtype/threads/scipy-x.y/numba-x.y`, for example
 `Darwin/arm64/apple-m3/4096x4096/complex64/16/scipy-1.18/numba-0.66`, where
 `cpu` is LLVM's name for the processor and `threads` the fewer of the CPUs
@@ -158,10 +158,12 @@ which is faster only where FFTW is vectorized and on arm64 no prebuilt build is.
 On CPU, a 2D split step can run in blocks sized to the processor's caches.
 Whether that is faster, and at which block size, depends on the processor,
 so it is measured: the first run on a grid times the usual step against
-blocked ones (0.4-0.9 s at 1024², 12.1-12.5 s at 4096² complex128 on an M3
-Max, `docs/optimization-log.md`) and keeps
-the answer in `cpu_blocking.json` in the cache directory. While one process
-measures, the others take the usual step and do not wait.
+blocked ones, five block sizes each on all the threads, on half of them and,
+on macOS, on the fastest cores' (12 of 16 on an M3 Max), and keeps
+the answer in `cpu_blocking.json` in the cache directory. That takes 0.6-1.7 s
+at 1024² and 17-18 s at 4096² complex128 on an M3 Max
+(`docs/optimization-log.md`). While one process measures, the others take the
+usual step and do not wait.
 
 To measure ahead of time, for example before a batch of runs:
 
