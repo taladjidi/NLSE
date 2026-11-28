@@ -213,7 +213,7 @@ kernel. The transform is closed, but the other 40 are ours.
 
 **A separable propagator — open, measured, not built.** (2026-11-28: built
 since on the CPU, inside the blocked step, and in CUPY's callbacks; see those
-sections. Still open on MLX and OpenCL.) The linear propagator
+sections. Measured since on OpenCL, rejected, and on MLX, to be built.) The linear propagator
 is `exp(-i(kx²+ky²)dz/2k)`, which factors into
 `exp(-i·kx²dz/2k) · exp(-i·ky²dz/2k)` — verified rank-1 to 6.7e-8, float32 eps.
 So the N² array every step reads could be two N-vectors: **8 MiB → 16 KiB at
@@ -1352,6 +1352,30 @@ slope in `coupled_rk4_stage_c`, and moves by 9e-7 of the peak.
 The gain falls with the grid as the transforms, which this does not touch,
 take more of the step. Not measured: complex128, other OpenCL devices.
 
+**The propagator as two vectors — rejected** (2026-11-28). The CPU's blocked
+step and CUPY's forward callback read the propagator as one factor per axis;
+`apply_propagator` here reads the grid. A kernel multiplying by
+`rows[iy] * columns[ix]` instead, put into the solver's Lie step (`NLSE`,
+complex64, lossless, no potential, `step_for` step; one process, the two sides
+alternating over 8 rounds, slope between 10 and 60 steps; medians, and the
+median and [min, max] of the per-round gain; `sep_prop_cl.py` in
+`~/Documents/LKB/NLSE_tangui_fix_specs/`):
+
+| device | grid | grid | two vectors | gain [range] |
+|---|---|---|---|---|
+| RTX 3050 | 1024² | 0.593 ms | 0.554 ms | 1.03x [0.87, 1.08] |
+| RTX 3050 | 2048² | 3.333 ms | 3.183 ms | 1.05x [0.89, 1.05] |
+| RTX 3050 | 4096² | 18.67 ms | 18.09 ms | 1.03x [0.92, 1.04] |
+| Apple M3 Max | 1024² | 0.757 ms | 0.884 ms | 0.85x [0.63, 0.88] |
+| Apple M3 Max | 2048² | 1.561 ms | 1.551 ms | 1.02x [0.94, 1.30] |
+| Apple M3 Max | 4096² | 6.691 ms | 6.449 ms | 1.03x [1.02, 1.07] |
+
+The multiply alone is 1.47 to 1.48 times faster on the RTX 3050, and the step
+does not follow: one row in six gains more than its rounds spread, by 3%, and
+1024² loses on Apple. Not built. RTX 3050 8 GB, driver 620.70.06, pyopencl
+2026.1.5; M3 Max, macOS 27.2.1, Apple's OpenCL 1.2, pyopencl 2026.1.2;
+pyvkfft 2025.1.1 on both.
+
 ## MLX (Metal)
 
 **A lossless graph for a lossless run — deployed** (2026-08-01). The solved
@@ -1492,6 +1516,21 @@ throughout and Apple's OpenCL ships no fp64, so any check that scores a backend
 against a double-precision reference has to skip both, or it scores them against
 a reference of another width. `supports_double_precision()` is the question to
 ask, and both answer no.
+
+**The propagator as two vectors — measured, to be built** (2026-11-28). The
+same swap in the fused Lie graph, `A * py[:, None] * px[None, :]` for
+`A * propagator` (`sep_prop_mlx.py`, the protocol of the OpenCL entry; M3 Max,
+macOS 27.2.1, mlx 0.32.0):
+
+| grid | grid | two vectors | step gain [range] | multiply alone |
+|---|---|---|---|---|
+| 1024² | 0.288 ms | 0.275 ms | 1.07x [0.83, 1.09] | 1.04x [0.97, 1.11] |
+| 2048² | 1.675 ms | 1.674 ms | 1.00x [0.95, 1.04] | 1.28x [1.28, 1.33] |
+| 4096² | 7.212 ms | 6.726 ms | 1.06x [1.03, 1.10] | 1.35x [1.33, 1.35] |
+
+The two results differ by 3.6e-6 to 4.5e-6 of the peak after 60 steps. Only
+4096² is a difference. What it also frees is the grid itself, 128 MiB at
+4096² complex64. The owner chose to build it; it is not built yet.
 
 ## CUDA (CuPy)
 
