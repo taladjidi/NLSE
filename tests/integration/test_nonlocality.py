@@ -27,6 +27,10 @@ RESPONSE_PARAMS = {
 }
 # The input Gaussian's waist, in m: well inside the window.
 RESPONSE_WAIST = RESPONSE_WINDOW / 6
+# W/m: 12 rad of phase at the peak, sqrt(2/pi) P / w, over L, where the run
+# test's 1.97 below was measured. The 2D beam's radian (4.79 W/m) puts the two
+# runs only 0.30 apart (measured), under RUN_APART_FLOOR.
+RESPONSE_LINE_POWER = 64.0
 # Non-local lengths of one and five cells, in m: 0.41 of the peak apart in the
 # output (measured, CPU and MLX), so the smoothing changes the answer.
 SHORT_LENGTH = RESPONSE_WINDOW / RESPONSE_N
@@ -92,8 +96,9 @@ def test_a_length_below_one_cell_is_kept(backend):
 
 def run_1d(backend, cells):
     """Return NLSE_1d's output for a Gaussian, the response ``cells`` cells long."""
-    params = {key: RESPONSE_PARAMS[key] for key in ("alpha", "power", "n2", "V", "L")}
+    params = {key: RESPONSE_PARAMS[key] for key in ("alpha", "n2", "V", "L")}
     simu = NLSE_1d(
+        power=RESPONSE_LINE_POWER,
         window=RESPONSE_WINDOW,
         NX=RESPONSE_N,
         Isat=RESPONSE_PARAMS["Isat"],

@@ -6,13 +6,8 @@ from scipy.constants import c, epsilon_0
 PRECISION_COMPLEX = np.complex64
 
 N = 256
-n2 = -1.6e-9
 waist = 2.23e-3
 window = 4 * waist
-power = 1.05
-Isat = 10e4  # saturation intensity in W/m^2
-L = 1e-3
-alpha = 20
 
 # Step used wherever a test builds a propagator or takes a step by hand.
 DZ_TEST = 1e-4
@@ -30,7 +25,7 @@ def make_solver(backend="CPU", n=N, **overrides):
 
 
 def test_build_propagator(backend) -> None:
-    simu = NLSE_1d(alpha, power, window, n2, None, L, NX=N, Isat=Isat, backend=backend)
+    simu = make_solver(backend)
     prop = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
     assert np.allclose(prop, np.exp(-1j * 0.5 * (simu.Kx**2) / simu.k * DZ_TEST)), (
         f"Propagator is wrong. (Backend {backend})"
@@ -49,7 +44,7 @@ def test_prepare_output_array(backend) -> None:
         assert out.flags.aligned, f"Output array is not aligned. (Backend {backend})"
         assert out_sq.flags.aligned, f"Output array is not aligned. (Backend {backend})"
     out_np = as_numpy(simu, out)
-    integral = (np.abs(out_np) ** 2 * simu.delta_X**2).sum()
+    integral = (np.abs(out_np) ** 2 * simu.delta_X).sum()
     integral *= c * epsilon_0 / 2
     assert np.allclose(integral, simu.power, rtol=1e-4), (
         f"Normalization failed. (Backend {backend})"
@@ -88,15 +83,15 @@ def test_split_step(backend) -> None:
 
 
 def test_out_field(backend) -> None:
-    simu = NLSE_1d(0, power, window, n2, None, L, NX=N, Isat=Isat, backend=backend)
+    simu = make_solver(backend, alpha=0)
     E0 = np.ones(N, dtype=PRECISION_COMPLEX)
     A = simu.out_field(
         E0, DZ_TEST, delta_z=DZ_TEST, verbose=False, plot=False, splitting="lie"
     )
     rho = A.real * A.real + A.imag * A.imag
-    norm = (rho * simu.delta_X**2).sum(axis=simu._last_axes)
+    norm = (rho * simu.delta_X).sum(axis=simu._last_axes)
     norm *= c * epsilon_0 / 2
     assert A.shape == (N,), f"Output array has wrong shape. (Backend {backend})"
-    assert np.allclose(norm, power, rtol=1e-4), (
+    assert np.allclose(norm, simu.power, rtol=1e-4), (
         f"Normalization failed. (Backend {backend})"
     )

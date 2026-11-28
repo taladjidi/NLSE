@@ -48,7 +48,7 @@ def test_prepare_output_array(backend) -> None:
         assert out.flags.aligned, f"Output array is not aligned. (Backend {backend})"
         assert out_sq.flags.aligned, f"Output array is not aligned. (Backend {backend})"
     out = as_numpy(simu, out)
-    integral = ((out.real * out.real + out.imag * out.imag) * simu.delta_X**2).sum(
+    integral = ((out.real * out.real + out.imag * out.imag) * simu.delta_X).sum(
         axis=simu._last_axes
     )
     integral *= c * epsilon_0 / 2
@@ -103,7 +103,7 @@ def test_out_field(backend) -> None:
         E0, DZ_TEST, delta_z=DZ_TEST, verbose=False, plot=False, splitting="lie"
     )
     rho = A.real * A.real + A.imag * A.imag
-    integral = (rho * simu.delta_X**2).sum(axis=simu._last_axes)
+    integral = (rho * simu.delta_X).sum(axis=simu._last_axes)
     integral *= c * epsilon_0 / 2
     assert A.shape == (
         2,

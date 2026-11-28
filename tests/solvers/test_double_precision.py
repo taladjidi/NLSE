@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from helpers import AVAILABLE_BACKENDS
+from helpers import AVAILABLE_BACKENDS, LINE_POWER, LINE_SOLVERS
 from NLSE import CNLSE, GPE, NLSE, CNLSE_1d, NLSE_1d
 
 N = 32
@@ -37,7 +37,9 @@ def build(cls, backend):
     }
     if cls in (CNLSE, CNLSE_1d):
         params["n12"] = -1e-10
-    if cls not in (NLSE_1d, CNLSE_1d):
+    if cls in LINE_SOLVERS:
+        params["power"] = LINE_POWER
+    else:
         params["NY"] = N
     return cls(**params)
 
