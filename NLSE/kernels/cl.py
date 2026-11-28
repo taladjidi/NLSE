@@ -533,7 +533,7 @@ class OpenCLKernels:
         """
         plan.fft(A, A)
         self.apply_propagator(A, propagator)
-        if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
+        if unnorm_ifft:
             plan.ifft_unnorm(A, A)
         else:
             plan.ifft(A, A)
@@ -1461,7 +1461,7 @@ class OpenCLKernels:
         # Linear step: FFT → propagator multiply → IFFT
         plan.fft(A, A)
         self.apply_propagator(A, propagator)
-        if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
+        if unnorm_ifft:
             plan.ifft_unnorm(A, A)
         else:
             plan.ifft(A, A)
@@ -1549,7 +1549,7 @@ class OpenCLKernels:
         """
         plan.fft_oop(A_in, k)
         self.apply_propagator(k, propagator)
-        if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
+        if unnorm_ifft:
             plan.ifft_unnorm(k, k)
         else:
             plan.ifft(k, k)
@@ -1741,7 +1741,7 @@ class OpenCLKernels:
         ls_full = self._local_size(A.size)
         plan.fft(A, A)
         kerns["apply_propagator"](self.queue, gs_full, ls_full, A.data, propagator.data)
-        if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
+        if unnorm_ifft:
             plan.ifft_unnorm(A, A)
         else:
             plan.ifft(A, A)
