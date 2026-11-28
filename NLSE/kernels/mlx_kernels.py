@@ -875,7 +875,7 @@ def split_step_fused(
     V_scaled : mx.array or None
         Pre-scaled potential (V * k/2), or None.
     dz : float
-        Propagation step (full for single, half for double precision).
+        Nonlinear step (whole for Lie, half for Strang).
     alpha : float
         Loss coefficient (half of total).
     g : float
@@ -1381,7 +1381,7 @@ def _make_split_step_coupled(splitting, has_V, has_omega, axes):
     """Build the fused coupled step for one shape of the problem.
 
     Six variants over three choices: a potential or not, Rabi coupling or not,
-    and a whole step (single) against a Strang pair of halves (double). They
+    and a whole step (Lie) against a Strang pair of halves. They
     were written out as six bodies, so the interaction, saturation and loss
     terms appeared six times and could drift apart between them -- which is
     the failure this shape invites, because a run only takes one of the six.
@@ -1554,7 +1554,7 @@ def _make_split_step_coupled(splitting, has_V, has_omega, axes):
             A1, A2 = nonlinear(A[0], A[1], dz_half, *args)
             return mx.stack([A1, A2])
 
-    else:  # double, has_V
+    else:  # strang, has_V
 
         def _pure(
             A,
@@ -1626,7 +1626,7 @@ def split_step_coupled_fused(
     V2_scaled : mx.array or None
         Pre-scaled potential for component 2 (V * k2/2), or None.
     dz : float
-        Step size (full for single, half for double).
+        Nonlinear step (whole for Lie, half for Strang).
     alpha1 : float
         Half-loss, component 1.
     alpha2 : float

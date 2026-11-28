@@ -855,9 +855,10 @@ class CNLSE(NLSE):
         V_scaled = self._V_scaled
         V2_scaled = self._V2_scaled
         if V is not None and V_scaled is None:
-            # The solver's own scale: DDGPE's is not k / 2.
-            V_scaled = V * np.float32(self._constant("_k_half"))
-            V2_scaled = V * np.float32(self._constant("_k2_half"))
+            # The solver's own scale: DDGPE's is not k / 2. At the field's width.
+            dtype = self._potential_dtype(V, self._field_dtype(A))
+            V_scaled = self._scale_potential(V, self._constant("_k_half"), dtype)
+            V2_scaled = self._scale_potential(V, self._constant("_k2_half"), dtype)
         nl_args = (
             V_scaled,
             V2_scaled,

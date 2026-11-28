@@ -170,6 +170,10 @@ come first.
 - **A one-value array parameter no longer sends the CPU kernels through the
   field row by row.** `alpha=np.array([0.1])`, 100 steps at 256², complex64,
   M3 Max: 2.69 s, now 52 ms, the time of the scalar.
+- **A coupled `split_step` called directly on a `complex128` field keeps the
+  potential's scale in double precision.** It rounded `k / 2` to float32,
+  2.8e-8 relative on the phase the potential gives; a run through `out_field`
+  was not affected.
 
 ### Changed
 

@@ -1448,8 +1448,7 @@ class CUDAKernels:
         V1_scaled, V2_scaled : cp.ndarray or None
             Pre-scaled potentials, one per component. Both None or neither.
         dz : float
-            Nonlinear step (the whole step for single precision, half for
-            double).
+            Nonlinear step (whole for Lie, half for Strang).
         alpha1, alpha2 : float
             Half-loss coefficients.
         g11, g22 : float

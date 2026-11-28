@@ -48,7 +48,8 @@ Nothing merged since `c5a44fb` has run on CuPy.
 
 ### Resume here (written 2026-11-28)
 
-`main` is `3a144d2`, pushed. Orders from the owner for the night of
+`main` is pushed; its last code change is `fix/coupled-direct-potential-width`.
+Orders from the owner for the night of
 2026-11-27: "run independently tonight : debloating, docs, and review.
 Iterate over this. Also when reviewing ignore the previous context to be
 impartial. Look at all aspects of the code, notably complexity and code
@@ -58,14 +59,19 @@ reviewers get the code and no conclusions, and do not read this file; what
 was decided alone is under "Decided alone" below.
 
 1. **Review, then iterate** (debloat, docs, review). Done and merged: the
-   solvers (two fix rounds), the backends, the docs pages (round 1). In
-   flight when this was written:
+   solvers (two fix rounds), the backends, the docs pages (round 1), the
+   kernels (round 1). In flight when this was written, results in no file
+   yet:
    - the test suite's four MAJOR gaps, as an architect's verified patch
      series (`review_round1/tests.md` and `tests_patches/` in the specs
      directory; worktree `scratchpad/wt-tests`, branch `test/review-gaps`):
      apply, gate, fresh review, merge;
-   - a fresh review of `NLSE/kernels/` and of how the solvers call them.
-   Not reviewed afresh yet: `examples/` and `benchmarks/`.
+   - a fresh review of the kernels round 1 did not read (`cpu_blocked.py`,
+     the CuPy and CUDA sources, `templating.py`);
+   - a fresh review of `examples/` and `benchmarks/`;
+   - `main` at `5af91cd` on the box, CuPy and OpenCL, six runs and one with
+     `NLSE_FUSE_PROPAGATOR=0`: `~/Documents/nlse_main_5af91cd/run*.txt`
+     there.
 2. **README headline performance** (docs). Spec, revision 2:
    `docs/readme_perf.md` in the specs directory. Branch
    `docs/readme-performance` (`9b685c3`, worktree `scratchpad/wt-perf`), not
@@ -216,6 +222,42 @@ was decided alone is under "Decided alone" below.
   self-computed assertions (`test_auto_backend.py` near 142,
   `test_benchmark.py` near 125-160 and 449); helpers copied across about 70
   test files; `test_packaging.py` needs the network.
+- **Kernel review, round 1** (fresh context, at `3a144d2`; fix on
+  `fix/coupled-direct-potential-width`). Read: `kernels/cpu.py`, `cl.py`
+  with `kernels.cl`, `mlx_kernels.py`, and how the solvers call them. **Not
+  read**: `cpu_blocked.py`, `cupy.py`, `cupy_kernels.py`, `cuda_source/`,
+  `templating.py`; no mutants run. That is the next round.
+  - Nothing found in: the scalar kernels against a DOP853 reference
+    (complex128 on CPU, within 2.5e-6, the three-pass tolerance); CPU, CL and
+    MLX in complex64 against CPU complex128 (within 2e-5 over `alpha` in
+    {0, ±0.8, 3}, `dz` in {±0.05, 0.4}, `Isat` in {inf, 2}, no, real and
+    complex `V`); the coupled kernels across the three backends (1e-8); the
+    Rabi sign; the wrapped exports' argument order; the dispatch.
+  - Its one MAJOR is known and documented, and was not taken: the coupled
+    real-space step freezes the loss, local error O(dz²) (5.9e-4, 1.5e-4,
+    3.76e-5, 9.4e-6 at `dz` = 0.04 to 0.005, `alpha1` = 1, `Isat` = (2, 3),
+    the same on the three backends). `docs/numerical_methods.md`,
+    `docs/physical_validation.md` and the log's *Open* section say so, and
+    the log says why the one-channel closed form does not carry over. It is
+    a feature, and the first one worth the owner's time: DDGPE lives there.
+  - Fixed: a coupled `split_step` called directly scaled `V` by a float32
+    `k / 2` (2.75e-9 rad on 0.1 rad in complex128, now 2.8e-17); kernel
+    comments where "single/double" meant Lie/Strang. Its review said ship;
+    left: on MLX that fallback copies `V` to the host on every direct call
+    (`np.iscomplexobj` on an MLX array), and it was not run on CuPy, with
+    `CNLSE_1d` or with a batched `V`.
+  - Checked, not a bug: a batched parameter on an unbatched field under RK4
+    raises `ValueError` on CPU and on MLX alike (MLX's message, "Cannot
+    broadcast array of shape (3,64,64) into shape (64,64)", is the poorer);
+    a batched field on MLX agrees with CPU to 1.3e-6.
+  - MINOR, left: the loss limit 0.1 and the three passes are written three
+    times (`_LOSS_SOLVED_LIMIT` in `cpu.py`, `NLSE_LOSS_SOLVED_LIMIT` in
+    `kernels.cl`, the MLX body), and the CL and MLX complex64 lossy step is
+    pinned only through the cross-backend comparison, which needs float64
+    and is skipped here: a complex64 test against the ODE would close both.
+    The CPU kernels with a potential have no lossless branch (the ones
+    without have a rotation): a lossless step with `V` runs the three passes
+    at `u = 0`. Exact, cost unmeasured.
 - **Decided alone** (revert what does not suit): coupled solvers opted out
   of the Strang merge rather than given their own half step; RK4 ignores
   `splitting`; `gamma2` is `alpha2`; a complex128 run leaves MLX with a
