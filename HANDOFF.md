@@ -90,6 +90,25 @@ CPU", `2b450b5`), so that question was stale, as was the entry under "Still
 open"; `CLAUDE.md` is corrected, by me with the owner's leave (seven
 statements; it is untracked, `.git/info/exclude`, so no commit shows it).
 
+**The owner's remarks later on 2026-11-28.**
+
+- *Ceilings.* The README's performance tables named the largest share of a
+  row as the "closest ceiling". The owner: at 32% that is no limit, and only
+  MLX at 1024² (99%) is at a ceiling. The column is gone
+  (`docs/roofline-verdict`: the largest share is bold, the prose says what a
+  share far from 100% means, `roofline.py` prints the column as `nearest`,
+  the log follows). They reach 80-90% of the flops ceiling on other
+  projects, so **a CPU performance pass is open** ("Packages not built").
+- *Constructor interface.* The owner asked whether an `NLSEConfig` class
+  parsed from JSON or TOML, and pint units, would beat the long constructor.
+  Answered, nothing built, the owner has not chosen. My recommendation:
+  keyword-only arguments (breaking, so with 5.0.0); each parameter declares
+  its unit once and the constructor takes a float in SI or a pint quantity
+  (pint an optional extra, checked and stripped before the kernels);
+  `to_dict()` and `from_dict()` rather than a config class. Pint catches a
+  wrong unit, not two swapped lengths: keywords do that. Not checked: how
+  the `GPE` and `DDGPE` unit systems map; pint is not installed here.
+
 `main` is pushed; its last changes are `docs/owner-decisions` (this section
 and two entries of the optimization log) and `perf/cpu-pcore-threads` (item 3
 below), before them `fix/closing-review` (item 3
@@ -1091,6 +1110,11 @@ and "Still open" list:
 - The propagator as two vectors on MLX: to be built ("Start here"). On
   OpenCL it is measured and rejected (optimization log).
 - The Mac profiles (CPU and MLX): see "Performance profiles".
+- **A CPU performance pass** (owner, 2026-11-28). The step is at 21-32% of
+  the FP32 flops ceiling on the M3 Max and 6-7% on the Ryzen 3 4100 (README,
+  "Performance"); the owner's bar is 80-90%. Not started. First to
+  establish: how the gap splits between the transforms (`scipy.fft`, which
+  `roofline.py` charges 5 N log2 N flops per 1D pass) and the kernels.
 
 ### Left open by merged work
 

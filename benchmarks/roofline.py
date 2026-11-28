@@ -35,7 +35,8 @@ about the probe, not about MLX.
 A step is charged for compulsory traffic only: every array it must read and
 write, counted once, on the path the step took (`step_path`). Real traffic can
 only be larger, so each floor is a true lower bound. A row gives the measured
-step's share of each ceiling, and the largest share is what bounds it.
+step's share of each ceiling and names the largest, the ceiling the step
+would meet first: only a share near 100% says the step is bound by it.
 """
 
 import argparse
@@ -705,7 +706,7 @@ def main(argv=None):
         print(
             f"\n  {'backend':<7} {'case':<20} {'path':<9} {'B/pt':>5}"
             f" {'measured':>9} {'memory':>7} {'flops':>7} {'sincos':>7}"
-            f" {'dispatch':>8}  bound"
+            f" {'dispatch':>8}  nearest"
         )
         for backend_name in backends:
             device = DEVICE_OF[backend_name]
@@ -730,13 +731,13 @@ def main(argv=None):
                 # The largest share, not their sum: a GPU overlaps dispatch
                 # with the traffic of the kernel before it, so adding them is
                 # not a bound the hardware has to respect.
-                bound = max(shares, key=shares.get)
+                nearest = max(shares, key=shares.get)
                 print(
                     f"  {backend_name:<7} {case:<20} {path:<9} {cost[0]:5.0f}"
                     f" {got * MS_PER_S:8.3f}m {PERCENT * shares['memory']:6.0f}%"
                     f" {PERCENT * shares['flops']:6.0f}%"
                     f" {PERCENT * shares['sincos']:6.0f}%"
-                    f" {PERCENT * shares['dispatch']:7.0f}%  {bound}"
+                    f" {PERCENT * shares['dispatch']:7.0f}%  {nearest}"
                 )
     return 0
 
