@@ -5,6 +5,10 @@ Basic tests for MLX backend operations. Skipped if MLX is not available.
 
 import numpy as np
 import pytest
+from NLSE.solvers.step_size import (
+    CAPPED_STEP_FRACTION,
+    SPLIT_STEP_DISPERSION_PHASE_LIMIT,
+)
 from NLSE.utils import __MLX_AVAILABLE__
 
 pytestmark = pytest.mark.skipif(not __MLX_AVAILABLE__, reason="MLX not available")
@@ -17,29 +21,40 @@ FACTORS_STEPS = 3  # steps per run, the last a partial one
 # Fraction of a step the run ends on, so the remainder's propagator is read too.
 FACTORS_REMAINDER = 0.5
 FACTORS_BATCH = 3
+FACTORS_SEED = 0  # of the white-noise field, which fills every wavenumber
+# Phase per step on the grid's shortest wave, in rad: under the limit past which
+# out_field lowers the step (SPLIT_STEP_DISPERSION_PHASE_LIMIT, step_size.py), by
+# its own margin. A factor off by a part in a thousand is then far past round-off.
+LINEAR_PHASE = CAPPED_STEP_FRACTION * SPLIT_STEP_DISPERSION_PHASE_LIMIT
 # Roundings between one application by the factors and one by the grid: each
 # factor, their product, the grid's exponential. Its float32 argument adds
-# the largest phase, in eps. Measured 0.18 of the bound at most.
+# the largest phase, in eps. Measured 0.24 of the bound at most.
 FACTORS_ROUNDINGS = 4
 APPLICATIONS = {"lie": 1, "strang": 1, "yoshida": 3}  # propagators per step
 V_PEAK = 1e-4  # the potential of the lossless-graph test below
+V_WAIST = 1 / 8  # of the window: the potential's 1/e radius
 ABSORPTION = 0.1  # imaginary part of a complex potential, per unit of real
-NLSE_DZ = 1e-4  # m
-# Constructor arguments and step of tests/integration/test_zero_potential.py.
-GPE_ARGS = {"gamma": 0.0, "N": 1e6, "window": 100e-6, "g": 1e-11, "m": 87 * 1.66e-27}
-GPE_DZ = 1e-8  # s
-# solver, constructor arguments, splitting, batched, potential. "lossy" keeps
-# helpers.PHYSICS's alpha of 20/m, which takes the solved kernel.
+# No interaction: a nonlinear phase phi turns a relative error e into about
+# 2 * phi * e, which the bound does not count.
+NLSE_LINEAR = {"alpha": 0.0, "n2": 0.0}
+# 1/m. 2 * alpha * dz is 0.023 at NLSE's step, under LOSS_PER_STEP_LIMIT
+# (step_size.py), so the step is kept and the kernel is the solved one.
+LOSSY_ALPHA = 0.5
+# Constructor arguments of tests/integration/test_zero_potential.py, g set to 0.
+GPE_ARGS = {"gamma": 0.0, "N": 1e6, "window": 100e-6, "g": 0.0, "m": 87 * 1.66e-27}
+# solver, constructor arguments, splitting, batched, potential.
 FACTOR_CASES = {
-    "lie": ("NLSE", {"alpha": 0.0}, "lie", False, None),
-    "lossy": ("NLSE", {}, "lie", False, None),
-    "real V": ("NLSE", {"alpha": 0.0}, "lie", False, "real"),
-    "strang": ("NLSE", {"alpha": 0.0}, "strang", False, None),
-    "strang complex V": ("NLSE", {"alpha": 0.0}, "strang", False, "complex"),
-    "yoshida": ("NLSE", {"alpha": 0.0}, "yoshida", False, None),
-    "batch": ("NLSE", {"alpha": 0.0}, "lie", True, None),
+    "lie": ("NLSE", NLSE_LINEAR, "lie", False, None),
+    "lossy": ("NLSE", NLSE_LINEAR | {"alpha": LOSSY_ALPHA}, "lie", False, None),
+    "real V": ("NLSE", NLSE_LINEAR, "lie", False, "real"),
+    "strang": ("NLSE", NLSE_LINEAR, "strang", False, None),
+    "strang complex V": ("NLSE", NLSE_LINEAR, "strang", False, "complex"),
+    "yoshida": ("NLSE", NLSE_LINEAR, "yoshida", False, None),
+    "batch": ("NLSE", NLSE_LINEAR, "lie", True, None),
     "GPE": ("GPE", GPE_ARGS, "lie", False, None),
 }
+# A propagator the solver did not build, for this many of its steps.
+FOREIGN_STEPS = 2
 
 
 @pytest.fixture
@@ -445,6 +460,48 @@ class TestMLXSolvedStepKernel:
         )
 
 
+def factors_solver(name, physics):
+    """Return an MLX solver of FACTOR_CASES, with the step its phase asks.
+
+    Parameters
+    ----------
+    name : str
+        Solver class, "NLSE" or "GPE".
+    physics : dict
+        Constructor arguments over helpers.PHYSICS.
+
+    Returns
+    -------
+    tuple
+        ``(solver, step)``, the step putting LINEAR_PHASE on the shortest wave.
+    """
+    import NLSE
+    from helpers import make
+
+    simu = make(getattr(NLSE, name), "MLX", n=FACTORS_NX, NY=FACTORS_NY, **physics)
+    operator = np.asarray(simu._compute_propagator_rk4(), np.complex128)
+    return simu, LINEAR_PHASE / np.abs(operator).max()
+
+
+def white_noise(shape):
+    """Return a complex64 field of independent normal samples.
+
+    Parameters
+    ----------
+    shape : tuple
+        Shape of the field.
+
+    Returns
+    -------
+    np.ndarray
+        The field, the same for the same shape.
+    """
+    rng = np.random.default_rng(FACTORS_SEED)
+    return (rng.standard_normal(shape) + 1j * rng.standard_normal(shape)).astype(
+        np.complex64
+    )
+
+
 def factors_run(case, grid=False):
     """Run one FACTOR_CASES case on MLX; return what the step needs checked.
 
@@ -460,14 +517,12 @@ def factors_run(case, grid=False):
     tuple
         ``(field out, solver, step, keys of _SPLIT_STEP_CACHE)``.
     """
-    import NLSE
-    from helpers import WAIST, make
     from NLSE.kernels import mlx_kernels
 
     name, physics, splitting, batch, potential = FACTOR_CASES[case]
-    simu = make(getattr(NLSE, name), "MLX", n=FACTORS_NX, NY=FACTORS_NY, **physics)
-    waist, dz = (WAIST, NLSE_DZ) if name == "NLSE" else (simu.window[0] / 8, GPE_DZ)
-    bump = V_PEAK * np.exp(-(simu.XX**2 + simu.YY**2) / (waist / 2) ** 2)
+    simu, dz = factors_solver(name, physics)
+    waist = V_WAIST * simu.window[0]
+    bump = V_PEAK * np.exp(-(simu.XX**2 + simu.YY**2) / waist**2)
     if potential == "real":
         simu.V = bump.astype(np.float32)
     elif potential == "complex":
@@ -476,9 +531,8 @@ def factors_run(case, grid=False):
         assert potential is None, potential
     if grid:
         simu._propagator_factors = lambda *args: None
-    field = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(np.complex64)
-    if batch:
-        field = np.stack([(1 + 0.5 * b) * field for b in range(FACTORS_BATCH)])
+    batch_shape = (FACTORS_BATCH,) if batch else ()
+    field = white_noise(batch_shape + simu.XX.shape)
     mlx_kernels._SPLIT_STEP_CACHE.clear()
     out = simu.out_field(
         field,
@@ -493,6 +547,35 @@ def factors_run(case, grid=False):
     return np.asarray(out), simu, dz, keys
 
 
+def one_split_step(simu, field, propagator, delta_z):
+    """Return ``field`` after one ``split_step`` by hand on ``propagator``.
+
+    Parameters
+    ----------
+    simu : NLSE
+        The solver.
+    field : np.ndarray
+        Field on the host.
+    propagator : mx.array
+        Propagator handed to the step.
+    delta_z : float
+        The step it was built for.
+
+    Returns
+    -------
+    np.ndarray
+        The field after the step, on the host.
+    """
+    backend = simu._backend
+    A = backend.from_numpy(field)
+    A_sq = backend.allocate_real_field(field.shape, np.float32)
+    plans = simu._build_fft_plan(A)
+    out = simu.split_step(A, A_sq, None, propagator, plans, delta_z)
+    return np.asarray(backend.to_numpy(out))
+
+
+# A step lowered by out_field would take more steps than the bound counts.
+@pytest.mark.filterwarnings("error:delta_z=")
 @pytest.mark.filterwarnings("ignore:splitting='yoshida'")
 class TestMLXPropagatorFactors:
     """The fused step multiplies by one vector per axis, not by the grid."""
@@ -538,3 +621,19 @@ class TestMLXPropagatorFactors:
         read, *_ = factors_run("lie", grid=True)
         assert not np.array_equal(read, reference), "the poison does not reach the grid"
         assert np.array_equal(poisoned, reference), "the step read the grid"
+
+    def test_a_propagator_it_did_not_build_is_applied(self):
+        """A step handed a copy reads it, not the factors of the solver's own."""
+        import mlx.core as mx
+
+        simu, dz = factors_solver("NLSE", NLSE_LINEAR)
+        simu.propagator = simu._build_propagator(np.complex64, dz)
+        step = FOREIGN_STEPS * dz
+        foreign = mx.array(np.asarray(simu._build_propagator(np.complex64, step)))
+        field = white_noise(simu.XX.shape)
+        own = one_split_step(simu, field, simu.propagator, step)
+        applied = one_split_step(simu, field, foreign, step)
+        simu._propagator_factors = lambda *args: None
+        grid = one_split_step(simu, field, foreign, step)
+        assert not np.allclose(own, grid), "the copy steps as the solver's own does"
+        assert np.array_equal(applied, grid), "the step did not apply the copy"

@@ -1578,8 +1578,10 @@ Left out:
 - The nonlocal path's `linear_step`: not measured, and its signature is shared
   by all four backends.
 
-`tests/backends/test_mlx.py::TestMLXPropagatorFactors` pins three things: the
-agreement with the grid, the fallback, and that a zeroed grid is not read.
+`tests/backends/test_mlx.py::TestMLXPropagatorFactors` pins four things: the
+agreement with the grid, on white noise at 0.9 rad a step on the shortest wave
+(0.24 of the round-off bound at most); the fallback; that a zeroed grid is not
+read; and that a propagator the solver did not build is the one applied.
 
 *Challenge this* if the largest grids need the memory more than a read of
 `simu.propagator` needs speed. The device dispersion operator could then be
