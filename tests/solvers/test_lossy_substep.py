@@ -6,7 +6,7 @@ from helpers import AVAILABLE_BACKENDS, make
 from NLSE import CNLSE, DDGPE, NLSE
 from NLSE.backends import get_backend
 from NLSE.kernels.cpu import _LOSS_SOLVED_LIMIT
-from NLSE.solvers.step_size import LOSS_PER_STEP_LIMIT
+from NLSE.solvers.step_size import CAPPED_STEP_FRACTION, LOSS_PER_STEP_LIMIT
 from scipy.constants import c, epsilon_0
 from scipy.optimize import brentq
 
@@ -168,7 +168,7 @@ def test_a_step_too_lossy_to_solve_still_decays():
 
 @pytest.mark.parametrize("requested", [1e-3, 1e-2, 1.0])
 def test_the_solver_caps_a_step_that_would_leave_the_solved_range(requested):
-    """The caller's step is lowered until ``u = 2*alpha*dz`` is in range."""
+    """The caller's step is lowered until ``u = 2*alpha*dz`` is in range, no lower."""
     simu = make(NLSE, "CPU", n=N, alpha=ALPHA, **{**PHYSICS, "n2": -1e-15})
     simu.out_field(
         beam().astype(np.complex64),
@@ -183,6 +183,14 @@ def test_the_solver_caps_a_step_that_would_leave_the_solved_range(requested):
         f"asked for delta_z={requested:g} m with alpha={ALPHA}, the solver used "
         f"{used:.3e} m, which takes out u = {u:.3g} of the intensity per step "
         f"-- past {_LOSS_SOLVED_LIMIT}, where the kernel stops solving the step"
+    )
+    # Lowered to its fraction of the ceiling, not to any step in range: a cap
+    # ten times too low passes the bound above and costs ten times the steps.
+    ceiling = LOSS_PER_STEP_LIMIT / (2 * ALPHA)
+    expected = requested if requested <= ceiling else CAPPED_STEP_FRACTION * ceiling
+    assert used == pytest.approx(expected), (
+        f"asked for {requested:g} m under a {ceiling:.3e} m ceiling, the solver "
+        f"used {used:.3e} m where {expected:.3e} m was due"
     )
 
 
