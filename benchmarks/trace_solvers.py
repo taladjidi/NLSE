@@ -27,6 +27,9 @@ import time
 from unittest import mock
 
 import numpy as np
+from NLSE import solvers
+from NLSE.backends import list_available_backends
+from NLSE.backends.backend import Backend
 from profile_backends import check_step_kept, step_for
 
 WAIST = 2.23e-3
@@ -176,24 +179,13 @@ class TracingKernels:
 STEP_KEY = "__step__"
 
 
-def python_loop(self, step_fn, n_iters):
-    """Run the steps from Python, in place of a backend's `execute_loop`.
-
-    CUPY captures one iteration into a CUDA graph and replays it: a wrapper
-    or a profiler then sees the warmup and the capture, and nothing of the
-    steps (the first traced run reported 0.01 calls per step).
-    """
-    for _ in range(n_iters):
-        step_fn()
-
-
 @contextlib.contextmanager
 def tracing(simu, nvtx=False):
     """Route a solver's kernels, transforms and steps through a recorder.
 
-    The steps run from Python (`python_loop`), which is not the path a CUPY
-    run takes: the untraced total is timed apart, with the graph in use, and
-    the gap between the two is what graph replay is worth.
+    The steps run from Python (the base `execute_loop`): CUPY replays one
+    captured iteration as a CUDA graph, which shows a wrapper the capture and
+    nothing of the steps. The untraced total is timed apart, graph in use.
     """
     backend = simu._backend
     recorder = Recorder(backend, nvtx=nvtx)
@@ -222,7 +214,7 @@ def tracing(simu, nvtx=False):
         mock.patch.object(cls, "kernels", property(lambda self: traced)),
         mock.patch.object(cls, "fft", timed_fft),
         mock.patch.object(cls, "ifft", timed_ifft),
-        mock.patch.object(cls, "execute_loop", python_loop),
+        mock.patch.object(cls, "execute_loop", Backend.execute_loop),
         mock.patch.object(solver_cls, "split_step", timed_step),
         mock.patch.object(solver_cls, "split_step_RK4", timed_rk4),
     ):
@@ -235,8 +227,6 @@ def build(solver_name, backend, n):
     Raises if the solver came up on another one: a backend that is not
     installed is replaced with a warning, and the row would carry its name.
     """
-    from NLSE import solvers
-
     cls = getattr(solvers, solver_name)
     kwargs = {
         "alpha": 0.0,
@@ -374,7 +364,7 @@ def without_cuda_graph(backend):
     itemises only the captured launches, so a 1440-step run reported 90
     apply_propagator launches and a kernel table that described the warmup.
     """
-    with mock.patch.object(type(backend), "execute_loop", python_loop):
+    with mock.patch.object(type(backend), "execute_loop", Backend.execute_loop):
         yield
 
 
@@ -429,8 +419,6 @@ def main(argv=None):
         help="step from Python so a profiler sees every launch, not a graph",
     )
     args = parser.parse_args(argv)
-
-    from NLSE.backends import list_available_backends
 
     failed = 0
     for backend_name in args.backends or list_available_backends():
