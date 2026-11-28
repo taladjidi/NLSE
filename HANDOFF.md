@@ -51,8 +51,9 @@ DDGPE tests (121 passed). Nothing merged since `b6fa684` has run on CuPy.
 
 ### Resume here (written 2026-11-28)
 
-`main` is pushed; its last code change is `fix/examples-benchmarks-review`
-(`cea5ea2`), the two merges after it are tests.
+`main` is pushed; its last code change is `fix/arch-review`. Last full suite
+on the Mac there: 2355 passed, 221 skipped, 88 deselected (five tests fewer
+than before it: ten packaging cases removed, five added).
 Orders from the owner for the night of
 2026-11-27: "run independently tonight : debloating, docs, and review.
 Iterate over this. Also when reviewing ignore the previous context to be
@@ -65,10 +66,78 @@ was decided alone is under "Decided alone" below.
 1. **Review, then iterate** (debloat, docs, review). Done and merged: the
    solvers (two fix rounds), the backends, the docs pages (round 1), the
    kernels (rounds 1 and 2), the test suite's four MAJOR gaps, `examples/`
-   and `benchmarks/` (round 1). Nothing is in flight. Next rounds, none
-   started: a second docs round, a review of what round 1 of the examples
-   did not open. The examples' debloat candidates are dismissed (see that
-   round's entry).
+   and `benchmarks/` (round 1), the architecture review below. Next: the
+   second docs round (reviewed, findings below, fixes not merged), then a
+   review of what round 1 of the examples did not open
+   (`benchmarks/trace_solvers.py`, `nsys_summary.py`,
+   `tests/benchmarks/test_benchmark_profile.py`). The examples' debloat
+   candidates are dismissed (see that round's entry).
+   - **Architecture review** (fresh context, the whole package;
+     `fix/arch-review`, 2026-11-28). Six MAJORs. Fixed:
+     - `adapt_delta_z_to_error` had no floor on a `GPE` (`L = 0`): the
+       default is now the same fraction of the run (`_run_distance`, set by
+       `_loop_with_callbacks`). Three files, done inline.
+     - `NLSE_BACKEND` and `NLSE_FORCE_BENCHMARK` were read once at import;
+       `get_backend` reads them per call. `tests/conftest.py` drops both
+       before collection: with `NLSE_BACKEND=CPU` exported the suite
+       collected 71 tests fewer and ran every backend's tests on CPU. So
+       `NLSE_BACKEND=CPU pytest` no longer pins the suite's backend.
+     - `Backend.supports_coupled_batch` replaces
+       `CNLSE._no_coupled_batch_backends`; `CNLSE._is_batched` is the base
+       method again (`_component_axes`).
+     - Debloat: `backends.clear_backend_cache` (no caller, breaking, in the
+       changelog), ten packaging cases the exact-set test implies, a tuple
+       entry `StepSize` built and skipped.
+   - Decided alone, not changed:
+     - `gpu = ["cupy"]` builds from source: `docs/installation.md` says so
+       and names the `cupy-cuda12x/13x` wheels.
+     - `_run_propagation` (11 parameters, `state = [A]`, the nested
+       `_make_step`/`_step`): the zero-argument step is
+       `Backend.execute_loop`'s contract on four backends (CUDA graph
+       capture) and the list is there for MLX's functional kernels.
+       Changing it is an interface change in the hot loop and needs a
+       timing proof.
+     - The `NLSE` class is 2784 lines and 85 methods, `out_field` 178 lines
+       (C901 13). Seams the reviewer named, for a package of their own:
+       building and caching the propagators (about `nlse.py:1300-1500` and
+       `1862-2180`), the device-transfer state, `out_field`'s validation
+       (`345-366`). Also over the limit: `benchmark_all_backends` (11),
+       `mlx_kernels._make_split_step` (13), `_make_split_step_coupled` (16).
+     - The wrapper code `kernels/cl.py` shares with `cupy_kernels.py`
+       (`_expand_v_blocks`, `_KERNEL_NAMES`) stays: the duplication audit
+       is closed. `get_optimal_backend` stays (public). The version stays
+       a literal.
+   - The fixes' own fresh review: all four claims hold, mutations bite
+     (floor reverted, `_component_axes = 0` on `CNLSE`, the flag `True` on
+     the base class); its one code-side MAJOR, the missing changelog entry
+     for the floor, is fixed. Left, MINOR:
+     - `_run_distance` keeps the last run's length, so the callback called
+       by hand after a run on a `GPE` takes its floor from that run.
+     - `_backend_builders()[name][1]` is written in two test files.
+     - `tests/conftest.py` leaks `_variable` as a module global.
+   - From the architecture review, MINOR, not fixed:
+     - `callback=[]` raises `IndexError`, not `ValueError`
+       (`_run_callbacks`).
+     - `cpu_tuning.py:803` reads `NLSE_CACHE_DIR` itself.
+     - `any(getattr(p, "ndim", 0) > 0 ...)` is written in `nlse.py`,
+       `cnlse.py` and `step_size.py`.
+     - `X` and `Y` are float32 on a complex128 run.
+     - `pyproject.toml`: the license is not an SPDX expression; `"C90"` is
+       inside `"C"` in ruff's selection; `llvmlite` is imported
+       (`cpu_tuning.py:32`) and not declared.
+     - `ci.yml`: the macOS job installs `--extra opencl` only, so MLX never
+       runs in CI; no top-level `permissions:` block.
+     - `test_packaging.py` builds the sdist with build isolation (needs the
+       network).
+     - Not verified: `ddgpe.py` binds `_random` once in `__init__`, so it
+       would stay numpy's after `simu.backend = "CUPY"`.
+   - `CLAUDE.md` (the owner's file, not edited): line 77 still names
+     `_no_coupled_batch_backends in solvers/cnlse.py`, now
+     `Backend.supports_coupled_batch`; `NLSE_FUSE_PROPAGATOR` is missing
+     from its list of variables.
+   - Not opened by either review: the CuPy paths (nothing here runs them),
+     the insides of `mlx_kernels.py`, `cl.py`, `kernels.cl`, `cpu.py`,
+     `cpu_blocked.py`.
 2. **README headline performance** (docs): done, branch
    `docs/readme-performance`. The README has `## Performance` and the
    optimization log's Mac and box tables are these runs. Spec, revision 2:
@@ -122,7 +191,11 @@ was decided alone is under "Decided alone" below.
    spec first), thread counts per machine in the tuner, the increment-form
    linear step for complex64 (recommend only), the fewer-passes lessons on
    MLX and OpenCL, the Mac profiles, a closing review pass and the final
-   report. Version 5.0.0 is neither bumped nor published.
+   report. Version 5.0.0 is neither bumped nor published. The four P4
+   patches no longer apply on `main` (checked 2026-11-28 at `58bfbd1`,
+   `git apply --3way`): conflicts in `cupy_kernels.py`, `cnlse.py`,
+   `nlse.py`, `step_size.py` and `tests/solvers/test_solver_state.py`; T4
+   alone applies. That package starts with an architect rebasing them.
 
 #### Night of 2026-11-27: landed, decided, left
 
@@ -693,9 +766,8 @@ and "Still open" list:
   step-changing callback or a batched `omega`; `docs/solvers_overview.md:263`
   says a positive imaginary potential removes power, which is the NLSE
   convention and now the opposite of DDGPE's.
-- p3: the floor of `adapt_delta_z_to_error`, `L/1e5`, is 0 for a GPE; the
-  default GPE step ignores the kinetic term; no test with `g < 0`, `V < 0` or
-  complex128.
+- p3: the default GPE step ignores the kinetic term; no test with `g < 0`,
+  `V < 0` or complex128.
 - p4: `nl_length=np.inf` is accepted and gives NaN; the smoothed intensity can
   dip to about -4e-7 of its maximum; comments at `nlse.py:855`,
   `cnlse.py:369`, `examples/nonlocality.py:5` and two test names in

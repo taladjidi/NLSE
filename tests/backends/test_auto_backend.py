@@ -1,6 +1,5 @@
 """Integration tests for automatic backend selection."""
 
-import importlib
 from unittest.mock import Mock
 
 import NLSE.backends as backends
@@ -99,21 +98,16 @@ class TestEnvironmentVariables:
     def test_env_backend_override(self, monkeypatch):
         """NLSE_BACKEND wins over "auto", which then benchmarks nothing."""
         monkeypatch.setenv("NLSE_BACKEND", "cpu")
-        importlib.reload(backends)
-        try:
-            monkeypatch.setattr(
-                backends,
-                "get_optimal_backend",
-                lambda *args, **kwargs: NOT_A_BACKEND,
-            )
-            assert backends.get_backend("auto").name == "CPU"
-        finally:
-            monkeypatch.delenv("NLSE_BACKEND")
-            importlib.reload(backends)
+        monkeypatch.setattr(
+            backends,
+            "get_optimal_backend",
+            lambda *args, **kwargs: NOT_A_BACKEND,
+        )
+        assert backends.get_backend("auto").name == "CPU"
 
     def test_env_backend_not_installed_falls_back_once(self, monkeypatch):
         """NLSE_BACKEND naming a missing backend falls back, not recurses."""
-        monkeypatch.setattr(backends, "_ENV_BACKEND", "CUPY")
+        monkeypatch.setenv("NLSE_BACKEND", "CUPY")
         monkeypatch.setattr(backends, "_CUPY_AVAILABLE", False)
         with pytest.warns(UserWarning, match="CUPY backend is not installed"):
             backend = backends.get_backend("CPU", (N, N))
@@ -125,12 +119,7 @@ class TestEnvironmentVariables:
         spy = Mock(wraps=benchmark.benchmark_all_backends)
         monkeypatch.setattr(benchmark, "benchmark_all_backends", spy)
         monkeypatch.setenv("NLSE_FORCE_BENCHMARK", "1")
-        importlib.reload(backends)
-        try:
-            backends.get_backend("auto", (N, N))
-        finally:
-            monkeypatch.delenv("NLSE_FORCE_BENCHMARK")
-            importlib.reload(backends)
+        backends.get_backend("auto", (N, N))
         spy.assert_called_once_with((N, N))
 
 

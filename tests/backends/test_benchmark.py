@@ -187,7 +187,7 @@ class TestBenchmarkBackend:
 
     def test_benchmark_times_the_backend_it_names(self, monkeypatch):
         """NLSE_BACKEND does not change the backend a timing is recorded under."""
-        monkeypatch.setattr("NLSE.backends._ENV_BACKEND", NOT_A_BACKEND)
+        monkeypatch.setenv("NLSE_BACKEND", NOT_A_BACKEND)
         time_ms = benchmark.benchmark_backend("CPU", LAZY_GRID, LAZY_TRIALS)
         assert time_ms is not None, "the override replaced the CPU being timed"
 

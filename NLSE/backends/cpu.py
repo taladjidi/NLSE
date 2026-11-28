@@ -89,6 +89,7 @@ class CPUBackend(Backend):
 
     # Taken where the grid was measured to gain from it (cpu_tuning).
     has_linear_nonlinear_step = True
+    supports_coupled_batch = True
 
     @property
     def name(self) -> str:

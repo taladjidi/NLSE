@@ -52,6 +52,8 @@ come first.
   run raises `ValueError`. The noise is a Wiener increment, `√|dt|` per step,
   so the intensity it adds per unit time no longer depends on the step.
 
+- **`backends.clear_backend_cache` is removed.** Nothing called it.
+
 ### Fixed
 
 - **A coupled Strang run without a callback keeps its cross coupling.**
@@ -126,6 +128,10 @@ come first.
 - **Callbacks see the step just taken,** also when it was cut to land on `L`
   or `z`, so a `DDGPE` pump integrates over the right length.
   `adapt_delta_z_to_error` scales the step the loop takes next, not a cut one.
+- **`adapt_delta_z_to_error` has a floor on `GPE` too.** Its default floor is
+  a fraction of the medium's length, which `GPE` does not have: the floor was
+  zero and a run whose error never met the tolerance shrank its step without
+  end. There it is now the same fraction of the run.
 - **RK4 bounds its step by the grid's fastest linear rate.** The limit
   averaged the dispersion and the potential over the beam, and RK4 amplifies
   round-off in any mode it is unstable for: a run left to choose its step on
@@ -185,6 +191,10 @@ come first.
   for both.
 
 ### Changed
+
+- **`NLSE_BACKEND` and `NLSE_FORCE_BENCHMARK` are read when a backend is asked
+  for**, not once when NLSE is imported, like the other `NLSE_*` variables: one
+  set after the import now counts.
 
 - **A `complex128` field on a backend without double precision moves to the
   fastest backend that has it, with a warning** (MLX, an OpenCL device
