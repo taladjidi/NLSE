@@ -41,8 +41,8 @@ do not look for another way.
 | Benchmark waits on what lazy transforms return (MLX was timed doing nothing) | `3dfc28f` |
 | Docs: gallery cached in CI; page review along Diataxis | `18f4cc7`, `3bd8af5` |
 
-Last full suites: Mac (CPU, OpenCL, MLX) 2364 passed, 221 skipped, 85 deselected at
-`fix/open-items`; box, combined environment (CuPy and OpenCL), 2466
+Last full suites: Mac (CPU, OpenCL, MLX) 2381 passed, 221 skipped, 85 deselected at
+`test/review-findings`; box, combined environment (CuPy and OpenCL), 2466
 passed, 104 skipped, none failed, six times and once with
 `NLSE_FUSE_PROPAGATOR=0`, at `77edad9` (2026-11-28,
 `~/Documents/nlse_main_77edad9/run*.txt` there). Each box run also reports
@@ -54,10 +54,13 @@ backend). The benchmark tools ran there on their own (their entry below).
 
 ### Resume here (written 2026-11-28)
 
-`main` is pushed; its last code change is `fix/open-items` (`NLSE_3d`
-merges its Strang half steps), its last merge `ci/token-permissions` (the
-workflow only). Last full suite on the Mac there:
-2364 passed, 221 skipped, 85 deselected (four tests added; three
+`main` is pushed; its last code change in the solvers is `fix/open-items`
+(`NLSE_3d` merges its Strang half steps), its last merges
+`test/review-findings` (tests only) and `chore/packaging-leftovers` (one
+`getattr` in `kernels/cpu.py`, and the packaging test). Last full suite on
+the Mac at `test/review-findings`: 2381 passed, 221 skipped, 85 deselected
+in 177 s (202 s before it). At `fix/open-items` it was 2364 (four tests
+added; three
 benchmarks fewer since `refactor/bench-tests-debloat`: the DDGPE one, which
 was skipped on every backend). Against the 2355 of
 `fix/arch-review`: ten tests added, and five cases fewer than a tree with a
@@ -284,12 +287,15 @@ was decided alone is under "Decided alone" below.
        id; the classifiers say CUDA 11 where the docs cover 12 and 13; no
        lower bounds on numpy, scipy, numba, matplotlib, mlx;
        `kernels/cpu.py:14` reads numba's private `_is_initialized` at
-       import; the version is in `pyproject.toml`, `NLSE/__init__.py` and
+       import (through `getattr` since `chore/packaging-leftovers`: a numba
+       without it takes the workqueue pool); the version is in `pyproject.toml`, `NLSE/__init__.py` and
        a regex in `docs/conf.py`, held together by a test;
        `tests/test_packaging.py` keeps a setuptools-era hint
        (`STALE_BUILD_DIR`, `_cause_hint`), cites a wheel `exclude` list
        that does not exist, and does not assert that the wheel holds only
-       `NLSE/`; `ty-baseline.json` matches on file, rule and columns, so
+       `NLSE/` (all three fixed in `chore/packaging-leftovers`, whose new
+       test fails with `tests` added to the wheel's packages);
+       `ty-baseline.json` matches on file, rule and columns, so
        a new diagnostic at the same columns is absorbed; intersphinx
        fetches three inventories under `-W`; the README's relative
        `docs/...` links break on PyPI; `NLSE.egg-info/` and `.benchmarks/`
@@ -298,6 +304,71 @@ was decided alone is under "Decided alone" below.
        dead, the box has no `uv` and takes them.
      - Not checked by it: a full docs build, Windows and Linux runners,
        the repository's Actions settings.
+   - **Test suite** (fresh context, the whole of `tests/`, 2026-11-28;
+     `test/review-findings`, tests only). Nine checks could not fail, each
+     shown with a mutant before and after:
+     - The trap run lasted a whole number of periods, where
+       `exp(-i w t) = 1` whatever the sign or the multiple of `w`: 1.25
+       periods now.
+     - Beer's law ran at `alpha L = 0.01`, where half the loss passed its
+       1%: `alpha L = 1` and 1e-4 now (a loss 5% off is at 5.1e-2).
+     - A backend against the CPU, and Lie against RK4, compared point by
+       point: a coupling 5% off passed the first (CNLSE, `rtol=1e-2`) and
+       an `n2` 5% off the second (`rtol=5e-2`); on CNLSE the float32 noise
+       of the wings hid a 20% error. The three CNLSE and CPU comparisons
+       are over the peak amplitude now (backends 3.9e-6 apart at most, a
+       coupling 5% off 6.0e-3, tolerance 1e-4); Lie against RK4 on NLSE
+       keeps point by point at `rtol=5e-3` (the schemes use 0.16 of it).
+     - The lossy saturable identity ran at 1e-5 m, where the solved and
+       the frozen step are both inside float32 round-off: 1e-4 m now.
+     - Two interaction rates were checked to `rel=0.5` (a rate a third off
+       passed): 1e-6.
+     - `test_nonlocality` (160 lines) built its GPE with the wrong
+       arguments and asserted nothing a local run would fail; deleted. GPE
+       is in the closed-form response test (12 cases fail with
+       `nl_length=0` passed down), and `NLSE_1d` and GPE each have one
+       short `out_field` run with a response (1.97 and 1.10 of the peak
+       apart from the local run, norms equal to 1.3e-6).
+     - Faster, same assertions: the Gouy phase on 64 points, the capped
+       backward run over 145 steps, the Yoshida warning on a short run.
+   - Test suite, the fixes' fresh review: MERGE, no CRITICAL or MAJOR; it
+     re-measured every figure on CPU, CL and MLX and built its own mutants,
+     all caught. Its MINORs: the wing-noise margin of the CNLSE comparison
+     (fixed: over the peak, above), the non-local `out_field` runs (fixed,
+     above), a comment figure (fixed), and `RATE_RTOL = 1e-6` defined in
+     two test files (left). **The fix of those three was read by me only.**
+     Not checked by anyone: the new tolerances on POCL and x86 before the
+     push (the local POCL environment no longer links its kernels; CI's
+     run after the push is the check), CUDA, complex128 on CL and MLX.
+     `LOSSY_INTENSITY_RTOL` is the tightest: 3 times above MLX, 2.4 times
+     below the frozen step.
+   - Test suite, refuted or kept: the `[lie]` order case checks first
+     order and is right; the `*_is_finite` and `test_out_field` smoke tests
+     stay, named as what they are; `test_ddgpe.py:549` (margin 1.9) and
+     `test_out_field_arguments.py:180` (2 x 2.5 s) left.
+   - Test suite, left, all MINOR: `as_numpy` twice (`tests/helpers.py:14`,
+     `tests/integration/test_broadcasting.py:64`); 13 copies of
+     `make_solver`, 18 beam helpers, 14 `PRECISION_COMPLEX`; 23 files build
+     their Gaussian by hand and 2.23e-3 appears 28 times; 38 nested defs
+     (`physics/test_closed_forms.py:224,523`, `solvers/test_nlse_3d.py:98`,
+     `solvers/test_double_precision.py:94`,
+     `backends/test_cross_backend_correctness.py:639`); lowercase module
+     constants and bare numbers; 48 skips in
+     `tests/backends/test_fused_paths.py:116` and 18 in
+     `tests/test_examples.py:59` always fire on the Mac;
+     `test_fft_propagator_fusion.py` (497 lines) and the `cuda_*` files run
+     only on CuPy; comments citing `e60e2a4` with "Old test name" dicts;
+     three files named for benchmarks; five norm-conservation checks;
+     `test_fft_propagator_fusion.py:84` sets `os.environ` directly. No
+     order dependence found. Not checked by it: MLX timings beyond the top
+     40, mutants for the adaptive step, the callbacks and the 1D and 3D
+     split-step checks, the CuPy-only files, the benchmark-marker tests.
+   - Yoshida at 6 to 10 times a Lie step on the 64x64 trap run is not a
+     defect: the solver lowers Yoshida's step 1.7 times (its largest
+     sub-step is held to the dispersion bound) and runs three sub-steps,
+     5.1 `split_step` calls per step asked; a sub-step costs 1.3 (CPU) to
+     2.0 (CL) Lie steps at 64x64, where the calls dominate. The log has
+     Yoshida at real grid sizes.
    - Dead code: `vulture` at 60% on `NLSE/` and `benchmarks/` names seven
      things, none dead (numba overloads, public methods, an availability
      import).
@@ -676,6 +747,13 @@ was decided alone is under "Decided alone" below.
   - Not opened then: `trace_solvers.py`, `nsys_summary.py`,
     `tests/benchmarks/test_benchmark_profile.py` (reviewed since: "Benchmark
     tools" above), the docs pages that quote the examples, any CuPy path.
+- **Decided alone**, test suite (2026-11-28): the fixes were written by
+  me on a worktree and read by a fresh reviewer, not sent through architect
+  and implementer (nine files, tests only); `test_nonlocality` deleted, not
+  repaired; the CPU comparisons and CNLSE's Lie against RK4 are over the
+  peak, which no longer sees a relative error in the wings; no local Sphinx
+  build (CI builds with `-W` and checks the links); `.gitignore` keeps its
+  two setuptools lines.
 - **Decided alone**, CI (2026-11-28): the workflow's token is read-only
   without the owner being asked; the actions stay on tags; no MLX job
   tried on the hosted runner.

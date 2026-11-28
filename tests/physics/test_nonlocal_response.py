@@ -2,14 +2,16 @@
 
 import numpy as np
 import pytest
-from NLSE import CNLSE, NLSE, CNLSE_1d, NLSE_1d, NLSE_3d
-from scipy.constants import c, epsilon_0
+from NLSE import CNLSE, GPE, NLSE, CNLSE_1d, NLSE_1d, NLSE_3d
+from scipy.constants import atomic_mass, c, epsilon_0
 
 WVL = 780e-9  # m, the solvers' default wavelength
 DZ = 1e-3  # m, the step the nonlinear phase is taken over
 PHASE = 1.0  # rad, nonlinear phase of a unit field over DZ: well inside (-pi, pi)
 N2 = PHASE / (2 * np.pi / WVL * c * epsilon_0 / 2 * DZ)  # m^2/W, gives PHASE
 ISAT = 1e30  # W/m^2, saturation out of reach of a unit field
+G_GPE = PHASE / DZ  # rad/s*m^2, gives PHASE on a unit density over DZ seconds
+MASS = 87 * atomic_mass  # kg, rubidium 87
 EPS = 0.5  # depth of the intensity modulation
 PERIODS = 3  # periods of the modulation across the window
 NX, NY, NZ = 64, 48, 16
@@ -73,6 +75,11 @@ def make_2d(backend, nl_length):
     return NLSE(0, 1, WINDOW, N2, None, 1, NX, NY, ISAT, nl_length, WVL, backend)
 
 
+def make_gpe(backend, nl_length):
+    """Return the GPE on the 2D grid, lengths in m and DZ read as seconds."""
+    return GPE(0, 1, WINDOW, G_GPE, None, MASS, NX, NY, ISAT, nl_length, backend)
+
+
 def make_1d(backend, nl_length):
     """Return the 1D solver on the module's x grid."""
     return NLSE_1d(0, 1, WINDOW[0], N2, None, 1, NX, ISAT, nl_length, WVL, backend)
@@ -108,11 +115,12 @@ def test_a_uniform_field_takes_the_local_phase_everywhere(backend, make, method)
     assert np.ptp(phase) <= RTOL * PHASE, "the phase is not the same everywhere"
 
 
+@pytest.mark.parametrize("make", [make_2d, make_gpe], ids=["NLSE", "GPE"])
 @pytest.mark.parametrize("axis", ["x", "y"])
 @pytest.mark.parametrize("method", METHODS)
-def test_a_modulation_is_reduced_by_the_response_2d(backend, axis, method):
+def test_a_modulation_is_reduced_by_the_response_2d(backend, make, axis, method):
     """``I0 (1 + eps cos(q r))`` keeps ``R(q)`` of its phase modulation."""
-    local, nonlocal_ = make_2d(backend, 0), make_2d(backend, NL_LENGTH)
+    local, nonlocal_ = make(backend, 0), make(backend, NL_LENGTH)
     grid, window = (local.XX, WINDOW[0]) if axis == "x" else (local.YY, WINDOW[1])
     field, q = modulated(grid, window)
     ratio = np.ptp(nonlinear_phase(nonlocal_, field, method)) / np.ptp(

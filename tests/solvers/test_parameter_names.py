@@ -7,6 +7,9 @@ from scipy.constants import atomic_mass, c, epsilon_0
 
 N = 32
 H_BAR = 0.654
+# On a unit field the interaction rate is the couplings themselves: measured
+# 4e-9 off, float32 rounding. At 0.5 a rate off by a third passed.
+RATE_RTOL = 1e-6
 
 GPE_PARAMS = {
     "gamma": 0.1,
@@ -109,7 +112,7 @@ def test_ddgpe_interaction_rate_is_its_own_coupling():
     rates = simu._energy_rates(A)
 
     assert rates["interaction"] == pytest.approx(
-        abs(DDGPE_PARAMS["g"]) + abs(DDGPE_PARAMS["g12"]), rel=0.5
+        abs(DDGPE_PARAMS["g"]) + abs(DDGPE_PARAMS["g12"]), rel=RATE_RTOL
     ), (
         f"the interaction rate is {rates['interaction']:.3g} for couplings of "
         f"order {abs(DDGPE_PARAMS['g']):.3g}, so it is being scaled by "

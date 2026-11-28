@@ -35,13 +35,16 @@ TRAP_OMEGA = 2 * np.pi * 100  # rad/s, trap angular frequency
 TRAP_LENGTH = np.sqrt(hbar / (MASS * TRAP_OMEGA))  # m, ground-state width
 N_TRAP = 64  # grid points per axis for the trap
 WINDOW_TRAP = 16 * TRAP_LENGTH  # m, the Gaussian is 1e-28 at the edge
-TRAP_PERIODS = 3  # trap periods the ground state is followed over
+# Trap periods the ground state is followed over. Not a whole number: there
+# exp(-i w t) = 1 whatever the sign of the phase or the multiple of w. At a
+# quarter past, a reversed phase is 2 away and a doubled rate 1.4.
+TRAP_PERIODS = 1.25
 # s. The default RK4 step gives NaN on this grid, before this fix too and for a
 # free Gaussian as well: an open step-size issue. Below 2.83 / (16*pi^2*w), the
 # grid's largest kinetic rate (dx = TRAP_LENGTH/4), RK4 is stable.
 TRAP_STEP = 1e-5
-TRAP_DENSITY_TOL = 1e-3  # density change relative to the peak; measured 2.7e-5
-TRAP_OVERLAP_TOL = 1e-3  # |<psi0|psi(t)> / N - exp(-i w t)|; measured 2.2e-4
+TRAP_DENSITY_TOL = 1e-3  # density change relative to the peak; measured 8.9e-5
+TRAP_OVERLAP_TOL = 1e-3  # |<psi0|psi(t)> / N - exp(-i w t)|; measured 9.5e-5
 
 RATE_REL_TOL = 1e-5  # relative, float32 sums over the grid; measured 4.9e-7
 

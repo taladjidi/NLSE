@@ -3,9 +3,9 @@ import warnings
 import numpy as np
 import pytest
 from helpers import AVAILABLE_BACKENDS
-from NLSE import CNLSE, GPE, NLSE, CNLSE_1d, NLSE_1d, NLSE_3d
+from NLSE import GPE, NLSE, NLSE_1d, NLSE_3d
 from NLSE.backends import get_backend
-from scipy.constants import c, epsilon_0
+from scipy.constants import atomic_mass
 
 PRECISION_COMPLEX = np.complex64
 
@@ -33,6 +33,20 @@ SHORT_LENGTH = RESPONSE_WINDOW / RESPONSE_N
 LONG_LENGTH = 5 * RESPONSE_WINDOW / RESPONSE_N
 # One backend run twice at one length: measured 0 apart.
 RESPONSE_ATOL_FRACTION = 1e-6
+
+# NLSE_1d and GPE through out_field with a response five cells long. The GPE:
+# rubidium 87, 1e5 atoms in a Gaussian a sixth of the window wide, 2 rad of
+# interaction phase at its centre over the run.
+GPE_WINDOW = 100e-6  # m
+GPE_ATOMS = 1e5
+GPE_G = 1e-11  # rad/s*m^2
+GPE_MASS = 87 * atomic_mass  # kg
+GPE_TIME = 1e-3  # s
+RUN_CELLS = 5
+# Smoothed against local, over the peak: measured 1.97 (NLSE_1d) and 1.10
+# (GPE). The norm of the two: 1.3e-6 apart at most (MLX), no loss in either.
+RUN_APART_FLOOR = 0.5
+RUN_NORM_RTOL = 1e-5
 
 
 def test_a_non_local_run_stays_on_the_backend_asked_for(backend):
@@ -76,166 +90,51 @@ def test_a_length_below_one_cell_is_kept(backend):
     assert simu.nl_length == 60e-6, "the sub-cell length was dropped"
 
 
-def test_nonlocality():
-    # Reduced N and L for faster testing while still exercising nonlocality
-    N = 512  # Reduced from 2048
-    n2 = -1e-9
-    n12 = -1e-10
-    waist = 2.23e-3
-    waist2 = 70e-6
-    window = 4 * waist
-    power = 1.05
-    Isat = 10e4  # saturation intensity in W/m^2
-    L = 2e-4  # Reduced from 1e-3 for faster testing
-    alpha = 0
-    nl_length = 60e-6
-    for backend in AVAILABLE_BACKENDS:
-        simu_c_1d = CNLSE_1d(
-            alpha,
-            power,
-            window,
-            n2,
-            n12,
-            None,
-            L,
-            NX=N,
-            Isat=Isat,
-            nl_length=nl_length,
-            backend=backend,
-        )
-        simu_c_2d = CNLSE(
-            alpha,
-            power,
-            window,
-            n2,
-            n12,
-            None,
-            L,
-            NX=N,
-            NY=N,
-            Isat=Isat,
-            nl_length=nl_length,
-            backend=backend,
-        )
-        simu_1d = NLSE_1d(
-            alpha,
-            power,
-            window,
-            n2,
-            None,
-            L,
-            NX=N,
-            Isat=Isat,
-            nl_length=nl_length,
-            backend=backend,
-        )
-        simu_2d = NLSE(
-            alpha,
-            power,
-            window,
-            n2,
-            None,
-            L,
-            NX=N,
-            NY=N,
-            Isat=Isat,
-            nl_length=nl_length,
-            backend=backend,
-        )
-        simu_gpe = GPE(
-            alpha,
-            power,
-            window,
-            n2,
-            None,
-            L,
-            NX=N,
-            NY=N,
-            sat=Isat,
-            nl_length=nl_length,
-            backend=backend,
-        )
-        simu_c_1d.power2 = 10e-3
-        simu_c_1d.n22 = 1e-10
-        simu_c_1d.k2 = 2 * np.pi / 795e-9
-        simu_c_2d.power2 = simu_c_1d.power2
-        simu_c_2d.n22 = simu_c_1d.n22
-        simu_c_2d.k2 = simu_c_1d.k2
-        E_0 = np.exp(-(simu_c_2d.XX**2 + simu_c_2d.YY**2) / waist**2).astype(
-            PRECISION_COMPLEX
-        )
-        V0 = np.exp(-(simu_c_2d.XX**2 + simu_c_2d.YY**2) / waist2**2).astype(
-            PRECISION_COMPLEX
-        )
-        E, _ = simu_c_1d.out_field(
-            np.array([E_0[N // 2, :], V0[N // 2, :]]),
-            L,
-            verbose=False,
-            plot=False,
-            splitting="lie",
-            delta_z=1e-5,
-        )
-        arr = E.real * E.real + E.imag * E.imag
-        arr *= c * epsilon_0 / 2 * simu_c_1d.delta_X**2
-        norm = arr.sum(simu_c_1d._last_axes)
-        assert np.allclose(norm, simu_c_1d.power, rtol=1e-3), (
-            f"CNLSE_1d : Norm is not conserved ! (Backend {backend})"
-        )
-        E = simu_1d.out_field(
-            E_0[N // 2, :],
-            L,
-            verbose=False,
-            plot=False,
-            splitting="lie",
-            delta_z=1e-5,
-        )
-        arr = E.real * E.real + E.imag * E.imag
-        arr *= c * epsilon_0 / 2 * simu_1d.delta_X**2
-        norm = arr.sum(simu_c_1d._last_axes)
-        assert np.allclose(norm, simu_1d.power, rtol=1e-3), (
-            f"NLSE_1d : Norm is not conserved ! (Backend {backend})"
-        )
-        E, _ = simu_c_2d.out_field(
-            np.array([E_0, V0]),
-            L,
-            verbose=False,
-            plot=False,
-            splitting="lie",
-            delta_z=1e-5,
-        )
-        arr = E.real * E.real + E.imag * E.imag
-        arr *= c * epsilon_0 / 2 * simu_c_2d.delta_X * simu_c_2d.delta_Y
-        norm = arr.sum(simu_c_2d._last_axes)
-        assert np.allclose(norm, simu_c_2d.power, rtol=1e-3), (
-            f"CNLSE : Norm is not conserved ! (Backend {backend})"
-        )
-        E = simu_2d.out_field(
-            E_0,
-            L,
-            verbose=False,
-            plot=False,
-            splitting="lie",
-            delta_z=1e-5,
-        )
-        arr = E.real * E.real + E.imag * E.imag
-        arr *= c * epsilon_0 / 2 * simu_2d.delta_X * simu_2d.delta_Y
-        norm = arr.sum(simu_2d._last_axes)
-        assert np.allclose(norm, simu_2d.power, rtol=1e-3), (
-            f"NLSE : Norm is not conserved ! (Backend {backend})"
-        )
-        E = simu_gpe.out_field(
-            E_0,
-            L,
-            verbose=False,
-            plot=False,
-            splitting="lie",
-        )
-        arr = E.real * E.real + E.imag * E.imag
-        arr *= simu_gpe.delta_X * simu_gpe.delta_Y
-        norm = arr.sum(simu_gpe._last_axes)
-        assert np.allclose(norm, simu_gpe.N, rtol=1e-3), (
-            f"CNLSE : Norm is not conserved ! (Backend {backend})"
-        )
+def run_1d(backend, cells):
+    """Return NLSE_1d's output for a Gaussian, the response ``cells`` cells long."""
+    params = {key: RESPONSE_PARAMS[key] for key in ("alpha", "power", "n2", "V", "L")}
+    simu = NLSE_1d(
+        window=RESPONSE_WINDOW,
+        NX=RESPONSE_N,
+        Isat=RESPONSE_PARAMS["Isat"],
+        nl_length=cells * RESPONSE_WINDOW / RESPONSE_N,
+        backend=backend,
+        **params,
+    )
+    field = np.exp(-(simu.X**2) / RESPONSE_WAIST**2).astype(PRECISION_COMPLEX)
+    out = simu.out_field(field, simu.L, verbose=False, plot=False)
+    return np.asarray(simu._backend.to_numpy(out))
+
+
+def run_gpe(backend, cells):
+    """Return GPE's output for a Gaussian, the response ``cells`` cells long."""
+    simu = GPE(
+        gamma=0,
+        N=GPE_ATOMS,
+        window=GPE_WINDOW,
+        g=GPE_G,
+        V=None,
+        m=GPE_MASS,
+        NX=RESPONSE_N,
+        NY=RESPONSE_N,
+        nl_length=cells * GPE_WINDOW / RESPONSE_N,
+        backend=backend,
+    )
+    waist = GPE_WINDOW / 6
+    field = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(PRECISION_COMPLEX)
+    out = simu.out_field(field, GPE_TIME, verbose=False, plot=False)
+    return np.asarray(simu._backend.to_numpy(out))
+
+
+@pytest.mark.parametrize("run", [run_1d, run_gpe], ids=["NLSE_1d", "GPE"])
+def test_a_non_local_run_moves_the_field_and_keeps_its_norm(backend, run):
+    """The response changes the phase a run puts on, and only the phase."""
+    local, smoothed = run(backend, 0), run(backend, RUN_CELLS)
+    apart = np.max(np.abs(smoothed - local)) / np.max(np.abs(local))
+    assert apart > RUN_APART_FLOOR, f"the non-local run is the local one to {apart:.2e}"
+    assert np.sum(np.abs(smoothed) ** 2) == pytest.approx(
+        np.sum(np.abs(local) ** 2), rel=RUN_NORM_RTOL
+    )
 
 
 def test_a_three_dimensional_run_can_be_non_local(backend):

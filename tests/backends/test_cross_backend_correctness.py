@@ -36,6 +36,22 @@ V_RADIUS = 2e-3
 N2_WEAK = -1e-10
 N12_WEAK = 1e-10
 DZ_FINE = 1e-5
+# A loss with alpha*L = 1 (1/m), and the relative error allowed on the power
+# left: measured 9.9e-6 (split step) and 1.4e-7 (RK4); 5.1e-2 if the loss is
+# 5% off. At alpha*L = 0.01 half the loss passed a 1% tolerance.
+DECAY_ALPHA = 1e3
+DECAY_RTOL = 1e-4
+# A backend against the CPU, over the peak amplitude: measured 3.9e-6 at most
+# (NLSE on MLX), and 6.0e-3 for a coupling 5% off. Relative to each point, the
+# wings' float32 noise used 0.40 of a tolerance that coupling used 2.3 times.
+VS_CPU_PEAK_FRACTION = 1e-4
+# Lie against RK4 on NLSE: the two schemes use 0.16 of it, an n2 5% off 7.4.
+SCHEMES_RTOL = 5e-3
+SCHEMES_ATOL = 1e-4  # V/m
+# Lie against RK4 on CNLSE, over the peak amplitude: measured 3.7e-5 at most
+# (MLX), and 1.2e-3 for a cross coupling 5% off. Relative to each point, the
+# float32 noise of the wings hid a 20% error.
+CNLSE_SCHEMES_PEAK_FRACTION = 2e-4
 
 
 def make_nlse(backend="CPU", n=N, **overrides):
@@ -119,17 +135,24 @@ def test_power_conservation(backend):
 @pytest.mark.parametrize("method", ["split_step", "RK4"])
 def test_power_decay(method):
     """Propagation with alpha>0 gives expected exponential power decay."""
-    test_alpha = 10.0
-    simu = make_nlse("CPU", n=S, alpha=test_alpha, n2=1e-10, Isat=1e20)
+    simu = make_nlse("CPU", n=S, alpha=DECAY_ALPHA, n2=1e-10, Isat=1e20)
     E_in = beam(simu)
     E_out = simu.out_field(
-        E_in, L, verbose=False, plot=False, normalize=False, method=method
+        E_in,
+        L,
+        delta_z=DZ_FINE,
+        verbose=False,
+        plot=False,
+        normalize=False,
+        method=method,
     )
     power_in = np.sum(np.abs(E_in) ** 2) * simu.delta_X * simu.delta_Y
     power_out = np.sum(np.abs(E_out) ** 2) * simu.delta_X * simu.delta_Y
-    expected_ratio = np.exp(-test_alpha * L)
+    expected_ratio = np.exp(-DECAY_ALPHA * L)
     rel_error = np.abs(power_out / power_in - expected_ratio) / expected_ratio
-    assert rel_error < 0.01, f"{method} power decay incorrect: {rel_error:.2%} error"
+    assert rel_error < DECAY_RTOL, (
+        f"{method}: the power left is {rel_error:.2e} off exp(-alpha L)"
+    )
 
 
 @pytest.mark.parametrize("backend", GPU_BACKENDS)
@@ -148,8 +171,8 @@ def test_nlse_matches_the_cpu(backend, method, with_V):
     np.testing.assert_allclose(
         E_test,
         E_ref,
-        rtol=1.5e-2,
-        atol=1e-4,
+        rtol=0,
+        atol=VS_CPU_PEAK_FRACTION * np.max(np.abs(E_ref)),
         err_msg=f"{method} {backend} does not match CPU reference (V: {with_V})",
     )
 
@@ -184,8 +207,8 @@ def test_cnlse_matches_the_cpu(backend, case):
     np.testing.assert_allclose(
         E_test,
         E_ref,
-        rtol=1e-2,
-        atol=1e-4,
+        rtol=0,
+        atol=VS_CPU_PEAK_FRACTION * np.max(np.abs(E_ref)),
         err_msg=f"CNLSE {backend} does not match CPU reference ({case})",
     )
 
@@ -202,8 +225,8 @@ def test_split_step_vs_rk4(backend, with_V):
     np.testing.assert_allclose(
         E_rk,
         E_ss,
-        rtol=5e-2,
-        atol=1e-3,
+        rtol=SCHEMES_RTOL,
+        atol=SCHEMES_ATOL,
         err_msg=f"RK4 vs split_step mismatch on {backend} (V: {with_V})",
     )
 
@@ -223,8 +246,8 @@ def test_cnlse_split_step_vs_rk4(backend, with_V):
     np.testing.assert_allclose(
         E_rk,
         E_ss,
-        rtol=5e-2,
-        atol=1e-3,
+        rtol=0,
+        atol=CNLSE_SCHEMES_PEAK_FRACTION * np.max(np.abs(E_ss)),
         err_msg=f"CNLSE RK4 vs split_step mismatch on {backend} (V: {with_V})",
     )
 

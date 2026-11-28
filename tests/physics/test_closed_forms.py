@@ -84,6 +84,17 @@ PULSE_DISTANCE = 2  # dispersion lengths
 # flipped D0 sign misses by 0.70.
 PULSE_ATOL = 1e-4
 
+# The lossy saturable run: its step (m), and what its end intensity
+# (relative) and phase (rad) may be off by. Measured 2.0e-5 and 2.1e-5 (MLX,
+# the worst); 1.1e-4 (MLX) to 1.4e-4 (CPU) and 1.1e-3 with the step frozen.
+# At 1e-5 m the two are both inside the float32 round-off of 5000 steps.
+LOSSY_STEP = 1e-4
+LOSSY_INTENSITY_RTOL = 6e-5
+LOSSY_PHASE_ATOL = 2e-4
+# Points per side for the Gouy phase: 28 to 112 steps where N has 449 to
+# 1797, and the same answer (9.9e-6 rad off at worst, 5.7e-5 at N).
+GOUY_N = 64
+
 
 def solver(backend, **kwargs):
     """Return a 2D solver with the module's grid and no physics but what is asked.
@@ -192,7 +203,7 @@ def test_a_gaussian_beam_diffracts_at_the_rate_diffraction_theory_gives(
 
 def test_the_on_axis_phase_is_the_gouy_phase(backend):
     """The on-axis phase is the Gouy phase ``-arctan(z/zR)``."""
-    simu = solver(backend)
+    simu = solver(backend, NX=GOUY_N, NY=GOUY_N)
     field = np.exp(-(simu.XX**2 + simu.YY**2) / WAIST**2).astype(np.complex64)
     z_rayleigh = simu.k * WAIST**2 / 2
 
@@ -207,7 +218,7 @@ def test_the_on_axis_phase_is_the_gouy_phase(backend):
                 normalize=False,
             ),
         )
-        got = float(np.angle(out[N // 2, N // 2]))
+        got = float(np.angle(out[GOUY_N // 2, GOUY_N // 2]))
         assert got == pytest.approx(-np.arctan(z_over_zr), abs=2e-3), (
             f"{backend}: on-axis phase at z = {z_over_zr} zR is {got:+.4f} rad "
             f"against a Gouy phase of {-np.arctan(z_over_zr):+.4f}"
@@ -477,7 +488,7 @@ def test_a_lossy_saturable_step_obeys_the_identity_it_is_solved_from(backend):
     out = to_host(
         simu,
         simu.out_field(
-            field, z, delta_z=1e-5, verbose=False, plot=False, normalize=False
+            field, z, delta_z=LOSSY_STEP, verbose=False, plot=False, normalize=False
         ),
     )
 
@@ -486,7 +497,7 @@ def test_a_lossy_saturable_step_obeys_the_identity_it_is_solved_from(backend):
         lambda y: np.log(y) + y / isat - target, 1e-12 * intensity, intensity
     )
     got_end = c * epsilon_0 / 2 * float(np.abs(out[32, 32])) ** 2
-    assert got_end == pytest.approx(exact_end, rel=1e-3), (
+    assert got_end == pytest.approx(exact_end, rel=LOSSY_INTENSITY_RTOL), (
         f"{backend}: the intensity ends at {got_end:.6e} W/m^2 against the "
         f"{exact_end:.6e} that ln(I) + I/Isat falling by alpha*z gives"
     )
@@ -494,7 +505,7 @@ def test_a_lossy_saturable_step_obeys_the_identity_it_is_solved_from(backend):
     expected_phase = simu.k * n2 / alpha * (intensity - exact_end)
     got_phase = float(np.angle(out[32, 32]))
     wrapped = float(np.angle(np.exp(1j * expected_phase)))
-    assert got_phase == pytest.approx(wrapped, abs=2e-3), (
+    assert got_phase == pytest.approx(wrapped, abs=LOSSY_PHASE_ATOL), (
         f"{backend}: the phase is {got_phase:+.5f} rad against the "
         f"{wrapped:+.5f} the identity gives from the intensity drop alone"
     )
