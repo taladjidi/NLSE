@@ -4,7 +4,7 @@ Driven-dissipative polaritons
 
 ``DDGPE`` adds a drive and a decay, which is what an exciton-polariton fluid needs.
 A Gaussian pump is turned on over 10 ps and the exciton and cavity populations
-settle toward their driven steady state.
+rise and oscillate toward their driven steady state.
 """
 
 import matplotlib.pyplot as plt

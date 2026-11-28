@@ -63,13 +63,15 @@ PROBE_DT = 1e-3
 
 # Driven steady state: a uniform pump on the cavity and no interaction, so the
 # closed form of two coupled, damped, driven modes applies.
-DRIVEN_GAMMA = 20 * 0.07 / h_bar  # 1/ps; the transient is exp(-10.7) by DRIVEN_T
+# 20 times the example's decay (0.07 meV), so that the transient, exp(-10.7)
+# by DRIVEN_T, is under the tolerance in a short run.
+DRIVEN_GAMMA = 20 * 0.07 / h_bar  # 1/ps
 DRIVEN_T = 10.0  # ps
 DRIVEN_STEPS = 1600
 DRIVE = 1.0  # field per ps
 # The Lie step with a drive is first order: measured 8.0e-3 at 1600 steps and
 # 4.0e-3 at 3200 (CPU, CL, MLX). Smallest convention error guarded: the
-# detuning's sign, 0.33 on the cavity; gamma for gamma / 2 gives 0.49.
+# detuning's sign in the solver, measured 0.46; gamma for gamma / 2 gives 0.49.
 DRIVEN_RTOL = 1.5e-2
 
 

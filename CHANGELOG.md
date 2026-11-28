@@ -175,8 +175,11 @@ come first.
   2.8e-8 relative on the phase the potential gives; a run through `out_field`
   was not affected.
 - **The `ddgpe` example pumps its cavity.** It ran with no pump and no loss
-  since 2024 and plotted zeros; the pump (3) and the decay (0.07 meV) it was
-  written with are back.
+  since 2024 and plotted zeros; the pump (3) and the decay (a linewidth of 0.07 meV)
+  it was written with are back.
+- **`examples/vortex_precession_benchmark.py` and `vortex_precession.jl` leave
+  the first run of each size out of their timings.** It compiled the kernels
+  and planned the transform, and the mean counted it as propagation.
 - **`benchmarks/profile_kernels.py` times the coupled fused kernels.** It
   passed one cross constant where they take two, and reported a `TypeError`
   for both.

@@ -6,7 +6,8 @@ The same condensate solved here and in Julia, for comparison.
 
 It plots what two other runs write to ``examples/output``:
 ``vortex_precession_benchmark.py`` for every backend it found, and
-``vortex_precession.jl`` for FourierGPE.jl.
+``vortex_precession.jl`` for FourierGPE.jl. Both leave the first run of each
+size, which compiles and plans the transform, out of their timings.
 """
 
 import sys
