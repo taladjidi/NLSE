@@ -1590,7 +1590,9 @@ class OpenCLKernels:
         plan : VkFFT plan
             Pre-built FFT plan.
         omega : float or None
-            Rabi coupling (half). None to skip.
+            Rabi coupling (half). None to skip. Rotates over ``dz`` after
+            the nonlinear step, and for Strang before the first one too, so
+            the step is ``R N L N R``.
         unnorm_ifft : bool
             Use unnormalized IFFT.
 
@@ -1609,8 +1611,16 @@ class OpenCLKernels:
             A.dtype, dz, alpha1, alpha2, g11, g12, g21, g22, Isat1, Isat2
         )
 
-        # Strang: NL half-step before the linear step
+        rotation = None
+        if omega is not None:
+            rotation = self._cast_params(
+                A.dtype, np.cos(omega * dz), np.sin(omega * dz)
+            )
+
+        # Strang: Rabi and NL half-steps before the linear step
         if splitting == "strang":
+            if rotation is not None:
+                self._rabi_interleaved(kerns, A, gs, ls, N_sq_i, rotation)
             self._launch_coupled(
                 kerns,
                 "coupled_nl_prop_c",
@@ -1646,22 +1656,30 @@ class OpenCLKernels:
             params,
         )
 
-        # Rabi coupling (Lie splitting only)
-        if omega is not None:
-            cos_val = np.cos(omega * float(params[0]))  # omega * dz
-            sin_val = np.sin(omega * float(params[0]))
-            cos_c, sin_c = self._cast_params(A.dtype, cos_val, sin_val)
-            kerns["rabi_coupling_interleaved"](
-                self.queue,
-                gs,
-                ls,
-                A.data,
-                N_sq_i,
-                cos_c,
-                sin_c,
-            )
+        if rotation is not None:
+            self._rabi_interleaved(kerns, A, gs, ls, N_sq_i, rotation)
 
         return A
+
+    def _rabi_interleaved(self, kerns, A, gs, ls, N_sq_i, rotation):
+        """Rotate the two halves of an interleaved field into each other.
+
+        Parameters
+        ----------
+        kerns : dict
+            Compiled kernels for the field's dtype.
+        A : cla.Array
+            Interleaved field (2, ...) modified in-place.
+        gs, ls : tuple
+            Global and local work sizes, one item per component element.
+        N_sq_i : np.int32
+            Elements in one component.
+        rotation : tuple
+            Cosine and sine of the Rabi angle, cast to the field's precision.
+        """
+        kerns["rabi_coupling_interleaved"](
+            self.queue, gs, ls, A.data, N_sq_i, *rotation
+        )
 
     def rk4_rhs_coupled_fused(
         self,

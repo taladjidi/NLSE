@@ -269,6 +269,22 @@ come first.
   step). Results move at rounding level: 8e-6 of the peak after 220 complex64
   steps, 1.4e-14 in complex128. `NLSE_FUSE_PROPAGATOR=0` still switches every
   callback off. Figures in `docs/optimization-log.md`.
+- **The Rabi coupling runs inside the fused coupled kernels.** With `omega`
+  set, a `CNLSE` split step took the fused coupled kernel and then rotated the
+  components in a launch of its own (Lie), or through two component copies
+  around it (Strang); RK4 was never fused. CUPY now rotates inside the
+  nonlinear kernel and adds the coupling's slope inside the whole-stage RK4
+  kernel; OpenCL and MLX rotate the interleaved field in place around a
+  Strang step. On an RTX 3050 in complex64 at `omega` = 1e4 rad/m, a CUPY
+  step is 1.85 to 1.89x faster in Strang, 1.17 to 1.21x in Lie and 2.0 to
+  2.2x in RK4 at 1024², 2048² and 4096², and an OpenCL Strang step 2.0x and
+  1.66x at 1024² and 2048². In those runs (lossless, no potential, 60
+  steps) the CUPY Lie and Strang and the OpenCL Strang outputs match the old
+  ones to the bit, which is not promised in general: the old CUDA Lie
+  rotation took its angle from the step rounded to float32. RK4 moves by 9e-7
+  of the peak. A `DDGPE` Strang run no longer copies its components twice a
+  step. Batched `omega` runs as before. Figures in
+  `docs/optimization-log.md`.
 - One-step `out_field` at 2048² (M3 Max): CPU 73 → 47 ms, MLX 70 → 41 ms; the
   dispersion eigenvalues are kept and the normalization writes in place. The
   per-step time is unchanged.

@@ -41,6 +41,15 @@ waist = 2.23e-3
 window = 4 * waist
 SOLVERS = [NLSE, NLSE_1d, CNLSE, CNLSE_1d]
 COUPLED = [CNLSE, CNLSE_1d]
+# Rabi coupling, rad/m: a rotation of omega * L / 2 = 5 rad over the run,
+# so a half rotation missing from every step is not lost in round-off.
+OMEGA = 1e4
+# Error allowed on the closed-form share of power, cos^2(OMEGA L / 2) = 0.08:
+# a complex64 sum over the grid carries about 1e-6 of it.
+RABI_SHARE_ATOL = 1e-5
+# Steps over L for that check: 0.025 rad of rotation a step, so RK4's error,
+# (0.025)^5 / 120 a step, sums to 2e-8 over the run.
+RABI_STEPS = 200
 
 
 def one_dimensional(cls):
@@ -181,31 +190,95 @@ def test_the_coupled_split_step_matches_the_generic_one(
     assert np.max(np.abs(fused - generic)) / np.max(np.abs(generic)) < 1e-5
 
 
+def run_with_rabi(backend_name, level, monkeypatch, splitting, method, dtype):
+    """Propagate a coupled field with a Rabi coupling at this level of fusion."""
+    solver = make(CNLSE, backend_name)
+    solver.omega = OMEGA
+    fusion(monkeypatch, solver._backend, level)
+    out = solver.out_field(
+        gaussian(CNLSE, dtype),
+        L,
+        verbose=False,
+        plot=False,
+        splitting=splitting,
+        method=method,
+    )
+    return np.asarray(solver._backend.to_numpy(out))
+
+
 @pytest.mark.parametrize("backend_name", FUSED_BACKENDS)
-def test_the_fused_split_step_carries_the_rabi_coupling(backend_name, monkeypatch):
-    """The interleaved Rabi rotation must match the per-component one."""
+@pytest.mark.parametrize("splitting", ["lie", "strang"])
+def test_the_fused_split_step_carries_the_rabi_coupling(
+    backend_name, splitting, monkeypatch
+):
+    """The interleaved Rabi rotation must match the per-component one.
+
+    Strang puts half of it on each side of the step, and both halves are
+    inside the fused step: one left out of either side rotates the field by
+    half as much again, which is far outside this tolerance.
+    """
     if not getattr(get_backend(backend_name), "has_fused_coupled_split_step", False):
         pytest.skip(f"{backend_name} has no fused coupled split step")
-
-    def run(level):
-        solver = make(CNLSE, backend_name)
-        solver.omega = 1e4
-        fusion(monkeypatch, solver._backend, level)
-        return np.asarray(
-            solver._backend.to_numpy(
-                solver.out_field(
-                    gaussian(CNLSE),
-                    L,
-                    verbose=False,
-                    plot=False,
-                    splitting="lie",
-                    method="split_step",
-                )
-            )
-        )
-
-    fused, generic = run("stage"), run("generic")
+    fused = run_with_rabi(
+        backend_name, "stage", monkeypatch, splitting, "split_step", np.complex64
+    )
+    generic = run_with_rabi(
+        backend_name, "generic", monkeypatch, splitting, "split_step", np.complex64
+    )
     assert np.max(np.abs(fused - generic)) / np.max(np.abs(generic)) < 1e-5
+
+
+@pytest.mark.parametrize("backend_name", FUSED_BACKENDS)
+@pytest.mark.parametrize(
+    "dtype, tolerance", [(np.complex64, 1e-5), (np.complex128, 1e-12)]
+)
+def test_the_fused_rk4_stage_carries_the_rabi_coupling(
+    backend_name, dtype, tolerance, monkeypatch
+):
+    """The whole-stage kernel adds the coupling the generic slope adds.
+
+    To a tolerance: the generic path also differs in the saturation sum, as
+    ``test_each_rk4_level_matches_the_generic_one`` says.
+    """
+    backend = get_backend(backend_name)
+    if not getattr(backend, "has_fused_rk4_stage", False):
+        pytest.skip(f"{backend_name} has no fused RK4 stage")
+    if dtype == np.complex128 and not backend.supports_double_precision():
+        pytest.skip(f"{backend_name} has no double precision")
+    stage = run_with_rabi(backend_name, "stage", monkeypatch, "lie", "RK4", dtype)
+    generic = run_with_rabi(backend_name, "generic", monkeypatch, "lie", "RK4", dtype)
+    difference = np.max(np.abs(stage - generic)) / np.max(np.abs(generic))
+    assert difference < tolerance, f"differs by {difference:.3e}"
+
+
+@pytest.mark.parametrize("backend_name", FUSED_BACKENDS)
+@pytest.mark.parametrize(
+    "method, splitting",
+    [("split_step", "lie"), ("split_step", "strang"), ("RK4", "lie")],
+)
+def test_a_linear_rabi_run_follows_its_closed_form(backend_name, method, splitting):
+    """Without interaction or loss the coupling commutes with diffraction.
+
+    The two components share a wavenumber, so the first one keeps
+    cos^2(OMEGA z / 2) of the power whatever the beam does, on the most
+    fused path the backend has.
+    """
+    solver = make(CNLSE, backend_name, n2=0, n12=0, alpha=0, omega=OMEGA)
+    field = gaussian(CNLSE)
+    field[1] = 0
+    out = solver.out_field(
+        field,
+        L,
+        verbose=False,
+        plot=False,
+        normalize=False,
+        delta_z=L / RABI_STEPS,
+        splitting=splitting,
+        method=method,
+    )
+    power = np.sum(np.abs(np.asarray(solver._backend.to_numpy(out))) ** 2, axis=(1, 2))
+    share = power[0] / power.sum()
+    assert share == pytest.approx(np.cos(OMEGA * L / 2) ** 2, abs=RABI_SHARE_ATOL)
 
 
 @pytest.mark.parametrize("backend_name", FUSED_BACKENDS)
@@ -246,12 +319,26 @@ def test_the_top_level_is_the_one_taken(backend_name, cls, monkeypatch):
 
 @pytest.mark.parametrize("backend_name", FUSED_BACKENDS)
 @pytest.mark.parametrize("cls", COUPLED, ids=lambda c: c.__name__)
-@pytest.mark.parametrize("method", ["split_step", "RK4"])
-def test_a_fused_run_splits_no_components(backend_name, cls, method, monkeypatch):
-    """The point of the coupled kernels is that they split nothing."""
-    if not getattr(get_backend(backend_name), "has_fused_coupled_split_step", False):
+@pytest.mark.parametrize(
+    "method, splitting",
+    [("split_step", "lie"), ("split_step", "strang"), ("RK4", "lie")],
+)
+@pytest.mark.parametrize("omega", [None, OMEGA])
+def test_a_fused_run_splits_no_components(
+    backend_name, cls, method, splitting, omega, monkeypatch
+):
+    """The point of the coupled kernels is that they split nothing.
+
+    A Rabi coupling included: it rotates the components into each other in
+    the kernels' own pass, so it is no reason to take them apart.
+    """
+    backend = get_backend(backend_name)
+    if not getattr(backend, "has_fused_coupled_split_step", False):
         pytest.skip(f"{backend_name} has no fused coupled path")
+    if method == "RK4" and omega is not None and not backend.has_fused_rk4_stage:
+        pytest.skip("only the whole-stage kernel carries the coupling in RK4")
     solver = make(cls, backend_name)
+    solver.omega = omega
     calls = []
     for name in ("_take_components", "_set_components"):
         original = getattr(type(solver), name)
@@ -263,7 +350,12 @@ def test_a_fused_run_splits_no_components(backend_name, cls, method, monkeypatch
         monkeypatch.setattr(type(solver), name, spy)
 
     solver.out_field(
-        gaussian(cls), L, verbose=False, plot=False, splitting="lie", method=method
+        gaussian(cls),
+        L,
+        verbose=False,
+        plot=False,
+        splitting=splitting,
+        method=method,
     )
     assert not calls, (
         f"{backend_name} declares a fused coupled path but {method} still "

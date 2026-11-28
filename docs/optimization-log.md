@@ -1686,6 +1686,53 @@ point, by a pass along rows, 0.077, plus one transposing copy. That copy takes
 0.089 it would save. Nothing in cuFFT's interface reaches the column pass
 itself.
 
+**Deployed: the Rabi coupling inside the fused coupled kernels**
+(2026-11-28). RTX 3050 8 GB, driver 620.70.06, CuPy 14.2.0, CUDA runtime
+13.2, cuFFT 12.3.0; pyopencl 2026.1.5 on the same card. With `omega` set, the
+fused coupled split step rotated the components afterwards in a launch of
+its own (`rabi_coupling_interleaved`, Lie) or through `_take_components`
+copies on each side (Strang), and `CNLSE` kept RK4 off the whole-stage
+kernels. `coupled_nl_prop_c` now takes the rotation's cosine and sine and a
+`RabiPlacement` (`kernels/templating.py`, rendered as `#define RABI_*` ahead
+of the source): before the nonlinear step to open a Strang step, after it to
+close a Lie or Strang one. `coupled_rk4_stage_c` adds `-1j * omega/2` times
+the other component to each slope. OpenCL and MLX keep their kernels and
+rotate the interleaved field in place around a Strang step.
+
+`CNLSE`, complex64, `omega` = 1e4 rad/m, lossless, no potential, the
+benchmark field (`benchmarks/profile_backends.py`, `step_for` step). One
+process, base and patched trees side by side, the order alternating over 8
+rounds; per step from the 10→60 step slope, median of the per-round values,
+[min, max] of the per-round gain (`gpu_p4_r2_ab.py`):
+
+| backend, scheme | grid | before | after | gain [range] |
+|---|---|---|---|---|
+| CUPY, Strang | 1024² | 2.096 ms | 1.114 ms | **1.88x** [1.80, 1.89] |
+| CUPY, Strang | 2048² | 8.611 ms | 4.560 ms | **1.89x** [1.55, 2.02] |
+| CUPY, Strang | 4096² | 41.36 ms | 22.68 ms | **1.85x** [1.74, 2.03] |
+| CUPY, Lie | 1024² | 1.113 ms | 0.950 ms | **1.17x** [1.09, 1.18] |
+| CUPY, Lie | 2048² | 4.550 ms | 3.902 ms | **1.17x** [1.16, 1.17] |
+| CUPY, Lie | 4096² | 24.38 ms | 19.56 ms | 1.21x [0.90, 1.47] |
+| CUPY, RK4 | 1024² | 10.95 ms | 4.888 ms | **2.24x** [2.22, 2.25] |
+| CUPY, RK4 | 2048² | 43.95 ms | 19.93 ms | **2.21x** [2.20, 2.21] |
+| CUPY, RK4 | 4096² | 198.9 ms | 97.14 ms | **2.01x** [1.86, 2.21] |
+| CL, Strang | 1024² | 3.325 ms | 1.666 ms | **2.00x** [1.92, 2.05] |
+| CL, Strang | 2048² | 13.57 ms | 8.187 ms | **1.66x** [1.57, 1.68] |
+| CL, Strang | 4096² | 66.19 ms | 48.48 ms | 1.24x [0.71, 2.54] |
+
+In these runs (complex64, lossless, no potential, 60 steps) the CUPY Lie and
+Strang outputs and the OpenCL Strang output equal the base's to the bit
+(`max_rel_diff` 0 in `gpu_p4_r2_ab.py`). Only these cases were compared, and
+other steps may differ in the last bit: the old CUDA Lie rotation took its
+angle from `params[0]`, the step rounded to float32, where the kernel now
+rotates by the double `dz`. RK4 differs by 9.3e-7 of the peak, the slope's
+sum taken in another order. Lie at 4096² on CUPY and Strang at 4096² on OpenCL vary more
+between rounds than they gain and claim nothing. Closed form: a linear
+`CNLSE` started in one component keeps `cos²(omega z / 2)` of its power
+there; Lie, Strang and RK4 follow it to 1e-5 in complex64 over 200 steps
+(`test_a_linear_rabi_run_follows_its_closed_form`). Not measured:
+MLX, complex128, a batched `omega` (still the generic path).
+
 
 ## Open
 
