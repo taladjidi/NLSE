@@ -2,8 +2,8 @@
 
 import numpy as np
 import pytest
-from NLSE import CNLSE, DDGPE, GPE, NLSE, CNLSE_1d, NLSE_1d, NLSE_3d
-from NLSE.backends import list_available_backends
+from NLSE import CNLSE, GPE, NLSE, CNLSE_1d, NLSE_1d, NLSE_3d
+from NLSE.backends import get_backend, list_available_backends
 from NLSE.kernels.cpu import (
     nl_prop,
     nl_prop_c,
@@ -12,7 +12,7 @@ from NLSE.kernels.cpu import (
     rabi_coupling,
     square_mod,
 )
-from scipy.constants import c
+from scipy.constants import atomic_mass, c
 
 # Test parameters
 N = 64
@@ -49,12 +49,6 @@ def bench_steps(simu) -> int:
 
 # Get available backends
 BACKENDS = list_available_backends()
-
-
-def skip_if_backend_unavailable(backend: str):
-    """Skip benchmark if backend is not available."""
-    if backend not in BACKENDS:
-        pytest.skip(f"Backend {backend} not available")
 
 
 def _propagate(simu, E_in, z, **kwargs):
@@ -120,129 +114,58 @@ def assert_written(out, before, name):
     assert not np.array_equal(out, before), f"{name} left its output as it was"
 
 
+def _kernel_cases():
+    """Return, per CPU kernel: the kernel, its arguments, the positions it writes."""
+    A1, A2 = _random_field_2d(seed=42), _random_field_2d(seed=43)
+    I1, I2 = _random_real_2d(seed=44), _random_real_2d(seed=45)
+    V = _random_real_2d(seed=46)
+    V_c = V.astype(PRECISION_COMPLEX)  # the coupled kernel is typed for a complex V
+    g12, sat = g_k * 0.5, Isat_k
+    return {
+        "square_mod": (square_mod, (A1, I1), (1,)),
+        "nl_prop": (nl_prop, (A1, I1, dz, alpha_k, V, g_k, sat), (0,)),
+        "nl_prop_without_V": (
+            nl_prop_without_V,
+            (A1, I1, dz, alpha_k, g_k, sat),
+            (0,),
+        ),
+        "nl_prop_c": (
+            nl_prop_c,
+            (A1, I1, I2, dz, alpha_k, V_c, g_k, g12, sat, sat),
+            (0,),
+        ),
+        "nl_prop_without_V_c": (
+            nl_prop_without_V_c,
+            (A1, I1, I2, dz, alpha_k, g_k, g12, sat, sat),
+            (0,),
+        ),
+        "rabi_coupling": (rabi_coupling, (A1, A2, dz, omega_k), (0, 1)),
+    }
+
+
+KERNEL_CASES = _kernel_cases()
+
+
+def _fresh(args):
+    """Copy the arrays among a kernel's arguments, in the form pedantic's setup takes."""
+    return tuple(a.copy() if isinstance(a, np.ndarray) else a for a in args), {}
+
+
 @pytest.mark.benchmark(group="kernels")
 class TestKernelBenchmark:
     """Benchmark individual kernel functions (CPU backend only)."""
 
-    def test_square_mod(self, benchmark):
-        """Benchmark square_mod kernel."""
-        A = _random_field_2d()
-        A_sq = _random_real_2d()
-
-        def kernel():
-            out = A_sq.copy()
-            square_mod(A.copy(), out)
-            return out
-
-        out = benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
-        assert_written(out, A_sq, "square_mod")
-
-    def test_nl_prop(self, benchmark):
-        """Benchmark nl_prop kernel (with potential)."""
-        A = _random_field_2d()
-        A_sq = _random_real_2d()
-        V = _random_real_2d(seed=43)
-
-        def kernel():
-            out = A.copy()
-            nl_prop(
-                out,
-                A_sq.copy(),
-                dz,
-                alpha_k,
-                V.copy(),
-                g_k,
-                Isat_k,
-            )
-            return out
-
-        out = benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
-        assert_written(out, A, "nl_prop")
-
-    def test_nl_prop_without_V(self, benchmark):
-        """Benchmark nl_prop_without_V kernel (no potential)."""
-        A = _random_field_2d()
-        A_sq = _random_real_2d()
-
-        def kernel():
-            out = A.copy()
-            nl_prop_without_V(
-                out,
-                A_sq.copy(),
-                dz,
-                alpha_k,
-                g_k,
-                Isat_k,
-            )
-            return out
-
-        out = benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
-        assert_written(out, A, "nl_prop_without_V")
-
-    def test_nl_prop_c(self, benchmark):
-        """Benchmark nl_prop_c kernel (coupled with potential)."""
-        A1 = _random_field_2d(seed=42)
-        A_sq_1 = _random_real_2d(seed=44)
-        A_sq_2 = _random_real_2d(seed=45)
-        # V needs to be complex for numba typing
-        V = _random_real_2d(seed=46).astype(PRECISION_COMPLEX)
-
-        def kernel():
-            out = A1.copy()
-            nl_prop_c(
-                out,
-                A_sq_1.copy(),
-                A_sq_2.copy(),
-                dz,
-                alpha_k,
-                V.copy(),
-                g_k,
-                g_k * 0.5,
-                Isat_k,
-                Isat_k,
-            )
-            return out
-
-        out = benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
-        assert_written(out, A1, "nl_prop_c")
-
-    def test_nl_prop_without_V_c(self, benchmark):
-        """Benchmark nl_prop_without_V_c kernel (coupled, no potential)."""
-        A1 = _random_field_2d(seed=42)
-        A_sq_1 = _random_real_2d(seed=44)
-        A_sq_2 = _random_real_2d(seed=45)
-
-        def kernel():
-            out = A1.copy()
-            nl_prop_without_V_c(
-                out,
-                A_sq_1.copy(),
-                A_sq_2.copy(),
-                dz,
-                alpha_k,
-                g_k,
-                g_k * 0.5,
-                Isat_k,
-                Isat_k,
-            )
-            return out
-
-        out = benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
-        assert_written(out, A1, "nl_prop_without_V_c")
-
-    def test_rabi_coupling(self, benchmark):
-        """Benchmark rabi_coupling kernel."""
-        A1 = _random_field_2d(seed=42)
-        A2 = _random_field_2d(seed=43)
-
-        def kernel():
-            out1, out2 = A1.copy(), A2.copy()
-            rabi_coupling(out1, out2, dz, omega_k)
-            return out1, out2
-
-        out1, out2 = benchmark.pedantic(kernel, rounds=100, warmup_rounds=10)
-        assert_written(out1, A1, "rabi_coupling")
-        assert_written(out2, A2, "rabi_coupling")
+    @pytest.mark.parametrize("name", KERNEL_CASES)
+    def test_kernel(self, benchmark, name):
+        """Benchmark one kernel call, the copies of its arguments left out."""
+        kernel, args, written = KERNEL_CASES[name]
+        benchmark.pedantic(
+            kernel, setup=lambda: _fresh(args), rounds=100, warmup_rounds=10
+        )
+        out, _ = _fresh(args)
+        kernel(*out)
+        for position in written:
+            assert_written(out[position], args[position], name)
 
 
 @pytest.mark.benchmark(group="solvers-single")
@@ -252,7 +175,6 @@ class TestSolverBenchmark:
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_nlse_2d(self, benchmark, backend):
         """Benchmark NLSE 2D propagation."""
-        skip_if_backend_unavailable(backend)
         simu = NLSE(
             alpha=alpha,
             power=power,
@@ -277,7 +199,6 @@ class TestSolverBenchmark:
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_nlse_1d(self, benchmark, backend):
         """Benchmark NLSE_1d propagation."""
-        skip_if_backend_unavailable(backend)
         simu = NLSE_1d(
             alpha=alpha,
             power=power,
@@ -301,7 +222,6 @@ class TestSolverBenchmark:
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_nlse_3d(self, benchmark, backend):
         """Benchmark NLSE_3d propagation."""
-        skip_if_backend_unavailable(backend)
         simu = NLSE_3d(
             alpha=alpha,
             energy=1e-6,
@@ -333,9 +253,6 @@ class TestSolverBenchmark:
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_gpe(self, benchmark, backend):
         """Benchmark GPE propagation."""
-        skip_if_backend_unavailable(backend)
-        from scipy.constants import atomic_mass
-
         simu = GPE(
             gamma=0.1,
             N=1e5,
@@ -365,7 +282,6 @@ class TestCoupledSolverBenchmark:
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_cnlse_2d(self, benchmark, backend):
         """Benchmark CNLSE 2D propagation."""
-        skip_if_backend_unavailable(backend)
         simu = CNLSE(
             alpha=alpha,
             power=power,
@@ -393,7 +309,6 @@ class TestCoupledSolverBenchmark:
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_cnlse_1d(self, benchmark, backend):
         """Benchmark CNLSE_1d propagation."""
-        skip_if_backend_unavailable(backend)
         simu = CNLSE_1d(
             alpha=alpha,
             power=power,
@@ -415,62 +330,6 @@ class TestCoupledSolverBenchmark:
 
         result = benchmark.pedantic(propagate, rounds=10, warmup_rounds=2)
         assert result.shape == (2, N)
-        assert np.all(np.isfinite(result))
-
-    @pytest.mark.skip(reason="DDGPE benchmark is slow and has callback complexity")
-    @pytest.mark.parametrize("backend", BACKENDS)
-    def test_ddgpe(self, benchmark, backend):
-        """Benchmark DDGPE propagation."""
-        # DDGPE specific parameters
-        gamma = 0.1
-        omega = 1e3
-        T = 1e-3
-        omega_exc = 1.5e15
-        omega_cav = 1.5e15
-        detuning = 0.0
-        k_z = 1e6
-
-        simu = DDGPE(
-            gamma=gamma,
-            power=power,
-            window=window,
-            g=n2,
-            g12=n12,
-            omega=omega,
-            T=T,
-            omega_exc=omega_exc,
-            omega_cav=omega_cav,
-            detuning=detuning,
-            k_z=k_z,
-            V=None,
-            NX=N,
-            NY=N,
-            Isat=Isat,
-            backend=backend,
-        )
-        E_in = np.zeros((2, N, N), dtype=PRECISION_COMPLEX)
-        E_in[0] = _gaussian_field_2d(waist, simu.X, simu.Y)
-        E_in[1] = _gaussian_field_2d(waist * 1.2, simu.X, simu.Y) * 0.5
-
-        # No-op laser excitation for benchmarking
-        def no_laser(simu, A, z, i):
-            pass
-
-        def propagate():
-            # DDGPE names its span `t`, so it cannot go through _propagate;
-            # pin the step the same way by hand.
-            return simu.out_field(
-                E_in,
-                t=T,
-                laser_excitation=no_laser,
-                verbose=False,
-                callback=[],
-                callback_args=[()],
-                delta_z=T / bench_steps(simu),
-            )
-
-        result = benchmark.pedantic(propagate, rounds=10, warmup_rounds=2)
-        assert result.shape == (2, N, N)
         assert np.all(np.isfinite(result))
 
 
@@ -499,8 +358,7 @@ def _solver(backend, n, V=None, **overrides):
 
 def _field(simu, n, count=None, dtype=PRECISION_COMPLEX):
     """Return a Gaussian input, optionally batched over `count` simulations."""
-    XX, YY = np.meshgrid(simu.X, simu.Y)
-    env = np.exp(-(XX**2 + YY**2) / waist**2).astype(dtype)
+    env = _gaussian_field_2d(waist, simu.X, simu.Y).astype(dtype)
     if count is None:
         return env
     return np.broadcast_to(env, (count, n, n)).copy()
@@ -541,7 +399,6 @@ class TestGridScaling:
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_nlse_2d_scaling(self, benchmark, backend, n):
         """Benchmark NLSE 2D across grid sizes."""
-        skip_if_backend_unavailable(backend)
         simu = _solver(backend, n)
         E_in = _field(simu, n)
         rounds = 10 if n <= 256 else 5
@@ -560,7 +417,6 @@ class TestMethodAndOrder:
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_split_step_order(self, benchmark, backend, splitting):
         """Benchmark both split-step orders."""
-        skip_if_backend_unavailable(backend)
         simu = _solver(backend, N)
         E_in = _field(simu, N)
         _timed(
@@ -571,7 +427,6 @@ class TestMethodAndOrder:
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_rk4(self, benchmark, backend):
         """Benchmark the RK4 integrator without a potential."""
-        skip_if_backend_unavailable(backend)
         simu = _solver(backend, N)
         E_in = _field(simu, N)
         _timed(
@@ -582,7 +437,6 @@ class TestMethodAndOrder:
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_rk4_with_a_potential(self, benchmark, backend):
         """Benchmark RK4 under a potential."""
-        skip_if_backend_unavailable(backend)
         probe = _solver(backend, N)
         XX, YY = np.meshgrid(probe.X, probe.Y)
         V = (1e-6 * np.exp(-(XX**2 + YY**2) / (1e-3) ** 2)).astype(PRECISION_REAL)
@@ -603,7 +457,6 @@ class TestPotential:
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_potential_kind(self, benchmark, backend, kind):
         """Benchmark propagation under each kind of potential."""
-        skip_if_backend_unavailable(backend)
         probe = _solver(backend, N)
         XX, YY = np.meshgrid(probe.X, probe.Y)
         ring = np.exp(-((np.sqrt(XX**2 + YY**2) - 1e-3) ** 2) / (2e-4) ** 2)
@@ -625,7 +478,6 @@ class TestBatching:
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_batched_n2_sweep(self, benchmark, backend, count):
         """Benchmark a batched parameter sweep."""
-        skip_if_backend_unavailable(backend)
         n2_batch = np.linspace(n2, 2 * n2, count).reshape(count, 1, 1)
         simu = _solver(backend, N, n2=n2_batch)
         E_in = _field(simu, N, count=count)
@@ -639,7 +491,6 @@ class TestFloatWidth:
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_double_precision_field(self, benchmark, backend):
         """Benchmark a genuine fp64 propagation."""
-        skip_if_backend_unavailable(backend)
         simu = _solver(backend, N)
         if not simu._backend.supports_double_precision():
             pytest.skip(f"{backend} has no fp64")
@@ -654,9 +505,6 @@ class TestKernelsAcrossBackends:
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_square_mod_nl_prop(self, benchmark, backend):
         """Benchmark the fused intensity + nonlinear step."""
-        skip_if_backend_unavailable(backend)
-        from NLSE.backends import get_backend
-
         be = get_backend(backend)
         A = be.from_numpy(_random_field_2d())
 
@@ -668,9 +516,6 @@ class TestKernelsAcrossBackends:
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_square_mod_nl_prop_v(self, benchmark, backend, kind):
         """Benchmark the potential kernel, real against complex V."""
-        skip_if_backend_unavailable(backend)
-        from NLSE.backends import get_backend
-
         be = get_backend(backend)
         A = be.from_numpy(_random_field_2d())
         V_host = _random_real_2d()
@@ -693,9 +538,6 @@ class TestKernelsAcrossBackends:
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_apply_propagator(self, benchmark, backend):
         """Benchmark the propagator multiply, the bandwidth-bound case."""
-        skip_if_backend_unavailable(backend)
-        from NLSE.backends import get_backend
-
         be = get_backend(backend)
         A = be.from_numpy(_random_field_2d())
         prop = be.from_numpy(_random_field_2d(seed=7))

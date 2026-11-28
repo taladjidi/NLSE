@@ -41,8 +41,8 @@ do not look for another way.
 | Benchmark waits on what lazy transforms return (MLX was timed doing nothing) | `3dfc28f` |
 | Docs: gallery cached in CI; page review along Diataxis | `18f4cc7`, `3bd8af5` |
 
-Last full suites: Mac (CPU, OpenCL, MLX) 2360 passed, 221 skipped, 88 deselected at
-`fix/bench-tools`; box, combined environment (CuPy and OpenCL), 2466
+Last full suites: Mac (CPU, OpenCL, MLX) 2360 passed, 221 skipped, 85
+deselected at `refactor/bench-tests-debloat`; box, combined environment (CuPy and OpenCL), 2466
 passed, 104 skipped, none failed, six times and once with
 `NLSE_FUSE_PROPAGATOR=0`, at `77edad9` (2026-11-28,
 `~/Documents/nlse_main_77edad9/run*.txt` there). Each box run also reports
@@ -54,8 +54,10 @@ backend). The benchmark tools ran there on their own (their entry below).
 ### Resume here (written 2026-11-28)
 
 `main` is pushed; its last code change is `fix/callback-step-count`, its
-last merge `fix/bench-tools` (tools and tests only). Last full suite on the
-Mac there: 2360 passed, 221 skipped, 88 deselected. Against the 2355 of
+last merge `refactor/bench-tests-debloat` (tools and tests only, like
+`fix/bench-tools` before it). Last full suite on the Mac there: 2360 passed,
+221 skipped, 85 deselected (three benchmarks fewer: the DDGPE one, which
+was skipped on every backend). Against the 2355 of
 `fix/arch-review`: ten tests added, and five cases fewer than a tree with a
 local Sphinx build used to run (`tests/test_doc_claims.py` swept
 `docs/_build` too, which no clean checkout has; it no longer does).
@@ -199,11 +201,28 @@ was decided alone is under "Decided alone" below.
        mid-file; no test of `--plain`, of the coupled and 1D paths, or of
        a real lowered step at 1024² (the tests patch `step_for`).
      - `tests/benchmarks/test_benchmark_profile.py`: lowercase constants
-       without units; `TestKernelBenchmark` times `.copy()` calls.
-     - Debloat candidates: `plain_loop` duplicates `plain`;
-       `skip_if_backend_unavailable` can never fire (about 20 calls); the
-       skipped DDGPE benchmark (about 50 lines); `_field` duplicates
-       `_gaussian_field_2d`; six kernel tests could be one parametrized.
+       without units.
+   - **Benchmark tests and tracer, debloat** (`refactor/bench-tests-debloat`,
+     2026-11-28; the candidates of the review above; two files, 63 lines in
+     and 236 out). Gone: `skip_if_backend_unavailable` and its 16 calls (the
+     tests are parametrized over the installed backends, it could not fire);
+     the DDGPE benchmark (skipped unconditionally); `_field`'s own Gaussian.
+     The six CPU kernel benchmarks are one parametrized `test_kernel`, which
+     copies its arguments in `pedantic`'s `setup`, so the copies are no
+     longer timed. The tracer's two nested loops are gone: `tracing` and
+     `without_cuda_graph` patch `Backend.execute_loop` in. Fresh review:
+     MERGE; its MINOR on a third copy of the loop is fixed (read by me
+     only). Left, MINOR:
+     - At 64² numba's parallel launch dominates a kernel call, so
+       `test_kernel` cannot tell the kernels apart; its ids and numbers do
+       not compare with the old ones (copies out, other seeds).
+     - `tracing` keeps four nested closures (`timed_fft`, `timed_ifft`,
+       `timed_step`, `timed_rk4`); bare `rounds=100`, `warmup_rounds=10` and
+       `0.5` in the test file.
+     - No test runs `without_cuda_graph` (`--plain 20 --no-cuda-graph` by
+       hand: exit 0 on CPU, CL and MLX). Not run on CUPY, where the patch
+       matters.
+     - DDGPE has no benchmark now.
    - Dead code: `vulture` at 60% on `NLSE/` and `benchmarks/` names seven
      things, none dead (numba overloads, public methods, an availability
      import).
@@ -582,6 +601,11 @@ was decided alone is under "Decided alone" below.
   - Not opened then: `trace_solvers.py`, `nsys_summary.py`,
     `tests/benchmarks/test_benchmark_profile.py` (reviewed since: "Benchmark
     tools" above), the docs pages that quote the examples, any CuPy path.
+- **Decided alone**, benchmark tools and their debloat (2026-11-28): the
+  fusion tool fixed on `fix/bench-tools` though outside that review; the
+  tracer refuses a backend it did not get instead of relabelling the row;
+  the DDGPE benchmark deleted, not repaired; the kernel benchmark's ids and
+  what it times changed (old saved results do not compare).
 - **Decided alone** (revert what does not suit): the DDGPE example's pump
   and decay; a drift test for the loss model rather than one source; fixes
   of three files or more made inline where each file's change was a line or
