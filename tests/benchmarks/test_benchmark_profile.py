@@ -513,6 +513,26 @@ def _timed(benchmark, fn, rounds=10):
     return result
 
 
+def _run_kernel(be, kernel, A, *args):
+    """Run a kernel on A and wait for it; return the array holding the result.
+
+    MLX's kernels return a new lazy array, the others write A and return
+    nothing: without the result in hand MLX would time building a graph.
+    """
+    out = kernel(A, *args)
+    result = A if out is None else out
+    be.synchronize(result)
+    return result
+
+
+def _timed_kernel(benchmark, be, A, kernel, *args):
+    """Benchmark one kernel call, the copy back to the host left out."""
+    result = benchmark.pedantic(
+        _run_kernel, args=(be, kernel, A, *args), rounds=20, warmup_rounds=2
+    )
+    assert np.all(np.isfinite(be.to_numpy(result))), "benchmark produced NaN"
+
+
 @pytest.mark.benchmark(group="grid-scaling")
 class TestGridScaling:
     """Cost against grid size."""
@@ -640,11 +660,9 @@ class TestKernelsAcrossBackends:
         be = get_backend(backend)
         A = be.from_numpy(_random_field_2d())
 
-        def run():
-            be.kernels.square_mod_nl_prop(A, dz, alpha_k, g_k, Isat_k)
-            return be.to_numpy(A)
-
-        _timed(benchmark, run, rounds=20)
+        _timed_kernel(
+            benchmark, be, A, be.kernels.square_mod_nl_prop, dz, alpha_k, g_k, Isat_k
+        )
 
     @pytest.mark.parametrize("kind", ["real", "complex"])
     @pytest.mark.parametrize("backend", BACKENDS)
@@ -660,11 +678,17 @@ class TestKernelsAcrossBackends:
             V_host if kind == "real" else V_host.astype(PRECISION_COMPLEX)
         )
 
-        def run():
-            be.kernels.square_mod_nl_prop_v(A, V, dz, alpha_k, g_k, Isat_k)
-            return be.to_numpy(A)
-
-        _timed(benchmark, run, rounds=20)
+        _timed_kernel(
+            benchmark,
+            be,
+            A,
+            be.kernels.square_mod_nl_prop_v,
+            V,
+            dz,
+            alpha_k,
+            g_k,
+            Isat_k,
+        )
 
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_apply_propagator(self, benchmark, backend):
@@ -676,8 +700,4 @@ class TestKernelsAcrossBackends:
         A = be.from_numpy(_random_field_2d())
         prop = be.from_numpy(_random_field_2d(seed=7))
 
-        def run():
-            be.kernels.apply_propagator(A, prop)
-            return be.to_numpy(A)
-
-        _timed(benchmark, run, rounds=20)
+        _timed_kernel(benchmark, be, A, be.kernels.apply_propagator, prop)

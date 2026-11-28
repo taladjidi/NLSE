@@ -142,6 +142,19 @@ def step_for(simu):
     return DELTA_Z * min(1.0, (STABLE_N / simu.NX) ** 2)
 
 
+def check_step_kept(simu, delta_z):
+    """Raise if the solver lowered the step a run asked for.
+
+    The run then took more steps than were asked, and every per-step figure
+    from it would be too high by that ratio.
+    """
+    if simu._current_delta_z != delta_z:
+        raise RuntimeError(
+            f"the solver lowered the step from {delta_z:.3e} m to "
+            f"{simu._current_delta_z:.3e} m, so the run took more steps than asked"
+        )
+
+
 def propagate(simu, field, method, steps):
     """Run ``steps`` steps, however this revision wants the step given."""
     kwargs = {"verbose": False, "plot": False, "method": method}

@@ -27,14 +27,16 @@ import time
 from unittest import mock
 
 import numpy as np
+from profile_backends import check_step_kept, step_for
 
 WAIST = 2.23e-3
-DELTA_Z = 1e-4
 # Enough steps that the once-per-run setup -- planning, the propagator build,
 # the host-to-device transfer -- does not land in the per-step shares. It is
 # not in a kernel, so it would otherwise inflate exactly the row that is
 # hardest to interpret.
 STEPS = 200
+# The solvers `build` knows the arguments of.
+SOLVERS = ("NLSE", "NLSE_1d", "CNLSE", "CNLSE_1d")
 
 # Kernel or backend call -> the phase it belongs to. Anything unlisted is
 # reported under its own name rather than silently folded away.
@@ -198,11 +200,11 @@ def tracing(simu, nvtx=False):
         for _ in range(n_iters):
             step_fn()
 
-    def timed_fft(self, array, plan):
-        return recorder.measure("fft", real_fft, self, array, plan)
+    def timed_fft(self, array, plan, **kwargs):
+        return recorder.measure("fft", real_fft, self, array, plan, **kwargs)
 
-    def timed_ifft(self, array, plan):
-        return recorder.measure("ifft", real_ifft, self, array, plan)
+    def timed_ifft(self, array, plan, **kwargs):
+        return recorder.measure("ifft", real_ifft, self, array, plan, **kwargs)
 
     real_step = solver_cls.split_step
     real_rk4 = solver_cls.split_step_RK4
@@ -259,19 +261,26 @@ def input_field(simu, solver_name):
     return field
 
 
-def run(simu, field, method):
-    """Propagate STEPS steps and return the wall time."""
+def run(simu, field, method, steps=STEPS):
+    """Propagate ``steps`` steps and return the wall time.
+
+    Raises if the solver lowered the step: the run then took more steps than
+    were asked, and every per-step figure would be too high by that ratio.
+    """
+    delta_z = step_for(simu)
     start = time.perf_counter()
     out = simu.out_field(
         field.copy(),
-        STEPS * DELTA_Z,
+        steps * delta_z,
         verbose=False,
         plot=False,
-        delta_z=DELTA_Z,
+        delta_z=delta_z,
         method=method,
     )
     simu._backend.synchronize(out)
-    return time.perf_counter() - start
+    elapsed = time.perf_counter() - start
+    check_step_kept(simu, delta_z)
+    return elapsed
 
 
 def trace(solver_name, backend_name, n, method, nvtx):
@@ -378,18 +387,8 @@ def plain_run(solver_name, backend_name, n, method, steps, no_graph=False):
     run(simu, field, method)  # warm plans and autotuning, outside the profile
 
     guard = without_cuda_graph(simu._backend) if no_graph else contextlib.nullcontext()
-    start = time.perf_counter()
     with guard:
-        out = simu.out_field(
-            field.copy(),
-            steps * DELTA_Z,
-            verbose=False,
-            plot=False,
-            delta_z=DELTA_Z,
-            method=method,
-        )
-    simu._backend.synchronize(out)
-    elapsed = time.perf_counter() - start
+        elapsed = run(simu, field, method, steps)
     print(
         f"  {solver_name} / {backend_name} / {method} / {n}x{n}: "
         f"{steps} steps in {elapsed * 1e3:.1f} ms, {elapsed / steps * 1e3:.3f} ms/step"
@@ -398,8 +397,12 @@ def plain_run(solver_name, backend_name, n, method, steps, no_graph=False):
 
 def main(argv=None):
     """Parse arguments and trace every requested case."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--solvers", nargs="*", default=["NLSE", "CNLSE"])
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--solvers", nargs="*", default=["NLSE", "CNLSE"], choices=SOLVERS
+    )
     parser.add_argument("--methods", nargs="*", default=["split_step", "RK4"])
     parser.add_argument("--backends", nargs="*")
     parser.add_argument("--sizes", nargs="*", type=int, default=[1024])
@@ -424,6 +427,7 @@ def main(argv=None):
 
     from NLSE.backends import list_available_backends
 
+    failed = 0
     for backend_name in args.backends or list_available_backends():
         for solver_name in args.solvers:
             for n in args.sizes:
@@ -443,8 +447,9 @@ def main(argv=None):
                     except Exception as exc:
                         print(
                             f"\n=== {solver_name} / {backend_name} / {method} "
-                            f"/ {n}x{n} ===\n  {type(exc).__name__}: {exc}"
+                            f"/ {n}x{n} ===\n  FAILED: {type(exc).__name__}: {exc}"
                         )
+                        failed += 1
                         continue
                     report(
                         solver_name,
@@ -454,7 +459,7 @@ def main(argv=None):
                         *result,
                         detailed=args.per_call,
                     )
-    return 0
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

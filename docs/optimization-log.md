@@ -651,7 +651,8 @@ the step asked and returned NaN, its successor bounds the step and took 2.56
 times as many, which read as "2.56x slower". `step_for` now shrinks the step
 as `(512/N)²` past 512², under both limits: no cell of NLSE, CNLSE or NLSE_1d
 from 256 to 2048 has its step lowered, on either revision.
-`trace_solvers.py` and `propagator_fusion.py` still ask 1e-4 at every size.
+`trace_solvers.py` and `propagator_fusion.py` asked 1e-4 at every size until
+2026-11-28: both take `step_for`'s step now and raise if the solver lowers it.
 
 **A call costs less than in 4.1.0, and is still worth many steps — measured**
 (2026-11-26). One `out_field` call of one step asked, on a solver that has

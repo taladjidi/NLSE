@@ -7,7 +7,7 @@
 nsys sees what the Python-level tracer cannot: the kernels inside a replayed
 CUDA graph, the split between GPU time and driver time, and the gaps where
 the GPU has nothing to do. This runs `nsys stats`, folds the kernel names into
-the same phases, and reports what fraction of the wall clock the GPU was busy.
+the same phases, and sets the GPU kernel time against the CUDA API time.
 
 `nsys stats` report names have changed between releases, so each table is
 looked up under every name it has had. Nothing is inferred from a table that
@@ -261,7 +261,9 @@ def main(argv=None):
             as_float(column(r, "Total Time (ns)", "Total Time")) for r in tables["api"]
         )
         print(f"\n  CUDA API time: {api_ns / 1e6:.2f} ms")
-        if api_ns:
+        if not (api_ns and gpu_ns):
+            print("  no kernel time to set against it: no ratio")
+        else:
             print(f"  GPU kernel time / CUDA API time: {gpu_ns / api_ns:.2f}")
             if traced_run(tables["nvtx"] or []):
                 print(

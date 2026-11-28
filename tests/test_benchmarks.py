@@ -1,11 +1,16 @@
-"""Tests of the tools in benchmarks/: nsys_summary.py and roofline.py."""
+"""Tests of the tools in benchmarks/.
+
+nsys_summary, propagator_fusion, roofline and trace_solvers.
+"""
 
 import importlib
 import math
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
+from NLSE import NLSE
 from NLSE.backends import cpu_tuning
 
 BENCHMARKS = Path(__file__).resolve().parent.parent / "benchmarks"
@@ -13,7 +18,9 @@ sys.path.insert(0, str(BENCHMARKS))
 
 nsys_summary = pytest.importorskip("nsys_summary")
 # A plain import: the repository's own tool failing to import is a failure.
+propagator_fusion = importlib.import_module("propagator_fusion")
 roofline = importlib.import_module("roofline")
+trace_solvers = importlib.import_module("trace_solvers")
 
 # What `nsys stats --report cuda_gpu_kern_sum --format csv` actually emits:
 # a heading, a blank line, then a quoted CSV table.
@@ -24,6 +31,16 @@ SAMPLE = """ ** CUDA GPU Kernel Summary (cuda_gpu_kern_sum):
 "21.7","185,000,000","800","231250.0","void nlse_apply_propagator<float2>(float2*)"
 "9.4","80,000,000","400","200000.0","void nlse_square_mod_nl_prop<float2>(float2*)"
 """
+
+# `nsys stats --report cuda_api_sum --format csv`, cut to two calls: 1000 ms.
+API_SAMPLE = """ ** CUDA API Summary (cuda_api_sum):
+
+"Time (%)","Total Time (ns)","Num Calls","Avg (ns)","Name"
+"90.0","900,000,000","1600","562500.0","cudaStreamSynchronize"
+"10.0","100,000,000","800","125000.0","cudaLaunchKernel"
+"""
+# The smallest grid the tracer is run on in the tests (points per side).
+TRACED_N = 64
 
 # Hand counts of a complex64 step per grid point, each array read or written
 # once: c = 8 B a complex element, v = 4 B a float32 potential.
@@ -99,6 +116,63 @@ def test_the_columns_nsys_renamed_are_both_accepted():
     assert nsys_summary.column(old, "Total Time (ns)", "Total Time") == "1000"
     assert nsys_summary.column(old, "Instances", "Num Calls", "Count") == "4"
     assert nsys_summary.column(old, "Name", "Kernel Name", "Operation") == "k"
+
+
+def _stats_without_kernels(report, names):
+    """Stand in for `nsys stats` on a report that has only its API table."""
+    return API_SAMPLE if "cuda_api_sum" in names else None
+
+
+def test_no_ratio_is_given_without_a_kernel_table(monkeypatch, capsys):
+    """A missing kernel table is zero kernel time only by default: say so."""
+    monkeypatch.setattr(nsys_summary.shutil, "which", lambda name: "/usr/bin/nsys")
+    monkeypatch.setattr(nsys_summary, "run_stats", _stats_without_kernels)
+    assert nsys_summary.main(["report.nsys-rep"]) == 0
+    out = capsys.readouterr().out
+    assert "CUDA API time: 1000.00 ms" in out
+    assert "GPU kernel time / CUDA API time" not in out
+    assert "GPU is waiting" not in out
+
+
+@pytest.mark.parametrize("method", ["split_step", "RK4"])
+def test_the_tracer_follows_a_cpu_run_step_by_step(method):
+    """The CPU transforms take ``normalize``, and a step asked is a step taken."""
+    _, _, recorder = trace_solvers.trace("NLSE", "CPU", TRACED_N, method, False)
+    assert recorder.calls[trace_solvers.STEP_KEY] == trace_solvers.STEPS
+    assert recorder.calls["fft"] > 0 and recorder.calls["ifft"] > 0
+
+
+def test_the_tracer_refuses_a_run_whose_step_was_lowered(monkeypatch):
+    """A lowered step takes more steps than the per-step figures divide by."""
+    monkeypatch.setattr(trace_solvers, "step_for", lambda simu: OVERSIZED_STEP)
+    simu = trace_solvers.build("NLSE", "CPU", TRACED_N)
+    field = trace_solvers.input_field(simu, "NLSE")
+    with pytest.warns(UserWarning, match="Reducing"):
+        with pytest.raises(RuntimeError, match="lowered the step"):
+            trace_solvers.run(simu, field, "split_step", steps=2)
+
+
+def test_the_fusion_benchmark_times_the_steps_it_asks(monkeypatch):
+    """Its slope is per step only while the solver keeps the step."""
+    monkeypatch.setattr(propagator_fusion, "BACKEND", "CPU")
+    assert propagator_fusion.time_run(NLSE, TRACED_N, 2, np.complex64) > 0
+    monkeypatch.setattr(propagator_fusion, "step_for", lambda simu: OVERSIZED_STEP)
+    with pytest.warns(UserWarning, match="Reducing"):
+        with pytest.raises(RuntimeError, match="lowered the step"):
+            propagator_fusion.time_run(NLSE, TRACED_N, 2, np.complex64)
+
+
+def _failing_trace(*args):
+    """Stand in for a case that cannot be traced."""
+    raise TypeError("not traceable")
+
+
+def test_a_case_that_fails_is_a_failed_run(monkeypatch, capsys):
+    """The error under a case header must not come with exit code 0."""
+    monkeypatch.setattr(trace_solvers, "trace", _failing_trace)
+    args = ["--backends", "CPU", "--solvers", "NLSE", "--methods", "split_step"]
+    assert trace_solvers.main(args) == 1
+    assert "FAILED: TypeError: not traceable" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
