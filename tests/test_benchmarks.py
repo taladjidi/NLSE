@@ -57,6 +57,10 @@ RK4_BYTES = 624  # docs/optimization-log.md, "What the machine allows"
 RK4_FLOPS_1024 = 872.0  # 4 slopes of 2 transforms (200), 6 and 12
 # A step far past the split-step limit of a 64x64 grid, 1.3e-2 m (m).
 OVERSIZED_STEP = 1.0
+# The 3D merge benchmark's grid in the tests (points per axis), and how far
+# its two sides may be apart, relative: 3e-6 measured, 1e-2 for a wrong step.
+MERGE_3D_N = 16
+MERGED_3D_APART = 1e-4
 # What both run lengths are made to take, so that the slope is zero (s).
 DISTURBED_RUN_SECONDS = 1.0
 # A made-up step for ceiling_shares, each share a different fraction by hand:
@@ -283,8 +287,8 @@ def test_the_cpu_path_is_blocked_when_the_tuner_gives_a_step(monkeypatch):
     assert roofline.step_path(simu, "RK4") == "separate"
 
 
-def test_the_3d_merge_benchmark_compares_a_merged_run_with_an_unmerged_one(capsys):
+def test_the_3d_merge_benchmark_compares_a_merged_run_with_an_unmerged_one():
     """Its two sides differ by rounding: by more they are not the same method."""
-    strang_merge_3d.main(["--nx", "16", "--nt", "16", "--rounds", "1"])
-    apart = float(capsys.readouterr().out.split("results ")[1].split()[0])
-    assert 0 < apart < 1e-4
+    times, apart = strang_merge_3d.measure("CPU", MERGE_3D_N, MERGE_3D_N, rounds=1)
+    assert set(times) == {"unmerged", "merged"}
+    assert 0 < apart < MERGED_3D_APART

@@ -514,8 +514,9 @@ class StepSize:
 
         The scalar kernels solve the real-space step rather than freezing
         ``|A|^2`` through it (see ``_loss_factor`` in kernels/cpu.py), and the
-        iteration that does it contracts while ``u = 2*alpha*dz`` stays well
-        below one. ``LOSS_PER_STEP_LIMIT`` is where it is still comfortably
+        iteration that does it contracts while its ``u``, ``alpha*dz`` in the
+        medium's ``alpha``, stays well below one. ``LOSS_PER_STEP_LIMIT``,
+        which holds ``u`` to half its own value, is where it is still comfortably
         converging; past it the iteration walks away and the step returns a
         field larger than the one it was given, which is a worse failure than
         a coarse answer because it does not look like one. The coupled kernels

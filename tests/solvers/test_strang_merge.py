@@ -17,14 +17,20 @@ COUPLED_TOLERANCE = 1e-5
 COUPLED_PHASE = 0.5
 # Loss of both components (1/m), so that the second one's is in the run too.
 COUPLED_ALPHA = 20
-# The 3D case: points per axis, steps over L, the pulse's window (s), energy
-# (J, 1 W over the window: about 1.5 rad of nonlinear phase over L) and
+# The 3D case: points per axis, steps over L, the pulse's window (s) and its
+# 1/e half-width as a fraction of it, energy (J) and saturation (W/m^2) (about
+# 5 rad at the peak over L: k*n2*I*L/(1 + I/Isat) with I = 6e5 W/m^2), and
 # dispersion (s^2/m, that of tests/benchmarks).
 N_3D = 16
 STEPS_3D = 20
 WINDOW_T = 1e-12
+PULSE_FRACTION = 6
 ENERGY_3D = 1e-12
+ISAT_3D = 1e6
 D0 = 1e-26
+# Relative. Merged and unmerged 3D runs are 2e-6 to 5e-6 apart in complex64
+# (CPU, CL and MLX, measured 2026-11-28); a wrong half step is 1e-2 and more.
+MERGE_TOLERANCE_3D = 1e-4
 
 
 def beam(coupled=False, dtype=np.complex64):
@@ -179,11 +185,13 @@ def test_the_merge_is_taken_with_loss():
     )
 
 
-def run_3d(merged):
-    """Run a Gaussian pulse over L on NLSE_3d in Strang splitting.
+def run_3d(backend, merged):
+    """Run a Gaussian pulse over L on a lossy NLSE_3d in Strang splitting.
 
     Parameters
     ----------
+    backend : str
+        Backend name.
     merged : bool
         Whether the run may merge its half steps.
 
@@ -194,20 +202,20 @@ def run_3d(merged):
     """
     solver = make(
         NLSE_3d,
-        "CPU",
+        backend,
         n=N_3D,
         NZ=N_3D,
-        alpha=0,
         energy=ENERGY_3D,
         window=[WINDOW, WINDOW, WINDOW_T],
         D0=D0,
         vg=c,
         L=L,
-        Isat=1e6,
+        Isat=ISAT_3D,
     )
     solver._lie_step_is_strang_body = merged
     X, Y, T = np.meshgrid(solver.X, solver.Y, solver.T)
-    pulse = np.exp(-(X**2 + Y**2) / WAIST**2 - T**2 / (WINDOW_T / 6) ** 2)
+    duration = WINDOW_T / PULSE_FRACTION
+    pulse = np.exp(-(X**2 + Y**2) / WAIST**2 - T**2 / duration**2)
     delta_z = L / STEPS_3D
     out = solver.out_field(
         pulse.astype(np.complex64),
@@ -218,20 +226,22 @@ def run_3d(merged):
         splitting="strang",
     )
     assert solver._current_delta_z == delta_z, "the solver lowered the step"
-    return solver, np.asarray(out)
+    return solver, np.asarray(solver._backend.to_numpy(out))
 
 
-def test_a_3d_run_merges_its_half_steps():
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_a_3d_run_merges_its_half_steps(backend_name):
     """NLSE_3d's ``omega`` is its frequency grid, not a Rabi coupling."""
-    solver, merged = run_3d(merged=True)
+    solver, merged = run_3d(backend_name, merged=True)
     assert solver._merges_strang_halves("strang"), (
         "NLSE_3d should merge its Strang half steps: it has no Rabi coupling"
     )
-    _, unmerged = run_3d(merged=False)
+    _, unmerged = run_3d(backend_name, merged=False)
     difference = np.max(np.abs(merged - unmerged)) / np.max(np.abs(unmerged))
-    assert 0 < difference < 1e-3, (
-        f"merging changed the 3D answer by {difference:.3e}: more than the "
-        f"round-off it should cost, or 0 if the two runs were the same one"
+    assert 0 < difference < MERGE_TOLERANCE_3D, (
+        f"{backend_name}: merging changed the 3D answer by {difference:.3e}: "
+        f"more than the round-off it should cost, or 0 if the two runs were "
+        f"the same one"
     )
 
 

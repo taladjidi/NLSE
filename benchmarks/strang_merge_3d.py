@@ -29,6 +29,7 @@ STEPS_IN_LENGTH = 2000  # the step asked is LENGTH over this, under both limits
 STEPS_LOW = 20
 STEPS_HIGH = 60
 ROUNDS = 5
+MS_PER_S = 1e3
 
 
 def build(backend, nx, nt, merged):
@@ -78,7 +79,47 @@ def per_step_ms(simu, field):
     """Return the milliseconds a step takes, from the slope between two runs."""
     low, _ = run(simu, field, STEPS_LOW)
     high, _ = run(simu, field, STEPS_HIGH)
-    return (high - low) / (STEPS_HIGH - STEPS_LOW) * 1e3
+    return (high - low) / (STEPS_HIGH - STEPS_LOW) * MS_PER_S
+
+
+def measure(backend, nx, nt, rounds):
+    """Time both sides and compare their results.
+
+    Parameters
+    ----------
+    backend : str
+        Backend name; the run is refused if the solver falls back to another.
+    nx, nt : int
+        Points along x and y, and along time.
+    rounds : int
+        Interleaved timings of each side.
+
+    Returns
+    -------
+    tuple
+        Per side (``"unmerged"``, ``"merged"``) the step times in ms, and the
+        largest difference between the two results over the peak.
+    """
+    sides = {
+        name: build(backend, nx, nt, merged)
+        for name, merged in (("unmerged", False), ("merged", True))
+    }
+    for name, simu in sides.items():
+        if simu._backend.name != backend:
+            raise RuntimeError(f"asked {backend}, got {simu._backend.name}")
+        if simu._merges_strang_halves("strang") != (name == "merged"):
+            raise RuntimeError(f"the {name} side does not run as its name says")
+    field = pulse(sides["merged"])
+    results = {name: run(simu, field, STEPS_LOW)[1] for name, simu in sides.items()}
+    apart = np.max(np.abs(results["merged"] - results["unmerged"])) / np.max(
+        np.abs(results["unmerged"])
+    )
+    times = {name: [] for name in sides}
+    for round_index in range(rounds):
+        order = list(sides) if round_index % 2 == 0 else list(sides)[::-1]
+        for name in order:
+            times[name].append(per_step_ms(sides[name], field))
+    return times, float(apart)
 
 
 def main(argv=None):
@@ -90,26 +131,7 @@ def main(argv=None):
     parser.add_argument("--rounds", type=int, default=ROUNDS)
     args = parser.parse_args(argv)
 
-    sides = {
-        name: build(args.backend, args.nx, args.nt, merged)
-        for name, merged in (("unmerged", False), ("merged", True))
-    }
-    for name, simu in sides.items():
-        if simu._backend.name != args.backend:
-            raise RuntimeError(f"asked {args.backend}, got {simu._backend.name}")
-        if simu._merges_strang_halves("strang") != (name == "merged"):
-            raise RuntimeError(f"the {name} side does not run as its name says")
-    field = pulse(sides["merged"])
-    results = {name: run(simu, field, STEPS_LOW)[1] for name, simu in sides.items()}
-    apart = np.max(np.abs(results["merged"] - results["unmerged"])) / np.max(
-        np.abs(results["unmerged"])
-    )
-
-    times = {name: [] for name in sides}
-    for round_index in range(args.rounds):
-        order = list(sides) if round_index % 2 == 0 else list(sides)[::-1]
-        for name in order:
-            times[name].append(per_step_ms(sides[name], field))
+    times, apart = measure(args.backend, args.nx, args.nt, args.rounds)
     median = {name: statistics.median(values) for name, values in times.items()}
     spread = {name: max(values) - min(values) for name, values in times.items()}
     print(
