@@ -404,7 +404,7 @@ def test_yoshida_warns_about_the_second_component_loss(backend):
     simu, field = second_component_lossy(backend)
     with pytest.warns(UserWarning, match="splitting='yoshida' with loss"):
         simu.out_field(
-            field, SECOND_L, splitting="yoshida", verbose=False, normalize=False
+            field, SECOND_DZ, splitting="yoshida", verbose=False, normalize=False
         )
 
 

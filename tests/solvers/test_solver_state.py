@@ -57,6 +57,8 @@ PHASE_LIMIT_RTOL = 1e-3
 # A batch's rate against its strongest member's alone, float32 on both sides:
 # measured 1.6e-7 (CPU). The weakest member's rate is 16x lower.
 BATCH_RATE_RTOL = 1e-6
+# DDGPE's interaction rate on a unit field against its g: measured equal.
+RATE_RTOL = 1e-6
 # A step far past every limit of this module's grid, in m.
 FAR_PAST_LIMIT = 1.0
 # Coupled RK4 runs, all linear. Uniform potential as an index change, the
@@ -1174,8 +1176,8 @@ def test_ddgpe_couplings_are_not_scaled_by_the_optical_constant():
     )
     A = np.ones((2, 32, 32), dtype=PRECISION_COMPLEX)
     interaction = simu._energy_rates(A)["interaction"]
-    assert interaction == pytest.approx(g, rel=0.5), (
-        f"interaction rate {interaction:.3e} is not of order g = {g:.3e}"
+    assert interaction == pytest.approx(g, rel=RATE_RTOL), (
+        f"interaction rate {interaction:.3e} is not g = {g:.3e}"
     )
 
 

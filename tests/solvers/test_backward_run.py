@@ -27,6 +27,8 @@ ADAPTIVE_N2 = -1.6e-12  # m^2/W
 # Arguments of adapt_delta_z_to_error: tolerance, update_every, bounds,
 # safety, and a floor of 1e-5 m so that a step pinned to it ends in 100 steps.
 ERROR_CONTROL_ARGS = (1e-4, 1, (0.5, 2.0), 0.9, 1e-5)
+# Distance of the capped run (m): 145 steps at the 6.9e-8 m the cap gives.
+CAPPED_Z = 1e-5
 # Relative difference between the backward steps and the forward ones negated.
 # Measured at most 2.0e-6 (complex64) and 5.2e-16 (complex128).
 STEP_HISTORY_RTOL = 1e-5
@@ -100,7 +102,7 @@ def test_a_backward_step_is_capped_like_a_forward_one(backend):
     # complex64, where the cap is the only warning a Lie run gives.
     field = beam(simu).astype(np.complex64)
     with pytest.warns(UserWarning, match="exceeds"):
-        simu.out_field(field, 1e-3, delta_z=-1.0, verbose=False)
+        simu.out_field(field, CAPPED_Z, delta_z=-1.0, verbose=False)
     used = simu._current_delta_z
     assert -1.0 < used < 0, f"a backward step of -1 m came out as {used:g} m"
 
