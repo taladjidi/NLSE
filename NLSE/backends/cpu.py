@@ -197,9 +197,10 @@ def tune_cpu_step(
     Returns
     -------
     dict or None
-        ``rows`` and ``threads`` of the blocked step, both None where the
-        unblocked one is faster; ``unblocked_ms`` and ``blocked_ms``, the
-        best per-step times; ``timestamp``. None, measuring nothing, while
+        ``rows``, ``threads`` and ``pad_bytes`` (its column-pass scratch
+        rows' pad) of the blocked step, all None where the unblocked one is
+        faster; ``unblocked_ms`` and ``blocked_ms``, the best per-step times
+        of the unblocked and blocked steps; ``timestamp``. None, measuring nothing, while
         another process tunes (it holds ``cpu_blocking.lock`` in the cache
         directory): call again once it is done.
 

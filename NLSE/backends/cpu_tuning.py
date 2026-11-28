@@ -4,10 +4,10 @@ The blocked step (``NLSE/kernels/cpu_blocked.py``) wins or loses by how its
 blocks sit in this processor's caches: on a Ryzen 3 4100 the best block was
 256-512 KiB and 1 MiB lost, on an M3 Max 1 MiB was best, and at 1024x1024 it
 lost to the unblocked step on the Mac at every block. So neither the block nor
-whether to block is a constant. Both are measured against the unblocked step
-the first time a grid runs, as the "auto" backend is, and kept in
-``cpu_blocking.json`` in the cache directory, one entry per processor, grid,
-dtype, thread count and scipy and numba release.
+whether to block is a constant, nor whether to pad the column pass's scratch
+rows (``PAD_BYTES``). All are measured, the first time a grid runs, as the
+"auto" backend is, and kept in ``cpu_blocking.json`` in the cache directory,
+one entry per processor, grid, dtype, thread count and scipy and numba release.
 
 ``NLSE_CPU_BLOCKING=0`` never blocks and never measures; ``NLSE_FORCE_TUNING=1``
 measures again, once per grid in the process, whatever the cache holds. One
@@ -33,7 +33,7 @@ import numpy as np
 import scipy
 from llvmlite import binding as llvm
 
-from ..kernels.cpu_blocked import BlockedStep
+from ..kernels.cpu_blocked import PAD_BYTES, BlockedStep
 from ..utils import (
     get_blocking_cache_path,
     machine_identity,
@@ -47,8 +47,9 @@ from ..utils import (
 TUNE_ON_FIRST_RUN = True
 
 # Bumped whenever a cached entry stops meaning what it meant; 2: the fastest
-# cores' count joined the candidates, so entries measured without it go.
-CACHE_VERSION = "2"
+# cores' count joined the candidates, so entries measured without it go; 3: an
+# entry says whether the column pass's scratch rows are padded.
+CACHE_VERSION = "3"
 
 # Age past which an entry is measured again, as the backend benchmark's cache.
 CACHE_LIFETIME = timedelta(days=30)
@@ -68,8 +69,9 @@ THREAD_DIVISORS = (1, 2)
 PERFORMANCE_CPUS_SYSCTL = b"hw.perflevel0.logicalcpu"
 
 # Rounds of each candidate, interleaved, and steps per round; the best round
-# counts. Measured: 4096x4096 complex128 tunes in 17.0-18.1 s on an M3 Max,
-# the duel and the fastest cores' count included (12.0-13.0 s without).
+# counts. Measured: 4096x4096 complex128 tunes in 19 s on an M3 Max and 48 s
+# on a Ryzen 3 4100, the duels included (17-18 s and 40-43 s without the
+# pad's).
 ROUNDS = 3
 STEPS = 4
 
@@ -78,10 +80,10 @@ STEPS = 4
 # read 1.13x on a loaded M3 Max (1024x1024 complex128) where blocking loses.
 DUEL_ROUNDS = 5
 
-# Fraction the blocked step has to win by: what a timing here still says in
-# another process. On an M3 Max the plain 1024x1024 complex128 step moves from
-# 2.45 to 2.90 ms with what the process ran before, and a 1.08x read there
-# was a 10-18% loss in fresh processes.
+# Fraction the padded scratch, then the blocked step, has to win by: what a
+# timing here still says in another process. On an M3 Max the plain 1024x1024
+# complex128 step moves from 2.45 to 2.90 ms with what the process ran before,
+# and a 1.08x read there was a 10-18% loss in fresh processes.
 MARGIN = 0.10
 
 # The measured step: Kerr, lossless, unsaturated, 0.1 rad a step where |A| = 1.
@@ -102,8 +104,8 @@ MS_PER_S = 1e3
 RELEASE_PARTS = 2
 
 # The lock one tuning process holds, beside the cache, and its age in s past
-# which it was left by a process that died: 7 times the longest tuning
-# measured (4096x4096: 18 s on an M3 Max, 40 s on a Ryzen 3 4100).
+# which it was left by a process that died: 6 times the longest tuning
+# measured (4096x4096 complex128: 19 s on an M3 Max, 48 s on a Ryzen 3 4100).
 LOCK_NAME = "cpu_blocking.lock"
 LOCK_STALE_AFTER = 300.0
 
@@ -432,7 +434,7 @@ def _duel(first: tuple[Any, tuple], second: tuple[Any, tuple]) -> tuple[float, f
 
 
 def _measure(backend: Any, shape: tuple, dtype: np.dtype, threads: int) -> dict:
-    """Rank the candidates, time the first against the unblocked step, return the entry.
+    """Rank the blocks, try the first padded, time it against the unblocked step.
 
     Parameters
     ----------
@@ -448,9 +450,9 @@ def _measure(backend: Any, shape: tuple, dtype: np.dtype, threads: int) -> dict:
     Returns
     -------
     dict
-        ``rows`` and ``threads`` of the step to take, both None for the
-        unblocked one; ``unblocked_ms`` and ``blocked_ms``, the best per-step
-        times measured; ``timestamp``.
+        ``rows``, ``threads`` and ``pad_bytes`` of the step to take, all None
+        for the unblocked one; ``unblocked_ms`` and ``blocked_ms``, the best
+        per-step times of the unblocked and blocked steps; ``timestamp``.
     """
     field, row_factor, column_factor, propagator = _tuning_problem(shape, dtype)
     unblocked: tuple[Any, tuple] = (_unblocked_steps, (backend, field, propagator))
@@ -466,10 +468,37 @@ def _measure(backend: Any, shape: tuple, dtype: np.dtype, threads: int) -> dict:
     if not blocked:
         plain = min(_time_per_step(*unblocked) for _ in range(ROUNDS))
         return _entry(None, plain, None)
-    first = blocked[_fastest(blocked)]
+    first = _padded_if_faster(blocked[_fastest(blocked)], shape, dtype)
     plain, best = _duel(unblocked, first)
     wins = best * (1 + MARGIN) < plain
     return _entry(first[1][0] if wins else None, plain, best)
+
+
+def _padded_if_faster(
+    first: tuple[Any, tuple], shape: tuple, dtype: np.dtype
+) -> tuple[Any, tuple]:
+    """Return the candidate, on padded scratch where that wins by ``MARGIN``.
+
+    Parameters
+    ----------
+    first : tuple
+        ``(_blocked_steps, arguments)`` of the chosen step, unpadded.
+    shape : tuple
+        ``(NY, NX)``.
+    dtype : np.dtype
+        Complex dtype of the field.
+
+    Returns
+    -------
+    tuple
+        ``(_blocked_steps, arguments)`` of the padded step, or ``first``.
+    """
+    step, *problem = first[1]
+    padded = BlockedStep(shape, dtype, step.rows, step.threads, PAD_BYTES)
+    _blocked_steps(padded, *problem, 1)  # touches its scratch
+    second = (_blocked_steps, (padded, *problem))
+    unpadded_time, padded_time = _duel(first, second)
+    return second if padded_time * (1 + MARGIN) < unpadded_time else first
 
 
 def _entry(chosen: BlockedStep | None, plain: float, best: float | None) -> dict:
@@ -487,11 +516,13 @@ def _entry(chosen: BlockedStep | None, plain: float, best: float | None) -> dict
     Returns
     -------
     dict
-        ``rows``, ``threads``, ``unblocked_ms``, ``blocked_ms``, ``timestamp``.
+        ``rows``, ``threads``, ``pad_bytes``, ``unblocked_ms``, ``blocked_ms``,
+        ``timestamp``.
     """
     return {
         "rows": chosen.rows if chosen else None,
         "threads": chosen.threads if chosen else None,
+        "pad_bytes": chosen.pad_bytes if chosen else None,
         "unblocked_ms": plain * MS_PER_S,
         "blocked_ms": None if best is None else best * MS_PER_S,
         "timestamp": datetime.now().isoformat(),
@@ -579,14 +610,16 @@ def _usable(entry: Any, shape: tuple, threads: int) -> bool:
     """
     if not isinstance(entry, dict):
         return False
-    rows, count = entry.get("rows"), entry.get("threads")
-    unblocked = rows is None and count is None
+    rows, count, pad = entry.get("rows"), entry.get("threads"), entry.get("pad_bytes")
+    unblocked = rows is None and count is None and pad is None
     blocked = (
         type(rows) is int
         and type(count) is int
+        and type(pad) is int
         and rows > 0
         and 0 < count <= threads
         and rows * count <= min(shape)
+        and pad in (0, PAD_BYTES)
     )
     try:
         age = datetime.now() - datetime.fromisoformat(entry.get("timestamp", ""))
@@ -734,9 +767,11 @@ def _announce(shape: tuple, dtype: np.dtype, entry: dict) -> None:
         say(f"CPU step on {grid}: the unblocked step is fastest here.")
     else:
         gain = entry["unblocked_ms"] / entry["blocked_ms"]
+        pad = entry["pad_bytes"]
+        padded = f", scratch rows padded by {pad} B" if pad else ""
         say(
             f"CPU step on {grid}: blocks of {entry['rows']} rows on "
-            f"{entry['threads']} threads, {gain:.2f}x."
+            f"{entry['threads']} threads{padded}, {gain:.2f}x."
         )
 
 
@@ -828,7 +863,9 @@ def _step_for(entry: dict | None, shape: tuple, dtype: np.dtype) -> BlockedStep 
     """
     if entry is None or entry["rows"] is None:
         return None
-    return BlockedStep(shape, dtype, entry["rows"], entry["threads"])
+    return BlockedStep(
+        shape, dtype, entry["rows"], entry["threads"], entry["pad_bytes"]
+    )
 
 
 def _defer(settled: tuple) -> None:

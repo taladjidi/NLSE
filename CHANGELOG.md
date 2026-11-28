@@ -421,6 +421,20 @@ come first.
   `NLSE.backends.tune_cpu_step(shape, dtype)` measures ahead of a run.
   Batches, array-valued parameters, non-local responses, 1D and 3D grids,
   coupled solvers and RK4 run as before. Figures in `docs/optimization-log.md`.
+- **The CPU tuner also tries the blocked step with its column-pass scratch
+  rows padded by 128 B**: the best block is timed with and without the pad,
+  side by side, the pad kept if it wins by 10%, and that step then has to
+  beat the unblocked one by 10% as before, so a grid can block only padded.
+  Same results to the bit either way. Entries in `cpu_blocking.json` from
+  before are measured again (cache version 3). On an M3 Max 2048² and
+  4096² complex64 block padded, 1.21x and 1.40x the unblocked step (2048²
+  ran unblocked before); complex128 blocks unpadded and 1024² complex64
+  stays unblocked. Under another job (load 14-15) the same tuner left both
+  complex64 grids unblocked. On a Ryzen 3 4100 the five grids measured, of
+  1024²-4096², blocked and refused the pad, which read up to 7.9% faster or
+  0.3% slower. Times in `docs/optimization-log.md`. Forced tuning at 4096²
+  complex128 takes 19 s instead of 17-18 s on the M3 Max and 48 s instead of
+  40-43 s on the Ryzen.
 - **On macOS the CPU tuner also measures the blocked step on the fastest
   cores' threads** (`hw.perflevel0.logicalcpu`, 12 of 16 on an M3 Max), after
   all and half the threads. Entries in
