@@ -158,9 +158,10 @@ One split step (complex64, no potential, Lie splitting), timed by
 against ceilings the same script measures on the same machine. A percentage is
 the time the hardware would need for the step's compulsory traffic or work at
 that ceiling, over the time the step took: 100% is running at the ceiling, and
-the largest is what limits the step. Bytes per point is the compulsory traffic
-of the path the step took. Each figure is the median of 5 runs, after a first
-one that is discarded.
+the largest names the ceiling the step is closest to (two within 15% of each
+other are both named). Bytes per point is the compulsory traffic of the path
+the step took. Each figure is the median of 5 runs, after a first one that is
+discarded.
 
 **Apple M3 Max (40 GPU cores)**, 2026-11-28, commit [9b685c3](https://github.com/taladjidi/NLSE/commit/9b685c3):
 macOS 27.2.1 (arm64), Python 3.13.18, 16 CPU threads; numpy 2.4.6, scipy
@@ -168,7 +169,7 @@ macOS 27.2.1 (arm64), Python 3.13.18, 16 CPU threads; numpy 2.4.6, scipy
 GB/s (GPU), 243–247 GB/s (CPU); FP32 FMA 9.48–9.63 TFLOP/s (GPU), 0.62–0.63
 TFLOP/s (CPU); sin+cos+exp 74.2–77.7 G/s (GPU), 3.0–3.3 G/s (CPU).
 
-| Backend | Grid | Bytes/point | Step | Memory | FP32 flops | sin+cos+exp | Limited by |
+| Backend | Grid | Bytes/point | Step | Memory | FP32 flops | sin+cos+exp | Closest ceiling |
 |---|---|---|---|---|---|---|---|
 | CPU | 1024² | 104 | 1.714 ms | 26% | 21% | 19% | memory bandwidth |
 | CPU | 2048² | 104 | 5.774 ms | 31% | 28% | 23% | memory bandwidth / FP32 flops |
@@ -184,7 +185,7 @@ TFLOP/s (CPU); sin+cos+exp 74.2–77.7 G/s (GPU), 3.0–3.3 G/s (CPU).
 (GPU), 32 GB/s (CPU); FP32 FMA 8.12–8.22 TFLOP/s (GPU), 0.46 TFLOP/s (CPU);
 sin+cos+exp 84.7–86.0 G/s (GPU), 0.7–1.0 G/s (CPU).
 
-| Backend | Grid | Bytes/point | Step | Memory | FP32 flops | sin+cos+exp | Limited by |
+| Backend | Grid | Bytes/point | Step | Memory | FP32 flops | sin+cos+exp | Closest ceiling |
 |---|---|---|---|---|---|---|---|
 | CUPY | 1024² | 64 | 0.390 ms | 83% | 7% | 3% | memory bandwidth |
 | CUPY | 2048² | 64 | 1.598 ms | 81% | 8% | 3% | memory bandwidth |
@@ -205,11 +206,13 @@ and the nonlinear phase. What it must move depends on how it runs:
 The GPUs can do 26.6 (M3 Max) and 39.1 (RTX 3050) flops per byte they move,
 far more than the step asks, so CUPY, CL and MLX are memory-bound. CuPy moves
 only 64 B per point: cuFFT store callbacks carry the propagator in the forward
-transform and the nonlinear step in the inverse one. At 1024², MLX and CL run
-within noise of the bandwidth ceiling, so the only way to go faster there is
-to move fewer bytes. CuPy reaches 83%, 81% and 59% of bandwidth at 1024²,
-2048² and 4096², CL 63% and 45% at 2048² and 4096², MLX 67% and 69%: they
-move more than the compulsory bytes or wait on something else. The M3 Max
+transform and the nonlinear step in the inverse one. At 1024², MLX is at the
+bandwidth ceiling (99%) and CL near it (87%): going faster there means moving
+fewer bytes, or launching less, since the fixed cost of a step is 27% of the
+MLX step and 18% of the CL step at that size. CuPy reaches 83%, 81% and 59%
+of bandwidth at 1024², 2048² and 4096², CL 63% and 45% at 2048² and 4096²,
+MLX 67% and 69%: they move more than the compulsory bytes or wait on
+something else. The M3 Max
 CPU's tuning picks its step per grid: the three-pass blocked step (48 B per
 point, about 5 flops per byte) at 4096², the plain one (104 B, about 2.3) at
 1024² and 2048², against a balance of 2.6 flops per byte, and is near none of
@@ -220,8 +223,8 @@ ceilings (largest 21%, memory bandwidth). The
 [optimization log](docs/optimization-log.md#what-the-machine-allows) has the
 method and its history.
 
-Earlier figure, June 2024 (RTX 4090 and Ryzen 7950X, an older version of the
-solver): [`examples/benchmarks.py`](examples/benchmarks.py) against a plain
+Earlier figure, June 2024 (RTX 4090 and Ryzen 7950X, the solver as it was
+then): [`examples/benchmarks.py`](examples/benchmarks.py) against a plain
 numpy split step, and the vortex precession of
 [`FourierGPE.jl`](https://github.com/AshtonSBradley/FourierGPE.jl/blob/master/examples/2dvortexprecession.jl).
 ![benchmarks](img/benchmarks.png)

@@ -80,20 +80,25 @@ spending effort on a kernel.
 
 | ceiling | GPU | CPU |
 |---|---|---|
-| streaming bandwidth | 357–416 GB/s | 235–242 GB/s |
-| fp32 fused multiply-add | 10.2 TFLOP/s | 0.55 TFLOP/s |
-| sin + cos + exp | 87–89 G/s | 2.5–2.9 G/s |
+| streaming bandwidth | 351–366 GB/s | 243–247 GB/s |
+| fp32 fused multiply-add | 9.48–9.63 TFLOP/s | 0.62–0.63 TFLOP/s |
+| sin + cos + exp | 74.2–77.7 G/s | 3.0–3.3 G/s |
 
-The GPU bandwidth brackets the 400 GB/s rating, because at these sizes part of
-the working set is served by cache rather than DRAM. The FMA figure is
-essentially the hardware limit (40 cores x 128 lanes x 2 at ~1.1 GHz); a
-float4 probe reads 12.1, but scalar is what CUDA can also compile. The
-transcendental gap is the one that matters: **the GPU does sin, cos and exp 30x
-faster than the CPU**, which is why the nonlinear kernels dominate a CPU step
-and not a GPU one.
+These are the runs of 2026-11-28 tabled below. On 2026-07-31 (eedccbb) the
+same probes read 357–416 GB/s, 10.2 TFLOP/s and 87–89 G/s on the GPU, and
+235–242 GB/s, 0.55 TFLOP/s and 2.5–2.9 G/s on the CPU.
 
-The bandwidth ceiling itself moves about 15% between runs, so every percentage
-below carries that: nothing under ~15% apart is a difference.
+The GPU bandwidth is 88-92% of the 400 GB/s rating; in July it bracketed it,
+read then as part of the working set being served by cache rather than DRAM.
+The FMA figure is within 16% of the hardware limit (40 cores x 128 lanes x 2
+at ~1.1 GHz); a float4 probe read 12.1 in July, but scalar is what CUDA can
+also compile. The transcendental gap is the one that matters: **the GPU does
+sin, cos and exp 24x faster than the CPU**, which is why the nonlinear kernels
+dominate a CPU step and not a GPU one.
+
+The bandwidth ceiling itself moved about 15% between runs in July and 4% in
+these five. The tables keep the wider figure: nothing under ~15% apart is a
+difference.
 
 Compulsory traffic per grid point, counted on the path the step took
 (`step_path`): **104 B** for a single-precision split step done as separate
@@ -133,7 +138,7 @@ That one is not explained.
 Three things follow.
 
 **The GPU backends are at 67-99% of the memory ceiling**, so the remaining
-headroom there is under 1.5x and mostly in the transform, 64 of the 104 B.
+headroom there is under 1.5x.
 **The CPU sits at 26-32% of its binding ceiling**: memory at 1024², memory and
 flops within noise at 2048², flops at 4096², with sin+cos+exp behind at
 19-24% — the transcendentals are what the `_sincos` and `_exp` polynomials
@@ -206,7 +211,9 @@ a property of the algorithm we chose. What a step must move is 104 B/point:
 64 for the transform pair, 24 for the propagator multiply, 16 for the nonlinear
 kernel. The transform is closed, but the other 40 are ours.
 
-**A separable propagator — open, measured, not built.** The linear propagator
+**A separable propagator — open, measured, not built.** (2026-11-28: built
+since on the CPU, inside the blocked step, and in CUPY's callbacks; see those
+sections. Still open on MLX and OpenCL.) The linear propagator
 is `exp(-i(kx²+ky²)dz/2k)`, which factors into
 `exp(-i·kx²dz/2k) · exp(-i·ky²dz/2k)` — verified rank-1 to 6.7e-8, float32 eps.
 So the N² array every step reads could be two N-vectors: **8 MiB → 16 KiB at
@@ -254,7 +261,10 @@ to compute, and the fused kernel does less total work than the pair it replaces
 So: **the only measured lever left on macOS is the separable propagator.**
 
 **Folding the propagator into the transform (cuFFT callbacks) — open, probe
-written, nothing measured.** Better arithmetic than the separable propagator,
+written, nothing measured.** (2026-11-28: deployed since, see "CUDA (CuPy)";
+the store callbacks of both transforms carry the propagator and the nonlinear
+step, 64 B/point and not the 88 and 72 estimated here.) Better arithmetic than
+the separable propagator,
 because it removes the pass rather than shrinking it. cuFFT can run a store
 callback as it writes each element, which absorbs the propagator multiply
 entirely: **104 B/point becomes 88**, and a load callback on the inverse could
@@ -318,12 +328,12 @@ Double precision and RK4 were not re-run; their 2026-07-31 figures are in
 92f9133.
 
 **CuPy is at 83%, 81% and 59% of the bandwidth bound at 1024², 2048² and
-4096²**, on the 64 B per point of its callbacks path; at 4096² the grid no
-longer fits in cache. Dispatch there costs 0.011 ms per step, forty times less
-than Apple's OpenCL (not re-measured).
+4096²**, on the 64 B per point of its callbacks path; the drop at 4096² is not
+explained. Dispatch there costs 0.011 ms per step, forty times less than
+Apple's OpenCL (not re-measured).
 
 The two machines differ in which ceiling binds the CPU, and it is the hardware
-rather than the code. That box streams **32 GB/s against the M3 Max's 240** — a
+rather than the code. That box streams **32 GB/s against the M3 Max's 247** — a
 desktop's dual-channel DDR against unified memory — so every CPU row there is
 memory-bound, where on the Mac memory and flops tie at 2048² and flops bind at
 4096². Its sin+cos+exp rate is also a quarter of the Mac's (0.8 against 3.2
