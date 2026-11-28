@@ -85,13 +85,25 @@ was decided alone is under "Decided alone" below.
        which array is too short).
      - README, "27% of the MLX step and 18% of the CL step": the reviewer
        set the box's CL against the log's July figure for Apple's OpenCL,
-       which is another machine. But the MLX share is 12, 24, 27, 32, 47%
+       which is another machine. But the MLX share is 24, 26, 27, 32, 47%
        over the five runs: the README now gives the range.
      - `DDGPE.out_field` was documented as `NLSE`'s (no `method`, no
        `normalize`, a required `laser_excitation`, one tuple of
        `callback_args` per callback).
      - Six constructors offered `"GPU" or "CPU"` and all seven printed
        "Defaults to __BACKEND__"; `NLSE_1d` had no `window` or `NX` entry.
+   - Docs round 2, the fixes' fresh review: one MAJOR, fixed (the README's
+     MLX range took in the discarded first run: 24 to 47%, not 12 to 47%).
+     Fixed with it: `V` in the other constructors' docstrings (`DDGPE`'s
+     is a rate in rad/s), `CNLSE_1d`'s `power` and `n12`, the order of
+     `DDGPE.out_field`'s entries. Its note that `delta_z = L / 10000` can
+     take 10001 steps is a solver defect, reproduced and fixed on
+     `fix/callback-step-count` (below). Left: `backend="auto"` times a 2D
+     `(NX, 1024)` transform for `NLSE_1d` and ignores `NZ` for `NLSE_3d`;
+     `NLSE_BACKEND` overrides an explicit `backend=` and no docstring says
+     so; `docs/nlse_tutorial.ipynb` cells 3, 5 and 23 still hold the old
+     equation, `"GPU" or "CPU"` and "exactly 1000 steps" (the owner's
+     notebook).
    - Docs round 2, decided alone, not done:
      - `docs/migration.md` stops at 4.0.0. The section for the next major
        is written at the bump, from the changelog's breaking list

@@ -52,7 +52,8 @@ class NLSE_3d(NLSE):
         vg : float
             Group velocity in m/s.
         V : np.ndarray
-            Potential.
+            Potential, dimensionless as in `NLSE`: twice the local change of
+            the refractive index.
         L : float
             Length in m of the nonlinear medium.
         NX : int, optional

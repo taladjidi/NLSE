@@ -142,7 +142,8 @@ class DDGPE(CNLSE):
         k_z : float
             Longitudinal wavevector in m^-1.
         V : np.ndarray, optional
-            Potential landscape in a.u. Defaults to None.
+            Potential in rad/s: it advances the phase by -V t. Defaults to
+            None.
         g12 : float, optional
             Inter component interaction parameter. Defaults to 0.
         NX : int, optional
@@ -433,13 +434,13 @@ class DDGPE(CNLSE):
             E_in[1] is the cavity field.
         t : float
             Time to propagate to in s.
-        delta_z : float, optional
-            Time step. Defaults to None, meaning the solver derives one from
-            the field.
         laser_excitation : callable or None
             The pump and probe, called as a callback before the others. None
             uses `DDGPE.laser_excitation`. Either way its arguments are the
             first tuple of `callback_args`.
+        delta_z : float, optional
+            Time step. Defaults to None, meaning the solver derives one from
+            the field.
         plot : bool, optional
             Whether to plot the results. Defaults to False.
         splitting : str, optional

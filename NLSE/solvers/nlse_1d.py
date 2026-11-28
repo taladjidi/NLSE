@@ -38,7 +38,8 @@ class NLSE_1d(NLSE):
         n2 : float
             Non linear coeff in m^2/W.
         V : np.ndarray
-            Potential.
+            Potential, dimensionless as in `NLSE`: twice the local change of
+            the refractive index.
         L : float
             Length of the medium in m.
         NX : int, optional

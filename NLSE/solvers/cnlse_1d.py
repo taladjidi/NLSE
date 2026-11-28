@@ -33,15 +33,17 @@ class CNLSE_1d(CNLSE):
         alpha : float
             Alpha through the cell.
         power : float
-            Optical power in W.
+            Optical power of each component in W; `power2` sets the second
+            component's afterwards.
         window : float
             Computational window in m.
         n2 : float
             Non linear index of the 1st component in m^2/W.
         n12 : float
-            Inter component interaction parameter.
+            Cross nonlinear index between the components in m^2/W.
         V : np.ndarray
-            Potential landscape in a.u.
+            Potential, dimensionless as in `NLSE`: twice the local change of
+            the refractive index.
         L : float
             Length of the cell in m.
         NX : int, optional

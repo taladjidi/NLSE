@@ -58,7 +58,8 @@ class CNLSE(NLSE):
         n12 : float
             Cross nonlinear index between the components in m^2/W.
         V : np.ndarray
-            Potential landscape in a.u.
+            Potential, dimensionless as in `NLSE`: twice the local change of
+            the refractive index.
         L : float
             Length of the cell in m.
         NX : int, optional
