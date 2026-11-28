@@ -13,25 +13,6 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# setuptools once shipped stale modules from build/lib/; hatchling has no
-# staging directory, so these assertions are a backstop if that changes.
-STALE_BUILD_DIR = PROJECT_ROOT / "build" / "lib" / "NLSE"
-
-
-def _cause_hint() -> str:
-    """Return a hint about where unexpected wheel contents came from."""
-    if STALE_BUILD_DIR.exists():
-        leftovers = sorted(p.name for p in STALE_BUILD_DIR.glob("*.py"))
-        return (
-            f"\n\n{STALE_BUILD_DIR} exists and contains {leftovers}. "
-            f"That directory is left over from setuptools and should be "
-            f"inert now, so if it is the source of these files the build "
-            f"backend has regressed. Delete it and rebuild:"
-            f"\n    rm -rf {PROJECT_ROOT / 'build'}"
-        )
-    return "\n\nNo stale build directory found; check the packaging config."
-
-
 # Kernel templates read at runtime via Path(__file__).parent / ... .read_text(encoding="utf-8").
 # Every one of these must survive packaging or the matching backend dies with
 # FileNotFoundError on a non-editable install.
@@ -200,8 +181,8 @@ def test_kernel_templates_are_packaged(wheel_contents, data_file):
     """Kernel source templates must ship in the wheel."""
     assert data_file in wheel_contents, (
         f"{data_file} is missing from the wheel. The backend that loads it will "
-        f"raise FileNotFoundError on a non-editable install. Check the "
-        f"[tool.hatch.build.targets.wheel] exclude list in pyproject.toml."
+        f"raise FileNotFoundError on a non-editable install. Check "
+        f"[tool.hatch.build.targets.wheel] in pyproject.toml."
     )
 
 
@@ -216,7 +197,14 @@ def test_wheel_top_level_modules_match_source(wheel_contents):
         "NLSE/__init__.py",
         "NLSE/utils.py",
         "NLSE/callbacks.py",
-    }, f"unexpected top-level modules in wheel: {sorted(top_level)}" + _cause_hint()
+    }, f"unexpected top-level modules in wheel: {sorted(top_level)}"
+
+
+def test_the_wheel_holds_the_package_and_its_metadata_only(wheel_contents):
+    """Tests, docs or examples in the wheel would install as top-level names."""
+    roots = {name.split("/")[0] for name in wheel_contents}
+    stray = sorted(root for root in roots - {"NLSE"} if not root.endswith(".dist-info"))
+    assert not stray, f"the wheel carries {stray} next to NLSE/"
 
 
 def test_the_wheel_publishes_only_the_backend_extras(wheel_path):
@@ -254,7 +242,7 @@ def test_every_source_module_is_packaged(wheel_contents):
     }
     source = {name for name in source if not name.startswith(ignored_package_dirs())}
     missing = sorted(source - set(wheel_contents))
-    assert not missing, f"left out of the wheel: {missing}" + _cause_hint()
+    assert not missing, f"left out of the wheel: {missing}"
 
 
 def test_cache_dir_is_outside_the_installed_package(tmp_path, monkeypatch):
