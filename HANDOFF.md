@@ -41,8 +41,11 @@ do not look for another way.
 | Benchmark waits on what lazy transforms return (MLX was timed doing nothing) | `3dfc28f` |
 | Docs: gallery cached in CI; page review along Diataxis | `18f4cc7`, `3bd8af5` |
 
-Last full suites: Mac (CPU, OpenCL, MLX) 2536 passed, 187 skipped, 85
-deselected at `perf/cpu-pcore-threads` on `70f3c25`; 2526 at
+Last full suites: Mac (CPU, OpenCL, MLX) 2547 passed, 187 skipped, 85
+deselected at `perf/mlx-two-vectors` (box, CuPy and OpenCL, on its first
+three commits: 2662 passed, 67 skipped, six times and once with
+`NLSE_FUSE_PROPAGATOR=0`, tree `~/Documents/nlse_mlx2v_3b5114b` there); 2536
+at `perf/cpu-pcore-threads` on `70f3c25`; 2526 at
 `fix/closing-review` (its box runs are in its entry, under
 "Resume here"); 2496 at `perf/gpu-p4` (2382 and 221 on `main` before it); box, combined environment
 (CuPy and OpenCL), 2620 passed, 57 skipped, none failed, six times and once
@@ -58,29 +61,44 @@ merge included (timed there too: optimization log).
 ### Resume here (written 2026-11-28)
 
 **Start here: the owner's answers of 2026-11-28** (eight questions, asked that
-morning). Two builds follow from them, neither started, each through the
-pipeline (architect, spec review, implementer, fresh reviewer):
+morning). Two builds follow from them, each through the pipeline (architect,
+spec review, fresh reviewer; the architects delivered verified patch series
+in place of implementer briefs):
 
-- *The 1D solvers take `power` in W/m* (breaking, for 5.0.0). `NLSE_1d` and
-  `CNLSE_1d` set `_norm_grid_factor = delta_X**2` (`nlse_1d.py:78`,
-  `cnlse_1d.py:87`); the cell becomes `delta_X`, so that
-  `c eps0 / 2 * sum(|E|^2) * delta_X` is the power per unit length and the
-  intensity at a given `power` no longer moves with `NX`. It reaches the two
-  docstrings (written for the old convention in `fix/closing-review`), the
-  changelog (Unreleased, breaking), the 1D tests, examples and docs that give
-  a power, and it needs a test that the peak intensity does not move with
-  `NX`.
-- *The MLX propagator as two vectors.* Measured (optimization log, MLX
-  section): 1.06x [1.03, 1.10] a step at 4096², nothing at 2048², noise at
-  1024², and the grid-sized propagator freed. The solver already builds the
-  factors for the CPU and CUPY (`_separable_propagator` in
-  `solvers/nlse.py`, handed over only where the operator is a sum per axis);
-  MLX's fused graphs take `propagator` in `_make_split_step`,
-  `_make_split_step_rk4` and `_make_split_step_coupled`
-  (`kernels/mlx_kernels.py`). The measurement covers the lossless Lie step
-  of `NLSE` only: the spec decides which graphs, and every one changed is
-  timed before and after at 1024², 2048² and 4096²
-  (`NLSE_tangui_fix_specs/sep_prop_mlx.py` is the prototype's A/B).
+- *The 1D solvers take `power` in W/m* (breaking, for 5.0.0): **on the local
+  branch `feat/power-1d-per-length`, reviewed, not merged.** Four commits
+  (`git am` of `NLSE_tangui_fix_specs/power_1d_patches/`, spec
+  `power_1d_spec.md` beside them): the cell is `delta_X` in `nlse_1d.py` and
+  `cnlse_1d.py`; tests give 1D solvers `LINE_POWER` (375.7 W/m, the 2D test
+  beam's peak intensity) through `helpers.make`, and `test_nonlocality.py`
+  keeps its field as 64 W/m; a closed-form test (`I0 = sqrt(2/pi) P / w`, 18
+  cases, fails on the old cell); docs and examples at 376 W/m; changelog.
+  Fresh review: PASS, MINOR only. Left: rebase on `main` (the changelog
+  conflicts with the MLX entry), Mac gate, box run (CuPy never ran these),
+  merge, push.
+- *The MLX propagator as two vectors: built and merged*
+  (`perf/mlx-two-vectors`). `split_step_fused` takes `factors`, the solver's
+  `_propagator_factors` (the CPU's and CUPY's route, now for the plain
+  propagator as well as the 1/N twin), and multiplies by one vector per axis
+  in every graph it compiles (Lie, Strang, Yoshida, with `V`, lossy, `GPE`,
+  batches). Not in: `CNLSE`, `DDGPE`, RK4, 1D, 3D, the nonlocal linear step,
+  OpenCL (its kernel accepts `factors` and ignores it). Interleaved, grid
+  against vectors: 1.04-1.07x a Lie or Strang step at 1024², 2048² and
+  4096², 1.00-1.01x on a batch of 4, and 128 MiB less held at 4096²
+  (optimization log, MLX). Known and left: 256² loses (0.93x); the factors'
+  first build costs 127 ms on the host at 4096²; the reviewer's memory check
+  at 2048² saw two grids saved where the log says one at 4096².
+  Fresh review: code sound, two test gaps, closed by the `test(mlx)` commit
+  (a row factor 0.1% off now fails every case, 38 to 116 times past the
+  bound; a propagator the solver did not build is checked to be applied).
+  MINOR, not fixed: `factors` is dead on OpenCL (a capability flag would
+  remove it); positional booleans (`unnorm_ifft`, `grid=False`); the first
+  `_dispersion_axes` call's host transient (about 2 x 256 MiB at 4096², not
+  measured); the log's figures come from scripts kept outside the repo
+  (`NLSE_tangui_fix_specs/ab_two_vectors.py`, `memory_two_vectors.py`);
+  `FUSED_TRANSFORM_AXES` now also says where the factors are offered; on the
+  lossy and Strang test cases MLX compiles a second graph beside the
+  expected one (there before, not looked into).
 
 The other answers: `V = 2 dn` stays, nothing to change; the increment-form
 linear step for complex64 is not built; 5.0.0 is held until the two builds
@@ -109,7 +127,8 @@ statements; it is untracked, `.git/info/exclude`, so no commit shows it).
   wrong unit, not two swapped lengths: keywords do that. Not checked: how
   the `GPE` and `DDGPE` unit systems map; pint is not installed here.
 
-`main` is pushed; its last changes are `docs/owner-decisions` (this section
+`main` is pushed; its last changes are `perf/mlx-two-vectors` and
+`docs/roofline-verdict` (both above), before them `docs/owner-decisions` (this section
 and two entries of the optimization log) and `perf/cpu-pcore-threads` (item 3
 below), before them `fix/closing-review` (item 3
 below), before it `docs/short-docstrings` (text only,
@@ -571,7 +590,7 @@ was decided alone is under "Decided alone" below.
    - Thread counts per machine: merged (`perf/cpu-pcore-threads`, the
      owner's choice on 2026-11-28; entry below).
    - Fewer passes: the propagator as two vectors is measured on OpenCL
-     (rejected) and on MLX (to be built, "Start here"); both entries are
+     (rejected) and built on MLX (merged, "Start here"); both entries are
      in the optimization log.
    - The Mac profiles: not started. The final report: a first one was
      given to the owner on the morning of 2026-11-28, before these.
@@ -1107,8 +1126,8 @@ and "Still open" list:
 - Per-call costs from the CUDA-box profile, below: P4 removed the
   propagator download and the repeated `_energy_rates`; the potential
   grids are still rebuilt.
-- The propagator as two vectors on MLX: to be built ("Start here"). On
-  OpenCL it is measured and rejected (optimization log).
+- The propagator as two vectors: built on MLX ("Start here"), measured and
+  rejected on OpenCL (optimization log).
 - The Mac profiles (CPU and MLX): see "Performance profiles".
 - **A CPU performance pass** (owner, 2026-11-28). The step is at 21-32% of
   the FP32 flops ceiling on the M3 Max and 6-7% on the Ryzen 3 4100 (README,
