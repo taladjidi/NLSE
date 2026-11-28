@@ -69,9 +69,9 @@ THREAD_DIVISORS = (1, 2)
 PERFORMANCE_CPUS_SYSCTL = b"hw.perflevel0.logicalcpu"
 
 # Rounds of each candidate, interleaved, and steps per round; the best round
-# counts. Measured: 4096x4096 complex128 tunes in 26 s on an M3 Max at load 15
-# and 48 s on a Ryzen 3 4100, the duels included (24-25 s and 40-43 s without
-# the pad's).
+# counts. Measured: 4096x4096 complex128 tunes in 19 s on an M3 Max and 48 s
+# on a Ryzen 3 4100, the duels included (17-18 s and 40-43 s without the
+# pad's).
 ROUNDS = 3
 STEPS = 4
 
@@ -105,7 +105,7 @@ RELEASE_PARTS = 2
 
 # The lock one tuning process holds, beside the cache, and its age in s past
 # which it was left by a process that died: 6 times the longest tuning
-# measured (4096x4096 complex128: 26 s on an M3 Max, 48 s on a Ryzen 3 4100).
+# measured (4096x4096 complex128: 19 s on an M3 Max, 48 s on a Ryzen 3 4100).
 LOCK_NAME = "cpu_blocking.lock"
 LOCK_STALE_AFTER = 300.0
 
@@ -434,7 +434,7 @@ def _duel(first: tuple[Any, tuple], second: tuple[Any, tuple]) -> tuple[float, f
 
 
 def _measure(backend: Any, shape: tuple, dtype: np.dtype, threads: int) -> dict:
-    """Rank the candidates, time the first against the unblocked step, return the entry.
+    """Rank the blocks, try the first padded, time it against the unblocked step.
 
     Parameters
     ----------

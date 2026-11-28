@@ -1291,9 +1291,11 @@ Ryzen load 4.8-5.6; M3 Max load 10.8-11.0, to re-run quiet):
 | M3 Max | 2048² complex128 | 32x12 | 3.07 | 2.28 | 2.36 | 2.45 | 2.38 | 2.42 | 10.84-10.84 |
 | M3 Max | 4096² complex128 | 32x12 | 9.97 | 8.83 | 8.78 | 8.49 | 8.98 | 9.01 | 10.84-10.84 |
 
-Any pad of 64-384 B moved the pass alike, so the pad is one constant,
+Pads of 64-384 B moved the pass within 10% of each other at 2048² and 4096²
+(27% apart at the M3 Max's 1024² complex128), so the pad is one constant,
 `PAD_BYTES = 128`. Whether to pad is not: on the Ryzen it helps the
-8-thread layouts (32 × 8) more than the 4-thread ones its tuner takes.
+8-thread layouts (32 × 8) more than the 4-thread ones its tuner takes, and
+at 1024² complex64 it cost the M3 Max 38% of the move.
 
 *Hypotheses, not verified* (no hardware counters read): on the M3 Max, at a
 power-of-two NY, every row of a band starts on the same cache sets, which the
@@ -1315,29 +1317,31 @@ blocks only if that step beats the unblocked one by `MARGIN`. Kept per entry
 (`pad_bytes`). After one forced tuning, one in-process A/B of the three steps,
 best of 15 interleaved rounds, ms a step (`pad_ab.py`, same tool on both
 machines; where the tuner ran unblocked, the block its ranking takes first in
-that process; M3 Max load 14.2-15.7 from another job, to re-run quiet; Ryzen
-load 5.6-5.9, its own tuning's threads):
+that process; M3 Max on 7465343, load 5.8 before the run, no other job;
+Ryzen load 5.6-5.9, its own tuning's threads):
 
 | machine | grid | block | tuner kept | unblocked | blocked | blocked padded |
 |---|---|---|---|---|---|---|
-| M3 Max | 1024² complex64 | 128 × 8 | unblocked | 1.91 | 2.31 | 1.85 |
-| M3 Max | 2048² complex64 | 64 × 16 | unblocked | 6.47 | 6.79 | 6.18 |
-| M3 Max | 4096² complex64 | 32 × 12 | unblocked | 25.46 | 24.17 | 21.65 |
-| M3 Max | 2048² complex128 | 64 × 12 | unblocked | 10.46 | 9.93 | 9.51 |
-| M3 Max | 4096² complex128 | 32 × 12 | blocked | 46.17 | 37.69 | 36.18 |
+| M3 Max | 1024² complex64 | 64 × 8 | unblocked | 1.44 | 1.96 | 1.52 |
+| M3 Max | 2048² complex64 | 64 × 12 | blocked padded | 6.24 | 6.12 | 5.16 |
+| M3 Max | 4096² complex64 | 32 × 12 | blocked padded | 26.59 | 21.72 | 18.95 |
+| M3 Max | 2048² complex128 | 32 × 12 | blocked | 10.58 | 8.65 | 8.00 |
+| M3 Max | 4096² complex128 | 16 × 12 | blocked | 46.03 | 32.58 | 32.87 |
 | Ryzen | 1024² complex64 | 64 × 4 | blocked | 8.11 | 6.66 | 6.17 |
 | Ryzen | 2048² complex64 | 32 × 4 | blocked | 34.42 | 25.50 | 24.21 |
 | Ryzen | 4096² complex64 | 16 × 4 | blocked | 144.97 | 97.62 | 97.92 |
 | Ryzen | 2048² complex128 | 16 × 4 | blocked | 58.73 | 41.14 | 41.19 |
 | Ryzen | 4096² complex128 | 8 × 4 | blocked | 278.26 | 178.40 | 178.98 |
 
-At this load the M3 Max's tuning and the A/B after it disagree at 4096²
-complex64: the tuning read the blocked side 2% faster than unblocked, the A/B
-18% (an earlier run at load 9 blocked it padded, 20.69 ms). Forced tuning,
-main (97ee1c7) and this tree alternated twice: 4096² complex128, 24.1-25.4 s
-and 25.9-26.0 s (M3 Max), 40.4-43.0 s and 47.7-47.9 s (Ryzen); 2048²
-complex64 on the M3 Max, which both left unblocked, 3.4-4.7 s and 3.7-3.8 s,
-the pad's duel there being 41 steps of 6-7 ms. Cache version 3. *Open:* gathering in tiles of 16
+The choice moves with load: under another job (M3 Max, load 14.2-15.7) the
+same tool left 2048² and 4096² complex64 unblocked, its A/B there reading the
+padded step 1.05x and 1.18x the unblocked one (6.47 and 6.18 ms, 25.46 and
+21.65 ms). A padded step under 10% ahead of the unpadded one is also dropped
+where the unpadded one is under 10% ahead of the unblocked step. Forced
+tuning, main and this tree alternated twice: 4096² complex128, 17.3-17.8 s
+and 18.5-19.0 s (M3 Max, 7465343), 40.4-43.0 s and 47.7-47.9 s (Ryzen,
+97ee1c7); 2048² complex64 on the M3 Max, 2.5-3.8 s and 2.7 s, the pad's duel
+there being 41 steps of 5-6 ms. Cache version 3. *Open:* gathering in tiles of 16
 field rows is bit-safe (no arithmetic) and took the M3 Max's 4096² step a
 further 1 ms; unmeasured on the Ryzen. Scripts and results:
 `~/Documents/LKB/NLSE_tangui_fix_specs/cpu_tiled_gather/`.

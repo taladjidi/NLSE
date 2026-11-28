@@ -35,8 +35,9 @@ from .cpu import _square_mod_nl_prop_span, _square_mod_nl_prop_v_span
 # https://docs.python.org/3/library/mmap.html#mmap.mmap
 ANONYMOUS = -1
 # B the tuner may let each scratch row run past NY (cpu_tuning keeps it where
-# it wins). Pads of 64-384 B timed alike on an M3 Max and a Ryzen 3 4100
-# (``docs/optimization-log.md``); why the M3 gains is not verified.
+# it wins). Pads of 64-384 B timed within 10% of each other at 2048x2048 and
+# 4096x4096 on an M3 Max and a Ryzen 3 4100 (``docs/optimization-log.md``);
+# why the M3 gains is not verified.
 PAD_BYTES = 128
 
 
