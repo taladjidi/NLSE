@@ -57,10 +57,12 @@ from NLSE import sample, norm, evaluate_delta_n, adapt_delta_z, adapt_delta_z_to
 ```
 
 The arrays in the examples below are sized for the step that is asked. A
-`delta_z` beyond the split-step limit is shortened, with a warning (see
-[Step Size](solvers_overview.md#step-size)): the run then takes more steps
-than the array has rows, and the callback raises `IndexError`. Pass a shorter
-step until the warning is gone.
+step beyond the method's limit is shortened (see
+[Step Size](solvers_overview.md#step-size)): with a warning if you passed it,
+silently if the solver chose it. The run then takes more steps than
+`z / delta_z`, and a callback writing into an array sized for that count
+raises `IndexError`. `simu._current_delta_z` holds the step actually taken
+from the first call (`i == 0`) on: size from it there, or append to a list.
 
 ### `sample` -- Save field snapshots
 

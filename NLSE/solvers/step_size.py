@@ -538,6 +538,8 @@ class StepSize:
         A: np.ndarray,
         method: str,
         rates: dict[str, float] | None = None,
+        *,
+        warn: bool = True,
     ) -> float:
         """Return delta_z, lowered if it leaves the method's convergence region.
 
@@ -545,7 +547,7 @@ class StepSize:
         direction of the run. The limit of either method can bind on the
         default step as well as on one the caller passed: both count the
         grid's shortest wave, which the default weights by the field or
-        leaves out.
+        leaves out. Only lowering a step the caller passed warns.
 
         Parameters
         ----------
@@ -558,6 +560,9 @@ class StepSize:
         rates : dict or None
             ``_energy_rates(A)``, if the caller already has it. Without it
             the rates are reduced here, once.
+        warn : bool, optional
+            Warn when the step is lowered. Defaults to True; False for the
+            solver's own default, which the caller did not choose.
 
         Returns
         -------
@@ -587,10 +592,11 @@ class StepSize:
         # the same length a forward one does.
         if abs(delta_z) > max_dz:
             capped = math.copysign(CAPPED_STEP_FRACTION * max_dz, delta_z)
-            warnings.warn(
-                f"delta_z={delta_z:.2e} exceeds {label} limit "
-                f"({max_dz:.2e}). Reducing to {capped:.2e}.{extra}",
-                stacklevel=2,
-            )
+            if warn:
+                warnings.warn(
+                    f"delta_z={delta_z:.2e} exceeds {label} limit "
+                    f"({max_dz:.2e}). Reducing to {capped:.2e}.{extra}",
+                    stacklevel=2,
+                )
             return capped
         return delta_z

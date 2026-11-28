@@ -331,9 +331,9 @@ class NLSE(StepSize):
             Step to propagate with. Defaults to None, meaning the solver
             derives one from the field: a step that imprints a fixed phase
             per step, against the same energy rates the stability and
-            accuracy limits are built from. A step given here is used as
-            given, capped only where it would leave the method's region of
-            convergence. A negative step propagates backwards over z.
+            accuracy limits are built from. Either is capped where it would
+            leave the method's region of convergence, with a warning only for
+            a step given here. A negative step propagates backwards over z.
         plot : bool, optional
             Plots the results. Defaults to False.
         splitting : str, optional
@@ -423,10 +423,11 @@ class NLSE(StepSize):
             # The field does not change until the run, so its rates are
             # reduced once and shared by every limit below.
             rates = self._energy_rates(A)
+            passed = delta_z is not None
             if delta_z is None:
                 delta_z = self._default_delta_z(A, method, z, rates)
             self._scheme_in_force = (method, splitting)
-            delta_z = self._capped_delta_z(delta_z, A, method, rates)
+            delta_z = self._capped_delta_z(delta_z, A, method, rates, warn=passed)
             if splitting == "yoshida":
                 yoshida_max = self._max_dz_in_force(A, rates)
                 delta_z = math.copysign(min(abs(delta_z), yoshida_max), delta_z)

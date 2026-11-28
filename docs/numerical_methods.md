@@ -71,8 +71,8 @@ its order with loss. The coupled solvers and a complex potential still freeze
 the step (see [Physical validation](physical_validation.md#what-this-does-not-cover)).
 
 A step may take out only a few percent of the intensity: $2\alpha\,\delta z$
-stays under `LOSS_PER_STEP_LIMIT` = 0.05. A coarser step is lowered with a
-warning, like every other step limit here.
+stays under `LOSS_PER_STEP_LIMIT` = 0.05. A coarser step is lowered, like
+every other step limit here: with a warning if you passed it.
 
 ```python
 # complex64 field: lie is fast, strang is the better constant
@@ -152,12 +152,11 @@ E = simu.out_field(E_in, z, delta_z=1e-5)  # in meters (or seconds for GPE/DDGPE
 
 Every step is checked against the method's limit, whether you passed it or
 the solver chose it. Inside the limit it is used as given. Past it, it is
-lowered to `CAPPED_STEP_FRACTION` = 0.9 of the limit, with a warning naming
-which limit bound.
-
-The default is not exempt. On a fine grid the dispersion limit sits below the
-split-step default: the first run of the [quick start](quick_start.md) is
-lowered that way, and says so.
+lowered to `CAPPED_STEP_FRACTION` = 0.9 of the limit. A step you passed is
+lowered with a warning naming which limit bound; the default is lowered
+silently, since nobody chose it. On a fine grid the dispersion limit sits
+below the split-step default: the first run of the
+[quick start](quick_start.md) is lowered that way.
 
 **Split-step limit**: the smallest of three steps.
 

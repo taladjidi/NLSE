@@ -224,7 +224,8 @@ E = simu.out_field(E_in, z, delta_z=1e-5)  # manual step size in meters
 ```
 
 Either way the step is capped to the method's region of convergence before
-propagation, with a warning if that binds (see [Numerical Methods](numerical_methods.md)).
+propagation, with a warning if that binds on a step you passed (see
+[Numerical Methods](numerical_methods.md)).
 
 ## Coupled Solvers (CNLSE, CNLSE_1d, DDGPE)
 

@@ -35,10 +35,9 @@ E_out = simu.out_field(E_in, L, splitting="lie")
 ```
 
 `E_out` is the field at the end of the medium, a `(2048, 2048)` `complex64`
-array in V/m. The run warns that `delta_z` exceeds the split-step accuracy
-limit, which is expected: the default step is chosen from the potential and the
-interaction, while the limit also bounds the phase diffraction adds to the
-finest wave the grid resolves, so the solver takes the shorter step.
+array in V/m. The solver chose the step: it aims at a fixed phase per step
+from the potential and the interaction, and takes a shorter one here, where the
+limit on the phase diffraction adds to the finest wave the grid resolves binds.
 
 ## Adding a Potential
 
@@ -56,7 +55,7 @@ simu.V = V
 E_out = simu.out_field(E_in, L, splitting="lie")
 ```
 
-`E_out` has the same shape, and the same warning comes with it.
+`E_out` has the same shape.
 
 ## Using Callbacks
 

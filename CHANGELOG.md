@@ -232,6 +232,15 @@ come first.
 
 ### Changed
 
+- **A step the solver chose is held under the method's limit without a
+  warning.** The default aims at 0.1 rad of potential and interaction phase
+  per step, and where the limit binds, the dispersion bound of a fine grid
+  for one, the run warned about a `delta_z` nobody passed (at 2048², the
+  README run's 2.11e-4 m and the quick-start's 2.12e-4 m, both lowered to
+  1.39e-5 m). It is still lowered, now silently; a `delta_z` passed in
+  still warns. The steps run are the same, and `DDGPE` still samples its
+  drive at the default before the cap.
+
 - **`NLSE_BACKEND` and `NLSE_FORCE_BENCHMARK` are read when a backend is asked
   for**, not once when NLSE is imported, like the other `NLSE_*` variables: one
   set after the import now counts.
