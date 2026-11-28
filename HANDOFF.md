@@ -98,6 +98,26 @@ was decided alone is under "Decided alone" below.
      the run files record no commit (the trees were clean at the named
      ones); the two machines ran tool commits 13 lines apart (a refusal of
      disturbed timings, no change to a measurement).
+   - The tool's own changes (`13345a4`, `67d5b6e`, `9b685c3`) had no review
+     on record, so a fresh one ran before the push. Byte counts, paths,
+     waits and probes: nothing found (CuPy not run). One MAJOR, fixed
+     (`fix/roofline-zero-ceiling`): a probe whose slope was not positive
+     read 0 and the shares divided by it; `measure_ceilings` now gives no
+     ceiling unless all three are positive. Left, all MINOR:
+     - `tests/test_benchmarks.py` lets these mutants live: the slope divided
+       by `2 * steps`, `max` for `min` in `fastest_run`, CUPY's
+       `len(ours) == 2` as `>= 1`, the "left the path" check removed,
+       `WARMUP_STEPS = 0`, `STEP_DZ = 1e-5`. No test reaches the CUPY branch
+       of `step_path` or `main`; the real timing is only asserted finite.
+     - On CUPY `_fused` holds the callbacks ever built, not the ones the
+       timed step used: a step that declined them would still read
+       "callbacks" (plausible, not run).
+     - `main` exits 0 when every row failed.
+     - `PROPAGATOR_FLOPS` and `NONLINEAR_FLOPS` (6 and 14) have no source
+       but "as this tool has always charged them"; bare numbers in
+       `step_cost`, `time_step` and `step_path`; `main` is 35 statements.
+     - The 64x64 timing test raises "disturbed" on a loaded machine (25
+       repeats on each backend did not).
 3. **Afterwards, the owner's earlier order:** the GPU P4 patches (fix their
    spec first), thread counts per machine in the tuner, the increment-form
    linear step for complex64 (recommend only), the fewer-passes lessons on

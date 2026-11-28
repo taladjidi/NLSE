@@ -169,6 +169,17 @@ def test_each_ceiling_share_is_its_floor_over_the_time_taken():
     assert shares == pytest.approx(SHARES_EXPECTED)
 
 
+@pytest.mark.parametrize("dead", [None, *sorted(SHARES_CEILING)])
+def test_a_ceiling_that_reads_zero_is_no_ceiling(monkeypatch, dead):
+    """A probe's slope that was not positive reads 0, which no share can divide by."""
+    reading = SHARES_CEILING if dead is None else {**SHARES_CEILING, dead: 0.0}
+    monkeypatch.setattr(roofline, "_CEILINGS", {})
+    monkeypatch.setattr(
+        roofline, "PROBES", {"cpu": [("stub", lambda _: reading, set(reading))]}
+    )
+    assert roofline.measure_ceilings("cpu") == (reading if dead is None else None)
+
+
 def test_the_cpu_path_is_blocked_when_the_tuner_gives_a_step(monkeypatch):
     """The solver's own plan asks cpu_tuning, so its answer names the path."""
     simu, E = roofline.build_solver("CPU", 64)

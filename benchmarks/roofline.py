@@ -458,7 +458,7 @@ _CEILINGS: dict = {}
 
 
 def measure_ceilings(device, verbose=False):
-    """Return the best {stream, fma, trans} any probe reaches, or None."""
+    """Return the best {stream, fma, trans} the probes reach, or None if one is zero."""
     if device in _CEILINGS:
         return _CEILINGS[device]
     best = {"stream": 0.0, "fma": 0.0, "trans": 0.0}
@@ -477,7 +477,8 @@ def measure_ceilings(device, verbose=False):
             )
         for key in trusted:
             best[key] = max(best[key], got.get(key, 0.0))
-    _CEILINGS[device] = best if max(best.values()) > 0 else None
+    # Every share divides by its ceiling: one that reads zero is no ceiling.
+    _CEILINGS[device] = best if min(best.values()) > 0 else None
     return _CEILINGS[device]
 
 
@@ -709,7 +710,9 @@ def main(argv=None):
         for backend_name in backends:
             device = DEVICE_OF[backend_name]
             if device not in ceilings:
-                print(f"  {backend_name:<7} no {device} ceiling: no probe ran")
+                print(
+                    f"  {backend_name:<7} no {device} ceiling: no probe read all three"
+                )
                 continue
             ceiling = ceilings[device]
             for case in args.cases:
