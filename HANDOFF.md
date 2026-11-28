@@ -41,39 +41,49 @@ do not look for another way.
 | Benchmark waits on what lazy transforms return (MLX was timed doing nothing) | `3dfc28f` |
 | Docs: gallery cached in CI; page review along Diataxis | `18f4cc7`, `3bd8af5` |
 
-Last full suites: Mac (CPU, MLX) 1723 passed, 160 skipped at `f29b585`; box,
-combined environment (CuPy and OpenCL), 2275 passed, 103 skipped, six times
-and once with `NLSE_FUSE_PROPAGATOR=0`, at `c5a44fb`.
+Last full suites: Mac (CPU, OpenCL, MLX) 2223 passed, 219 skipped at
+`3a144d2`; box, combined environment (CuPy and OpenCL), 2275 passed, 103
+skipped, six times and once with `NLSE_FUSE_PROPAGATOR=0`, at `c5a44fb`.
+Nothing merged since `c5a44fb` has run on CuPy.
 
-### Resume here (written 2026-11-27)
+### Resume here (written 2026-11-28)
 
-`main` is `5dc5c6a` plus this shrink, pushed. Order from the owner for the
-night of 2026-11-27: "run independently tonight : debloating, docs, and
-review. Iterate over this. Also when reviewing ignore the previous context to
-be impartial. Look at all aspects of the code, notably complexity and code
-architecture, testability etc ...". So reviewers get the code and no
-conclusions, and do not read this file.
+`main` is `3a144d2`, pushed. Orders from the owner for the night of
+2026-11-27: "run independently tonight : debloating, docs, and review.
+Iterate over this. Also when reviewing ignore the previous context to be
+impartial. Look at all aspects of the code, notably complexity and code
+architecture, testability etc ..." and "don't ask me questions. Make
+decisions and worst case scenario we'll revert them tomorrow morning". So
+reviewers get the code and no conclusions, and do not read this file; what
+was decided alone is under "Decided alone" below.
 
-1. **README headline performance** (docs). Spec, revision 2:
+1. **Review, then iterate** (debloat, docs, review). Done and merged: the
+   solvers (two fix rounds), the backends, the docs pages (round 1). In
+   flight when this was written:
+   - the test suite's four MAJOR gaps, as an architect's verified patch
+     series (`review_round1/tests.md` and `tests_patches/` in the specs
+     directory; worktree `scratchpad/wt-tests`, branch `test/review-gaps`):
+     apply, gate, fresh review, merge;
+   - a fresh review of `NLSE/kernels/` and of how the solvers call them.
+   Not reviewed afresh yet: `examples/` and `benchmarks/`.
+2. **README headline performance** (docs). Spec, revision 2:
    `docs/readme_perf.md` in the specs directory. Branch
-   `docs/readme-performance`, not merged: the roofline fix (`13345a4`) and
-   its tests (`67d5b6e`) are applied, `tests/test_benchmarks.py` 33 passed.
-   - Box: six runs of the `67d5b6e` tree were started at 23:10, into
-     `~/Documents/nlse_perf_67d5b6e/perf/box_run{1..6}.txt` on the box
-     (`nlse_env_both`). Check they finished and that no run reads "failed".
-   - Mac: not measured. It was on battery (power mode Automatic there, High
-     Power on mains): run the spec's loop on mains, nothing else running,
-     with `UV_PROJECT_ENVIRONMENT=<scratchpad>/perf/venv-perf` so the repo's
+   `docs/readme-performance` (`9b685c3`, worktree `scratchpad/wt-perf`), not
+   merged: the roofline fix and its tests are applied.
+   - Box: done. Use the second set, `box2_run{1..6}.txt` in
+     `docs/readme_perf_runs/` of the specs directory (the first set's CL
+     4096² rows were bad and the runs were repeated); the first run of a set
+     is discarded; `summarize_runs.py` beside them prints the table.
+   - Mac: not measured. Run the spec's loop (CPU, MLX; six runs) on mains,
+     nothing else running, no agent testing, with
+     `UV_PROJECT_ENVIRONMENT=<scratchpad>/perf/venv-perf` so the repo's
      `.venv` gets no pyopencl.
-   - Then the README section (task C) and the log entry (task D), the doc
-     tests staying at 187 passed, 2 skipped; reviewer; gate; merge; push.
+   - Then the README section (task C) and the log entry (task D), citing the
+     box tree `67d5b6e` and the Mac tree `9b685c3`; doc tests; reviewer;
+     gate; merge; push.
    - Decisions taken for the owner, to report: the June 2024 figure moves
      into the new section, labelled (O1); Lie rows only, Strang measured as a
      check (O2); measured ceilings only, no rated figures (O3).
-2. **Review, then iterate** (debloat, docs, review): fresh reviewers over
-   the solvers, the backends and kernels, the tests, and the docs with the
-   examples and benchmarks; fix what is CRITICAL or MAJOR, list the rest
-   here.
 3. **Afterwards, the owner's earlier order:** the GPU P4 patches (fix their
    spec first), thread counts per machine in the tuner, the increment-form
    linear step for complex64 (recommend only), the fewer-passes lessons on
@@ -158,6 +168,61 @@ conclusions, and do not read this file.
     stand-in kernel, not the real ones.
   - Not checked: CuPy, an OpenCL device without fp64, Windows, a cache
     directory on a shared network home (the lock's host name).
+
+- **Solver review, round 1: what was not taken.** Lines are the review's,
+  stale since; find by name.
+  - `_dispersion_max_dz` binds on a linear problem (`n2 = 0`, 64²: 0.1 m cut
+    to 7.17e-4 m with a warning) though split-step is exact there (its M6).
+  - `NLSE_3d`: the time axis is `linspace(..., endpoint=True)` on a periodic
+    grid, so `delta_T` and the power are off by `NZ / (NZ - 1)`; `vg` is
+    stored and never read.
+  - `NLSE_1d` builds the 2D grids at the default `NY = 1024` (about 100 MB
+    for `NX = 4096`) and benchmarks the backend at a 2D size.
+  - `callback=[]` raises `IndexError`; a later callback's returned step
+    silently overrides an earlier one. The step warning's `stacklevel=2`
+    points into `nlse.py`.
+  - `_norm_grid_factor` and `_norm_constant` are float32: a complex128 run's
+    power carries 3e-8. `_nonlocal_intensity` allocates `A * conj(A)` a step.
+  - `_can_rate_on_device` builds a tuple whose first entry it never reads;
+    `adapt_delta_z_to_error` has a bare `1e5` and `order = 2`, and with
+    `L = 0` (GPE) its floor is 0; a NaN error reaches `_check_step`.
+  - `DDGPE._random` is chosen once by backend name and uses numpy's global
+    state; `DDGPE.out_field` breaks `NLSE.out_field`'s positional order;
+    `wvl=1e-30` (DDGPE) and `wvl=2*pi/m` (GPE) fake a wavelength.
+  - `evaluate_delta_n` is optical only; `norm` is an unscaled sum; the
+    callbacks reach about 12 private members; `_make_step` nests three
+    closures (the no-nested-defs rule) and `_run_propagation` takes 12
+    parameters.
+  - Its five structural suggestions, none started: the nonlinear step owned
+    by the class with the physics; one `_k_squared` hook for the override
+    quartet (about 120 lines); a tuple for the 14 coupled constants; a
+    `propagator_for(dz)` context for the three swap-and-restore copies;
+    `nlse.py` (2800 lines) split into run state, caches and loops.
+- **Docs review, round 1** (`docs/review-round1`, `966508a`). Fixed: the
+  callback pages' sample counts (`n_steps // save_every`), MLX's place in
+  the detection order, what `NLSE_QUIET` silences. Lint and format now cover
+  `benchmarks/` and `docs/`; the formatter skips `*.md`. Left:
+  - `docs/nlse_tutorial.ipynb` cell 23 sizes its samples `N_samples + 1`:
+    the notebook stores its outputs, so it is the owner's to re-run.
+  - `CLAUDE.md` is the owner's to edit. Stale there: line 7 (CuPy transforms
+    with cuFFT, not VkFFT), 34-35 (lint paths), 57 (Strang is "still 1
+    pair/step" for the scalar solvers only; a complex128 field moves off
+    MLX), 87 (`D101` is not ignored), and `CACHE_VERSION` is 4.
+- **Test-suite review** (mutation, about 65 mutants). Its four MAJOR gaps
+  are item 1 above. MINOR, not taken: `cpu_tuning._cache_key` on a
+  non-square grid; `plot_field`'s Y extent and intensity panel (every test
+  has a square window); the default cache directory per platform (every
+  test sets `NLSE_CACHE_DIR`); the loss cap's lower bound; type-only or
+  self-computed assertions (`test_auto_backend.py` near 142,
+  `test_benchmark.py` near 125-160 and 449); helpers copied across about 70
+  test files; `test_packaging.py` needs the network.
+- **Decided alone** (revert what does not suit): coupled solvers opted out
+  of the Strang merge rather than given their own half step; RK4 ignores
+  `splitting`; `gamma2` is `alpha2`; a complex128 run leaves MLX with a
+  warning; architects' verified patch series were applied directly, no
+  implementer; reviewers ran as background agents, no workflow; `CLAUDE.md`
+  and the tutorial notebook untouched; the 55 local branches merged into
+  `main` are kept (`git branch --merged main`).
 
 The final report has to say, beyond what "Review findings left as they are"
 and "Still open" list:
