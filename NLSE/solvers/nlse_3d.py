@@ -32,9 +32,8 @@ class NLSE_3d(NLSE):
     ) -> None:
         """Instantiate the simulation.
 
-        Solves an equation : d/dz psi = -1/2k0(d2/dx2 + d2/dy2) psi +
-          D0/2 (d2/dt2) psi + k0 dn psi +
-          k0 n2 psi**2 psi
+        Solves the equation of `NLSE` with the dispersion term
+        D0/2 d2/dt2 psi: docs/physics_problem.md has the whole equation.
 
         Parameters
         ----------
@@ -75,8 +74,9 @@ class NLSE_3d(NLSE):
         wvl : float
             Wavelength in m.
         backend : str, optional
-            "GPU" or "CPU".
-            Defaults to __BACKEND__.
+            Backend name: "CPU", "CUPY", "CL", "MLX" or "auto" (the installed
+            one with the fastest transform at this grid size). Defaults to
+            the backend NLSE picked when it was imported.
         """
         if len(window) == 2:
             window = [window[0], window[0], window[-1]]

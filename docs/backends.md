@@ -42,7 +42,7 @@ simu = NLSE(..., backend="MLX")
 
 ### Auto-benchmarking
 
-Use `backend="auto"` to benchmark all available backends and select the fastest for your grid size:
+Use `backend="auto"` to benchmark all available backends and select the fastest for your grid size. It times a pair of transforms, not a whole step:
 
 ```python
 simu = NLSE(..., backend="auto")

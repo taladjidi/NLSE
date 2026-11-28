@@ -157,7 +157,9 @@ class DDGPE(CNLSE):
             interaction reads the intensity smoothed by
             1 / (1 + nl_length^2 K^2) in Fourier space. Defaults to 0, local.
         backend : str, optional
-            "GPU" or "CPU". Defaults to __BACKEND__.
+            Backend name: "CPU", "CUPY", "CL", "MLX" or "auto" (the installed
+            one with the fastest transform at this grid size). Defaults to
+            the backend NLSE picked when it was imported.
         """
         super().__init__(
             alpha=gamma,
@@ -435,23 +437,21 @@ class DDGPE(CNLSE):
             Time step. Defaults to None, meaning the solver derives one from
             the field.
         laser_excitation : callable or None
-            The excitation function.
-            This represents the laser pump and probe. Defaults to None which uses
-            the static method defined in the class. In this case you still need
-            to pass the correct arguments to the callback_args.
+            The pump and probe, called as a callback before the others. None
+            uses `DDGPE.laser_excitation`. Either way its arguments are the
+            first tuple of `callback_args`.
         plot : bool, optional
             Whether to plot the results. Defaults to False.
         splitting : str, optional
-            Whether to apply the nonlinear terms in a
-            single or double step. Defaults to "lie".
+            Splitting scheme, as in `NLSE.out_field`. Defaults to "lie".
         verbose : bool, optional
             Whether to print progress. Defaults to True.
         callback : list[callable] or callable, optional
             A list of functions
             to execute at every solver step. Defaults to None.
-        callback_args : list[tuple] or tuple, optional
-            A list of callback
-            arguments passed to the callbacks. Defaults to None.
+        callback_args : list[tuple], optional
+            One tuple of arguments per callback, the excitation's first.
+            Defaults to None.
 
         Returns
         -------

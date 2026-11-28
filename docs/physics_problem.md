@@ -23,7 +23,7 @@ The constants are:
 
 - $k_0$: electric field [wavenumber](https://en.wikipedia.org/wiki/Wavenumber) in $m^{-1}$
 - $D_0$: [group velocity dispersion](https://en.wikipedia.org/wiki/Group-velocity_dispersion) (GVD) in $s^2/m$
-- $\delta n(\mathbf{r})$: local change in linear index of refraction (the "potential"), dimensionless; an imaginary part absorbs, as $|E|^2 \propto e^{-k_0\,\mathrm{Im}\,\delta n\,z}$
+- $\delta n(\mathbf{r})$: the potential `V`, dimensionless: twice the local change of the linear index of refraction, so a uniform index change $\Delta n$ is $\delta n = 2\Delta n$ and adds the phase $k_0\Delta n\,z$; an imaginary part absorbs, as $|E|^2 \propto e^{-k_0\,\mathrm{Im}\,\delta n\,z}$
 - $n_2$: [nonlinear index of refraction](https://en.wikipedia.org/wiki/Kerr_effect) in $m^2/W$; $n_2 > 0$ is self-focusing
 - $\alpha$: intensity loss in $m^{-1}$, so that $I = I_0e^{-\alpha z}$ when $I \ll I_\text{sat}$
 - $I_\text{sat}$: saturation intensity in $W/m^2$, which saturates the interaction and the loss

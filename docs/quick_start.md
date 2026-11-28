@@ -42,8 +42,10 @@ finest wave the grid resolves, so the solver takes the shorter step.
 
 ## Adding a Potential
 
-A potential is a dimensionless change of refractive index on the solver's grid.
-Assign it to `simu.V` and propagate the same input again:
+A potential is dimensionless and lives on the solver's grid. It is twice the
+change of refractive index, `V = 2 * dn` (see
+[the equation](physics_problem.md)). Assign it to `simu.V` and propagate the
+same input again:
 
 ```python
 # Define a potential landscape

@@ -165,13 +165,14 @@ class NLSE(StepSize):
     ) -> None:
         """Instantiate the simulation.
 
-        Solves an equation : d/dz psi = -1/2k0(d2/dx2 + d2/dy2) psi +
-          k0 dn psi + k0 n2 psi**2 psi
+        Solves i d/dz psi = -1/(2 k0) (d2/dx2 + d2/dy2) psi - k0/2 V psi
+        - k0/2 n2 c eps0 |psi|^2 psi, here without the loss and the
+        saturation: docs/physics_problem.md has the whole equation.
 
         Parameters
         ----------
         alpha : float
-            alpha
+            Intensity loss in 1/m: I = I0 exp(-alpha z).
         power : float
             Power in W
         window : float, list or tuple
@@ -180,8 +181,10 @@ class NLSE(StepSize):
             Can be different in x and y.
         n2 : float
             Non linear coeff in m^2/W
-        V : np.ndarray
-            Potential.
+        V : np.ndarray or None
+            Potential on the grid, dimensionless: twice the local change of
+            the refractive index, so a uniform index change dn is V = 2 dn
+            and adds the phase k0 dn z. None for no potential.
         L : float
             Length in m of the nonlinear medium
         NX : int, optional
@@ -199,9 +202,9 @@ class NLSE(StepSize):
         wvl : float
             Wavelength in m
         backend : str, optional
-            Backend name ("CPU", "CUPY", "CL", or "auto").
-            When "auto", automatically selects the fastest backend for your hardware.
-            Defaults to __BACKEND__.
+            Backend name: "CPU", "CUPY", "CL", "MLX" or "auto" (the installed
+            one with the fastest transform at this grid size). Defaults to
+            the backend NLSE picked when it was imported.
         """
         # list of physical parameters
         self._backend: Backend = get_backend(backend, grid_size=(NX, NY))

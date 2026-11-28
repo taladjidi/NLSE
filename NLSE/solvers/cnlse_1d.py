@@ -58,7 +58,9 @@ class CNLSE_1d(CNLSE):
         omega : float, optional
             Rabi coupling. Defaults to None.
         backend : str, optional
-            "GPU" or "CPU". Defaults to __BACKEND__.
+            Backend name: "CPU", "CUPY", "CL", "MLX" or "auto" (the installed
+            one with the fastest transform at this grid size). Defaults to
+            the backend NLSE picked when it was imported.
 
         """
         super().__init__(

@@ -271,9 +271,9 @@ entirely: **104 B/point becomes 88**, and a load callback on the inverse could
 take the nonlinear step too, for **72**. On a backend already at the bandwidth
 bound that is close to a straight 15–30%.
 
-`benchmarks/cufft_callback_probe.py` asks the four questions that decide
-whether it can be built, none of which can be answered on a machine without an
-NVIDIA GPU:
+`benchmarks/cufft_callback_probe.py` (deleted since) asked the four questions
+that decide whether it can be built, none of which can be answered on a
+machine without an NVIDIA GPU:
 
 1. Is `cupy.fft.config.set_cufft_callbacks` there at all? It is experimental,
    compiles the callback with nvcc and links cufft statically, so it needs a

@@ -131,6 +131,12 @@ The returned field `E_out` is in physical units (V/m for optical solvers). It
 is a NumPy array when `E_in` was one, and stays on the device when `E_in` was a
 device array.
 
+`DDGPE.out_field(E_in, t, laser_excitation, ...)` differs. The time `t`
+replaces `z`, and the pump is a required third argument (`None` for
+`DDGPE.laser_excitation`). There is no `method` and no `normalize`: the field
+is never rescaled. `callback_args` is a list with one tuple per callback, the
+pump's first. `examples/ddgpe.py` is a complete run.
+
 ### Coordinate Grids
 
 After initialization, the solver provides coordinate arrays:
