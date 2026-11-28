@@ -41,23 +41,24 @@ do not look for another way.
 | Benchmark waits on what lazy transforms return (MLX was timed doing nothing) | `3dfc28f` |
 | Docs: gallery cached in CI; page review along Diataxis | `18f4cc7`, `3bd8af5` |
 
-Last full suites: Mac (CPU, OpenCL, MLX) 2352 passed, 221 skipped, 88 deselected at
-`fix/callback-step-count`; box, combined environment (CuPy and OpenCL), 2466
+Last full suites: Mac (CPU, OpenCL, MLX) 2360 passed, 221 skipped, 88 deselected at
+`fix/bench-tools`; box, combined environment (CuPy and OpenCL), 2466
 passed, 104 skipped, none failed, six times and once with
 `NLSE_FUSE_PROPAGATOR=0`, at `77edad9` (2026-11-28,
 `~/Documents/nlse_main_77edad9/run*.txt` there). Each box run also reports
 12 errors, all of `tests/test_packaging.py`: `nlse_env_both` has no
 hatchling. Not run on CuPy since `77edad9`: the second docs round (text and
 docstrings) and the step-count fix (the loop is Python, the same on every
-backend).
+backend). The benchmark tools ran there on their own (their entry below).
 
 ### Resume here (written 2026-11-28)
 
-`main` is pushed; its last code change is `fix/callback-step-count`. Last
-full suite on the Mac there: 2352 passed, 221 skipped, 88 deselected (two tests
-added; and five cases fewer than a tree with a local Sphinx build used to
-run: `tests/test_doc_claims.py` swept `docs/_build` too, which no clean
-checkout has. It no longer does).
+`main` is pushed; its last code change is `fix/callback-step-count`, its
+last merge `fix/bench-tools` (tools and tests only). Last full suite on the
+Mac there: 2360 passed, 221 skipped, 88 deselected. Against the 2355 of
+`fix/arch-review`: ten tests added, and five cases fewer than a tree with a
+local Sphinx build used to run (`tests/test_doc_claims.py` swept
+`docs/_build` too, which no clean checkout has; it no longer does).
 Orders from the owner for the night of
 2026-11-27: "run independently tonight : debloating, docs, and review.
 Iterate over this. Also when reviewing ignore the previous context to be
@@ -71,8 +72,9 @@ was decided alone is under "Decided alone" below.
    solvers (two fix rounds), the backends, the docs pages (round 1), the
    kernels (rounds 1 and 2), the test suite's four MAJOR gaps, `examples/`
    and `benchmarks/` (round 1), the architecture review, the second docs
-   round and the step count of the callback loop below. The examples'
-   debloat candidates are dismissed (see that round's entry).
+   round, the step count of the callback loop and the benchmark tools
+   below. The examples' debloat candidates are dismissed (see that round's
+   entry).
    - **Docs, round 2** (fresh context, the pages and the public docstrings
      against the code; `docs/review-round-2`, 2026-11-28). Five MAJORs,
      each checked before it was fixed:
@@ -143,6 +145,65 @@ was decided alone is under "Decided alone" below.
      `L`, no RK4, no adaptive callback, no non-local run without a
      callback: the reviewer ran those by hand); the subclasses share the
      loop and were not run by hand.
+   - **Benchmark tools** (fresh context, `trace_solvers.py`,
+     `nsys_summary.py` and the benchmark tests, which round 1 had not
+     opened; `fix/bench-tools`, 2026-11-28). Two CRITICALs and two MAJORs,
+     each reproduced before it was fixed:
+     - `trace_solvers.py` raised `TypeError` on every CPU case (its
+       transform wrappers dropped `normalize`) and still exited 0. The
+       wrappers forward their keywords; a failed case makes the exit 1.
+     - `trace_solvers.py` and `propagator_fusion.py` asked 1e-4 m at every
+       size, which the solver lowers: 1.79 times the steps asked at 1024²,
+       7.18 at 2048², 28.7 at 4096² (`_current_delta_z` after three steps,
+       NLSE and CNLSE), and every per-step figure too high by that. Both
+       take `profile_backends.step_for` now and `check_step_kept` raises
+       if the solver lowers it anyway. `propagator_fusion.py` was not in
+       the review: found by me, the same defect. The log's fusion table
+       is older than the limit (2026-07-31 against `d28d9aa`, 2026-08-04)
+       and stands: the fixed tool reads 0.126, 0.557 and 2.242 ms unfused
+       on the box against its 0.125, 0.556 and 2.269.
+     - `nsys_summary.py` printed a kernel/API ratio of 0.00 and "the GPU
+       is waiting" when the kernel table was missing.
+     - `TestKernelsAcrossBackends` timed MLX building a lazy graph, and
+       the copy back to the host on every backend: `_run_kernel` forces
+       the result and the copy is outside the timing.
+   - Benchmark tools, the fixes' fresh review: FIX-FIRST. One MAJOR
+     confirmed and fixed: `--backends CUPY` on the Mac printed a CUPY row
+     that was an MLX run (the solver falls back with a warning), exit 0;
+     `build` raises now. One MAJOR refuted: the fusion table (above).
+     Fixed with it: `--methods` takes only `split_step` and `RK4` (any
+     other name ran split-step under its own label); the no-ratio wording;
+     one `BACKEND` constant in `propagator_fusion.py`. That second fix
+     was read by me, not by a third reviewer. On the box (CuPy and
+     OpenCL): `tests/test_benchmarks.py` 46 passed; the tracer on CPU,
+     CUPY and CL at 1024², exit 0; the fusion benchmark at 512² to 2048².
+     Not run: `nsys_summary.py` on a real `nsys` capture, `--nvtx`,
+     `--no-cuda-graph`. Left, all MINOR:
+     - `check_step_kept` does not see a remainder step: for 512 < N < 724
+       200 steps pass `L` and the run takes 201 (the reviewer's run at
+       600). Exact at powers of two.
+     - `profile_backends.build` falls back as silently as the tracer did
+       (it also drives old revisions, which name their backend otherwise).
+       `trace_solvers.build` and `input_field` duplicate its two.
+     - `nsys_summary.py`: `parse` hard-codes `"Time (%)"` (another header
+       gives no rows, silently); `"," in stdout` can take an error message
+       for a table; `traced_run` looks for kernel names the fused CUPY
+       paths never emit; `--from-csv` labels any CSV as kernel time; no
+       test of `summarise_kernels` or `traced_run` (five of six mutants
+       lived).
+     - `trace_solvers.py`: kernel calls outside the steps are counted
+       twice (the rows sum to about 101%); 1D cases are labelled `NxN`;
+       untraced is the best of 3 runs, traced a single one; `_forceable`
+       forces only `out[0]`; nested defs in `tracing`,
+       `without_cuda_graph` and `TracingKernels.__getattr__`; `STEP_KEY`
+       mid-file; no test of `--plain`, of the coupled and 1D paths, or of
+       a real lowered step at 1024² (the tests patch `step_for`).
+     - `tests/benchmarks/test_benchmark_profile.py`: lowercase constants
+       without units; `TestKernelBenchmark` times `.copy()` calls.
+     - Debloat candidates: `plain_loop` duplicates `plain`;
+       `skip_if_backend_unavailable` can never fire (about 20 calls); the
+       skipped DDGPE benchmark (about 50 lines); `_field` duplicates
+       `_gaussian_field_2d`; six kernel tests could be one parametrized.
    - Dead code: `vulture` at 60% on `NLSE/` and `benchmarks/` names seven
      things, none dead (numba overloads, public methods, an availability
      import).
@@ -518,9 +579,9 @@ was decided alone is under "Decided alone" below.
     gallery example is one file).
   - Dismissed: a MAJOR on `rayleigh_taylor.py` (false, V is minus a
     potential energy there); `NOISE = 0.0` is deliberate.
-  - Not opened: `trace_solvers.py`, `nsys_summary.py`,
-    `tests/benchmarks/test_benchmark_profile.py`, the docs pages that quote
-    the examples, any CuPy path.
+  - Not opened then: `trace_solvers.py`, `nsys_summary.py`,
+    `tests/benchmarks/test_benchmark_profile.py` (reviewed since: "Benchmark
+    tools" above), the docs pages that quote the examples, any CuPy path.
 - **Decided alone** (revert what does not suit): the DDGPE example's pump
   and decay; a drift test for the loss model rather than one source; fixes
   of three files or more made inline where each file's change was a line or
@@ -1101,9 +1162,10 @@ Known before the profiles:
 
 - The solver lowers a step past its limits, so a run can take more steps than
   it was asked for. Count the steps taken. `profile_backends.step_for` is now
-  under both limits; `benchmarks/trace_solvers.py` and
-  `benchmarks/propagator_fusion.py` still ask 1e-4 m at every size, which
-  split-step lowers at 1024² and above (1.79 steps per step asked).
+  under both limits, and since 2026-11-28 `benchmarks/trace_solvers.py` and
+  `benchmarks/propagator_fusion.py` take it and raise if the solver lowers
+  the step (they asked 1e-4 m at every size: 1.79 steps per step asked at
+  1024²).
 - A call costs many steps. One `out_field` call of one step on CuPy at 2048²,
   solver already run: 37.7 ms for NLSE split step (a step is about 1.95 ms),
   54.4 ms for RK4 (9.9 ms a step), 109.8 and 181.3 ms for CNLSE. Table in the

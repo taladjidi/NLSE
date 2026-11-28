@@ -30,12 +30,13 @@ import time
 import numpy as np
 from NLSE import CNLSE, NLSE
 from NLSE.backends import get_backend
+from profile_backends import check_step_kept, step_for
 
 WAIST = 2.23e-3
 POWER = 1.05
 N2 = -1.6e-9
 ISAT = 1e5
-DELTA_Z = 1e-4
+BACKEND = "CUPY"  # the only backend with a store callback
 STEPS_LOW = 20
 STEPS_HIGH = 220
 ROUNDS = 4
@@ -55,7 +56,7 @@ def build(cls, n):
         "Isat": ISAT,
         "NX": n,
         "NY": n,
-        "backend": "CUPY",
+        "backend": BACKEND,
     }
     if cls is CNLSE:
         kwargs["n12"] = N2 / 10
@@ -71,18 +72,25 @@ def field(cls, n, dtype):
 
 
 def time_run(cls, n, steps, dtype, **kw):
-    """Return the wall time of a propagation of this many steps."""
+    """Return the wall time of a propagation of this many steps.
+
+    Raises if the solver lowered the step: the slope would then be the cost
+    of more than one step.
+    """
     simu = build(cls, n)
     E = field(cls, n, dtype)
+    delta_z = step_for(simu)
     start = time.perf_counter()
-    simu.out_field(E, steps * DELTA_Z, delta_z=DELTA_Z, verbose=False, plot=False, **kw)
-    return time.perf_counter() - start
+    simu.out_field(E, steps * delta_z, delta_z=delta_z, verbose=False, plot=False, **kw)
+    elapsed = time.perf_counter() - start
+    check_step_kept(simu, delta_z)
+    return elapsed
 
 
 def per_step(cls, n, fuse, dtype, **kw):
     """Return the cost of one step, as the slope between two step counts."""
     os.environ["NLSE_FUSE_PROPAGATOR"] = "1" if fuse else "0"
-    get_backend("CUPY").clear_fft_plans()
+    get_backend(BACKEND).clear_fft_plans()
     # Once through at the low count first: the first run of a size compiles
     # kernels and the callback, which belongs to neither point on the line.
     time_run(cls, n, STEPS_LOW, dtype, **kw)
@@ -94,10 +102,11 @@ def per_step(cls, n, fuse, dtype, **kw):
 def fused_kinds(cls, n, dtype, **kw):
     """Return what the plan ended up fusing, to prove the run took the path."""
     os.environ["NLSE_FUSE_PROPAGATOR"] = "1"
-    get_backend("CUPY").clear_fft_plans()
+    get_backend(BACKEND).clear_fft_plans()
     simu = build(cls, n)
+    delta_z = step_for(simu)
     simu.out_field(
-        field(cls, n, dtype), 3 * DELTA_Z, delta_z=DELTA_Z, verbose=False, plot=False
+        field(cls, n, dtype), 3 * delta_z, delta_z=delta_z, verbose=False, plot=False
     )
     fused = getattr(simu.plans[0], "_fused", {})
     return ",".join(fused) or "none"
