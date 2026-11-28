@@ -39,6 +39,13 @@ FROZEN_FIELD = 1.5 + 0.5j
 FROZEN_N = 8
 # Float32 exponentials of order-one arguments: measured 2.5e-8 (CPU), 1.2e-7 (MLX).
 FROZEN_RTOL = 1e-6
+# The step's closed form holds |A|^2 at its entry value: 2.5, so sat = 4/9.
+FROZEN_INTENSITY = abs(FROZEN_FIELD) ** 2
+FROZEN_SAT = 1 / (1 + FROZEN_INTENSITY / FROZEN_ISAT)
+# The two other cases the same closed form covers: no loss (1/m), where holding
+# |A|^2 is exact, and no potential (rad/m), which takes the kernels without V.
+LOSSLESS = 0.0
+NO_POTENTIAL = 0.0
 # A CNLSE lossy on its second component only, 1/m, on a uniform field at the
 # saturation intensity. The step asked takes u = 2 * alpha2 * dz = 1 a step,
 # twenty times LOSS_PER_STEP_LIMIT; the coupled kernels freeze the step.
@@ -188,28 +195,73 @@ def test_a_lossless_run_is_not_capped_by_the_loss_ceiling():
     )
 
 
-def test_a_frozen_step_applies_loss_interaction_and_potential(backend):
-    """Past the solved range the step is ``exp(dz (-alpha s + i g |A|^2 s + i V))``.
+def step_once(implementation, fused, alpha, potential):
+    """Take one real-space step of a uniform ``FROZEN_FIELD``.
+
+    Parameters
+    ----------
+    implementation : Backend
+        Backend whose kernels take the step.
+    fused : bool
+        Whether the kernel computes ``|A|^2`` itself (``square_mod_nl_prop*``)
+        or is handed it (``nl_prop*``).
+    alpha : float
+        Loss, in the kernel's 1/m.
+    potential : float
+        Uniform potential, rad/m; ``NO_POTENTIAL`` takes the kernel without V.
+
+    Returns
+    -------
+    np.ndarray
+        The field after the step, on the host.
+    """
+    shape = (FROZEN_N, FROZEN_N)
+    kernels = implementation.kernels
+    field = implementation.from_numpy(np.full(shape, FROZEN_FIELD, dtype=np.complex64))
+    V = implementation.from_numpy(np.full(shape, potential, dtype=np.float32))
+    A_sq = implementation.from_numpy(np.full(shape, FROZEN_INTENSITY, np.float32))
+    scalars = (FROZEN_DZ, alpha, FROZEN_G, FROZEN_ISAT)
+    if fused and potential == NO_POTENTIAL:
+        out = kernels.square_mod_nl_prop(field, *scalars)
+    elif fused:
+        out = kernels.square_mod_nl_prop_v(field, V, *scalars)
+    elif potential == NO_POTENTIAL:
+        out = kernels.nl_prop_without_V(field, A_sq, *scalars)
+    else:
+        out = kernels.nl_prop(field, A_sq, FROZEN_DZ, alpha, V, FROZEN_G, FROZEN_ISAT)
+    return np.asarray(implementation.to_numpy(out))
+
+
+@pytest.mark.parametrize("fused", [False, True], ids=["nl_prop", "square_mod"])
+@pytest.mark.parametrize("potential", [NO_POTENTIAL, FROZEN_V], ids=["no_V", "V"])
+@pytest.mark.parametrize("alpha", [LOSSLESS, FROZEN_ALPHA], ids=["lossless", "frozen"])
+def test_a_frozen_step_applies_loss_interaction_and_potential(
+    backend, fused, alpha, potential
+):
+    """Unsolved, the step multiplies by ``exp(dz (-alpha s + i g |A|^2 s + i V))``.
+
+    Exact without loss, where ``|A|^2`` is constant; past the solved range, the
+    step that holds ``|A|^2`` at its entry value. Every sign and term shows.
 
     Parameters
     ----------
     backend : str
         Backend to run on.
+    fused : bool
+        Whether the kernel computes ``|A|^2`` itself.
+    alpha : float
+        Loss, 1/m: ``LOSSLESS`` or ``FROZEN_ALPHA``, past the solved range.
+    potential : float
+        Uniform potential, rad/m.
     """
-    implementation = get_backend(backend)
-    shape = (FROZEN_N, FROZEN_N)
-    field = implementation.from_numpy(np.full(shape, FROZEN_FIELD, dtype=np.complex64))
-    V = implementation.from_numpy(np.full(shape, FROZEN_V, dtype=np.float32))
-    out = implementation.kernels.square_mod_nl_prop_v(
-        field, V, FROZEN_DZ, FROZEN_ALPHA, FROZEN_G, FROZEN_ISAT
-    )
-
-    intensity = abs(FROZEN_FIELD) ** 2
-    sat = 1 / (1 + intensity / FROZEN_ISAT)
-    exponent = -FROZEN_ALPHA * sat + 1j * (FROZEN_G * intensity * sat + FROZEN_V)
-    expected = np.full(shape, FROZEN_FIELD * np.exp(FROZEN_DZ * exponent))
+    out = step_once(get_backend(backend), fused, alpha, potential)
+    decay = np.exp(-alpha * FROZEN_SAT * FROZEN_DZ)
+    phase = FROZEN_DZ * (FROZEN_G * FROZEN_INTENSITY * FROZEN_SAT + potential)
     np.testing.assert_allclose(
-        np.asarray(implementation.to_numpy(out)), expected, rtol=FROZEN_RTOL
+        np.abs(out), abs(FROZEN_FIELD) * decay, rtol=FROZEN_RTOL, err_msg="loss"
+    )
+    np.testing.assert_allclose(
+        np.angle(out / FROZEN_FIELD), phase, rtol=FROZEN_RTOL, err_msg="phase"
     )
 
 
