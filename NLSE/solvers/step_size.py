@@ -28,6 +28,11 @@ import numpy as np
 # imaginary axis. Every solver's step limit is derived from it.
 RK4_STABILITY_RADIUS = 2.83
 
+# Phase per step, at the peak, past which RK4 diverges on the cubic term
+# alone: psi' = -i|psi|^2 psi from |psi| = 1 blows up from a step of 1.547
+# (tests/solvers/test_solver_state.py iterates that map), rounded down.
+RK4_CUBIC_RADIUS = 1.5
+
 # Phase per step the linear step may put on the shortest resolved wave before
 # split-step goes unstable on a finite background (Weideman and Herbst, SIAM J.
 # Numer. Anal. 23, 485 (1986)). On a vortex dipole: unstable from 1.6 rad,
@@ -101,7 +106,9 @@ class StepSize:
         operator. A maximum is a property of the grid, not of the solution: a
         tall potential in a corner the field never reaches, or a high-K corner
         with no spectral weight, would set the step for a run it has no effect
-        on. Weighting by the field follows the physics instead.
+        on. Weighting by the field follows the physics instead. The potential
+        is weighted by its magnitude: a signed one whose mean over the beam
+        vanishes still turns the phase where the beam is.
 
         Parameters
         ----------
@@ -196,7 +203,7 @@ class StepSize:
             host_V = self._as_host_array(V_scaled)
             real_name, imag_name = POTENTIAL_GRIDS
             real_V = self._grid_on_device(
-                real_name, np.real(host_V), real_dtype, A.shape
+                real_name, np.abs(np.real(host_V)), real_dtype, A.shape
             )
             imag_V = self._grid_on_device(
                 imag_name, np.abs(np.imag(host_V)), real_dtype, A.shape
@@ -284,7 +291,7 @@ class StepSize:
         if V_scaled is None:
             potential = absorption = 0.0
         else:
-            potential = float(np.sum(weight * np.real(V_scaled)) / total)
+            potential = float(np.sum(weight * np.abs(np.real(V_scaled))) / total)
             absorption = float(np.sum(weight * np.abs(np.imag(V_scaled))) / total)
 
         g = self._as_host_array(self._constant("_g"))
@@ -408,8 +415,10 @@ class StepSize:
         The linear terms count by their maximum over the grid, not by the
         field-weighted rates of ``_energy_rates``: past the radius RK4
         amplifies whatever a mode holds, and round-off puts something in
-        every mode. The absorption of a complex potential counts too, unlike
-        in ``_split_step_max_dz``: split-step applies it exactly.
+        every mode. The interaction counts at its peak too, and against
+        ``RK4_CUBIC_RADIUS``: the cubic term diverges well inside the linear
+        radius. The absorption of a complex potential counts, unlike in
+        ``_split_step_max_dz``: split-step applies it exactly.
 
         Parameters
         ----------
@@ -429,7 +438,8 @@ class StepSize:
         if A is not None:
             if rates is None:
                 rates = self._energy_rates(A)
-            rate += rates["interaction"] + rates["loss"]
+            cubic = RK4_STABILITY_RADIUS / RK4_CUBIC_RADIUS
+            rate += cubic * self._max_interaction_rate(A) + rates["loss"]
         if rate == 0:
             return np.inf
         return RK4_STABILITY_RADIUS / rate

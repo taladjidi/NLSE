@@ -32,7 +32,9 @@ class NLSE_1d(NLSE):
         alpha : float
             Intensity loss in 1/m: I = I0 exp(-alpha z).
         power : float
-            Power in W.
+            Power in W, of a beam taken as ``delta_X`` thick: the field is
+            scaled so that ``c eps0 / 2 * sum(|E|^2) * delta_X**2`` is the
+            power, and the peak intensity at fixed power grows with ``NX``.
         window : float
             Computational window in m.
         n2 : float

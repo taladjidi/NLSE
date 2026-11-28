@@ -34,7 +34,8 @@ class CNLSE_1d(CNLSE):
             Alpha through the cell.
         power : float
             Optical power of each component in W; `power2` sets the second
-            component's afterwards.
+            component's afterwards. As in `NLSE_1d`, of a beam ``delta_X``
+            thick: the peak intensity at fixed power grows with ``NX``.
         window : float
             Computational window in m.
         n2 : float

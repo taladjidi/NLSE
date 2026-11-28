@@ -139,8 +139,8 @@ def adapt_delta_z(
 
     This callback will update the simulation step size every update_every steps by
     computing the nonlinear refractive index change and adjusting the step size
-    accordingly. Never past the split-step limit, ``_split_step_max_dz``, which
-    ``adapt_delta_z_to_error`` is held to as well.
+    accordingly. Never past the limit of the scheme the run uses,
+    ``_max_dz_in_force``, which ``adapt_delta_z_to_error`` is held to as well.
 
     A callback changes the step by returning it. The loop rebuilds the
     propagator to match before taking the next step; assigning the step
@@ -179,7 +179,7 @@ def adapt_delta_z(
     if peak == 0:
         # The nonlinear length is infinite, which is not a step.
         return None
-    return min(1 / (STEPS_PER_NONLINEAR_LENGTH * peak), simu._split_step_max_dz(A))
+    return min(1 / (STEPS_PER_NONLINEAR_LENGTH * peak), simu._max_dz_in_force(A))
 
 
 def _trial_propagation(simu: NLSE, A: np.ndarray, step: float, count: int):
@@ -243,7 +243,8 @@ def adapt_delta_z_to_error(
 
         h_new = h * (tolerance / error) ** (1 / (p + 1))
 
-    with p = 2 for the Strang splitting the loop runs.
+    with p = 2: the trial steps are Strang's, whatever scheme the run takes.
+    Only the cap follows the scheme.
 
     It costs three extra steps each time it fires, 15% at the default
     ``update_every``, and as a callback it puts the run on the loop that
@@ -309,7 +310,7 @@ def adapt_delta_z_to_error(
     # Capped at the physical limit: in complex64 the error estimate can read
     # round-off as no error at all, so any tolerance above that floor keeps doubling
     # the step. The cap follows the current field and tightens as a beam focuses.
-    cap = simu._split_step_max_dz(A)
+    cap = simu._max_dz_in_force(A)
     # Absolute, not relative to the step in force: a relative floor shrinks with
     # the step and never binds. Not the round-off optimum either, which is far too
     # coarse on a field with spectral content (see DEFAULT_PHASE_PER_STEP).

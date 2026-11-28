@@ -142,6 +142,9 @@ class NLSE(StepSize):
     # Step the loop takes next. It is not the one just taken when that one was
     # cut to land on L or z, and it is the one a controller has to scale.
     _step_in_force: float | None = None
+    # Method and splitting of the last run started, for the limit a callback
+    # holds its step to (_max_dz_in_force). Written by out_field.
+    _scheme_in_force: tuple[str, str] = ("split_step", "lie")
     # Distance the run in progress covers, for a callback that needs a length
     # where the solver has no medium (L = 0). Written by the callback loop.
     _run_distance: float = 0.0
@@ -421,11 +424,10 @@ class NLSE(StepSize):
             rates = self._energy_rates(A)
             if delta_z is None:
                 delta_z = self._default_delta_z(A, method, z, rates)
+            self._scheme_in_force = (method, splitting)
             delta_z = self._capped_delta_z(delta_z, A, method, rates)
             if splitting == "yoshida":
-                # The phase limits are written per real-space application, and
-                # Yoshida's longest sub-step is 1.7 times the step itself.
-                yoshida_max = self._split_step_max_dz(A, rates) / YOSHIDA_SPAN
+                yoshida_max = self._max_dz_in_force(A, rates)
                 delta_z = math.copysign(min(abs(delta_z), yoshida_max), delta_z)
 
             # The propagator depends on delta_z, k, the grid and the precision,
@@ -2515,7 +2517,8 @@ class NLSE(StepSize):
             return _step
 
         is_scalar_n2 = isinstance(self.n2, (int, float, np.floating))
-        can_use_fast_loop = callback is None and is_scalar_n2 and self.nl_length == 0
+        no_callback = callback in (None, [], ())
+        can_use_fast_loop = no_callback and is_scalar_n2 and self.nl_length == 0
         # Zeroing the nonlinearity mutates self, so restore it afterwards.
         saved = {attr: getattr(self, attr) for attr in self._medium_attrs}
         try:
@@ -2744,6 +2747,32 @@ class NLSE(StepSize):
             self._update_propagator_fft()
         return requested
 
+    def _max_dz_in_force(
+        self, A: np.ndarray, rates: dict[str, float] | None = None
+    ) -> float:
+        """Return the largest step of the scheme the last run started uses.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            Normalized field (possibly on device).
+        rates : dict or None
+            ``_energy_rates(A)``, if the caller already has it.
+
+        Returns
+        -------
+        float
+            RK4's stability limit, or the split-step limit, divided by
+            ``YOSHIDA_SPAN`` for a Yoshida run.
+        """
+        method, splitting = self._scheme_in_force
+        if method == "RK4":
+            return self._rk4_max_dz(A, rates)
+        limit = self._split_step_max_dz(A, rates)
+        # The phase limits are written per real-space application, and
+        # Yoshida's longest sub-step is 1.7 times the step itself.
+        return limit / YOSHIDA_SPAN if splitting == "yoshida" else limit
+
     def _run_callbacks(self, callback, callback_args, A, z, i):
         """Dispatch user callbacks at each solver step.
 
@@ -2755,9 +2784,9 @@ class NLSE(StepSize):
             except the adaptive ones.
         """
         requested = None
-        if isinstance(callback, Callable):
+        if callable(callback):
             requested = callback(self, A, z, i, *callback_args)
-        elif isinstance(callback, list) and isinstance(callback[0], Callable):
+        elif isinstance(callback, (list, tuple)) and all(map(callable, callback)):
             # Left at its default, the arguments are none for every callback,
             # as for a single one; a list given must match in length.
             per_callback = callback_args if callback_args else [()] * len(callback)

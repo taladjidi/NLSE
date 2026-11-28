@@ -158,7 +158,7 @@ class CNLSE(NLSE):
         potential = 0.0
         for weight, total, V in ((w1, t1, V1_scaled), (w2, t2, V2_scaled)):
             if V is not None:
-                potential = max(potential, abs(mean(weight, total, np.real(V))))
+                potential = max(potential, mean(weight, total, np.abs(np.real(V))))
         rates["potential"] = potential
 
         rates["interaction"] = self._fastest_interaction_rate(

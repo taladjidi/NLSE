@@ -481,6 +481,23 @@ class TestCacheLoading:
         fastest = benchmark.get_fastest_backend(tuple(CACHED_GRID))
         assert fastest in list_available_backends()
 
+    @pytest.mark.parametrize(
+        ("installed", "measured"),
+        [(["CPU"], False), (["CPU", NOT_A_BACKEND], True)],
+        ids=["same backends", "one more backend"],
+    )
+    def test_a_cache_is_believed_for_the_backends_it_timed(
+        self, installed, measured, monkeypatch
+    ):
+        """A record that timed other backends than the installed ones is redone."""
+        record = valid_cache_record()  # times CPU alone
+        write_cache(json.dumps(cache_file(record)))
+        monkeypatch.setattr("NLSE.backends.list_available_backends", lambda: installed)
+        ran = Mock(return_value=record)
+        monkeypatch.setattr(benchmark, "benchmark_all_backends", ran)
+        assert benchmark.get_fastest_backend(tuple(CACHED_GRID)) == "CPU"
+        assert ran.called is measured
+
     def test_an_unusable_cache_directory_is_no_cache(self, tmp_path, monkeypatch):
         """A cache directory that cannot be made stops neither a read nor a write."""
         blocker = tmp_path / "a_file"

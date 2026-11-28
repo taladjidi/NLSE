@@ -587,7 +587,7 @@ class CUDAKernels:
             The propagated field A.
         """
         self.fft_propagate(plan, A, A, propagator)
-        if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
+        if unnorm_ifft:
             plan.ifft_unnorm(A, A)
         else:
             plan.ifft(A, A)
@@ -1216,7 +1216,7 @@ class CUDAKernels:
         # VkFFT, which the OpenCL backend gives a separate fft_oop, a cuFFT
         # plan is out-of-place already: plan.fft takes its output array.
         self.fft_propagate(plan, A_in, k, propagator)
-        if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
+        if unnorm_ifft:
             plan.ifft_unnorm(k, k)
         else:
             plan.ifft(k, k)
@@ -1232,7 +1232,7 @@ class CUDAKernels:
         VkFFT one the OpenCL backend gives a separate ``fft_oop``.
         """
         self.fft_propagate(plan, A_in, k, propagator)
-        if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
+        if unnorm_ifft:
             plan.ifft_unnorm(k, k)
         else:
             plan.ifft(k, k)
@@ -1489,7 +1489,7 @@ class CUDAKernels:
             )
 
         self.fft_propagate(plan, A, A, propagator)
-        if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
+        if unnorm_ifft:
             plan.ifft_unnorm(A, A)
         else:
             plan.ifft(A, A)
@@ -1588,7 +1588,7 @@ class CUDAKernels:
 
         # The transform moves A_in into k, so no copy precedes it.
         self.fft_propagate(plan, A_in, k, propagator)
-        if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
+        if unnorm_ifft:
             plan.ifft_unnorm(k, k)
         else:
             plan.ifft(k, k)

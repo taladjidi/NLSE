@@ -419,11 +419,14 @@ def get_fastest_backend(
     # Check cache first (unless forced)
     if not force_benchmark:
         cache = load_benchmark_cache(grid_size)
-        # No record for this grid, a name from another install, or none at
-        # all: measure again.
-        fastest = None if cache is None else cache.get("fastest")
-        if fastest in list_available_backends():
-            return fastest
+        available = list_available_backends()
+        # No record for this grid, or one that timed other backends than the
+        # ones installed here (a shared cache directory, a backend added
+        # since): measure again.
+        if cache is not None and set(cache["results"]) == set(available):
+            fastest = cache.get("fastest")
+            if fastest in available:
+                return fastest
 
     # Run benchmarks
     say(f"Benchmarking FFT backends on {grid_size[0]}x{grid_size[1]} grid...")

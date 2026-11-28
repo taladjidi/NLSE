@@ -41,8 +41,9 @@ do not look for another way.
 | Benchmark waits on what lazy transforms return (MLX was timed doing nothing) | `3dfc28f` |
 | Docs: gallery cached in CI; page review along Diataxis | `18f4cc7`, `3bd8af5` |
 
-Last full suites: Mac (CPU, OpenCL, MLX) 2496 passed, 187 skipped, 85 deselected at
-`perf/gpu-p4` (2382 and 221 on `main` before it); box, combined environment
+Last full suites: Mac (CPU, OpenCL, MLX) 2526 passed, 187 skipped, 85
+deselected at `fix/closing-review` (its box runs are in its entry, under
+"Resume here"); 2496 at `perf/gpu-p4` (2382 and 221 on `main` before it); box, combined environment
 (CuPy and OpenCL), 2620 passed, 57 skipped, none failed, six times and once
 with `NLSE_FUSE_PROPAGATOR=0`, at `01e15c8` (2026-11-28,
 `~/Documents/nlse_p4r2_scripts/results/suite_01e15c8_*.txt` there; 2466 and
@@ -55,8 +56,9 @@ merge included (timed there too: optimization log).
 
 ### Resume here (written 2026-11-28)
 
-`main` is pushed; its last change is `docs/short-docstrings` (text only,
-item 1 below), its last code change `perf/gpu-p4` (the four GPU
+`main` is pushed; its last change is `fix/closing-review` (item 3
+below), before it `docs/short-docstrings` (text only,
+item 1 below) and `perf/gpu-p4` (the four GPU
 patches, item 3 below; CI green on its merge `4a2ba41`, run 46115316410,
 every job), before it `test/review-findings` (tests only) and
 `chore/packaging-leftovers` (one `getattr` in `kernels/cpu.py`, and the
@@ -438,8 +440,6 @@ was decided alone is under "Decided alone" below.
      - `_backend_builders()[name][1]` is written in two test files.
      - `tests/conftest.py` leaks `_variable` as a module global.
    - From the architecture review, MINOR, not fixed:
-     - `callback=[]` raises `IndexError`, not `ValueError`
-       (`_run_callbacks`).
      - `cpu_tuning.py:803` reads `NLSE_CACHE_DIR` itself.
      - `any(getattr(p, "ndim", 0) > 0 ...)` is written in `nlse.py`,
        `cnlse.py` and `step_size.py`.
@@ -509,15 +509,23 @@ was decided alone is under "Decided alone" below.
        `step_cost`, `time_step` and `step_path`; `main` is 35 statements.
      - The 64x64 timing test raises "disturbed" on a loaded machine (25
        repeats on each backend did not).
-3. **Afterwards, the owner's earlier order.** Done: the GPU P4 patches
-   (entry below). Next, in order: thread counts per machine in the tuner (an
-   architect was writing `NLSE_tangui_fix_specs/cpu_threads_spec.md` and
-   `cpu_threads_T<n>.patch`, cut on `402601a`, when this was written: spec
-   review, one round back to it, then apply on a branch), the
-   increment-form linear step for complex64 (recommendation under "Packages
-   not built"; not built), the fewer-passes lessons on MLX and OpenCL, the
-   Mac profiles, a closing review pass and the final report. Version 5.0.0
-   is neither bumped nor published.
+3. **Afterwards, the owner's earlier order.** Done: the GPU P4 patches and
+   the closing review pass (entries below); the increment-form linear step
+   for complex64 as a recommendation ("Packages not built"). In progress,
+   in order:
+   - Thread counts per machine: built on `perf/cpu-pcore-threads` (three
+     commits on `fcfba4a`; spec `NLSE_tangui_fix_specs/cpu_pcores_spec.md`),
+     read by a fresh reviewer (pass, MINOR only), not merged: the gains
+     are the architect's, to be measured again with `cpu_pcores_ab.py`
+     there before the merge.
+   - Fewer passes on OpenCL: measured, not built (a separable propagator
+     is 1.03 to 1.05 times a step on the box, 0.85 at 1024² on Apple's
+     OpenCL); the optimization log does not have the entry yet. On MLX:
+     not measured, `NLSE_tangui_fix_specs/sep_prop_mlx.py <tree> 1024
+     2048 4096` on an idle Mac (`sep_prop_cl.py` is the OpenCL one).
+   - The Mac profiles: not started. The final report: a first one was
+     given to the owner on the morning of 2026-11-28, before these.
+   Version 5.0.0 is neither bumped nor published.
    - **GPU P4** (`perf/gpu-p4`, 2026-11-28). Four commits, one per task of
      `NLSE_tangui_fix_specs/gpu_p4_r2_spec.md` (patches
      `gpu_p4_r2_T1..T4.patch`, rebased on `402601a` by an architect after a
@@ -575,6 +583,79 @@ was decided alone is under "Decided alone" below.
        (follow-up: fuse it into `coupled_nl_prop_c`); the `1.0` of the
        saturation formula stays a literal in the kernels; `.git/rr-cache`
        holds entries dated 2026-11-28 03:31 that no round claims.
+
+   - **Closing review** (`fix/closing-review`, 2026-11-28). Two fresh
+     reviewers read the whole tree, one the backends and kernels, one the
+     solvers and callbacks. Fixed, a commit each:
+     - `a5635a9`: a potential of both signs was rated by its mean over the
+       beam, which can vanish; the step limits take `|Re V|` now, on the
+       host path, the device path and `CNLSE`.
+     - `a15bf11`: RK4's bound counted the interaction weighted by the field,
+       against the linear radius 2.83. On the cubic term alone RK4 diverges
+       from 1.547 rad a step at the peak, so a Gaussian beam was allowed a
+       step about four times too long and came back NaN. It counts at its
+       peak now, against `RK4_CUBIC_RADIUS` = 1.5.
+     - `c43741d`: both adaptive callbacks stopped at the Lie and Strang
+       limit whatever ran. They take `_max_dz_in_force`: RK4's bound, or
+       the split-step limit, over `YOSHIDA_SPAN` under Yoshida. An RK4 run
+       given `splitting="yoshida"` is no longer cut to the Yoshida limit.
+     - `d6a517a`, `efe17de`: `callback=[]` raised `IndexError` and a tuple
+       `ValueError`. Both are taken; an empty one runs the fast loop.
+     - `1be7203`: `get_fastest_backend` believed a cache that had timed
+       other backends than the ones installed.
+     - `4a74dba`: the `hasattr(plan, "ifft_unnorm")` fall-throughs of
+       `kernels/cl.py` and `cupy_kernels.py` are gone (both plans have it).
+     - `c78ec04`: the 1D solvers' docstrings say what `power` means there
+       (the owner's question, under "Decided alone").
+     - Verified: the Mac gate (2526 passed, 187 skipped); the box suite at
+       the tree of `05b80bc`, 2651 passed and 57 skipped with the 13
+       packaging errors, then 2649 five times and once with
+       `NLSE_FUSE_PROPAGATOR=0` (`tests/test_packaging.py` deselected), and
+       2652 passed, 57 skipped at the branch head. Each fix reverted fails a test
+       named for it (nine mutants, then three for the second round).
+     - A third fresh reviewer read the branch: no CRITICAL, two MAJORs,
+       fixed (`09c9ddb`: three docs pages still gave the old limits;
+       `26ffcd1`: nothing ran a scheme through `out_field` at its limit,
+       so recording `(method, "lie")` passed). It could not run CuPy.
+     - Left, MINOR:
+       - `adapt_delta_z_to_error` measures Strang's error whatever runs
+         (its trial steps are Strang's); the page and the docstring say so.
+       - The margin is thin: 1.5 against a threshold of 1.5461 (the
+         reviewer's bisection), the callbacks cap at the bound itself and a
+         fixed `delta_z` is not checked again as a beam focuses. A peak
+         that grows by more than 3% after a step at the bound could
+         diverge (plausible, not reproduced: Kerr, potential and loss runs
+         are finite at the bound and diverge at 1.2 times it).
+       - The choice between RK4 and split step is written twice
+         (`_max_dz_in_force`, `_capped_delta_z`), and `out_field`'s Yoshida
+         clip does nothing under RK4. `YOSHIDA_SPAN` lives in `nlse.py`, so
+         `_max_dz_in_force` does too, not in `step_size.py`.
+       - Under RK4 an `adapt_delta_z` update reduces the rates and copies
+         the field to the host twice (once for the peak, once in the cap).
+       - `test_rk4_takes_the_potential_at_its_grid_maximum` and
+         `test_rk4_counts_the_interaction_and_the_loss` recompute the
+         formula they test; the map test and the Kerr run are the checks.
+       - `abs(potential)` is dead at two sites of `step_size.py`; `def
+         mean` is nested in `cnlse.py` (untouched code); a bare `5` in
+         `test_a_tuple_of_callbacks_is_called`.
+       - `get_fastest_backend` wants the exact set of backends where
+         `backends_by_speed` takes a half-filled cache: two environments
+         with different backends on one cache directory measure in turn,
+         and two machines with the same backends still share a record.
+     - From the two closing reviews, not taken:
+       - `execute_loop`'s capture has no `try/finally` (reproduced, nothing
+         observable follows); `np.int32(N)` past 2^31 elements.
+       - `_takes_blocked_step` checks no dtype: dismissed, the caller does.
+       - `_require_backend` moves a solver for its life: by design.
+       - Known already: the float32 normalisation constants, the 1D
+         solvers' `(1024, NX)` grids, DDGPE's batch noise, `_make_step`'s
+         nested closures, `_nonlocal_intensity` planning per step, the
+         stale `_current_delta_z`, `_step_in_force` and `_run_distance`.
+       - Debloat candidates, not started: a loop per simulation in place
+         of CuPy's broadcast branches (needs a CUDA timing proof); the
+         solvers' ones need a bit-equality proof each. Replacing the tuner
+         by a fixed rule is dismissed (the owner's rule: measured per
+         machine).
 
 #### Night of 2026-11-27: landed, decided, left
 
@@ -664,9 +745,8 @@ was decided alone is under "Decided alone" below.
     stored and never read.
   - `NLSE_1d` builds the 2D grids at the default `NY = 1024` (about 100 MB
     for `NX = 4096`) and benchmarks the backend at a 2D size.
-  - `callback=[]` raises `IndexError`; a later callback's returned step
-    silently overrides an earlier one. The step warning's `stacklevel=2`
-    points into `nlse.py`.
+  - A later callback's returned step silently overrides an earlier one.
+    The step warning's `stacklevel=2` points into `nlse.py`.
   - `_norm_grid_factor` and `_norm_constant` are float32: a complex128 run's
     power carries 3e-8. `_nonlocal_intensity` allocates `A * conj(A)` a step.
   - `_can_rate_on_device` builds a tuple whose first entry it never reads;
@@ -835,6 +915,15 @@ was decided alone is under "Decided alone" below.
   debloat with a timing proof; the review's test and the MLX wording were
   read by me only; the thread-count architect writes its patches itself
   (the tuner is judgment, not a brief for an implementer).
+- **Decided alone**, closing review (2026-11-28): the 1D solvers keep
+  their power convention, `delta_X**2` as the cell, so the beam is
+  `delta_X` thick and its peak intensity at a given power doubles with
+  `NX` (the owner's commit `e8893da`, 2024-03-29); documented, numerics
+  untouched. For the owner: (a) the cell `delta_X`, power in W/m,
+  breaking; (b) `delta_X * window`, breaking; (c) keep. The fixes were
+  written by me on a worktree, eighteen files, with no architect or
+  implementer, then read fresh; one commit message was corrected before
+  the push (a tuple of callbacks raised, it was not ignored).
 - **Decided alone**, docstrings (2026-11-28): written by me, no
   implementer (the new text is the whole job), and read by a fresh
   reviewer; the public `adapt_delta_z_to_error` shortened too, since

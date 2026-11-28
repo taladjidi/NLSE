@@ -162,7 +162,9 @@ lowered that way, and says so.
 **Split-step limit**: the smallest of three steps.
 
 - The step at which the potential and the interaction, weighted by the field,
-  imprint $\pi$ of phase.
+  imprint $\pi$ of phase. The potential counts by its magnitude: one of both
+  signs whose mean over the beam vanishes still turns the phase where the
+  beam is.
 - The step at which the shortest wave on the grid turns by
   `SPLIT_STEP_DISPERSION_PHASE_LIMIT` = 1 rad. On a vortex dipole the
   density stops converging between 1.3 and 1.6 rad (4.1.0 in the
@@ -174,7 +176,10 @@ lowered that way, and says so.
 imaginary axis, for $\lambda$ the sum of every rate RK4 integrates. Dispersion
 and the potential count at their largest on the grid, because past the radius
 RK4 amplifies whatever a mode holds and round-off puts something in every
-mode; the interaction and the loss count weighted by the field.
+mode. The interaction counts at its peak as well, and against
+`RK4_CUBIC_RADIUS` = 1.5 rather than the linear radius: on the cubic term
+alone, $\psi' = -i|\psi|^2\psi$, RK4 diverges from a phase of 1.547 rad per
+step. The loss counts weighted by the field.
 
 ## Propagator Caching
 
