@@ -56,6 +56,30 @@ come first.
 
 ### Fixed
 
+- **The RK4 step limit holds on the nonlinear term.** `method="RK4"` counted
+  the interaction weighted by the field and against the linear stability
+  radius, 2.83. RK4 diverges on the cubic term from 1.547 rad per step at
+  the peak, so a Gaussian beam was allowed a step about four times too
+  long and came back NaN. The interaction now counts at its peak, against
+  `RK4_CUBIC_RADIUS` = 1.5.
+
+- **`adapt_delta_z` and `adapt_delta_z_to_error` hold to the limit of the
+  scheme that runs.** Both stopped at the Lie and Strang limit whatever the
+  run: under Yoshida or RK4 they could ask for a step past the one
+  `out_field` itself would have refused.
+
+- **A potential of both signs limits the step.** The step limits took the
+  potential's mean over the beam, which vanishes for a potential as
+  positive on one side as negative on the other. They take its magnitude.
+
+- **`callback=[]` runs without a callback**, and a tuple of callables is
+  taken as a list is. An empty list raised `IndexError` at the first step.
+
+- **`backend="auto"` measures again when the installed backends changed.**
+  A cached benchmark that timed other backends than the ones installed,
+  one added since or a cache directory shared between machines, was
+  believed.
+
 - **A coupled Strang run without a callback keeps its cross coupling.**
   `CNLSE` and `CNLSE_1d` run with `splitting="strang"` and no callback took
   the merged path of the scalar solver, whose opening and closing half steps
