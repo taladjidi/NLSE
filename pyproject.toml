@@ -109,6 +109,10 @@ line-length = 88  # Enforce the default value
 # same finding twice and against a file nobody edits.
 extend-exclude = ["docs/auto_examples", "docs/api", "docs/_build"]
 
+[tool.ruff.format]
+# The pages align their comments by hand; the formatter would undo it.
+exclude = ["*.md"]
+
 [tool.ruff.lint]
 select = [
   "C",

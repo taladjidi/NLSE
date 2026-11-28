@@ -54,6 +54,37 @@ come first.
 
 ### Fixed
 
+- **A coupled Strang run without a callback keeps its cross coupling.**
+  `CNLSE` and `CNLSE_1d` run with `splitting="strang"` and no callback took
+  the merged path of the scalar solver, whose opening and closing half steps
+  apply neither `n12` nor the second component's loss. 4.0.0 and 4.1.0 both
+  do it: on 4.1.0 a ten-step run at 64² differs by 20% from the same run
+  stepped under a callback. Runs with a callback, a non-local interaction, a
+  Rabi coupling or a complex potential never merged and were right. The
+  coupled solvers no longer merge, so such a run does one more real-space
+  pass per step and still one transform pair.
+- **An RK4 run ignores `splitting`.** Given `splitting="strang"`, no callback
+  and a real potential, the fast loop bracketed the RK4 steps with the merged
+  split step's opening and closing half nonlinear steps, which nothing
+  closes: the field differed from the same run under `splitting="lie"`.
+  4.1.0 does it too. An RK4 run is no longer warned about a splitting it does
+  not use either.
+- **The second component's loss counts wherever the first's does.** The step
+  ceiling (`alpha2`, DDGPE's `gamma2`), RK4's stability bound and the
+  "Yoshida with loss" warning read `alpha` alone. A `CNLSE` lossy on its
+  second component stepped past the ceiling (4% off the closed-form decay
+  where the capped run is 0.2% off), and its RK4 bound was 6.4 times
+  looser than with the same loss on the first (`alpha2` = 5e3 /m, 16² grid:
+  6.15e-3 m against 9.56e-4 m).
+- **`adapt_delta_z` returns a step everywhere.** Past the medium, or with no
+  interaction, the peak phase rate is zero and the callback divided by it;
+  it now keeps the step in force. It also never asks for a step past the
+  split-step limit (it asked for 8.6e-5 m where a lossy medium is solved to
+  2.5e-5 m), and in the coupled solvers it counts the cross coupling.
+- **DDGPE's cavity loss stops at the end of the medium**, like the exciton's:
+  it kept damping to the end of the run. See "Changed" for `alpha2`.
+- **GPE leaves a saturation array alone.** A `sat` array passed to the
+  constructor was rescaled in place, so the caller's array changed.
 - **`backend="auto"` times MLX's transform.** The backend benchmark waited on
   the array it had passed in, and MLX's transforms are lazy and return a new
   one, so MLX was timed computing nothing (under 0.01 ms for a 2048²
@@ -126,12 +157,51 @@ come first.
   wrong dtype;** they were asserts. A callback list without `callback_args`
   gets empty arguments for each. `DDGPE.out_field` no longer changes the
   caller's callback list or, on CPU, the input field.
+- **`NLSE_BACKEND` naming a backend that is not installed falls back once,**
+  with a warning; it raised `RecursionError`. `benchmark_backend` times the
+  backend it is given, not the override.
+- **The benchmark cache keeps one record per grid size,** so two grids used
+  in turn no longer benchmark again at every switch.
+- **A CPU tuning that outlives its lock leaves it to the process that took
+  it over,** instead of removing it, and a forked child no longer inherits
+  its parent's tuning waits. A lock that cannot be read is left alone.
+- **`MLXBackend.ifft(..., normalize=False)` raises `ValueError`,** also
+  under `python -O`; it returned a normalized result.
+- **A one-value array parameter no longer sends the CPU kernels through the
+  field row by row.** `alpha=np.array([0.1])`, 100 steps at 256², complex64,
+  M3 Max: 2.69 s, now 52 ms, the time of the scalar.
+- **A coupled `split_step` called directly on a `complex128` field keeps the
+  potential's scale in double precision.** It rounded `k / 2` to float32,
+  2.8e-8 relative on the phase the potential gives; a run through `out_field`
+  was not affected.
+- **The `ddgpe` example pumps its cavity.** It ran with no pump and no loss
+  since 2024 and plotted zeros; the pump (3) and the decay (a linewidth of 0.07 meV)
+  it was written with are back.
+- **`examples/vortex_precession_benchmark.py` and `vortex_precession.jl` leave
+  the first run of each size out of their timings.** It compiled the kernels
+  and planned the transform, and the mean counted it as propagation.
+- **`benchmarks/profile_kernels.py` times the coupled fused kernels.** It
+  passed one cross constant where they take two, and reported a `TypeError`
+  for both.
 
 ### Changed
 
+- **A `complex128` field on a backend without double precision moves to the
+  fastest backend that has it, with a warning** (MLX, an OpenCL device
+  without fp64). It was computed in `complex64` without a word. The solver
+  stays on the backend it moved to.
+- **`DDGPE.gamma2` and `DDGPE.alpha2` are one value, the cavity loss.**
+  `alpha2` was inherited from `CNLSE` and read by nothing; setting it now
+  sets the cavity loss, and the cavity noise of `add_noise` stops past `T`
+  with it.
+- **`adapt_delta_z` may return a smaller step than before**, in a lossy or
+  dispersive medium where the split-step limit is the tighter, and in a
+  coupled run with `n12`. Each call now costs about one step (it measures
+  the rates the limit needs, one transform).
 - **Backend benchmark caches are measured again, once.** The CuPy timing now
   waits on the stream instead of copying the result to the host, so a cached
-  timing no longer compares with a new one; `CACHE_VERSION` 3 discards it.
+  timing no longer compares with a new one, and the file holds one record
+  per grid size; `CACHE_VERSION` 4 discards an older one.
 - **The README links to the guide instead of summarising it.** Its copies of
   the physics, the solvers, the callbacks, the step size and the backends had
   drifted from the pages they copied: it said the CUPY backend transforms

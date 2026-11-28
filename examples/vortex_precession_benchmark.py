@@ -79,7 +79,9 @@ for b, backend in enumerate(BACKENDS):
         simu.V = 4.31e-4 * np.exp(-2 * (simu.XX**2 + simu.YY**2) / waist**2).astype(
             np.float32
         )
-        for rep in range(navg):
+        # One more than is kept: the first run of a size compiles kernels and
+        # plans the transform, which is not the propagation's time.
+        for rep in range(-1, navg):
             t0 = time.perf_counter()
             simu.out_field(
                 E_0,
@@ -89,7 +91,8 @@ for b, backend in enumerate(BACKENDS):
                 splitting="lie",
                 delta_z=DELTA_Z,
             )
-            ts[b, i, rep] = time.perf_counter() - t0
+            if rep >= 0:
+                ts[b, i, rep] = time.perf_counter() - t0
         timing_string = f"Average time: {np.mean(ts[b, i]):.2f} s "
         timing_string += (
             f"(min: {np.min(ts[b, i]):.2f} s, max: {np.max(ts[b, i]):.2f} s)"

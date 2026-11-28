@@ -37,10 +37,10 @@ jobs:
               run: uv lock --check
 
             - name: Run ruff linter
-              run: uv run --locked --only-group dev ruff check NLSE/ tests/ examples/
+              run: uv run --locked --only-group dev ruff check NLSE/ tests/ examples/ benchmarks/ docs/
 
             - name: Check code formatting with ruff
-              run: uv run --locked --only-group dev ruff format --check NLSE/ tests/ examples/
+              run: uv run --locked --only-group dev ruff format --check NLSE/ tests/ examples/ benchmarks/ docs/
 
     type-check:
         name: Type Checking

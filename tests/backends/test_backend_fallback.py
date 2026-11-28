@@ -4,8 +4,10 @@ import warnings
 
 import numpy as np
 import pytest
+from helpers import as_numpy
 from NLSE import NLSE
 from NLSE.backends import (
+    CPUBackend,
     backends_by_speed,
     fastest_backend_supporting,
     get_backend,
@@ -13,6 +15,8 @@ from NLSE.backends import (
 )
 
 ALL_NAMES = ("CPU", "CUPY", "CL", "MLX")
+# Grid side, in points, of the solver below: any grid runs.
+N = 64
 MISSING = [n for n in ALL_NAMES if n not in list_available_backends()]
 
 
@@ -121,3 +125,32 @@ def test_every_available_backend_is_ranked():
 def test_a_requirement_nothing_meets_returns_nothing():
     """The caller has to be able to tell 'none' from 'the first one'."""
     assert fastest_backend_supporting(lambda backend: False, (64, 64)) is None
+
+
+class CPUWithoutDouble(CPUBackend):
+    """The CPU backend, answering as MLX does that it has no float64."""
+
+    def supports_double_precision(self) -> bool:
+        """Say there is no float64 here."""
+        return False
+
+
+def test_a_complex128_run_leaves_a_backend_without_float64():
+    """A complex128 field is not rounded to complex64: the run moves, and says so."""
+    simu = NLSE(
+        alpha=0,
+        power=1.05,
+        window=4 * 2.23e-3,
+        n2=-1e-9,
+        V=None,
+        L=1e-3,
+        NX=N,
+        NY=N,
+        backend="CPU",
+    )
+    simu._backend = CPUWithoutDouble()
+    field = np.ones((N, N), dtype=np.complex128)
+    with pytest.warns(UserWarning, match="does not support double precision"):
+        out = simu.out_field(field, 1e-3, verbose=False, plot=False)
+    assert simu._backend.supports_double_precision()
+    assert as_numpy(simu, out).dtype == np.complex128

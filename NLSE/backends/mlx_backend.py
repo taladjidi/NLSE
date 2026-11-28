@@ -110,8 +110,18 @@ class MLXBackend(Backend):
 
         MLX's inverse always normalizes, so this backend does not declare
         supports_unnormalized_ifft and is never asked to skip it.
+
+        Raises
+        ------
+        ValueError
+            If ``normalize`` is False: the result would be normalized anyway.
         """
-        assert normalize, "MLX cannot skip the inverse transform's 1/N"
+        if not normalize:
+            raise ValueError(
+                "MLX cannot skip the inverse transform's 1/N: its inverse "
+                "always normalizes. Ask for normalize=True, or use a backend "
+                "with supports_unnormalized_ifft."
+            )
         axes = plan[0]
         return mx.fft.ifftn(array, axes=axes)
 

@@ -18,8 +18,11 @@ from ..utils import machine_identity, say, write_json_atomically
 # Bumped whenever a cached timing stops meaning what it meant, so an older
 # cache is discarded rather than believed. 2: the CPU FFT moved from pyFFTW to
 # scipy. 3: the CUPY timing waits on the stream instead of copying to the host,
-# and the MLX one waits on the transform's result instead of its input.
-CACHE_VERSION = "3"
+# and the MLX one waits on the transform's result instead of its input. 4: one
+# record per grid size in the one file, so a second grid does not evict the first.
+CACHE_VERSION = "4"
+# How long a record is believed: drivers and libraries change under it.
+CACHE_MAX_AGE = timedelta(days=30)
 
 
 class BackendResult(TypedDict):
@@ -49,6 +52,29 @@ class BenchmarkResults(TypedDict):
     fastest: str | None
 
 
+class BenchmarkCache(TypedDict):
+    """The cache file: one record per grid size, keyed by ``_grid_key``."""
+
+    version: str
+    grids: dict[str, BenchmarkResults]
+
+
+def _grid_key(grid_size: tuple | list) -> str:
+    """Return the key a grid's record is cached under, as ``"NXxNY"``.
+
+    Parameters
+    ----------
+    grid_size : tuple or list
+        Grid dimensions.
+
+    Returns
+    -------
+    str
+        The dimensions joined by ``x``: JSON keys are strings.
+    """
+    return "x".join(str(n) for n in grid_size)
+
+
 def benchmark_backend(
     backend_name: str, grid_size: tuple[int, int], num_trials: int = 5
 ) -> float | None:
@@ -71,9 +97,9 @@ def benchmark_backend(
     """
     try:
         # Import here to avoid circular dependency
-        from . import get_backend
+        from . import _installed_backend
 
-        backend = get_backend(backend_name)
+        backend = _installed_backend(backend_name)
 
         # Allocate test array (initialized to zeros)
         dtype = np.dtype(np.complex64)
@@ -182,30 +208,30 @@ def benchmark_all_backends(
     return results
 
 
-def _is_cache_record(cache: Any) -> bool:
-    """Whether a decoded cache file has the fields read from it, typed as read.
+def _is_grid_record(record: Any) -> bool:
+    """Whether one grid's record has the fields read from it, typed as read.
 
     Parameters
     ----------
-    cache : Any
-        What ``json.load`` returned.
+    record : Any
+        One value of the cache file's ``grids``.
 
     Returns
     -------
     bool
         True if it is a record ``benchmark_all_backends`` could have written.
     """
-    if not isinstance(cache, dict):
+    if not isinstance(record, dict):
         return False
-    grid = cache.get("grid_size")
-    results = cache.get("results")
+    grid = record.get("grid_size")
+    results = record.get("results")
     return (
-        isinstance(cache.get("version"), str)
-        and isinstance(cache.get("timestamp"), str)
-        and isinstance(cache.get("platform"), dict)
+        isinstance(record.get("version"), str)
+        and isinstance(record.get("timestamp"), str)
+        and isinstance(record.get("platform"), dict)
         and isinstance(grid, list)
         and all(isinstance(n, int) for n in grid)
-        and isinstance(cache.get("fastest"), (str, type(None)))
+        and isinstance(record.get("fastest"), (str, type(None)))
         and isinstance(results, dict)
         and all(
             isinstance(entry, dict)
@@ -215,65 +241,122 @@ def _is_cache_record(cache: Any) -> bool:
     )
 
 
-def load_benchmark_cache() -> BenchmarkResults | None:
-    """Load cached benchmark results from disk.
+def _is_cache_record(cache: Any) -> bool:
+    """Whether a decoded cache file is one this version writes.
+
+    Parameters
+    ----------
+    cache : Any
+        What ``json.load`` returned.
 
     Returns
     -------
-    BenchmarkResults or None
-        Dictionary with cached results, or None if cache invalid/missing
+    bool
+        True if it is a ``BenchmarkCache`` of grid records.
+    """
+    if not isinstance(cache, dict):
+        return False
+    grids = cache.get("grids")
+    return (
+        isinstance(cache.get("version"), str)
+        and isinstance(grids, dict)
+        and all(_is_grid_record(record) for record in grids.values())
+    )
 
+
+def _read_cache_file(announce: bool) -> BenchmarkCache | None:
+    """Read the cache file, if it is one of this version.
+
+    Parameters
+    ----------
+    announce : bool
+        Say why a file is ignored. False where the caller replaces it anyway.
+
+    Returns
+    -------
+    BenchmarkCache or None
+        The file's records; None if it is missing, unreadable, of another
+        version or not of that form.
     """
     from ..utils import get_benchmark_cache_path
 
+    # OSError: the cache directory cannot be made, or the file read.
+    # ValueError: not JSON. RecursionError: JSON nested too deep.
     try:
         cache_path = get_benchmark_cache_path()
         if not cache_path.exists():
             return None
         with open(cache_path) as f:
             cache = json.load(f)
+    except (OSError, ValueError, RecursionError) as e:
+        if announce:
+            say(f"Warning: Invalid benchmark cache: {e}")
+        return None
 
-        if not _is_cache_record(cache):
-            say("Benchmark cache is not a record this version writes, ignoring it.")
-            return None
-
-        if cache["version"] != CACHE_VERSION:
+    if isinstance(cache, dict) and cache.get("version") != CACHE_VERSION:
+        if announce:
             say(
                 "Benchmark cache predates a change to what it timed, re-benchmarking..."
             )
-            return None
+        return None
+    if not _is_cache_record(cache):
+        if announce:
+            say("Benchmark cache is not a record this version writes, ignoring it.")
+        return None
+    return cache
 
-        # Recorded from the start and, like the version, never compared. A
-        # cache lives in the user's cache directory, which is inside a home
-        # directory that a lab machine and a laptop may well share, and the
-        # answer it holds is a statement about one machine's hardware.
-        cached_platform = cache["platform"]
-        here = machine_identity()
-        there = (cached_platform.get("system"), cached_platform.get("processor"))
-        if there != here:
-            say(
-                f"Benchmark cache was written on {there}, not {here}, re-benchmarking..."
-            )
-            return None
 
-        # Check if cache is stale (>30 days)
-        cache_time = datetime.fromisoformat(cache["timestamp"])
-        if datetime.now() - cache_time > timedelta(days=30):
-            say("Benchmark cache is stale (>30 days), re-benchmarking...")
-            return None
+def load_benchmark_cache(grid_size: tuple | list) -> BenchmarkResults | None:
+    """Load the cached benchmark results for one grid size.
 
-        return cache
+    Parameters
+    ----------
+    grid_size : tuple or list
+        Grid the results must have been measured at.
 
-    # OSError: the cache directory cannot be made, or the file read.
-    # ValueError: not JSON, or a timestamp that is not a date. TypeError: a
-    # timestamp with a time zone. RecursionError: JSON nested too deep.
-    except (OSError, ValueError, TypeError, RecursionError) as e:
+    Returns
+    -------
+    BenchmarkResults or None
+        That grid's record, or None if there is none, or it is invalid, from
+        another machine or stale.
+
+    """
+    cache = _read_cache_file(announce=True)
+    if cache is None:
+        return None
+    record = cache["grids"].get(_grid_key(grid_size))
+    if record is None:
+        return None
+
+    # Recorded from the start and, like the version, never compared. A
+    # cache lives in the user's cache directory, which is inside a home
+    # directory that a lab machine and a laptop may well share, and the
+    # answer it holds is a statement about one machine's hardware.
+    cached_platform = record["platform"]
+    here = machine_identity()
+    there = (cached_platform.get("system"), cached_platform.get("processor"))
+    if there != here:
+        say(f"Benchmark cache was written on {there}, not {here}, re-benchmarking...")
+        return None
+
+    # ValueError: a timestamp that is not a date. TypeError: a timestamp with
+    # a time zone.
+    try:
+        age = datetime.now() - datetime.fromisoformat(record["timestamp"])
+    except (ValueError, TypeError) as e:
         say(f"Warning: Invalid benchmark cache: {e}")
         return None
+    if age > CACHE_MAX_AGE:
+        say(
+            f"Benchmark cache is stale (>{CACHE_MAX_AGE.days} days), re-benchmarking..."
+        )
+        return None
+
+    return record
 
 
 def save_benchmark_cache(results: BenchmarkResults) -> None:
-    """Save benchmark results to cache file.
+    """Save one grid's benchmark results, keeping the other grids' records.
 
     Parameters
     ----------
@@ -287,8 +370,11 @@ def save_benchmark_cache(results: BenchmarkResults) -> None:
     except OSError as e:
         say(f"Warning: Failed to save benchmark cache: {e}")
         return
+    cache = _read_cache_file(announce=False)
+    grids = {} if cache is None else cache["grids"]
+    grids[_grid_key(results["grid_size"])] = results
     try:
-        write_json_atomically(cache_path, results)
+        write_json_atomically(cache_path, {"version": CACHE_VERSION, "grids": grids})
         say(f"Benchmark results cached to {cache_path}")
     except Exception as e:
         say(f"Warning: Failed to save benchmark cache: {e}")
@@ -332,19 +418,12 @@ def get_fastest_backend(
 
     # Check cache first (unless forced)
     if not force_benchmark:
-        cache = load_benchmark_cache()
-        if cache is not None:
-            # Check if grid size matches
-            cached_grid = tuple(cache.get("grid_size", []))
-            if cached_grid == grid_size:
-                # A name from another install, or none at all: measure again.
-                fastest = cache.get("fastest")
-                if fastest in list_available_backends():
-                    return fastest
-            else:
-                say(
-                    f"Grid size mismatch (cached: {cached_grid}, requested: {grid_size}), re-benchmarking..."
-                )
+        cache = load_benchmark_cache(grid_size)
+        # No record for this grid, a name from another install, or none at
+        # all: measure again.
+        fastest = None if cache is None else cache.get("fastest")
+        if fastest in list_available_backends():
+            return fastest
 
     # Run benchmarks
     say(f"Benchmarking FFT backends on {grid_size[0]}x{grid_size[1]} grid...")

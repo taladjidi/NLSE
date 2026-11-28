@@ -20,6 +20,9 @@ DT_DIRECT = 0.1
 # CNLSE: a step in m and the phase (k / 2) V dz it gives component 1, in rad.
 DZ_CNLSE = 1e-3
 PHASE_CNLSE = 0.1
+# rad, complex128: measured 2.8e-17 on CPU; k / 2 rounded to float32 misses
+# by 2.8e-9.
+PHASE_ATOL_DOUBLE = 1e-12
 
 
 def ddgpe(backend, V=None, g=0.0):
@@ -88,20 +91,20 @@ def test_ddgpe_potential_keeps_the_asked_step(backend):
     assert step == DT
 
 
-def direct_split_step(simu, V, dz):
+def direct_split_step(simu, V, dz, dtype=np.complex64):
     """Take one Lie split_step on a uniform field, as a direct caller would.
 
     Returns the phase of each component on the host.
     """
-    field = np.ones((2, N, N), np.complex64)
+    field = np.ones((2, N, N), dtype)
     A, A_sq = simu._prepare_output_array(field, normalize=False)
     simu.plans = simu._build_fft_plan(A)
-    simu.propagator = simu._build_propagator(np.complex64, dz)
+    simu.propagator = simu._build_propagator(dtype, dz)
     # out_field sends arrays for every device backend, so mirror that here or
     # the kernels receive a host propagator.
     if simu._backend.is_device_backend:
         simu._send_arrays_to_gpu()
-    potential = simu._backend.from_numpy(np.full((N, N), V, np.float32))
+    potential = simu._backend.from_numpy(np.full((N, N), V, field.real.dtype))
     A = simu.split_step(
         A, A_sq, potential, simu.propagator, simu.plans, dz, splitting="lie"
     )
@@ -115,8 +118,8 @@ def test_ddgpe_direct_split_step_potential(backend):
     assert phases == pytest.approx([-V_DIRECT * DT_DIRECT] * 2, abs=PHASE_ATOL)
 
 
-def test_cnlse_direct_split_step_potential(backend):
-    """Called directly, split_step turns each component by +(k / 2) V dz."""
+def cnlse(backend):
+    """Return a linear CNLSE whose second wavenumber is half the first."""
     simu = CNLSE(
         alpha=0,
         power=1,
@@ -130,6 +133,24 @@ def test_cnlse_direct_split_step_potential(backend):
         backend=backend,
     )
     simu.k2 = simu.k / 2
+    return simu
+
+
+def test_cnlse_direct_split_step_potential(backend):
+    """Called directly, split_step turns each component by +(k / 2) V dz."""
+    simu = cnlse(backend)
     V = PHASE_CNLSE / (simu.k / 2 * DZ_CNLSE)
     phases = direct_split_step(simu, V, DZ_CNLSE)
     assert phases == pytest.approx([PHASE_CNLSE, PHASE_CNLSE / 2], abs=PHASE_ATOL)
+
+
+def test_cnlse_direct_split_step_potential_keeps_double_precision(backend):
+    """In complex128 the potential's scale is not rounded to float32."""
+    simu = cnlse(backend)
+    if not simu._backend.supports_double_precision():
+        pytest.skip(f"{backend} has no float64")
+    V = PHASE_CNLSE / (simu.k / 2 * DZ_CNLSE)
+    phases = direct_split_step(simu, V, DZ_CNLSE, np.complex128)
+    assert phases == pytest.approx(
+        [PHASE_CNLSE, PHASE_CNLSE / 2], abs=PHASE_ATOL_DOUBLE
+    )

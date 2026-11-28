@@ -302,16 +302,18 @@ class NLSE(StepSize):
             - "lie": one nonlinear application per step, O(dz), one
               transform pair.
             - "strang": the nonlinear step split around the linear one,
-              O(dz^2) globally, and merged between consecutive steps so it
-              still costs one transform pair.
+              O(dz^2) globally, one transform pair. The scalar solvers
+              also merge the touching half steps of consecutive steps.
             - "yoshida": three Strang sub-steps composed to O(dz^4), three
               transform pairs. Worth it only in complex128 -- see the
               warning it raises otherwise.
 
             The floating-point width comes from ``E_in``: pass a complex128
-            field for float64 arithmetic, on a device that supports it. The
-            propagator is built to match, because the kernels select their
-            precision from the field and then read the propagator with it.
+            field for float64 arithmetic. A backend without it (MLX, an
+            OpenCL device without fp64) hands the run, with a warning, to the
+            fastest one that has it. The propagator is built to match,
+            because the kernels select their precision from the field and
+            then read the propagator with it.
         method : str, optional
             Integration method: "split_step" or "RK4".
             Defaults to "split_step".
@@ -362,7 +364,10 @@ class NLSE(StepSize):
             raise TypeError(f"E_in must be complex64 or complex128, not {E_in.dtype}")
         self._check_batch_support(E_in)
         field_dtype = self._field_dtype(E_in)
-        self._warn_about_splitting(splitting, field_dtype)
+        self._check_precision_support(field_dtype)
+        if method != "RK4":
+            # RK4 does not split, so the advice would be about a scheme not run.
+            self._warn_about_splitting(splitting, field_dtype)
         # Rebuilt below once delta_z is settled; drop the previous run's so
         # the transfer does not carry it.
         self.propagator = None
@@ -517,7 +522,7 @@ class NLSE(StepSize):
 
         Both halves of a Strang step do exactly this and differed only in the
         distance, so they are one method. It is also what brackets a merged
-        run -- see ``_merged_strang_bracket``.
+        run -- see ``_open_strang_bracket`` and ``_close_strang_bracket``.
 
         Parameters
         ----------
@@ -724,7 +729,7 @@ class NLSE(StepSize):
 
     def _has_loss(self) -> bool:
         """Whether anything in the run removes norm from the field."""
-        if np.any(np.asarray(self.alpha) != 0):
+        if self._peak_loss_half() != 0:
             return True
         V = self.V
         return V is not None and np.iscomplexobj(V) and np.any(np.imag(V) != 0)
@@ -1673,6 +1678,26 @@ class NLSE(StepSize):
             The input field.
         """
 
+    def _check_precision_support(self, field_dtype: np.dtype) -> None:
+        """Move a complex128 run off a backend that has no float64.
+
+        MLX rounded such a field to complex64 without a word, and an OpenCL
+        device without fp64 refuses it when its kernels compile. Either way
+        the run moves, as ``_require_backend`` moves any run a backend
+        cannot serve.
+
+        Parameters
+        ----------
+        field_dtype : np.dtype
+            Complex dtype the run will use, from ``_field_dtype``.
+        """
+        if np.dtype(field_dtype) == np.dtype(np.complex64):
+            return
+        self._require_backend(
+            lambda backend: backend.supports_double_precision(),
+            "double precision (a complex128 field)",
+        )
+
     def _prepare_output_array(
         self, E_in: np.ndarray, normalize: bool
     ) -> tuple[np.ndarray | Any, np.ndarray | Any]:
@@ -2100,7 +2125,9 @@ class NLSE(StepSize):
         if self._backend.broadcasts_parameters_natively:
             for attr in self._gpu_param_attrs:
                 val = getattr(self, attr)
-                if not isinstance(val, (int, float)):
+                # Any host scalar, numpy's included: converted, np.float32 came
+                # back a 0-d array, which the next run took for a batch.
+                if not np.isscalar(val):
                     setattr(self, attr, self._host_value(attr, val))
         self._sent_arrays.clear()
 
@@ -2324,7 +2351,7 @@ class NLSE(StepSize):
 
     # Whether this solver's Lie step is exactly the inside of its Strang step.
     # DDGPE's is not: it drives and it adds noise, so its steps are not a
-    # product of the same two operators.
+    # product of the same two operators. The coupled solvers opt out too.
     _lie_step_is_strang_body = True
 
     def _merges_strang_halves(self, splitting: str) -> bool:
@@ -2513,7 +2540,8 @@ class NLSE(StepSize):
         V : np.ndarray or None
             Potential, needed to re-derive the constants outside the medium.
         """
-        merged = self._merges_strang_halves(splitting)
+        # RK4 does not split: bracketing its steps would change the run.
+        merged = method != "RK4" and self._merges_strang_halves(splitting)
         step = step_factory(delta_z, "lie" if merged else splitting)
         self._current_delta_z = delta_z
         start = 0.0

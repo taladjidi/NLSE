@@ -415,8 +415,7 @@ def _nl_prop(
     dz, alpha, g, Isat = ft(dz), ft(alpha), ft(g), ft(Isat)
     u = _TWO * alpha * dz
     if abs(u) > _LOSS_SOLVED_LIMIT:
-        # Either lossless, where freezing |A|^2 is exact, or a step so lossy
-        # that solving it is out of reach. See _LOSS_SOLVED_LIMIT.
+        # Too lossy a step to solve, so frozen. See _LOSS_SOLVED_LIMIT.
         for i in numba.prange(A_flat.size):
             # saturation
             sat = _ONE / (_ONE + A_sq_flat[i] / Isat)
@@ -841,7 +840,7 @@ def _square_mod_nl_prop_v_span(
     dz, alpha, g, Isat = ft(dz), ft(alpha), ft(g), ft(Isat)
     u = _TWO * alpha * dz
     if abs(u) > _LOSS_SOLVED_LIMIT:
-        # Lossless, or too lossy to solve. See _LOSS_SOLVED_LIMIT.
+        # Too lossy a step to solve, so frozen. See _LOSS_SOLVED_LIMIT.
         for i in range(part.size):
             A_sq_val = part[i].real * part[i].real + part[i].imag * part[i].imag
             sat = _ONE / (_ONE + A_sq_val / Isat)
@@ -1244,12 +1243,27 @@ def _rk4_nl_rhs_c_v(
 # field against a shared propagator reuses the propagator, not index past it.
 
 
+def _collapse_singletons(args, scalar_positions):
+    """Hand each one-value array parameter over as that value.
+
+    One value applies to every point whatever its shape, so the kernel takes
+    the field in one call. Left an array, ``np.array([0.1])`` sent a (256, 256)
+    field through the loop one row at a time: 29 ms a call instead of 0.17.
+    Numba cannot type an array where a scalar goes, so nothing is lost.
+    """
+    return [
+        a.reshape(-1)[0]
+        if i in scalar_positions and isinstance(a, np.ndarray) and a.size == 1
+        else a
+        for i, a in enumerate(args)
+    ]
+
+
 def _batch_len(args, scalar_positions):
     """Return the length of the field's leading axis if a parameter is an array.
 
-    Any array-valued parameter means the loop is needed, including a batch of
-    exactly one. Requiring more than one element let a ``(1, 1, 1)`` parameter
-    through as a raw array, which is the very thing numba cannot type:
+    Any array-valued parameter left by ``_collapse_singletons`` holds several
+    values, so the loop is needed. Numba cannot type one at a scalar position:
     ``No implementation of function imul found for signature
     (complex64, array(complex128, 3d, C))``.
 
@@ -1367,6 +1381,7 @@ def _broadcast_batch(*scalar_positions, n_outputs=1):
         @functools.wraps(kernel)
         def wrapper(*args):
             _require_contiguous(kernel.__name__, args[:n_outputs])
+            args = _collapse_singletons(args, positions)
             n = _batch_len(args, positions) or _shared_grid_batch_len(args, positions)
             if n == 0:
                 return kernel(*args)

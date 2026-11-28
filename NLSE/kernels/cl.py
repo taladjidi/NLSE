@@ -1412,7 +1412,7 @@ class OpenCLKernels:
         """Fused split step: all GPU operations in one Python call.
 
         Chains FFT + apply_propagator + IFFT + nonlinear step (and an
-        additional NL half-step for double precision) without returning
+        additional NL half-step for Strang) without returning
         to the solver between dispatches.
 
         Parameters
@@ -1425,7 +1425,7 @@ class OpenCLKernels:
         V_scaled : cla.Array or None
             Pre-scaled potential (V * k/2), or None.
         dz : float
-            Nonlinear step size (full for single, half for double).
+            Nonlinear step size (whole for Lie, half for Strang).
         alpha : float
             Half-loss coefficient.
         g : float
@@ -1568,7 +1568,7 @@ class OpenCLKernels:
         V2_scaled : cla.Array or None
             Pre-scaled potential for component 2.
         dz : float
-            Nonlinear step size (full for single, half for double).
+            Nonlinear step size (whole for Lie, half for Strang).
         alpha1 : float
             Half-loss coefficient, component 1.
         alpha2 : float

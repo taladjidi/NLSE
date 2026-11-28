@@ -64,9 +64,9 @@ Saves the full field every `save_every` steps into a pre-allocated array.
 from NLSE import sample
 
 delta_z = L / 1000          # divides L, so the run is exactly 1000 steps
-n_steps = int(L / delta_z)
+n_steps = round(L / delta_z)
 save_every = 100
-n_samples = n_steps // save_every + 1
+n_samples = n_steps // save_every
 E_samples = np.zeros((n_samples, NY, NX), dtype=np.complex64)
 
 E_out = simu.out_field(
@@ -86,9 +86,9 @@ Records the total intensity ($\sum |A|^2$) at regular intervals.
 from NLSE import norm
 
 delta_z = L / 1000          # divides L, so the run is exactly 1000 steps
-n_steps = int(L / delta_z)
+n_steps = round(L / delta_z)
 save_every = 50
-norms = np.zeros(n_steps // save_every + 1)
+norms = np.zeros(n_steps // save_every)
 
 E_out = simu.out_field(
     E_in, L,
@@ -106,9 +106,9 @@ Evaluates the nonlinear refractive index change $\delta n = n_2 I / (1 + I/I_\te
 from NLSE import evaluate_delta_n
 
 delta_z = L / 1000          # divides L, so the run is exactly 1000 steps
-n_steps = int(L / delta_z)
+n_steps = round(L / delta_z)
 save_every = 100
-delta_n = np.zeros((n_steps // save_every + 1,) + (NY, NX))
+delta_n = np.zeros((n_steps // save_every,) + (NY, NX))
 
 E_out = simu.out_field(
     E_in, L,
@@ -121,7 +121,10 @@ E_out = simu.out_field(
 ### `adapt_delta_z` -- Adaptive step sizing
 
 Sets the step to a twelfth of the distance over which the peak nonlinear phase
-rate turns the phase by one radian. Updates every `update_every` steps.
+rate turns the phase by one radian, never past the split-step limit. Coupled
+solvers count the cross coupling. Where nothing turns the phase (no
+interaction, or past the medium) it returns nothing and the step in force
+stands. Updates every `update_every` steps.
 
 It changes the step by **returning** it. The solver rebuilds the linear
 propagator to match before taking the next step, so the two halves of a split
@@ -160,9 +163,10 @@ see it: the shorter one when a step was cut to land on `L` or on `z`.
 
 ### `adapt_delta_z_to_error` -- step sizing from a measured error
 
-`adapt_delta_z` reads the step off the peak nonlinear phase rate and divides by
-twelve. That is a *rate*: it says how fast the phase turns and nothing about
-how much of the answer the splitting is losing. This one measures instead —
+`adapt_delta_z` reads the step off the peak nonlinear phase rate, divides by
+twelve and caps it at the split-step limit. That is a *rate*: it says how
+fast the phase turns and nothing about how much of the answer the splitting
+is losing. This one measures instead —
 every `update_every` steps it takes the same distance once whole and once in
 two halves and compares, then solves for the step that would have hit the
 tolerance.

@@ -24,6 +24,21 @@ BEAM_WAIST = window / 16
 # Absolute tolerance of the one-step Gaussian beam check, unit peak; the
 # step lands within 3.2e-7 on CPU and MLX (float32).
 BEAM_ATOL = 1e-5
+# The propagator cache is keyed by the step, the dtype and k (with the grid):
+# each case changes one of the three, by these factors or to this dtype.
+CACHE_N = 32  # grid points: any grid has a propagator to cache
+# m: turns the fastest mode of that grid, 15.8 rad/m (measured), by 0.79 rad,
+# so that a propagator built for a stale step or k is far from the closed form.
+CACHE_DZ = 5e-2
+SAME = 1.0  # factor that leaves the step or k as it is
+STEP_CHANGE = 2.0
+WAVENUMBER_CHANGE = 1.5
+OTHER_DTYPE = np.complex128
+CACHE_CHANGES = [
+    (SAME, WAVENUMBER_CHANGE, PRECISION_COMPLEX),
+    (STEP_CHANGE, SAME, PRECISION_COMPLEX),
+    (SAME, SAME, OTHER_DTYPE),
+]
 
 
 def make_solver(backend="CPU", n=N, **overrides):
@@ -38,6 +53,41 @@ def test_build_propagator(backend) -> None:
         prop,
         np.exp(-1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k * DZ_TEST),
     ), f"Propagator is wrong. (Backend {backend})"
+
+
+@pytest.mark.parametrize(
+    "step_factor, k_factor, dtype", CACHE_CHANGES, ids=["k", "step", "dtype"]
+)
+def test_a_new_step_dtype_or_k_gets_its_own_propagator(
+    backend, step_factor, k_factor, dtype
+) -> None:
+    """Each of the three builds a propagator of its own; the first stays cached.
+
+    Parameters
+    ----------
+    backend : str
+        Backend to run on.
+    step_factor : float
+        Factor on ``CACHE_DZ`` for the second propagator.
+    k_factor : float
+        Factor on the wavenumber for the second propagator.
+    dtype : np.dtype
+        Complex dtype of the second propagator.
+    """
+    simu = make_solver(backend, n=CACHE_N)
+    wider = np.dtype(dtype).itemsize > np.dtype(PRECISION_COMPLEX).itemsize
+    if wider and not simu._backend.supports_double_precision():
+        pytest.skip(f"{backend} has no double precision")
+    cached = simu._build_propagator(PRECISION_COMPLEX, CACHE_DZ)
+    k = simu.k
+    simu.k = k * k_factor
+    step = CACHE_DZ * step_factor
+    built = simu._build_propagator(dtype, step)
+    expected = np.exp(-1j * (simu.Kxx**2 + simu.Kyy**2) * step / (2 * simu.k))
+    simu.k = k
+    assert built is not cached, "the changed parameter got the cached propagator"
+    assert np.allclose(as_numpy(simu, built), expected), "not the new closed form"
+    assert simu._build_propagator(PRECISION_COMPLEX, CACHE_DZ) is cached
 
 
 def test_build_fft_plan(backend) -> None:

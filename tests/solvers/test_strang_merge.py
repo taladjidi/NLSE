@@ -9,6 +9,13 @@ N = 64
 L = 1e-3
 WAIST = 2.23e-3
 WINDOW = 4 * WAIST
+# Relative. At COUPLED_PHASE the scalar bracket of a merged run is off by
+# 1.3e-3 (CPU and MLX, measured 2026-11-27); the run without it by 0.
+COUPLED_TOLERANCE = 1e-5
+# Phase per step, rad: large, so that a wrong half step shows.
+COUPLED_PHASE = 0.5
+# Loss of both components (1/m), so that the second one's is in the run too.
+COUPLED_ALPHA = 20
 
 
 def beam(coupled=False, dtype=np.complex64):
@@ -30,7 +37,7 @@ def build(backend, cls=NLSE, **overrides):
     return make(cls, backend, n=N, **params)
 
 
-def propagate(solver, coupled=False, phase=0.1):
+def propagate(solver, coupled=False, phase=0.1, callback=None):
     """Run one propagation at a step giving this phase, in Strang splitting."""
     A = beam(coupled)
     prepared, _ = solver._prepare_output_array(A.copy(), normalize=True)
@@ -45,6 +52,7 @@ def propagate(solver, coupled=False, phase=0.1):
         plot=False,
         splitting="strang",
         method="split_step",
+        callback=callback,
     )
     return np.asarray(solver._backend.to_numpy(out))
 
@@ -169,13 +177,42 @@ def test_the_merge_declines_for_lie_splitting():
     assert not solver._merges_strang_halves("lie")
 
 
-def test_the_merge_declines_with_a_rabi_coupling():
-    """The Rabi rotation rides on the Lie step, not on the Strang one."""
-    solver = build("CPU", cls=CNLSE, omega=1e4)
-    solver._precompute_step_constants(solver.V, np.complex64)
-    assert not solver._merges_strang_halves("strang")
-    solver.omega = None
-    assert solver._merges_strang_halves("strang")
+def no_callback(simu, A, z, i):
+    """Do nothing: any callback keeps a run off the merged path."""
+
+
+def run_coupled(backend_name, callback):
+    """Return a lossy two-component Strang run, stepped under this callback."""
+    solver = build(backend_name, cls=CNLSE, symmetric=False, alpha=COUPLED_ALPHA)
+    return propagate(solver, coupled=True, phase=COUPLED_PHASE, callback=callback)
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_a_coupled_strang_run_keeps_its_cross_coupling(backend_name):
+    """A coupled run must not take the scalar half steps of a merged one."""
+    assert not CNLSE._lie_step_is_strang_body
+    stepped = run_coupled(backend_name, no_callback)
+    merged = run_coupled(backend_name, None)
+    difference = np.max(np.abs(merged - stepped)) / np.max(np.abs(stepped))
+    assert difference < COUPLED_TOLERANCE, (
+        f"{backend_name}: a coupled Strang run differs by {difference:.3e} from "
+        f"the same run stepped under a callback"
+    )
+
+
+def run_rk4(backend_name, splitting):
+    """Return an RK4 run of the solver's own step, asked for this splitting."""
+    solver = build(backend_name)
+    out = solver.out_field(
+        beam(), L, verbose=False, plot=False, splitting=splitting, method="RK4"
+    )
+    return np.asarray(solver._backend.to_numpy(out))
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_an_rk4_run_ignores_the_splitting(backend_name):
+    """RK4 does not split, so no half step may bracket its run."""
+    assert np.array_equal(run_rk4(backend_name, "strang"), run_rk4(backend_name, "lie"))
 
 
 def test_a_driven_solver_opts_out():

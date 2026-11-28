@@ -41,44 +41,315 @@ do not look for another way.
 | Benchmark waits on what lazy transforms return (MLX was timed doing nothing) | `3dfc28f` |
 | Docs: gallery cached in CI; page review along Diataxis | `18f4cc7`, `3bd8af5` |
 
-Last full suites: Mac (CPU, MLX) 1723 passed, 160 skipped at `f29b585`; box,
-combined environment (CuPy and OpenCL), 2275 passed, 103 skipped, six times
-and once with `NLSE_FUSE_PROPAGATOR=0`, at `c5a44fb`.
+Last full suites: Mac (CPU, OpenCL, MLX) 2340 passed, 221 skipped at
+`0ba9aaa`; box, combined environment (CuPy and OpenCL), 2327 passed, 104
+skipped, six times and once with `NLSE_FUSE_PROPAGATOR=0`, at `5af91cd`
+(`~/Documents/nlse_main_5af91cd/run*.txt` there). Each box run also reports
+22 errors, all of `tests/test_packaging.py`: `nlse_env_both` has no
+hatchling. At `b6fa684` the box ran only the potential-sign, coupled and
+DDGPE tests (121 passed). Nothing merged since `b6fa684` has run on CuPy.
 
-### Resume here (written 2026-11-27)
+### Resume here (written 2026-11-28)
 
-`main` is `5dc5c6a` plus this shrink, pushed. Order from the owner for the
-night of 2026-11-27: "run independently tonight : debloating, docs, and
-review. Iterate over this. Also when reviewing ignore the previous context to
-be impartial. Look at all aspects of the code, notably complexity and code
-architecture, testability etc ...". So reviewers get the code and no
-conclusions, and do not read this file.
+`main` is pushed; its last code change is `fix/examples-benchmarks-review`
+(`cea5ea2`), the two merges after it are tests.
+Orders from the owner for the night of
+2026-11-27: "run independently tonight : debloating, docs, and review.
+Iterate over this. Also when reviewing ignore the previous context to be
+impartial. Look at all aspects of the code, notably complexity and code
+architecture, testability etc ..." and "don't ask me questions. Make
+decisions and worst case scenario we'll revert them tomorrow morning". So
+reviewers get the code and no conclusions, and do not read this file; what
+was decided alone is under "Decided alone" below.
 
-1. **README headline performance** (docs). Spec, revision 2:
+1. **Review, then iterate** (debloat, docs, review). Done and merged: the
+   solvers (two fix rounds), the backends, the docs pages (round 1), the
+   kernels (rounds 1 and 2), the test suite's four MAJOR gaps, `examples/`
+   and `benchmarks/` (round 1). Nothing is in flight. Next rounds, none
+   started: the debloat candidates the reviews named (listed in the night's
+   entries below), a second docs round, a review of what round 1 of the
+   examples did not open.
+2. **README headline performance** (docs). Spec, revision 2:
    `docs/readme_perf.md` in the specs directory. Branch
-   `docs/readme-performance`, not merged: the roofline fix (`13345a4`) and
-   its tests (`67d5b6e`) are applied, `tests/test_benchmarks.py` 33 passed.
-   - Box: six runs of the `67d5b6e` tree were started at 23:10, into
-     `~/Documents/nlse_perf_67d5b6e/perf/box_run{1..6}.txt` on the box
-     (`nlse_env_both`). Check they finished and that no run reads "failed".
-   - Mac: not measured. It was on battery (power mode Automatic there, High
-     Power on mains): run the spec's loop on mains, nothing else running,
-     with `UV_PROJECT_ENVIRONMENT=<scratchpad>/perf/venv-perf` so the repo's
+   `docs/readme-performance` (`9b685c3`, worktree `scratchpad/wt-perf`), not
+   merged: the roofline fix and its tests are applied.
+   - Box: done. Use the second set, `box2_run{1..6}.txt` in
+     `docs/readme_perf_runs/` of the specs directory (the first set's CL
+     4096² rows were bad and the runs were repeated); the first run of a set
+     is discarded; `summarize_runs.py` beside them prints the table.
+   - Mac: not measured. Run the spec's loop (CPU, MLX; six runs) on mains,
+     nothing else running, no agent testing, with
+     `UV_PROJECT_ENVIRONMENT=<scratchpad>/perf/venv-perf` so the repo's
      `.venv` gets no pyopencl.
-   - Then the README section (task C) and the log entry (task D), the doc
-     tests staying at 187 passed, 2 skipped; reviewer; gate; merge; push.
+   - Then the README section (task C) and the log entry (task D), citing the
+     box tree `67d5b6e` and the Mac tree `9b685c3`; doc tests; reviewer;
+     gate; merge; push.
    - Decisions taken for the owner, to report: the June 2024 figure moves
      into the new section, labelled (O1); Lie rows only, Strang measured as a
      check (O2); measured ceilings only, no rated figures (O3).
-2. **Review, then iterate** (debloat, docs, review): fresh reviewers over
-   the solvers, the backends and kernels, the tests, and the docs with the
-   examples and benchmarks; fix what is CRITICAL or MAJOR, list the rest
-   here.
 3. **Afterwards, the owner's earlier order:** the GPU P4 patches (fix their
    spec first), thread counts per machine in the tuner, the increment-form
    linear step for complex64 (recommend only), the fewer-passes lessons on
    MLX and OpenCL, the Mac profiles, a closing review pass and the final
    report. Version 5.0.0 is neither bumped nor published.
+
+#### Night of 2026-11-27: landed, decided, left
+
+- **Coupled Strang runs were wrong in 4.0.0 and 4.1.0** (`fix/cnlse-strang-merge`,
+  found by the solver reviewer, reproduced on both tags): `CNLSE` and
+  `CNLSE_1d` with `splitting="strang"` and no callback bracketed the run with
+  the scalar `_nonlinear_step` (no `n12`, no `alpha2`). Fixed by opting the
+  coupled solvers out of the merge (`_lie_step_is_strang_body = False`), the
+  smallest correct fix. Reviewed (SHIP). Left:
+  - A coupled `_nonlinear_step` would let lossless coupled runs merge again.
+    The cost of not merging is not measured: one real-space pass per step.
+  - `_merges_strang_halves` still declines on `omega`, which now only
+    `NLSE_3d` trips, by a name clash (its `omega` is the frequency axis): it
+    would merge correctly (3.5e-15 in complex128, the reviewer's run). No
+    test covers that branch since the Rabi test went.
+  - `docs/optimization-log.md:210-212` ("Already built") still reads as if
+    the coupled solvers merged.
+  - Not run: CuPy and OpenCL (the box was timing); DDGPE read only.
+- **Solver review, round 1** (`fix/solver-review-round1`, eight findings of
+  a fresh-context review, then two fix rounds, each on a fresh review).
+  Landed: every
+  loss read goes through `_loss_constants` / `_peak_loss_half` (step
+  ceiling, RK4 bound, Yoshida warning); `adapt_delta_z` returns `None` at a
+  zero rate, is capped by `_split_step_max_dz` and counts `g12`
+  (`_max_interaction_rate`); RK4 gets neither splitting advice nor the
+  Strang bracket (in 4.1.0 too; rel. diff 1.8 at `n2` = -1e-9 m²/W, 1 W on
+  a 2 mm window, `L` = 5 cm, 64², default step, and 1.6e-6 at the test's
+  parameters, hence its `array_equal`); GPE keeps the
+  caller's `sat`; DDGPE's `gamma2` is `Parameter("alpha2")`, so the cavity
+  loss ends at `T`; `_estimated_rates` deleted. `ty-baseline.json` 99 -> 87.
+  Decided alone: the `gamma2`/`alpha2` alias (public, in the changelog).
+  Left, all MINOR:
+  - `out_field` still cuts an RK4 run's step by `YOSHIDA_SPAN` when given
+    `splitting="yoshida"`, and `adapt_delta_z` caps an RK4 run by the
+    split-step limit, not `_rk4_max_dz`.
+  - `adapt_delta_z` on a batched `CNLSE` called outside a run takes the max
+    over cross pairs of simulations (11599.7 where 5799.9 is due): the
+    fallback constants have shape (B,1,1,1). Right in a run; safe side.
+  - `adapt_delta_z` costs one transform a call now: 1.84 -> 5.91 ms (NLSE)
+    and 3.86 -> 15.54 ms (CNLSE) at 1024², CPU, the reviewer's timing.
+  - Past the medium the step in force differs from the medium's last by
+    6e-8 relative (a float32 round trip somewhere in the restore), unexplained.
+  - `_loss_max_dz` turns `alpha / 2` back into `alpha` through a bare 2.
+  - No test of `adapt_delta_z` on DDGPE; `alpha2` is not in
+    `CNLSE._gpu_param_attrs`, so a batched `alpha2` on a device is unverified.
+  - The RK4-ignores-splitting test runs `NLSE` only; the second reviewer
+    also ran `NLSE_1d` by hand, nobody ran `NLSE_3d` or `GPE`.
+  - `method` is never validated: `"rk4"` runs split-step without a word.
+  - Not run: CuPy and OpenCL for this series.
+- **Backend review, round 1** (`fix/backend-review-round1`, seven findings
+  B1-B7 of a fresh-context review; the architect's six verified patches,
+  write-up in `~/Documents/LKB/NLSE_tangui_fix_specs/review_round1/backends.md`;
+  second fresh review: SHIP). Landed: `NLSE_BACKEND` is read once, in
+  `get_backend` (`_installed_backend` builds without override or fallback);
+  the benchmark cache is `{"version": "4", "grids": {...}}`, one record per
+  grid; `_check_precision_support` moves a complex128 run off a backend
+  without float64; the tuning lock holds `host pid thread` and
+  `_release_lock` removes only its own; `MLXBackend.ifft(normalize=False)`
+  raises; `_collapse_singletons` hands a one-value array over as its value.
+  Decided alone: B3 moves the run with a warning, as the batched coupled run
+  already does, where the review suggested `ValueError`.
+  Step time unchanged, scalar `alpha`, complex64, CPU, `NLSE_CPU_BLOCKING=0`,
+  100 steps, three alternated processes: 415-416 against 415-417 ms at
+  1024². At 256² compare in one environment: this worktree's interpreter
+  (3.13.18) is 14% slower than the main tree's (3.13.13) on the same code.
+  Left, all MINOR:
+  - The two "moved to another backend" warnings point inside the library
+    (`stacklevel=3`), not at the caller's `out_field` line.
+  - The move is for the solver's life: a later complex64 run stays on CPU.
+  - `save_benchmark_cache` reads, adds and writes without a lock: two
+    processes benchmarking different grids at once can lose one record.
+  - `_read_cache_file` says "predates a change to what it timed" for a file
+    with no `version` at all; `_backend_builders` builds its dict per call.
+  - `_collapse_singletons` runs per kernel call (2-4% at 64², the reviewer's
+    timing; nothing at 1024²).
+  - `test_a_one_value_array_runs_the_field_in_one_call` counts calls on a
+    stand-in kernel, not the real ones.
+  - Not checked: CuPy, an OpenCL device without fp64, Windows, a cache
+    directory on a shared network home (the lock's host name).
+
+- **Solver review, round 1: what was not taken.** Lines are the review's,
+  stale since; find by name.
+  - `_dispersion_max_dz` binds on a linear problem (`n2 = 0`, 64²: 0.1 m cut
+    to 7.17e-4 m with a warning) though split-step is exact there (its M6).
+  - `NLSE_3d`: the time axis is `linspace(..., endpoint=True)` on a periodic
+    grid, so `delta_T` and the power are off by `NZ / (NZ - 1)`; `vg` is
+    stored and never read.
+  - `NLSE_1d` builds the 2D grids at the default `NY = 1024` (about 100 MB
+    for `NX = 4096`) and benchmarks the backend at a 2D size.
+  - `callback=[]` raises `IndexError`; a later callback's returned step
+    silently overrides an earlier one. The step warning's `stacklevel=2`
+    points into `nlse.py`.
+  - `_norm_grid_factor` and `_norm_constant` are float32: a complex128 run's
+    power carries 3e-8. `_nonlocal_intensity` allocates `A * conj(A)` a step.
+  - `_can_rate_on_device` builds a tuple whose first entry it never reads;
+    `adapt_delta_z_to_error` has a bare `1e5` and `order = 2`, and with
+    `L = 0` (GPE) its floor is 0; a NaN error reaches `_check_step`.
+  - `DDGPE._random` is chosen once by backend name and uses numpy's global
+    state; `DDGPE.out_field` breaks `NLSE.out_field`'s positional order;
+    `wvl=1e-30` (DDGPE) and `wvl=2*pi/m` (GPE) fake a wavelength.
+  - `evaluate_delta_n` is optical only; `norm` is an unscaled sum; the
+    callbacks reach about 12 private members; `_make_step` nests three
+    closures (the no-nested-defs rule) and `_run_propagation` takes 12
+    parameters.
+  - Its five structural suggestions, none started: the nonlinear step owned
+    by the class with the physics; one `_k_squared` hook for the override
+    quartet (about 120 lines); a tuple for the 14 coupled constants; a
+    `propagator_for(dz)` context for the three swap-and-restore copies;
+    `nlse.py` (2800 lines) split into run state, caches and loops.
+- **Docs review, round 1** (`docs/review-round1`, `966508a`). Fixed: the
+  callback pages' sample counts (`n_steps // save_every`), MLX's place in
+  the detection order, what `NLSE_QUIET` silences. Lint and format now cover
+  `benchmarks/` and `docs/`; the formatter skips `*.md`. Left:
+  - `docs/nlse_tutorial.ipynb` cell 23 sizes its samples `N_samples + 1`:
+    the notebook stores its outputs, so it is the owner's to re-run.
+  - `CLAUDE.md` is the owner's to edit. Stale there: line 7 (CuPy transforms
+    with cuFFT, not VkFFT), 34-35 (lint paths), 57 (Strang is "still 1
+    pair/step" for the scalar solvers only; a complex128 field moves off
+    MLX), 87 (`D101` is not ignored), and `CACHE_VERSION` is 4.
+- **Test-suite review** (mutation, about 65 mutants). Its four MAJOR gaps
+  are item 1 above. MINOR, not taken: `cpu_tuning._cache_key` on a
+  non-square grid; `plot_field`'s Y extent and intensity panel (every test
+  has a square window); the default cache directory per platform (every
+  test sets `NLSE_CACHE_DIR`); the loss cap's lower bound; type-only or
+  self-computed assertions (`test_auto_backend.py` near 142,
+  `test_benchmark.py` near 125-160 and 449); helpers copied across about 70
+  test files; `test_packaging.py` needs the network.
+- **Kernel review, round 1** (fresh context, at `3a144d2`; fix on
+  `fix/coupled-direct-potential-width`). Read: `kernels/cpu.py`, `cl.py`
+  with `kernels.cl`, `mlx_kernels.py`, and how the solvers call them. **Not
+  read**: `cpu_blocked.py`, `cupy.py`, `cupy_kernels.py`, `cuda_source/`,
+  `templating.py`; no mutants run. That is the next round.
+  - Nothing found in: the scalar kernels against a DOP853 reference
+    (complex128 on CPU, within 2.5e-6, the three-pass tolerance); CPU, CL and
+    MLX in complex64 against CPU complex128 (within 2e-5 over `alpha` in
+    {0, ±0.8, 3}, `dz` in {±0.05, 0.4}, `Isat` in {inf, 2}, no, real and
+    complex `V`); the coupled kernels across the three backends (1e-8); the
+    Rabi sign; the wrapped exports' argument order; the dispatch.
+  - Its one MAJOR is known and documented, and was not taken: the coupled
+    real-space step freezes the loss, local error O(dz²) (5.9e-4, 1.5e-4,
+    3.76e-5, 9.4e-6 at `dz` = 0.04 to 0.005, `alpha1` = 1, `Isat` = (2, 3),
+    the same on the three backends). `docs/numerical_methods.md`,
+    `docs/physical_validation.md` and the log's *Open* section say so, and
+    the log says why the one-channel closed form does not carry over. It is
+    a feature, and the first one worth the owner's time: DDGPE lives there.
+  - Fixed: a coupled `split_step` called directly scaled `V` by a float32
+    `k / 2` (2.75e-9 rad on 0.1 rad in complex128, now 2.8e-17); kernel
+    comments where "single/double" meant Lie/Strang. Its review said ship;
+    left: on MLX that fallback copies `V` to the host on every direct call
+    (`np.iscomplexobj` on an MLX array), and it was not run on CuPy, with
+    `CNLSE_1d` or with a batched `V`.
+  - Checked, not a bug: a batched parameter on an unbatched field under RK4
+    raises `ValueError` on CPU and on MLX alike (MLX's message, "Cannot
+    broadcast array of shape (3,64,64) into shape (64,64)", is the poorer);
+    a batched field on MLX agrees with CPU to 1.3e-6.
+  - MINOR, left: the loss limit 0.1 and the three passes are written once
+    per dialect (held together by a text test since round 2), and the CL
+    and MLX complex64 lossy step is
+    pinned only through the cross-backend comparison, which needs float64
+    and is skipped here: a complex64 test against the ODE would close both.
+    The CPU kernels with a potential have no lossless branch (the ones
+    without have a rotation): a lossless step with `V` runs the three passes
+    at `u = 0`. Exact, cost unmeasured.
+- **Test-suite gaps** (`test/review-gaps`, the architect's five commits,
+  write-up `review_round1/tests.md` in the specs directory; fresh review:
+  SHIP, 37 mutants, 33 killed, and 12 of 13 survive the old tests). New
+  tests: the frozen-loss step against its closed form on CPU, CL and MLX;
+  the cadence of `adapt_delta_z_to_error`; the propagator cache key; the
+  benchmark's choice of the fastest backend; the loss cap on the step. No
+  library bug found. The commits carry `Co-Authored-By: Claude Opus 5.5`,
+  the model that wrote them. Left, all MINOR:
+  - `tests/solvers/test_nlse.py` near 90: the dtype case of the propagator
+    key never asserts the dtype (a propagator always built at complex64
+    passes).
+  - `test_lossy_substep.py`: `CAPPED_STEP_FRACTION` is imported, so 0.09 for
+    0.9 passes; the cap is not tried at its boundary (`> 2 * max_dz`
+    passes) nor on a backward step (a lost `copysign` passes); one test's
+    name says "frozen" though its lossless cases take the solved path.
+  - Not covered: skipped cadence steps still appending to `delta_z`; the
+    `scale == 0` branch of `adapt_delta_z_to_error`; the NX/NY terms of the
+    cache key (the cache is per instance).
+- **Kernel review, round 2** (fresh context, at `b6fa684`: `cpu_blocked.py`,
+  `cupy.py`, `cupy_kernels.py`, `cuda_source/`, `templating.py`; tests on
+  `test/kernel-review-2`). No arithmetic bug. 23 mutants on
+  `cpu_blocked.py`, 18 killed; the five left: two equivalent `min()` clips,
+  the tuning lock removed (its test is skipped on macOS,
+  `test_cpu_blocked_step.py` near 879), an over-sized scratch, the copy-back
+  branch no test reaches. Its two MAJORs, both answered with tests:
+  - No test ran the CUDA source off a device. Now
+    `tests/backends/test_cuda_source_on_host.py` builds the step and the
+    store callbacks as C++ behind a shim and holds them to the CPU kernels
+    (1.6 eps worst; Apple clang 21 and GCC 16.2.1 on the box). Skipped
+    without `c++` and on Windows. It shares the CPU's algorithm, so a wrong
+    shared formula passes; the shim's `float2`/`double2` are not aligned as
+    nvcc's (8 and 16), and the out-of-line call is probably inlined.
+  - The loss limit and pass count are written in five dialects.
+    `test_each_dialect_carries_the_cpu_loss_model` reads the four copies as
+    text against `cpu.py`. Decided alone: a drift test, not one templated
+    source; the polynomial coefficients are not held, and `kernels.cl` is
+    still never compiled without a device.
+  Left, all MINOR: solver-level blocked parity runs only at a square 32
+  (the reviewer's 37x53 sweep agreed to 3.5-6 eps); a negative `dz` in the
+  blocked step is run only near -1e-9; `_takes_blocked_step` checks no
+  dtype; `cpu_tuning.py` (911 lines) tunes with no potential, no loss and
+  Kerr only; `_wait` and a partly failed submit, and `KeyboardInterrupt`,
+  are untested; the CUDA kernels index with int32 (over 2^31 elements);
+  `blocked_step()` costs about 1.8 us a call. Not checked by it: a real
+  CuPy/cuFFT run, OpenCL and MLX execution, the tuning's quality.
+- **Examples and benchmarks review, round 1**
+  (`fix/examples-benchmarks-review`; second fresh review: one MAJOR, fixed).
+  Landed:
+  - `examples/ddgpe.py` ran with no pump and no loss since 2024 and plotted
+    zeros. Decided alone: the pump (3) and decay (0.07 meV) it was written
+    with are back; 53 s on CPU, the total still rising 3% over the last
+    20 ps.
+  - `benchmarks/profile_kernels.py` passed one cross constant to the coupled
+    fused kernels, which take two (a `TypeError` on both rows).
+  - `examples/vortex_precession_benchmark.py` and `vortex_precession.jl`
+    leave the first run of a size out of the timings. The Julia line was
+    parsed, not run (FourierGPE.jl at 8192² is hours).
+  - New: `test_a_uniform_pump_reaches_the_linear_steady_state` pins the
+    driven DDGPE (drive sign, `omega / 2`, `gamma / 2`, the detuning's sign)
+    against the two-mode closed form; no such test existed. First order in
+    the step: 8.0e-3 at 1600 steps, tolerance 1.5e-2, so a 1% error passes;
+    Lie only, uniform, `g = 0`.
+  Left, all MINOR:
+  - `profile_backends.py` and `propagator_fusion.py` label a row by the
+    backend asked for; `get_backend` falls back with a warning when it is
+    not installed, so the row can be another backend's.
+  - `work_precision.py`: the float32 floor, and a `ceil` near 218.
+  - `examples/benchmarks.py` and `fig1_benchmarks.py`: `E_cpu` is unbound
+    with no CPU row; the check runs only at `i == 0`; `N_AVG = 2`; the two
+    files are near copies.
+  - `examples/ddgpe.py`: `gamma` and `F_pump` are set inside `main`, and
+    `F_pump = 3` has no source; `plot_field` labels its axes in mm, which
+    this example's units are not.
+  - `jones_roberts_solitons.py`: the docstring's numbers are not verified.
+    `tests/test_examples.py` and `tests/test_benchmarks.py` parse, never
+    run. Nested functions in examples nobody touched.
+  - Debloat candidates: `fig1_benchmarks.py` into `benchmarks.py`;
+    `vortex_precession_animation.py` into `vortex_precession_benchmark.py`;
+    `vortex_shedding.py` split.
+  - Dismissed: a MAJOR on `rayleigh_taylor.py` (false, V is minus a
+    potential energy there); `NOISE = 0.0` is deliberate.
+  - Not opened: `trace_solvers.py`, `nsys_summary.py`,
+    `tests/benchmarks/test_benchmark_profile.py`, the docs pages that quote
+    the examples, any CuPy path.
+- **Decided alone** (revert what does not suit): the DDGPE example's pump
+  and decay; a drift test for the loss model rather than one source; fixes
+  of three files or more made inline where each file's change was a line or
+  two (no architect, no implementer), each branch then given to a fresh
+  reviewer; coupled solvers opted out
+  of the Strang merge rather than given their own half step; RK4 ignores
+  `splitting`; `gamma2` is `alpha2`; a complex128 run leaves MLX with a
+  warning; architects' verified patch series were applied directly, no
+  implementer; reviewers ran as background agents, no workflow; `CLAUDE.md`
+  and the tutorial notebook untouched; the 55 local branches merged into
+  `main` are kept (`git branch --merged main`).
 
 The final report has to say, beyond what "Review findings left as they are"
 and "Still open" list:
@@ -101,8 +372,11 @@ and "Still open" list:
   architect's 64² smoke run may have left an entry in the default NLSE cache;
   an architect deleted a scratch directory named `r2` by mistake (only its
   own transcript names it).
-- The owner's to edit: `CLAUDE.md` lines 86-87 (stale ruff ignores) and line
-  7 (CuPy uses cuFFT, not VkFFT); the debloat and docs decisions left open.
+- The owner's to edit: `CLAUDE.md` lines 86-87 (stale ruff ignores), line
+  7 (CuPy uses cuFFT, not VkFFT), lines 34-35 (ruff now also takes
+  `benchmarks/ docs/`) and line 57 (Strang is one pair per step with or
+  without the merge, and only the scalar solvers merge); the debloat and
+  docs decisions left open.
 
 ## Open work
 
@@ -306,7 +580,8 @@ and "Still open" list:
     majors, an SBOM artifact and a commit-message hook.
   - Not checked: the CuPy and OpenCL extras were not synced from the lock
     on the box.
-- Defects the audit found, none fixed, the first three for the owner:
+- Defects the audit found, the first two for the owner (a third,
+  `_loss_max_dz` reading `alpha` only, was fixed on 2026-11-28):
   - `_loss_max_dz` (`NLSE/solvers/step_size.py`) divides by `2 * alpha` while
     the kernels receive `alpha / 2`: the kernel's `u` at the cap is 0.025,
     and the comments there and in `NLSE/kernels/cpu.py` say 0.05. Safe side.
@@ -314,9 +589,6 @@ and "Still open" list:
   - `DDGPE` flips the sign of `g` but not of `g12` nor `g2`
     (`NLSE/solvers/ddgpe.py`); `tests/solvers/test_parameter_names.py` pins
     the current sign.
-  - `_loss_max_dz` reads `alpha` only; `CNLSE` and `DDGPE` hand the kernels
-    `alpha2` too, so a larger `alpha2` or `gamma2` can pass the limit the
-    kernel assumes. Read from the code, not run.
   - `benchmarks/nsys_summary.py`: a "Total Time"-only table parses to an
     empty list, and `parse()` reads on into the next table.
   - The comments "Lossless, or too lossy to solve" in `NLSE/kernels/cpu.py`
@@ -386,8 +658,7 @@ and "Still open" list:
   step-changing callback or a batched `omega`; `docs/solvers_overview.md:263`
   says a positive imaginary potential removes power, which is the NLSE
   convention and now the opposite of DDGPE's.
-- p3: `_estimated_rates` uses an optical intensity for GPE when no field is
-  given; the floor of `adapt_delta_z_to_error`, `L/1e5`, is 0 for a GPE; the
+- p3: the floor of `adapt_delta_z_to_error`, `L/1e5`, is 0 for a GPE; the
   default GPE step ignores the kinetic term; no test with `g < 0`, `V < 0` or
   complex128.
 - p4: `nl_length=np.inf` is accepted and gives NaN; the smoothed intensity can

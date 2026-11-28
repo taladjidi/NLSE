@@ -2,6 +2,7 @@
 
 import functools
 import warnings
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
@@ -15,6 +16,7 @@ from NLSE import (
     norm,
     sample,
 )
+from NLSE.solvers.step_size import LOSS_PER_STEP_LIMIT
 from scipy.constants import c, epsilon_0
 
 N = 32
@@ -59,6 +61,9 @@ CEILING_MARGIN = 4
 DELTA_N_RTOL = 1e-5
 STEP_RTOL = 1e-5
 RULE_RTOL = 1e-4
+# A loss in 1/m whose step ceiling, LOSS_PER_STEP_LIMIT / (2 alpha) = 2.5e-5 m,
+# is below the twelfth of the nonlinear length at INTENSITY, 8.6e-5 m.
+CAPPING_ALPHA = 1e3
 # Relative tolerance of norm against N**2 |A|^2: float32 sum of N**2 equal
 # terms, measured 9.3e-8 on CPU and MLX. Dropping a quadrature misses by 0.2.
 NORM_RTOL = 1e-6
@@ -73,6 +78,14 @@ DEFAULT_FLOOR_FRACTION = 1e-5
 ABOVE_FLOOR = 1.5
 # Relative error a trial reports to shrink by BOUNDS[0]: far above TOLERANCE.
 LARGE_ERROR = 1.0
+# adapt_delta_z_to_error measures on the steps i with i % CADENCE == 0: of the
+# first CADENCE_STEPS, these. Each measure is two trials, the whole step and its
+# halves (callbacks.py). The controller does not read z, in m.
+CADENCE = 3
+CADENCE_STEPS = 7
+MEASURED_STEPS = [0, 3, 6]
+TRIALS_PER_MEASURE = 2
+ANY_Z = 0.0
 
 
 def _buffers():
@@ -297,6 +310,53 @@ def test_adapt_delta_z_steps_by_a_twelfth_of_the_nonlinear_length(backend_name):
 
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_adapt_delta_z_stops_at_the_split_step_limit(backend_name):
+    """Where the loss ceiling is the tighter, it is the step asked for.
+
+    Parameters
+    ----------
+    backend_name : str
+        Backend to run on.
+    """
+    simu = NLSE(backend=backend_name, **{**BASE, "alpha": CAPPING_ALPHA})
+    simu._current_delta_z = DELTA_Z
+    field = simu._backend.from_numpy(uniform_field(INTENSITY))
+    got = adapt_delta_z(simu, field, 0.0, 0, 1, [])
+    expected = LOSS_PER_STEP_LIMIT / (2 * CAPPING_ALPHA)
+    assert got == pytest.approx(expected, rel=STEP_RTOL), (
+        f"adapt_delta_z asked for {got:.4e} m on {backend_name}, past the "
+        f"{expected:.4e} m the lossy step is solved at"
+    )
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_adapt_delta_z_keeps_the_step_past_the_medium(backend_name):
+    """Past L nothing turns the phase, so the step in force stands.
+
+    Parameters
+    ----------
+    backend_name : str
+        Backend to run on.
+    """
+    simu = NLSE(backend=backend_name, **BASE)
+    in_force: list = []
+    out = simu.out_field(
+        uniform_field(INTENSITY),
+        2 * L,
+        delta_z=DELTA_Z,
+        verbose=False,
+        normalize=False,
+        callback=adapt_delta_z,
+        callback_args=(1, in_force),
+    )
+    assert np.all(np.isfinite(in_force)), f"a step was not finite on {backend_name}"
+    assert np.all(np.isfinite(np.asarray(simu._backend.to_numpy(out))))
+    # The run ends on a cut step; the whole step before it is past the medium
+    # and still the one the medium's last adaptation asked for.
+    assert in_force[-2] == pytest.approx(in_force[1], rel=STEP_RTOL)
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_adapt_delta_z_to_error_follows_the_step_rule(backend_name, monkeypatch):
     """``adapt_delta_z_to_error`` returns ``h safety (tol / error) ** (1 / 3)``.
 
@@ -379,6 +439,30 @@ def test_adapt_delta_z_waits_for_its_cadence(backend_name):
     simu._current_delta_z = DELTA_Z
     field = simu._backend.from_numpy(uniform_field(INTENSITY))
     assert adapt_delta_z(simu, field, 0.0, 1, 2, []) is None
+
+
+def test_adapt_delta_z_to_error_measures_on_its_cadence_only(backend, monkeypatch):
+    """Only every ``update_every``-th step runs the trials and returns a step.
+
+    Parameters
+    ----------
+    backend : str
+        Backend to run on.
+    monkeypatch : pytest.MonkeyPatch
+        Replaces the trial propagation by a counted one.
+    """
+    simu = NLSE(backend=backend, **BASE)
+    field = simu._backend.from_numpy(uniform_field(INTENSITY))
+    simu._step_in_force = simu._split_step_max_dz(field) / CEILING_MARGIN
+    trial = Mock(wraps=functools.partial(scaled_trial, error=TRIAL_ERROR))
+    monkeypatch.setattr(callbacks, "_trial_propagation", trial)
+    measured = [
+        i
+        for i in range(CADENCE_STEPS)
+        if adapt_delta_z_to_error(simu, field, ANY_Z, i, TOLERANCE, CADENCE) is not None
+    ]
+    assert measured == MEASURED_STEPS
+    assert trial.call_count == TRIALS_PER_MEASURE * len(MEASURED_STEPS)
 
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)

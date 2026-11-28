@@ -55,6 +55,8 @@ STALE = timedelta(days=31)  # older than cpu_tuning.CACHE_LIFETIME
 AHEAD = timedelta(days=1)  # a timestamp in the future, by more than clock skew
 THREADED_STEPS = 200  # steps each of two threads takes: long enough to overlap
 FORK_TIMEOUT = 60  # s a forked child gets for SOLVER_STEPS steps: ~1 s needed
+OTHER_OWNER = "another-host 1 1"  # a lock another process holds, as _lock_token
+UNREADABLE_LOCK = b"\xff\xfe"  # not UTF-8: no token this library wrote
 SLOW_SHARE = 0.05  # s a share still runs after another has failed
 PARENT_MARK, CHILD_MARK = 1, 2  # what each side of a fork fills its scratch with
 # s a step of each candidate takes: the fastest neither first nor last.
@@ -610,6 +612,44 @@ def test_a_stale_lock_is_taken_over(blocking):
     assert settle().rows == ROWS
     assert len(MEASURED) == 1
     assert not lock_file().exists(), "the lock was left behind"
+
+
+def measured_while_taken_over(backend, shape, dtype, threads):
+    """Measure as a tuning that outlived LOCK_STALE_AFTER and lost its lock."""
+    lock_file().unlink()
+    lock_file().write_text(OTHER_OWNER)
+    return fixed_entry(backend, shape, dtype, threads)
+
+
+def test_a_lock_taken_over_is_left_to_its_new_owner(blocking, monkeypatch):
+    """Catches a late tuning that removes the lock another process now holds."""
+    monkeypatch.setattr(cpu_tuning, "_measure", measured_while_taken_over)
+    assert settle().rows == ROWS
+    assert lock_file().exists(), "removed the lock of the process that took it over"
+    assert lock_file().read_text() == OTHER_OWNER
+
+
+def test_an_unreadable_lock_is_left_alone(blocking):
+    """Catches a release that raises out of the tuning's ``finally``."""
+    lock_file().write_bytes(UNREADABLE_LOCK)
+    cpu_tuning._release_lock(lock_file())
+    assert lock_file().read_bytes() == UNREADABLE_LOCK
+
+
+def exit_by_busy_grids():
+    """In a forked child: exit 0 if it waits for no grid, 1 if it inherited one."""
+    os._exit(1 if cpu_tuning._BUSY_UNTIL else 0)
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="no fork on this platform")
+@pytest.mark.filterwarnings("ignore:This process")  # fork of a threaded process
+def test_a_forked_child_does_not_inherit_a_wait(monkeypatch):
+    """Catches a child that waits on the parent's deadline for a grid."""
+    monkeypatch.setitem(cpu_tuning._BUSY_UNTIL, ("a grid",), time.monotonic() + 1)
+    child = multiprocessing.get_context("fork").Process(target=exit_by_busy_grids)
+    child.start()
+    child.join(FORK_TIMEOUT)
+    assert child.exitcode == 0, "the child inherited the parent's deadlines"
 
 
 def test_an_unwritable_cache_warns_and_measures(

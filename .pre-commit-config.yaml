@@ -23,7 +23,7 @@ repos:
       hooks:
           - id: ruff-check
             name: ruff (lint)
-            entry: uv run --locked ruff check --fix NLSE/ tests/ examples/
+            entry: uv run --locked ruff check --fix NLSE/ tests/ examples/ benchmarks/ docs/
             language: unsupported
             # The command names its own paths, exactly as CI does, so it does
             # not matter which files are staged.
@@ -32,7 +32,7 @@ repos:
 
           - id: ruff-format
             name: ruff (format)
-            entry: uv run --locked ruff format NLSE/ tests/ examples/
+            entry: uv run --locked ruff format NLSE/ tests/ examples/ benchmarks/ docs/
             language: unsupported
             pass_filenames: false
             types_or: [python, pyi, jupyter]
