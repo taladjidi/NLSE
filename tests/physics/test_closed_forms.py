@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 from helpers import gaussian_beam
-from NLSE import NLSE, NLSE_1d, NLSE_3d
+from NLSE import NLSE, CNLSE_1d, NLSE_1d, NLSE_3d
 from NLSE.backends import get_backend
 from scipy.constants import c, epsilon_0
 from scipy.optimize import brentq
@@ -94,6 +94,17 @@ LOSSY_PHASE_ATOL = 2e-4
 # Points per side for the Gouy phase: 28 to 112 steps where N has 449 to
 # 1797, and the same answer (9.9e-6 rad off at worst, 5.7e-5 at N).
 GOUY_N = 64
+# A Gaussian on a line, E0 exp(-x^2 / w^2), carries P = I0 w sqrt(pi / 2) per
+# unit length, I0 = c eps0 |E0|^2 / 2 (the Gaussian integral of
+# exp(-2 x^2 / w^2)): I0 = sqrt(2 / pi) P / w, whatever the grid.
+LINE_POWER = 100.0  # W/m, a choice
+LINE_GRIDS = (256, 512, 1024)  # points across WINDOW: 12.8 to 51.2 per WAIST
+LINE_LENGTH = 1.0  # m, past the run, so the whole run is in the medium
+# m, 1.2e-4 Rayleigh lengths: diffraction lowers the peak by 8e-9, which the
+# closed form carries. The old cell of delta_X^2 was 6.4e4 to 2.6e5 off.
+LINE_DISTANCE = 2e-5
+# Measured 9.8e-9 on CPU, CL and MLX (float32), every grid and class.
+LINE_PEAK_RTOL = 1e-6
 
 
 def solver(backend, **kwargs):
@@ -557,4 +568,43 @@ def test_a_bright_soliton_keeps_its_shape(backend):
         f"{backend}: a profile 1.5x too wide changed by only {detuned:.2e} "
         f"against the soliton's {soliton:.2e}, so this grid would not have "
         f"noticed the balance being wrong"
+    )
+
+
+@pytest.mark.parametrize("nx", LINE_GRIDS)
+@pytest.mark.parametrize("cls", [NLSE_1d, CNLSE_1d], ids=lambda cls: cls.__name__)
+def test_a_power_per_unit_length_sets_the_peak_intensity_on_any_grid(backend, cls, nx):
+    """A Gaussian of P W/m peaks at sqrt(2/pi) P / w, whatever ``NX``."""
+    extra = {"n12": 0} if cls is CNLSE_1d else {}
+    simu = cls(
+        alpha=0,
+        power=LINE_POWER,
+        window=WINDOW,
+        n2=0,
+        V=None,
+        L=LINE_LENGTH,
+        NX=nx,
+        backend=backend,
+        **extra,
+    )
+    profile = np.exp(-(simu.X**2) / WAIST**2)
+    field = np.stack([profile, profile]) if cls is CNLSE_1d else profile
+    out = to_host(
+        simu,
+        simu.out_field(
+            field.astype(np.complex64), LINE_DISTANCE, verbose=False, plot=False
+        ),
+    )
+    got = c * epsilon_0 / 2 * np.max(np.abs(out) ** 2, axis=-1)
+    entrance = np.sqrt(2 / np.pi) * LINE_POWER / WAIST
+    diffracted = gaussian_beam(0.0, WAIST, simu.k, LINE_DISTANCE, 1)
+    expected = entrance * np.abs(diffracted) ** 2
+    np.testing.assert_allclose(
+        got,
+        expected,
+        rtol=LINE_PEAK_RTOL,
+        err_msg=(
+            f"{backend}: {LINE_POWER} W/m on {nx} points peaks at {got} W/m^2, "
+            f"against the {expected:.6e} W/m^2 of sqrt(2/pi) P / w"
+        ),
     )

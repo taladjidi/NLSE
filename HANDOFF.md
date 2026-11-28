@@ -41,8 +41,11 @@ do not look for another way.
 | Benchmark waits on what lazy transforms return (MLX was timed doing nothing) | `3dfc28f` |
 | Docs: gallery cached in CI; page review along Diataxis | `18f4cc7`, `3bd8af5` |
 
-Last full suites: Mac (CPU, OpenCL, MLX) 2547 passed, 187 skipped, 85
-deselected at `perf/mlx-two-vectors` (box, CuPy and OpenCL, on its first
+Last full suites: Mac (CPU, OpenCL, MLX) 2565 passed, 187 skipped, 85
+deselected at `feat/power-1d-per-length` (box, CuPy and OpenCL: 2680 passed, 68 skipped,
+six times and once with `NLSE_FUSE_PROPAGATOR=0`, tree
+`~/Documents/nlse_power1d_08c9f13` there); 2547 at
+`perf/mlx-two-vectors` (box, CuPy and OpenCL, on its first
 three commits: 2662 passed, 67 skipped, six times and once with
 `NLSE_FUSE_PROPAGATOR=0`, tree `~/Documents/nlse_mlx2v_3b5114b` there); 2536
 at `perf/cpu-pcore-threads` on `70f3c25`; 2526 at
@@ -65,17 +68,30 @@ morning). Two builds follow from them, each through the pipeline (architect,
 spec review, fresh reviewer; the architects delivered verified patch series
 in place of implementer briefs):
 
-- *The 1D solvers take `power` in W/m* (breaking, for 5.0.0): **on the local
-  branch `feat/power-1d-per-length`, reviewed, not merged.** Four commits
-  (`git am` of `NLSE_tangui_fix_specs/power_1d_patches/`, spec
-  `power_1d_spec.md` beside them): the cell is `delta_X` in `nlse_1d.py` and
-  `cnlse_1d.py`; tests give 1D solvers `LINE_POWER` (375.7 W/m, the 2D test
-  beam's peak intensity) through `helpers.make`, and `test_nonlocality.py`
-  keeps its field as 64 W/m; a closed-form test (`I0 = sqrt(2/pi) P / w`, 18
-  cases, fails on the old cell); docs and examples at 376 W/m; changelog.
-  Fresh review: PASS, MINOR only. Left: rebase on `main` (the changelog
-  conflicts with the MLX entry), Mac gate, box run (CuPy never ran these),
-  merge, push.
+- *The 1D solvers take `power` in W/m: built and merged*
+  (`feat/power-1d-per-length`, breaking, for 5.0.0; patches and spec in
+  `NLSE_tangui_fix_specs/power_1d_patches/`). The cell is `delta_X` in
+  `nlse_1d.py` and `cnlse_1d.py`; tests give 1D solvers `LINE_POWER`
+  (375.7 W/m, the 2D test beam's peak intensity) through `helpers.make`, and
+  `test_nonlocality.py` keeps its field as 64 W/m; a closed-form test
+  (`I0 = sqrt(2/pi) P / w`, 18 cases, fails on the old cell and on one 1e-5
+  off); docs and examples at 376 W/m; the changelog says how to convert an
+  old `power` and `power2`. Fresh review: PASS, MINOR only. MINOR, not
+  fixed: the 1D cell is written twice (`CNLSE_1d` does not inherit
+  `NLSE_1d`); the benchmarks still give 1D solvers `power=1.05`
+  (`benchmarks/profile_backends.py`, `trace_solvers.py`,
+  `tests/benchmarks/test_benchmark_profile.py`), so `--baseline` against a
+  revision before this one no longer runs the same 1D field; `power` values
+  left where `normalize=False` ignores them (`test_broadcasting.py`,
+  the soliton in `test_closed_forms.py`, `docs/make_validation_figure.py`,
+  `test_double_precision.py:31`); the new test is absent from
+  `docs/physical_validation.md`; it runs in float32 only, and a complex128
+  CPU run misses the closed form by 7.5e-8 because `_norm_grid_factor` and
+  `_norm_constant` are float32 (older than this); `LINE_POWER` is 375.7 in
+  `tests/helpers.py` and 100.0 in `test_closed_forms.py`. Older than this
+  and still open: no 1D test checks the nonlinear term against a closed
+  form (`g` changed by 5% in the CPU kernels fails only the cross-backend
+  comparison in `test_double_precision.py`).
 - *The MLX propagator as two vectors: built and merged*
   (`perf/mlx-two-vectors`). `split_step_fused` takes `factors`, the solver's
   `_propagator_factors` (the CPU's and CUPY's route, now for the plain
@@ -101,8 +117,8 @@ in place of implementer briefs):
   expected one (there before, not looked into).
 
 The other answers: `V = 2 dn` stays, nothing to change; the increment-form
-linear step for complex64 is not built; 5.0.0 is held until the two builds
-land, then ask again; the thread counts are merged (item 3 below); numba's
+linear step for complex64 is not built; 5.0.0 was held until the two builds
+landed, which they have: **ask the owner again**; the thread counts are merged (item 3 below); numba's
 threading limits were already in `docs/backends.md` ("Threads and processes on
 CPU", `2b450b5`), so that question was stale, as was the entry under "Still
 open"; `CLAUDE.md` is corrected, by me with the owner's leave (seven
@@ -127,7 +143,8 @@ statements; it is untracked, `.git/info/exclude`, so no commit shows it).
   wrong unit, not two swapped lengths: keywords do that. Not checked: how
   the `GPE` and `DDGPE` unit systems map; pint is not installed here.
 
-`main` is pushed; its last changes are `perf/mlx-two-vectors` and
+`main` is pushed; its last changes are `feat/power-1d-per-length`,
+`perf/mlx-two-vectors` and
 `docs/roofline-verdict` (both above), before them `docs/owner-decisions` (this section
 and two entries of the optimization log) and `perf/cpu-pcore-threads` (item 3
 below), before them `fix/closing-review` (item 3

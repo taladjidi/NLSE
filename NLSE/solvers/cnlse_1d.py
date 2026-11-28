@@ -33,9 +33,9 @@ class CNLSE_1d(CNLSE):
         alpha : float
             Alpha through the cell.
         power : float
-            Optical power of each component in W; `power2` sets the second
-            component's afterwards. As in `NLSE_1d`, of a beam ``delta_X``
-            thick: the peak intensity at fixed power grows with ``NX``.
+            Power per unit length of each component in W/m, as in `NLSE_1d`;
+            `power2` sets the second component's afterwards. The peak
+            intensity at fixed power does not depend on ``NX``.
         window : float
             Computational window in m.
         n2 : float
@@ -83,8 +83,8 @@ class CNLSE_1d(CNLSE):
         )
         self._last_axes = (-1,)
 
-        # Override normalization factor for 1D (delta_X^2 instead of delta_X * delta_Y)
-        self._norm_grid_factor = np.float32(self.delta_X**2)
+        # A line: the intensity is integrated over x alone, so power is in W/m.
+        self._norm_grid_factor = np.float32(self.delta_X)
 
     def _dispersion_operator(self) -> np.ndarray:
         """Return the 1D coupled dispersion eigenvalues.

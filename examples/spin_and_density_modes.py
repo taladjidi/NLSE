@@ -173,13 +173,9 @@ def measure(i0, mode, k_xi=1.0, periods=12):
     simu.I_sat2 = I_SAT
     simu.alpha2 = 0.0
 
-    # The amplitude is set from the intensity wanted rather than left to the
-    # solver's power normalisation, and ``normalize=False`` below keeps it.
-    # What ``power`` means is unambiguous in 2D -- the integral of the
-    # intensity over the window -- but this is the 1D solver, where following
-    # that convention would put the background intensity out by a factor of
-    # the grid pitch. Saturation makes the absolute intensity physical here,
-    # not just a scale, so it is worth being explicit about.
+    # The amplitude is set from the intensity wanted, and ``normalize=False``
+    # below keeps it. Saturation makes the absolute intensity physical here,
+    # so it is set directly rather than through ``power``, which is in W/m.
     amplitude = np.sqrt(2 * (i0 / 2) / (c_light * epsilon_0))
     epsilon = 0.02
     ripple = epsilon * np.cos(k_p * simu.X)

@@ -1,6 +1,7 @@
 """Backend-agnostic helpers for the solver tests."""
 
 import numpy as np
+from NLSE import CNLSE_1d, NLSE_1d
 from NLSE.backends import list_available_backends
 
 PRECISION_COMPLEX = np.complex64
@@ -89,6 +90,11 @@ PHYSICS = {
 # pair. Five such mutations survived the suite before this.
 ASYMMETRY = {"alpha2": 0.5, "n22": 0.4, "I_sat2": 0.25}
 WAVELENGTH2 = 795e-9
+# Solvers on a line, whose power is per unit length.
+LINE_SOLVERS = (NLSE_1d, CNLSE_1d)
+# W/m, 375.7: a Gaussian of WAIST on a line peaks at sqrt(2/pi) P / w, so this
+# gives it the peak intensity of the 2D beam, 2 P / (pi w^2), at PHYSICS power.
+LINE_POWER = PHYSICS["power"] * np.sqrt(2 / np.pi) / WAIST
 
 
 def make(cls, backend="CPU", n=None, symmetric=True, **overrides):
@@ -109,7 +115,8 @@ def make(cls, backend="CPU", n=None, symmetric=True, **overrides):
         pair visible; the default matches the constructor so that converting
         a test to this factory does not change what it runs.
     **overrides
-        Any constructor argument, by keyword.
+        Any constructor argument, by keyword. A 1D solver's ``power``
+        defaults to `LINE_POWER`, in W/m.
 
     Returns
     -------
@@ -125,6 +132,8 @@ def make(cls, backend="CPU", n=None, symmetric=True, **overrides):
             if axis in accepted:
                 params[axis] = n
     params["backend"] = backend
+    if issubclass(cls, LINE_SOLVERS):
+        params["power"] = LINE_POWER
     params.update(overrides)
     solver = cls(**params)
     if hasattr(solver, "n22") and not symmetric:
