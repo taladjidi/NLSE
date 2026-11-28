@@ -1,5 +1,8 @@
 """Tests that the rates reduced on the device are the rates."""
 
+import warnings
+from unittest import mock
+
 import numpy as np
 import pytest
 from helpers import AVAILABLE_BACKENDS, make
@@ -10,6 +13,8 @@ L = 1e-3
 WAIST = 2.23e-3
 WINDOW = 4 * WAIST
 SOLVERS = [NLSE, NLSE_1d, CNLSE, CNLSE_1d]
+# Short enough that a call is a handful of steps on any backend.
+CALL_DISTANCE = L / 100
 
 
 def one_dimensional(cls):
@@ -102,3 +107,41 @@ def test_rates_before_the_transforms_are_planned_take_the_host_path(backend_name
     rates = solver._energy_rates(field)
     assert set(rates) == {"kinetic", "potential", "interaction", "loss"}
     assert all(np.isfinite(value) for value in rates.values())
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+@pytest.mark.parametrize("cls", [NLSE, CNLSE], ids=lambda c: c.__name__)
+@pytest.mark.parametrize(
+    ("method", "splitting"),
+    [("split_step", "lie"), ("RK4", "lie"), ("split_step", "yoshida")],
+)
+@pytest.mark.parametrize("delta_z", [None, CALL_DISTANCE / 4], ids=["default", "given"])
+def test_a_call_reduces_the_rates_once(backend_name, cls, method, splitting, delta_z):
+    """The field does not change before the run starts, so neither do its rates.
+
+    The default step, the method's cap and Yoshida's span all read them. Each
+    used to reduce them again, and on the coupled solver every reduction
+    brings the whole field back to the host.
+    """
+    solver, field = prepared(cls, backend_name)
+    host_field = np.asarray(solver._backend.to_numpy(field))
+    with (
+        mock.patch.object(
+            cls, "_energy_rates", autospec=True, side_effect=cls._energy_rates
+        ) as rates,
+        warnings.catch_warnings(),
+    ):
+        # Yoshida in single precision warns that it is not worth it.
+        warnings.simplefilter("ignore")
+        solver.out_field(
+            host_field,
+            CALL_DISTANCE,
+            delta_z=delta_z,
+            method=method,
+            splitting=splitting,
+            verbose=False,
+        )
+    assert rates.call_count == 1, (
+        f"{cls.__name__} {method}/{splitting} on {backend_name} reduced the "
+        f"rates {rates.call_count} times in one call"
+    )

@@ -164,6 +164,38 @@ __kernel void nl_prop_c(
 
 // RK4 utility kernels (stage building and accumulation)
 
+// Element helpers the per-pass and the whole-stage RK4 kernels share, so each
+// sum is written, and rounded, in one place.
+
+// a + c*k: every RK4 update.
+inline {{FP2_TYPE}} rk4_axpy_element(const {{FP2_TYPE}} a, const {{FP_TYPE}} c, const {{FP2_TYPE}} k) {
+    return ({{FP2_TYPE}})(a.x + c * k.x, a.y + c * k.y);
+}
+
+// (coeff_r + 1j*coeff_i) * a: a component's nonlinear slope. The caller forms
+// the coefficients, since the potential's terms belong to its V twin.
+inline {{FP2_TYPE}} rk4_nl_slope(const {{FP2_TYPE}} a, const {{FP_TYPE}} coeff_r, const {{FP_TYPE}} coeff_i) {
+    return ({{FP2_TYPE}})(coeff_r * a.x - coeff_i * a.y, coeff_r * a.y + coeff_i * a.x);
+}
+
+// Spends a stage's slope on acc[i] as mode (an Rk4StageMode, templating.py)
+// says: SET stores it, ADD adds w times it, SPEND adds it to acc without
+// storing. Returns the slope the stage's output is built from.
+inline {{FP2_TYPE}} rk4_stage_carry(
+    __global {{FP2_TYPE}}* acc, const int i, const {{FP2_TYPE}} rhs, const {{FP_TYPE}} w, const int mode
+) {
+    if (mode == RK4_SET) {
+        acc[i] = rhs;
+        return rhs;
+    } else if (mode == RK4_ADD) {
+        acc[i] = rk4_axpy_element(acc[i], w, rhs);
+        return rhs;
+    } else {
+        {{FP2_TYPE}} acc_val = acc[i];
+        return ({{FP2_TYPE}})(acc_val.x + rhs.x, acc_val.y + rhs.y);
+    }
+}
+
 // RK4 AXPY: out = A + c * k
 __kernel void rk4_axpy(
     __global {{FP2_TYPE}}* out,
@@ -232,10 +264,9 @@ __kernel void square_mod_rk4_nl_rhs(
     {{FP_TYPE}} sat = 1.0{{FP_SUFFIX}} / (1.0{{FP_SUFFIX}} + A_sq_val / Isat);
     {{FP_TYPE}} coeff_r = -(alpha * sat V_LOSS(V, idx - (int)get_global_offset(0)));
     {{FP_TYPE}} coeff_i = g * A_sq_val * sat V_PHASE(V, idx - (int)get_global_offset(0));
-    {{FP_TYPE}} contrib_r = coeff_r * A_val.x - coeff_i * A_val.y;
-    {{FP_TYPE}} contrib_i = coeff_r * A_val.y + coeff_i * A_val.x;
+    {{FP2_TYPE}} slope = rk4_nl_slope(A_val, coeff_r, coeff_i);
     {{FP2_TYPE}} A_prop_val = A_prop[idx];
-    A_prop[idx] = ({{FP2_TYPE}})(A_prop_val.x + contrib_r, A_prop_val.y + contrib_i);
+    A_prop[idx] = ({{FP2_TYPE}})(A_prop_val.x + slope.x, A_prop_val.y + slope.y);
 }
 // {{END_VBLOCK}}
 
@@ -283,8 +314,7 @@ __kernel void rk4_set_and_axpy(
     int idx = get_global_id(0);
     {{FP2_TYPE}} k_val = k[idx];
     acc[idx] = k_val;
-    {{FP2_TYPE}} A_val = A[idx];
-    out[idx] = ({{FP2_TYPE}})(A_val.x + c * k_val.x, A_val.y + c * k_val.y);
+    out[idx] = rk4_axpy_element(A[idx], c, k_val);
 }
 
 // FUSED RK4 stage update: acc += w * k, out = A + c * k  (used for stages 2-3)
@@ -299,11 +329,99 @@ __kernel void rk4_acc_and_axpy(
 ) {
     int idx = get_global_id(0);
     {{FP2_TYPE}} k_val = k[idx];
-    {{FP2_TYPE}} acc_val = acc[idx];
-    acc[idx] = ({{FP2_TYPE}})(acc_val.x + w * k_val.x, acc_val.y + w * k_val.y);
-    {{FP2_TYPE}} A_val = A[idx];
-    out[idx] = ({{FP2_TYPE}})(A_val.x + c * k_val.x, A_val.y + c * k_val.y);
+    acc[idx] = rk4_axpy_element(acc[idx], w, k_val);
+    out[idx] = rk4_axpy_element(A[idx], c, k_val);
 }
+
+// Whole-stage RK4 kernels. The CUDA twins in cuda_source/kernels.cu carry the
+// reasoning: the slope is finished in registers and spent on the accumulator
+// and the next argument without reaching memory. mode is an Rk4StageMode
+// (templating.py). out may alias A_orig and A.
+// {{VBLOCK}}
+__kernel void square_mod_rk4_stage(
+    __global const {{FP2_TYPE}}* lin,
+    __global const {{FP2_TYPE}}* A_orig,
+    V_ARG(V)
+    __global {{FP2_TYPE}}* acc,
+    __global {{FP2_TYPE}}* out,
+    __global const {{FP2_TYPE}}* A,
+    const {{FP_TYPE}} alpha,
+    const {{FP_TYPE}} g,
+    const {{FP_TYPE}} Isat,
+    const {{FP_TYPE}} w,
+    const {{FP_TYPE}} c,
+    const int mode
+) {
+    int idx = get_global_id(0);
+    {{FP2_TYPE}} A_val = A_orig[idx];
+    {{FP_TYPE}} A_sq_val = A_val.x * A_val.x + A_val.y * A_val.y;
+    {{FP_TYPE}} sat = 1.0{{FP_SUFFIX}} / (1.0{{FP_SUFFIX}} + A_sq_val / Isat);
+    {{FP_TYPE}} coeff_r = -(alpha * sat V_LOSS(V, idx));
+    {{FP_TYPE}} coeff_i = g * A_sq_val * sat V_PHASE(V, idx);
+    {{FP2_TYPE}} slope = rk4_nl_slope(A_val, coeff_r, coeff_i);
+    {{FP2_TYPE}} lin_val = lin[idx];
+    {{FP2_TYPE}} rhs = ({{FP2_TYPE}})(lin_val.x + slope.x, lin_val.y + slope.y);
+    {{FP2_TYPE}} carried = rk4_stage_carry(acc, idx, rhs, w, mode);
+    out[idx] = rk4_axpy_element(A[idx], c, carried);
+}
+// {{END_VBLOCK}}
+
+// The same, for an interleaved (2, N_sq) coupled field. half_omega adds the
+// Rabi slope, -1j*half_omega*(other component); it is 0 without a coupling.
+// {{VBLOCK}}
+__kernel void coupled_rk4_stage_c(
+    __global const {{FP2_TYPE}}* lin,
+    __global const {{FP2_TYPE}}* A_orig,
+    __global {{FP2_TYPE}}* acc,
+    __global {{FP2_TYPE}}* out,
+    __global const {{FP2_TYPE}}* A,
+    V_ARG(V1)
+    V_ARG(V2)
+    const int N_sq,
+    const {{FP_TYPE}} alpha1,
+    const {{FP_TYPE}} alpha2,
+    const {{FP_TYPE}} g11,
+    const {{FP_TYPE}} g12,
+    const {{FP_TYPE}} g21,
+    const {{FP_TYPE}} g22,
+    const {{FP_TYPE}} Isat1,
+    const {{FP_TYPE}} Isat2,
+    const {{FP_TYPE}} half_omega,
+    const {{FP_TYPE}} w,
+    const {{FP_TYPE}} c,
+    const int mode
+) {
+    int idx = get_global_id(0);
+    {{FP2_TYPE}} a1 = A_orig[idx];
+    {{FP2_TYPE}} a2 = A_orig[idx + N_sq];
+    {{FP_TYPE}} sq1 = a1.x * a1.x + a1.y * a1.y;
+    {{FP_TYPE}} sq2 = a2.x * a2.x + a2.y * a2.y;
+    {{FP_TYPE}} sat = 1.0{{FP_SUFFIX}} / (1.0{{FP_SUFFIX}} + sq1 / Isat1 + sq2 / Isat2);
+
+    {{FP_TYPE}} interact1_i = (g11 * sq1 + g12 * sq2) * sat;
+    {{FP_TYPE}} coeff1_r = -(alpha1 * sat V_LOSS(V1, idx));
+    {{FP_TYPE}} coeff1_i = interact1_i V_PHASE(V1, idx);
+    {{FP2_TYPE}} nl1 = rk4_nl_slope(a1, coeff1_r, coeff1_i);
+
+    {{FP_TYPE}} interact2_i = (g22 * sq2 + g21 * sq1) * sat;
+    {{FP_TYPE}} coeff2_r = -(alpha2 * sat V_LOSS(V2, idx));
+    {{FP_TYPE}} coeff2_i = interact2_i V_PHASE(V2, idx);
+    {{FP2_TYPE}} nl2 = rk4_nl_slope(a2, coeff2_r, coeff2_i);
+
+    {{FP2_TYPE}} lin1 = lin[idx];
+    {{FP2_TYPE}} lin2 = lin[idx + N_sq];
+    {{FP2_TYPE}} rhs1 = ({{FP2_TYPE}})(lin1.x + nl1.x, lin1.y + nl1.y);
+    {{FP2_TYPE}} rhs2 = ({{FP2_TYPE}})(lin2.x + nl2.x, lin2.y + nl2.y);
+    // -1j * half_omega * (x + iy) = half_omega * (y, -x)
+    rhs1 = ({{FP2_TYPE}})(rhs1.x + half_omega * a2.y, rhs1.y - half_omega * a2.x);
+    rhs2 = ({{FP2_TYPE}})(rhs2.x + half_omega * a1.y, rhs2.y - half_omega * a1.x);
+
+    {{FP2_TYPE}} carried1 = rk4_stage_carry(acc, idx, rhs1, w, mode);
+    {{FP2_TYPE}} carried2 = rk4_stage_carry(acc, idx + N_sq, rhs2, w, mode);
+    out[idx] = rk4_axpy_element(A[idx], c, carried1);
+    out[idx + N_sq] = rk4_axpy_element(A[idx + N_sq], c, carried2);
+}
+// {{END_VBLOCK}}
 
 // Rabi coupling: 2x2 rotation of (A1, A2) pair
 __kernel void rabi_coupling(
@@ -404,19 +522,17 @@ __kernel void coupled_rk4_nl_rhs_c(
     {{FP_TYPE}} interact1_i = (g11 * sq1 + g12 * sq2) * sat;
     {{FP_TYPE}} coeff1_r = -(alpha1 * sat V_LOSS(V1, idx));
     {{FP_TYPE}} coeff1_i = interact1_i V_PHASE(V1, idx);
-    {{FP_TYPE}} nl1_r = coeff1_r * a1.x - coeff1_i * a1.y;
-    {{FP_TYPE}} nl1_i = coeff1_r * a1.y + coeff1_i * a1.x;
+    {{FP2_TYPE}} nl1 = rk4_nl_slope(a1, coeff1_r, coeff1_i);
     {{FP2_TYPE}} k1_val = k[idx];
-    k[idx] = ({{FP2_TYPE}})(k1_val.x + nl1_r, k1_val.y + nl1_i);
+    k[idx] = ({{FP2_TYPE}})(k1_val.x + nl1.x, k1_val.y + nl1.y);
 
     // Component 2: same structure with swapped params
     {{FP_TYPE}} interact2_i = (g22 * sq2 + g21 * sq1) * sat;
     {{FP_TYPE}} coeff2_r = -(alpha2 * sat V_LOSS(V2, idx));
     {{FP_TYPE}} coeff2_i = interact2_i V_PHASE(V2, idx);
-    {{FP_TYPE}} nl2_r = coeff2_r * a2.x - coeff2_i * a2.y;
-    {{FP_TYPE}} nl2_i = coeff2_r * a2.y + coeff2_i * a2.x;
+    {{FP2_TYPE}} nl2 = rk4_nl_slope(a2, coeff2_r, coeff2_i);
     {{FP2_TYPE}} k2_val = k[idx + N_sq];
-    k[idx + N_sq] = ({{FP2_TYPE}})(k2_val.x + nl2_r, k2_val.y + nl2_i);
+    k[idx + N_sq] = ({{FP2_TYPE}})(k2_val.x + nl2.x, k2_val.y + nl2.y);
 }
 // {{END_VBLOCK}}
 

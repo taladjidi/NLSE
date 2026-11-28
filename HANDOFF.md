@@ -41,25 +41,28 @@ do not look for another way.
 | Benchmark waits on what lazy transforms return (MLX was timed doing nothing) | `3dfc28f` |
 | Docs: gallery cached in CI; page review along Diataxis | `18f4cc7`, `3bd8af5` |
 
-Last full suites: Mac (CPU, OpenCL, MLX) 2381 passed, 221 skipped, 85 deselected at
-`test/review-findings`; box, combined environment (CuPy and OpenCL), 2466
-passed, 104 skipped, none failed, six times and once with
-`NLSE_FUSE_PROPAGATOR=0`, at `77edad9` (2026-11-28,
-`~/Documents/nlse_main_77edad9/run*.txt` there). Each box run also reports
-12 errors, all of `tests/test_packaging.py`: `nlse_env_both` has no
-hatchling. Not run on CuPy since `77edad9`: the second docs round (text and
-docstrings) and the step-count fix (the loop is Python, the same on every
-backend). The benchmark tools ran there on their own (their entry below).
-`NLSE_3d`'s Strang merge (`fix/open-items`) has not run on CuPy at all.
+Last full suites: Mac (CPU, OpenCL, MLX) 2496 passed, 187 skipped, 85 deselected at
+`perf/gpu-p4` (2382 and 221 on `main` before it); box, combined environment
+(CuPy and OpenCL), 2620 passed, 57 skipped, none failed, six times and once
+with `NLSE_FUSE_PROPAGATOR=0`, at `01e15c8` (2026-11-28,
+`~/Documents/nlse_p4r2_scripts/results/suite_01e15c8_*.txt` there; 2466 and
+104 at `77edad9`). Each box run also reports 13 errors, all of
+`tests/test_packaging.py`: `nlse_env_both` has no hatchling. The branch's
+last commit (`bbead51`, one test and two sentences) ran there as
+`tests/backends/test_fused_paths.py` only: 171 passed, 1 skipped. So
+everything on `main` up to `402601a` has now run on CuPy, `NLSE_3d`'s Strang
+merge included (timed there too: optimization log).
 
 ### Resume here (written 2026-11-28)
 
-`main` is pushed; its last code change in the solvers is `fix/open-items`
-(`NLSE_3d` merges its Strang half steps), its last merges
-`test/review-findings` (tests only) and `chore/packaging-leftovers` (one
-`getattr` in `kernels/cpu.py`, and the packaging test). Last full suite on
-the Mac at `test/review-findings`: 2381 passed, 221 skipped, 85 deselected
-in 177 s (202 s before it). At `fix/open-items` it was 2364 (four tests
+`main` is pushed; its last code change is `perf/gpu-p4` (the four GPU
+patches, item 3 below), before it `test/review-findings` (tests only) and
+`chore/packaging-leftovers` (one `getattr` in `kernels/cpu.py`, and the
+packaging test). Last full suite on the Mac at `perf/gpu-p4`: 2496
+passed, 187 skipped, 85 deselected in 254 s; at
+`chore/packaging-leftovers` 2382 and 221 in 188 s; at
+`test/review-findings` 2381 in 177 s (202 s before it).
+At `fix/open-items` it was 2364 (four tests
 added; three
 benchmarks fewer since `refactor/bench-tests-debloat`: the DDGPE one, which
 was skipped on every backend). Against the 2355 of
@@ -487,15 +490,72 @@ was decided alone is under "Decided alone" below.
        `step_cost`, `time_step` and `step_path`; `main` is 35 statements.
      - The 64x64 timing test raises "disturbed" on a loaded machine (25
        repeats on each backend did not).
-3. **Afterwards, the owner's earlier order:** the GPU P4 patches (fix their
-   spec first), thread counts per machine in the tuner, the increment-form
-   linear step for complex64 (recommend only), the fewer-passes lessons on
-   MLX and OpenCL, the Mac profiles, a closing review pass and the final
-   report. Version 5.0.0 is neither bumped nor published. The four P4
-   patches no longer apply on `main` (checked 2026-11-28 at `58bfbd1`,
-   `git apply --3way`): conflicts in `cupy_kernels.py`, `cnlse.py`,
-   `nlse.py`, `step_size.py` and `tests/solvers/test_solver_state.py`; T4
-   alone applies. That package starts with an architect rebasing them.
+3. **Afterwards, the owner's earlier order.** Done: the GPU P4 patches
+   (entry below). Next, in order: thread counts per machine in the tuner (an
+   architect was writing `NLSE_tangui_fix_specs/cpu_threads_spec.md` and
+   `cpu_threads_T<n>.patch`, cut on `402601a`, when this was written: spec
+   review, one round back to it, then apply on a branch), the
+   increment-form linear step for complex64 (recommendation under "Packages
+   not built"; not built), the fewer-passes lessons on MLX and OpenCL, the
+   Mac profiles, a closing review pass and the final report. Version 5.0.0
+   is neither bumped nor published.
+   - **GPU P4** (`perf/gpu-p4`, 2026-11-28). Four commits, one per task of
+     `NLSE_tangui_fix_specs/gpu_p4_r2_spec.md` (patches
+     `gpu_p4_r2_T1..T4.patch`, rebased on `402601a` by an architect after a
+     review of its first round, nine points, all answered):
+     `3e43b01` T1, the Rabi coupling inside the fused coupled kernels;
+     `8fbab85` T2, the energy rates reduced once per `out_field` call;
+     `8c13643` T3, the propagator stays on the device until it is read
+     (`propagator` is a property now); `01e15c8` T4, OpenCL runs each RK4
+     stage in one kernel. `bbead51` is the review's test.
+     - Gains, RTX 3050, complex64, 2048², measured by the architect at
+       `295602f` (changelog and optimization log have every grid): T1, a
+       `CNLSE` step with `omega` = 1e4 rad/m on CuPy, Strang 8.61 to 4.56
+       ms, Lie 4.55 to 3.90, RK4 43.95 to 19.93, and OpenCL Strang 13.57 to
+       8.19; T2, a 10-step RK4 call, `NLSE` 143.5 to 140.1 ms, `CNLSE`
+       352.0 to 313.6; T3, a 10-step Lie call, `NLSE` 49.26 to 41.54,
+       `CNLSE` 140.9 to 126.5; T4, an OpenCL RK4 step, `NLSE` 17.20 to
+       15.42, `CNLSE` 32.70 to 29.34, `CNLSE` with `omega` 80.51 to 29.24.
+     - Verified: the Mac gate and the box runs under "Last full suites";
+       each task's acceptance counts on the Mac as the spec gives them; by
+       me, `simu.propagator` read after a run is a host array on all six
+       solvers, split step and RK4, on CPU, CL and MLX, and a second run
+       works after the read.
+     - Fresh review: MERGE, no CRITICAL or MAJOR. It read the Rabi order
+       (Lie `L N R`, Strang `R N L N R`) in the CUDA source, on CL, MLX and
+       the generic path, the RK4 slope, the rates-once flow with DDGPE's
+       override, the propagator's life cycle; ran the CUDA kernels'
+       arithmetic through a host C harness against NumPy; and ran a fused
+       `CNLSE` with `omega` against the generic path (1.3e-6 of the peak on
+       CL, 9.3e-7 on MLX). Of its 13 mutants 11 failed a test; `omega` out
+       of `_fusable_params` failed none, and fails
+       `test_a_batched_coupling_declines_the_fused_stage` since `bbead51`.
+     - Left, MINOR: `omega` taken out of the split step's own fuse check
+       (`cnlse.py`, the tuple passed to `_can_fuse_components`) still fails
+       no test: CL and MLX refuse a batched coupled run before it, and no
+       test runs a batched `omega` on CuPy. The rhs-level fused RK4 kernels
+       (`rk4_rhs_fused`, `rk4_rhs_coupled_fused`) are superseded by the
+       stage kernels on CL now, as they were on CuPy: only a test that
+       switches the stage off reaches them (MLX still runs the coupled
+       one). `_retrieve_arrays_from_gpu` names `propagator` inside its
+       loop, and a solver pickled or copied between runs would carry the
+       device array (nothing in the package pickles one; not tried). Bare
+       `2` for the half coupling, as before the patch.
+     - Not verified: the timings on the final stack (the refactor after
+       `295602f` was timed against it on box CL at 2048², 1.001 to 1.006x,
+       and matches it to the bit); MLX and complex128 timings; T2 and T3
+       for a `CNLSE` at 4096²; T2 with the default step or Yoshida; T4 with
+       `omega` at 4096²; CuPy Lie and OpenCL Strang at 4096² under T1 (too
+       noisy to claim); T3's memory cost; the reviewer ran nothing on CuPy;
+       complex128 on CL and MLX; POCL before the push (CI is the check).
+     - The owner's to decide (spec, "Owner decisions"): T3 keeps RK4's
+       linear operator on the device until the next run or read, one grid
+       (two for a `CNLSE`), accepted here; the `CNLSE` energy rates still
+       bring the field to the host, 173 ms a reduction at 4096² (follow-up:
+       reduce on the device); OpenCL still rotates in a launch of its own
+       (follow-up: fuse it into `coupled_nl_prop_c`); the `1.0` of the
+       saturation formula stays a literal in the kernels; `.git/rr-cache`
+       holds entries dated 2026-11-28 03:31 that no round claims.
 
 #### Night of 2026-11-27: landed, decided, left
 
@@ -747,6 +807,15 @@ was decided alone is under "Decided alone" below.
   - Not opened then: `trace_solvers.py`, `nsys_summary.py`,
     `tests/benchmarks/test_benchmark_profile.py` (reviewed since: "Benchmark
     tools" above), the docs pages that quote the examples, any CuPy path.
+- **Decided alone**, GPU P4 (2026-11-28): the architect's four patches
+  were applied with `git apply` and committed with my messages, no
+  implementer (the patches carried empty bodies and another model's
+  attribution); one review round went back to the architect, and its second
+  round was checked by me; T3's held grid is accepted; OpenCL keeps its
+  separate Rabi launch; the superseded rhs-level kernels stay until a
+  debloat with a timing proof; the review's test and the MLX wording were
+  read by me only; the thread-count architect writes its patches itself
+  (the tuner is judgment, not a brief for an implementer).
 - **Decided alone**, test suite (2026-11-28): the fixes were written by
   me on a worktree and read by a fresh reviewer, not sent through architect
   and implementer (nine files, tests only); `test_nonlocality` deleted, not
@@ -809,8 +878,8 @@ and "Still open" list:
 
 ### Packages not built
 
-- Thread counts per machine, not built (next package, through the
-  pipeline): on the M3 Max (12 P and 4 E cores) numba's `prange` kernels
+- Thread counts per machine, not built (in progress, "Resume here" item
+  3): on the M3 Max (12 P and 4 E cores) numba's `prange` kernels
   are 21-34% faster on 12 threads than on 16 at 1024², 2048² and 4096² in
   both dtypes, and the whole unblocked step on 12 against 16 threads is
   1.18 against 1.54 ms at 1024² complex64, 2.12 against 2.40 at complex128,
@@ -822,35 +891,29 @@ and "Still open" list:
   measured by the tuner and cached with the block; the blocked step's
   candidates (`THREAD_DIVISORS`: 16 and 8 here) should include the P-core
   count too.
-- GPU fixed costs and the coupled runs that leave the fused step:
-  `NLSE_tangui_fix_specs/gpu_p4_spec.md` with `gpu_p4_T1..T4.patch` (base
-  `f26b694`), written and measured by an architect, nothing applied. Spec
-  review: the patches apply stacked on `main` and on the blocked step with
-  line offsets only, and pass the Mac suite (1171 passed, 137 skipped in
-  `tests/backends` and `tests/solvers`), but fix the spec first: every
-  expected count was measured at `f26b694` and is stale (re-measure on
-  `main`, on the box too, where `main`'s newer Rabi and DDGPE tests have
-  never run against T1; T4 has no OpenCL baseline); the box commands lack
-  directory and environment; no task writes the CHANGELOG and the log, and
-  `ab.py` and `calls.py` exist only in `~/Documents/nlse_scratch_scripts/p4/`
-  on the box. Minor: DDGPE takes the fused kernels for the first time and
-  the spec does not say so; the Rabi angle now comes from the double `dz`,
-  so complex64 equality to the bit is observed, not guaranteed; bare `1`
-  and `2` for the mode in `kernels.cu`; nothing fails if T4's flag is
-  reverted. The reviewer's stage-by-stage local counts are in the session
-  transcript; re-measure rather than trust them. T1 Rabi coupling in the fused step (CuPy CNLSE 2048² strang
-  8.43 to 4.55 ms, RK4 43.9 to 20.0), T2 `_energy_rates` once a call, T3
-  the propagator stays on the GPU, T4 a fused RK4 stage on OpenCL (8 to
-  13%). Left to the owner, with options in the spec: the CNLSE field
-  download and the potential grids rebuilt every call, and VkFFT
-  `tune_config` on OpenCL.
+- GPU P4 is merged ("Resume here", item 3). Its follow-ups, not built: the
+  `CNLSE` energy rates reduced on the device (173 ms a reduction at 4096² on
+  CuPy, once per call now); the Rabi rotation fused into OpenCL's
+  `coupled_nl_prop_c` (one launch per Lie step, two per Strang step); the
+  potential grids rebuilt on every call (17-25 ms with V, from the
+  profile); VkFFT `tune_config` on OpenCL (-23% on a 2048² transform, not
+  run in the solver); the rhs-level RK4 kernels the stage kernels supersede
+  on CuPy and CL (delete, with a timing proof).
 - **complex64 accuracy is set by the transforms**, not the kernels: a round
   trip loses 2.8 units of 2^-24 of power, every step. Writing the linear step
   as `A + ifft((P - 1) fft(A))` cuts the field error 40 to 390 times for 7 to
-  26% of a CPU step (prototype, optimization log, *Open*). The user has not
-  decided: recommend only.
-- Per-call costs from the CUDA-box profile, below: the propagator download,
-  `_energy_rates` twice, the potential grids.
+  26% of a CPU step (prototype, optimization log, *Open*). The owner has not
+  decided. Recommendation (mine, 2026-11-28): not by default. The drift is
+  2.75 units of 2^-24 of the power a step, 1.6e-7, so 0.16% after 1e4
+  steps, and a run that cares has complex128, at 1.56 to 1.8 times the CPU
+  step (the unblocked figures above) and twice the memory. Worth building
+  only as an opt-in, for long complex64 runs on grids a GPU cannot hold in
+  complex128, and after two measurements the prototype lacks: its cost on
+  CuPy, and against the blocked CPU step (the 7 to 26% is unfused, on the
+  Mac's CPU).
+- Per-call costs from the CUDA-box profile, below: P4 removed the
+  propagator download and the repeated `_energy_rates`; the potential
+  grids are still rebuilt.
 - MLX and OpenCL: the fewer-passes lessons are not ported.
 - The Mac profiles (CPU and MLX): see "Performance profiles".
 
@@ -1317,7 +1380,9 @@ State:
 - Nothing is in `docs/optimization-log.md` from the profiles yet, and no
   candidate is implemented.
 
-Top of the ranking, CuPy at 2048², one-step call (measured, prototypes only):
+Top of the ranking, CuPy at 2048², one-step call (measured, prototypes only).
+`perf/gpu-p4` built the first two and the coupled `omega` cases of the
+last; the rest is open:
 
 - The propagator is downloaded after every call (`_gpu_array_attrs`,
   `NLSE/solvers/nlse.py:1668`): 40.6 -> 28.5 ms for NLSE split step without

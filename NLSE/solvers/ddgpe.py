@@ -392,6 +392,7 @@ class DDGPE(CNLSE):
         A: np.ndarray,
         method: str = "split_step",
         z: float | None = None,
+        rates: dict[str, float] | None = None,
     ) -> float:
         """Return the solver's default step, kept as the drive's sampling step.
 
@@ -403,13 +404,15 @@ class DDGPE(CNLSE):
             Integration method, as for the parent.
         z : float, optional
             Total time, as for the parent.
+        rates : dict, optional
+            The field's rates, as for the parent.
 
         Returns
         -------
         float
             The parent's default step.
         """
-        delta_z = super()._default_delta_z(A, method, z)
+        delta_z = super()._default_delta_z(A, method, z, rates)
         self._drive_step = delta_z
         return delta_z
 

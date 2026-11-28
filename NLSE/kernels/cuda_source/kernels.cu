@@ -285,9 +285,7 @@ extern "C" __global__ void rk4_nl_rhs_c(
 // {{END_VBLOCK}}
 
 // Whole-stage RK4, the slope kept in registers. A_orig may alias out (per index).
-//   mode 0 (stage 1)    acc = rhs;         out = A + c*rhs
-//   mode 1 (stages 2-3) acc = acc + w*rhs; out = A + c*rhs
-//   mode 2 (stage 4)    acc untouched;     out = A + c*(acc + rhs)
+// mode is an Rk4StageMode (templating.py): RK4_SET, RK4_ADD or RK4_SPEND.
 
 // {{VBLOCK}}
 extern "C" __global__ void square_mod_rk4_stage(
@@ -320,9 +318,9 @@ extern "C" __global__ void square_mod_rk4_stage(
     {{FP2_TYPE}} rhs = make_{{FP2_TYPE}}(lin_val.x + contrib_r, lin_val.y + contrib_i);
 
     {{FP2_TYPE}} carried = rhs;
-    if (mode != 0) {
+    if (mode != RK4_SET) {
         {{FP2_TYPE}} acc_val = acc[idx];
-        if (mode == 1) {
+        if (mode == RK4_ADD) {
             acc[idx] = make_{{FP2_TYPE}}(acc_val.x + w * rhs.x, acc_val.y + w * rhs.y);
         } else {
             carried = make_{{FP2_TYPE}}(acc_val.x + rhs.x, acc_val.y + rhs.y);
@@ -357,6 +355,7 @@ extern "C" __global__ void coupled_rk4_stage_c(
     const {{FP_TYPE}} g22,
     const {{FP_TYPE}} Isat1,
     const {{FP_TYPE}} Isat2,
+    const {{FP_TYPE}} half_omega,
     const {{FP_TYPE}} w,
     const {{FP_TYPE}} c,
     const int mode,
@@ -386,13 +385,17 @@ extern "C" __global__ void coupled_rk4_stage_c(
     {{FP2_TYPE}} lin2 = lin[idx + N_sq];
     {{FP2_TYPE}} rhs1 = make_{{FP2_TYPE}}(lin1.x + nl1_r, lin1.y + nl1_i);
     {{FP2_TYPE}} rhs2 = make_{{FP2_TYPE}}(lin2.x + nl2_r, lin2.y + nl2_i);
+    // The Rabi slope, -1j * half_omega * (other component), added last as the
+    // generic path adds it. half_omega is 0 without a coupling.
+    rhs1 = make_{{FP2_TYPE}}(rhs1.x + half_omega * a2.y, rhs1.y - half_omega * a2.x);
+    rhs2 = make_{{FP2_TYPE}}(rhs2.x + half_omega * a1.y, rhs2.y - half_omega * a1.x);
 
     {{FP2_TYPE}} carried1 = rhs1;
     {{FP2_TYPE}} carried2 = rhs2;
-    if (mode != 0) {
+    if (mode != RK4_SET) {
         {{FP2_TYPE}} acc1 = acc[idx];
         {{FP2_TYPE}} acc2 = acc[idx + N_sq];
-        if (mode == 1) {
+        if (mode == RK4_ADD) {
             acc[idx] = make_{{FP2_TYPE}}(acc1.x + w * rhs1.x, acc1.y + w * rhs1.y);
             acc[idx + N_sq] = make_{{FP2_TYPE}}(
                 acc2.x + w * rhs2.x, acc2.y + w * rhs2.y);
@@ -418,7 +421,25 @@ extern "C" __global__ void coupled_rk4_stage_c(
 // A[idx + N_sq] of the (2, ...) array, so no per-component copies, and the
 // saturation is computed once for both.
 
-// Coupled nonlinear propagation on an interleaved (2, N_sq) field
+// Rabi rotation of one pair of components over the step cos_val, sin_val
+// were taken for: (a1, a2) -> (c a1 - i s a2, c a2 - i s a1).
+__device__ __forceinline__ void rabi_rotate(
+    {{FP2_TYPE}}* a1, {{FP2_TYPE}}* a2,
+    const {{FP_TYPE}} cos_val, const {{FP_TYPE}} sin_val
+) {
+    {{FP2_TYPE}} b1 = *a1;
+    {{FP2_TYPE}} b2 = *a2;
+    // -1j * (x + iy) = (y, -x)
+    *a1 = make_{{FP2_TYPE}}(cos_val * b1.x + sin_val * b2.y,
+                            cos_val * b1.y - sin_val * b2.x);
+    *a2 = make_{{FP2_TYPE}}(cos_val * b2.x + sin_val * b1.y,
+                            cos_val * b2.y - sin_val * b1.x);
+}
+
+// Coupled nonlinear propagation on an interleaved (2, N_sq) field.
+//
+// `placement` (RabiPlacement in templating.py) puts the Rabi rotation in the
+// same pass, so a coupled step reads and writes the field once for both.
 // {{VBLOCK}}
 extern "C" __global__ void coupled_nl_prop_c(
     {{FP2_TYPE}}* A,
@@ -433,12 +454,16 @@ extern "C" __global__ void coupled_nl_prop_c(
     const {{FP_TYPE}} g22,
     const {{FP_TYPE}} Isat1,
     const {{FP_TYPE}} Isat2,
+    const {{FP_TYPE}} cos_val,
+    const {{FP_TYPE}} sin_val,
+    const int placement,
     const int N_sq
 ) {
     int idx = blockDim.x * blockIdx.x + threadIdx.x;
     if (idx >= N_sq) return;
     {{FP2_TYPE}} a1 = A[idx];
     {{FP2_TYPE}} a2 = A[idx + N_sq];
+    if (placement == RABI_BEFORE) rabi_rotate(&a1, &a2, cos_val, sin_val);
     {{FP_TYPE}} sq1 = a1.x * a1.x + a1.y * a1.y;
     {{FP_TYPE}} sq2 = a2.x * a2.x + a2.y * a2.y;
     {{FP_TYPE}} sat = ({{FP_TYPE}})1.0 / (({{FP_TYPE}})1.0 + sq1 / Isat1 + sq2 / Isat2);
@@ -450,7 +475,7 @@ extern "C" __global__ void coupled_nl_prop_c(
     {{FP_TYPE}} cos_imag1, sin_imag1;
     {{SINCOS_FUNC}}(arg_imag1, &sin_imag1, &cos_imag1);
     {{FP2_TYPE}} exp_arg1 = make_{{FP2_TYPE}}(exp_real1 * cos_imag1, exp_real1 * sin_imag1);
-    A[idx] = make_{{FP2_TYPE}}(
+    {{FP2_TYPE}} out1 = make_{{FP2_TYPE}}(
         a1.x * exp_arg1.x - a1.y * exp_arg1.y,
         a1.x * exp_arg1.y + a1.y * exp_arg1.x
     );
@@ -462,10 +487,13 @@ extern "C" __global__ void coupled_nl_prop_c(
     {{FP_TYPE}} cos_imag2, sin_imag2;
     {{SINCOS_FUNC}}(arg_imag2, &sin_imag2, &cos_imag2);
     {{FP2_TYPE}} exp_arg2 = make_{{FP2_TYPE}}(exp_real2 * cos_imag2, exp_real2 * sin_imag2);
-    A[idx + N_sq] = make_{{FP2_TYPE}}(
+    {{FP2_TYPE}} out2 = make_{{FP2_TYPE}}(
         a2.x * exp_arg2.x - a2.y * exp_arg2.y,
         a2.x * exp_arg2.y + a2.y * exp_arg2.x
     );
+    if (placement == RABI_AFTER) rabi_rotate(&out1, &out2, cos_val, sin_val);
+    A[idx] = out1;
+    A[idx + N_sq] = out2;
 }
 // {{END_VBLOCK}}
 
@@ -515,24 +543,6 @@ extern "C" __global__ void coupled_rk4_nl_rhs_c(
 }
 // {{END_VBLOCK}}
 
-// Rabi coupling on an interleaved (2, N_sq) field
-extern "C" __global__ void rabi_coupling_interleaved(
-    {{FP2_TYPE}}* A,
-    const {{FP_TYPE}} cos_val,
-    const {{FP_TYPE}} sin_val,
-    const int N_sq
-) {
-    int idx = blockDim.x * blockIdx.x + threadIdx.x;
-    if (idx >= N_sq) return;
-    {{FP2_TYPE}} a1 = A[idx];
-    {{FP2_TYPE}} a2 = A[idx + N_sq];
-    // -1j * (x + iy) = (y, -x)
-    A[idx] = make_{{FP2_TYPE}}(cos_val * a1.x + sin_val * a2.y,
-                                cos_val * a1.y - sin_val * a2.x);
-    A[idx + N_sq] = make_{{FP2_TYPE}}(cos_val * a2.x + sin_val * a1.y,
-                                       cos_val * a2.y - sin_val * a1.x);
-}
-
 // Rabi coupling: 2x2 rotation of (A1, A2) pair
 extern "C" __global__ void rabi_coupling(
     {{FP2_TYPE}}* A1,
@@ -545,9 +555,7 @@ extern "C" __global__ void rabi_coupling(
     if (idx >= N) return;
     {{FP2_TYPE}} a1 = A1[idx];
     {{FP2_TYPE}} a2 = A2[idx];
-    // -1j * (x + iy) = (y, -x)
-    A1[idx] = make_{{FP2_TYPE}}(cos_val * a1.x + sin_val * a2.y,
-                                 cos_val * a1.y - sin_val * a2.x);
-    A2[idx] = make_{{FP2_TYPE}}(cos_val * a2.x + sin_val * a1.y,
-                                 cos_val * a2.y - sin_val * a1.x);
+    rabi_rotate(&a1, &a2, cos_val, sin_val);
+    A1[idx] = a1;
+    A2[idx] = a2;
 }

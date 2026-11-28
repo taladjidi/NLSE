@@ -16,6 +16,7 @@ import tqdm
 from scipy.constants import c, epsilon_0
 
 from ..backends import Backend, fastest_backend_supporting, get_backend
+from ..kernels.templating import Rk4StageMode
 from ..utils import (
     __BACKEND__,
     __CUPY_AVAILABLE__,
@@ -166,9 +167,8 @@ class NLSE(StepSize):
     # Key, dispersion eigenvalues and their largest magnitude, for the last
     # configuration only: one float64 grid, 33.5 MB at 2048x2048.
     _eigenvalues: tuple[tuple, np.ndarray, float] | None = None
-    # Declared for type checkers: whichever array type the backend allocates and
-    # a list of its plan objects (assigned None in __init__).
-    propagator: Any = None
+    # Declared for type checkers: a list of the backend's plan objects
+    # (assigned None in __init__). The propagator is a property, further down.
     plans: Any = None
 
     # All three, so nothing has to know which backends are worth asking about.
@@ -416,13 +416,16 @@ class NLSE(StepSize):
             self._precompute_step_constants(V, field_dtype)
 
             # Settle the step before building anything that depends on it.
+            # The field does not change until the run, so its rates are
+            # reduced once and shared by every limit below.
+            rates = self._energy_rates(A)
             if delta_z is None:
-                delta_z = self._default_delta_z(A, method, z)
-            delta_z = self._capped_delta_z(delta_z, A, method)
+                delta_z = self._default_delta_z(A, method, z, rates)
+            delta_z = self._capped_delta_z(delta_z, A, method, rates)
             if splitting == "yoshida":
                 # The phase limits are written per real-space application, and
                 # Yoshida's longest sub-step is 1.7 times the step itself.
-                yoshida_max = self._split_step_max_dz(A) / YOSHIDA_SPAN
+                yoshida_max = self._split_step_max_dz(A, rates) / YOSHIDA_SPAN
                 delta_z = math.copysign(min(abs(delta_z), yoshida_max), delta_z)
 
             # The propagator depends on delta_z, k, the grid and the precision,
@@ -1026,7 +1029,7 @@ class NLSE(StepSize):
         A: np.ndarray,
         w: float,
         c: float,
-        mode: int,
+        mode: Rk4StageMode,
     ) -> np.ndarray:
         """Run one whole RK4 stage through the backend's fused kernel.
 
@@ -1049,8 +1052,8 @@ class NLSE(StepSize):
             The field the step started from.
         w, c : float
             Weights of this stage's slope in the accumulator and the output.
-        mode : int
-            0 to set the accumulator, 1 to add to it, 2 to spend it.
+        mode : Rk4StageMode
+            Whether to set the accumulator, add to it or spend it.
 
         Returns
         -------
@@ -1118,10 +1121,10 @@ class NLSE(StepSize):
         h = delta_z
         stage = self._RK4_fused_stage
         #        argument  out     w    c      mode
-        stage(A, V, propagator, plans, A_tmp, A, 1.0, h / 2, 0)
-        stage(A_tmp, V, propagator, plans, A_tmp, A, 2.0, h / 2, 1)
-        stage(A_tmp, V, propagator, plans, A_tmp, A, 2.0, h, 1)
-        stage(A_tmp, V, propagator, plans, A, A, 1.0, h / 6, 2)
+        stage(A, V, propagator, plans, A_tmp, A, 1.0, h / 2, Rk4StageMode.SET)
+        stage(A_tmp, V, propagator, plans, A_tmp, A, 2.0, h / 2, Rk4StageMode.ADD)
+        stage(A_tmp, V, propagator, plans, A_tmp, A, 2.0, h, Rk4StageMode.ADD)
+        stage(A_tmp, V, propagator, plans, A, A, 1.0, h / 6, Rk4StageMode.SPEND)
         return A
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:
@@ -1992,6 +1995,32 @@ class NLSE(StepSize):
     _gpu_array_attrs = ("V", "propagator")
     _gpu_param_attrs = ("power", "n2", "alpha", "I_sat")
 
+    # The propagator a run left on the device, until something reads it.
+    _propagator: Any = None
+    _propagator_on_device: bool = False
+
+    @property
+    def propagator(self) -> Any:
+        """The propagator of the current or the last run.
+
+        A run builds it on the device and leaves it there. Read after the
+        run, it comes back to the host, once: most callers never read it.
+
+        Returns
+        -------
+        Any
+            The propagator, on the host once a run has finished.
+        """
+        if self._propagator_on_device:
+            self._propagator = self._backend.to_numpy(self._propagator)
+            self._propagator_on_device = False
+        return self._propagator
+
+    @propagator.setter
+    def propagator(self, value: Any) -> None:
+        self._propagator = value
+        self._propagator_on_device = False
+
     def _as_host_array(self, value: Any) -> Any:
         """Return a parameter as a host numpy array, or None if unset.
 
@@ -2156,6 +2185,10 @@ class NLSE(StepSize):
         if not self._backend.is_device_backend:
             return
         for attr in self._gpu_array_attrs:
+            if attr == "propagator":
+                # Left on the device; the property brings it back when read.
+                self._propagator_on_device = self._propagator is not None
+                continue
             val = getattr(self, attr, None)
             if val is None:
                 continue

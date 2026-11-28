@@ -13,7 +13,7 @@ import pyopencl as cl
 from pyopencl import array as cla
 
 from . import templating
-from .templating import COMPLEX_V_SUFFIX, REAL_V_SUFFIX
+from .templating import COMPLEX_V_SUFFIX, NO_RABI_COUPLING, REAL_V_SUFFIX
 
 # How OpenCL C opens a kernel.
 KERNEL_DECL = "__kernel void"
@@ -189,11 +189,11 @@ def _load_kernel_template():
     Returns
     -------
     str
-        String containing kernel template with {{placeholders}}
+        The mode #defines, then the kernel template with {{placeholders}}.
 
     """
     template_path = Path(__file__).parent / "cl_source" / "kernels.cl"
-    return template_path.read_text()
+    return templating.mode_defines() + template_path.read_text()
 
 
 def _expand_v_blocks(source):
@@ -1514,17 +1514,7 @@ class OpenCLKernels:
         cla.Array
             The modified buffer k.
         """
-        # Out-of-place FFT: A_in → k (eliminates buffer copy)
-        plan.fft_oop(A_in, k)
-
-        # Apply propagator to k
-        self.apply_propagator(k, propagator)
-
-        # IFFT k in-place
-        if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
-            plan.ifft_unnorm(k, k)
-        else:
-            plan.ifft(k, k)
+        self._linear_into(A_in, k, propagator, plan, unnorm_ifft)
 
         # Nonlinear RHS: k = k + NL(A_in)
         if V_scaled is not None:
@@ -1532,6 +1522,119 @@ class OpenCLKernels:
         else:
             self.square_mod_rk4_nl_rhs(k, A_in, alpha, g, Isat)
         return k
+
+    def _linear_into(self, A_in, k, propagator, plan, unnorm_ifft):
+        """Transform A_in into k, propagate it there, and come back.
+
+        The out-of-place transform is what moves the field into the stage
+        buffer, so no copy precedes it.
+
+        Parameters
+        ----------
+        A_in : cla.Array
+            Field to transform (not modified).
+        k : cla.Array
+            Buffer the linear part is left in (modified in-place).
+        propagator : cla.Array
+            Pre-computed propagator (pre-divided by N_fft when unnorm_ifft).
+        plan : _VkFFTPlan
+            Pre-built FFT plan (must support fft_oop).
+        unnorm_ifft : bool
+            If True, use the unnormalized inverse transform.
+
+        Returns
+        -------
+        cla.Array
+            The modified buffer k.
+        """
+        plan.fft_oop(A_in, k)
+        self.apply_propagator(k, propagator)
+        if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
+            plan.ifft_unnorm(k, k)
+        else:
+            plan.ifft(k, k)
+        return k
+
+    def rk4_stage_fused(
+        self,
+        A_in: cla.Array,
+        k: cla.Array,
+        V_scaled: cla.Array | None,
+        propagator: cla.Array,
+        plan,
+        acc: cla.Array,
+        out: cla.Array,
+        A: cla.Array,
+        alpha: float,
+        g: float,
+        Isat: float,
+        w: float,
+        c: float,
+        mode: templating.Rk4StageMode,
+        unnorm_ifft: bool = False,
+    ) -> cla.Array:
+        """Run a whole RK4 stage: linear part, slope and stage update.
+
+        The slope is finished in registers and spent on ``acc`` and ``out``
+        without reaching memory. Unbatched fields only: the solver sends a
+        batch the generic way.
+
+        Parameters
+        ----------
+        A_in : cla.Array
+            Field this stage evaluates the slope at (not modified).
+        k : cla.Array
+            Scratch buffer the transform writes into (modified in-place).
+        V_scaled : cla.Array or None
+            Pre-scaled potential (V * k/2), or None.
+        propagator : cla.Array
+            Pre-computed propagator (pre-divided by N_fft when unnorm_ifft).
+        plan : _VkFFTPlan
+            Pre-built FFT plan (must support fft_oop).
+        acc : cla.Array
+            Slope accumulator (modified in-place unless mode is SPEND).
+        out : cla.Array
+            Where the stage's result goes.
+        A : cla.Array
+            The field the step started from.
+        alpha : float
+            Half-loss coefficient.
+        g : float
+            Nonlinear interaction strength.
+        Isat : float
+            Saturation intensity (converted units).
+        w : float
+            Weight this stage's slope carries into the accumulator.
+        c : float
+            Coefficient of the slope in the stage's output.
+        mode : Rk4StageMode
+            Whether to set the accumulator, add to it or spend it.
+        unnorm_ifft : bool
+            If True, the propagator carries the 1/N.
+
+        Returns
+        -------
+        cla.Array
+            ``out``, the array this stage wrote.
+        """
+        self._linear_into(A_in, k, propagator, plan, unnorm_ifft)
+        kerns = self._get_kernels(A.dtype)
+        params = self._cast_params(A.dtype, alpha, g, Isat, w, c)
+        potential = () if V_scaled is None else (V_scaled.data,)
+        self._v_kernel(kerns, "square_mod_rk4_stage", V_scaled)(
+            self.queue,
+            (int(A.size),),
+            self._local_size(A.size),
+            k.data,
+            A_in.data,
+            *potential,
+            acc.data,
+            out.data,
+            A.data,
+            *params,
+            np.int32(mode),
+        )
+        return out
 
     # ── Fused interleaved coupled methods ────────────────────────────────────
 
@@ -1590,7 +1693,9 @@ class OpenCLKernels:
         plan : VkFFT plan
             Pre-built FFT plan.
         omega : float or None
-            Rabi coupling (half). None to skip.
+            Rabi coupling (half). None to skip. Rotates over ``dz`` after
+            the nonlinear step, and for Strang before the first one too, so
+            the step is ``R N L N R``.
         unnorm_ifft : bool
             Use unnormalized IFFT.
 
@@ -1609,8 +1714,16 @@ class OpenCLKernels:
             A.dtype, dz, alpha1, alpha2, g11, g12, g21, g22, Isat1, Isat2
         )
 
-        # Strang: NL half-step before the linear step
+        rotation = None
+        if omega is not None:
+            rotation = self._cast_params(
+                A.dtype, np.cos(omega * dz), np.sin(omega * dz)
+            )
+
+        # Strang: Rabi and NL half-steps before the linear step
         if splitting == "strang":
+            if rotation is not None:
+                self._rabi_interleaved(kerns, A, gs, ls, N_sq_i, rotation)
             self._launch_coupled(
                 kerns,
                 "coupled_nl_prop_c",
@@ -1646,22 +1759,30 @@ class OpenCLKernels:
             params,
         )
 
-        # Rabi coupling (Lie splitting only)
-        if omega is not None:
-            cos_val = np.cos(omega * float(params[0]))  # omega * dz
-            sin_val = np.sin(omega * float(params[0]))
-            cos_c, sin_c = self._cast_params(A.dtype, cos_val, sin_val)
-            kerns["rabi_coupling_interleaved"](
-                self.queue,
-                gs,
-                ls,
-                A.data,
-                N_sq_i,
-                cos_c,
-                sin_c,
-            )
+        if rotation is not None:
+            self._rabi_interleaved(kerns, A, gs, ls, N_sq_i, rotation)
 
         return A
+
+    def _rabi_interleaved(self, kerns, A, gs, ls, N_sq_i, rotation):
+        """Rotate the two halves of an interleaved field into each other.
+
+        Parameters
+        ----------
+        kerns : dict
+            Compiled kernels for the field's dtype.
+        A : cla.Array
+            Interleaved field (2, ...) modified in-place.
+        gs, ls : tuple
+            Global and local work sizes, one item per component element.
+        N_sq_i : np.int32
+            Elements in one component.
+        rotation : tuple
+            Cosine and sine of the Rabi angle, cast to the field's precision.
+        """
+        kerns["rabi_coupling_interleaved"](
+            self.queue, gs, ls, A.data, N_sq_i, *rotation
+        )
 
     def rk4_rhs_coupled_fused(
         self,
@@ -1724,23 +1845,11 @@ class OpenCLKernels:
         kerns = self._get_kernels(A_in.dtype)
         # Interleaved (2, N_sq) layout: one thread per component element.
         N_sq = int(A_in.size) // 2
-        gs_full = (int(A_in.size),)
-        ls_full = self._local_size(A_in.size)
         gs = (N_sq,)
         ls = self._local_size(N_sq)
         N_sq_i = np.int32(N_sq)
 
-        # Out-of-place FFT: A_in → k
-        plan.fft_oop(A_in, k)
-
-        # Apply propagator
-        kerns["apply_propagator"](self.queue, gs_full, ls_full, k.data, propagator.data)
-
-        # IFFT
-        if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
-            plan.ifft_unnorm(k, k)
-        else:
-            plan.ifft(k, k)
+        self._linear_into(A_in, k, propagator, plan, unnorm_ifft)
 
         # Coupled NL RHS
         params = self._cast_params(
@@ -1759,3 +1868,90 @@ class OpenCLKernels:
         )
 
         return k
+
+    def rk4_stage_coupled_fused(
+        self,
+        A_in: cla.Array,
+        k: cla.Array,
+        V1_scaled: cla.Array | None,
+        V2_scaled: cla.Array | None,
+        propagator: cla.Array,
+        plan,
+        acc: cla.Array,
+        out: cla.Array,
+        A: cla.Array,
+        alpha1: float,
+        alpha2: float,
+        g11: float,
+        g12: float,
+        g21: float,
+        g22: float,
+        Isat1: float,
+        Isat2: float,
+        w: float,
+        c: float,
+        mode: templating.Rk4StageMode,
+        omega: float | None = None,
+        unnorm_ifft: bool = False,
+    ) -> cla.Array:
+        """Run a whole coupled RK4 stage on an interleaved (2, N_sq) field.
+
+        Parameters
+        ----------
+        A_in : cla.Array
+            Field this stage evaluates the slope at (not modified).
+        k : cla.Array
+            Scratch buffer the transform writes into (modified in-place).
+        V1_scaled, V2_scaled : cla.Array or None
+            Pre-scaled potentials, both or neither.
+        propagator : cla.Array
+            Pre-computed propagator.
+        plan : _VkFFTPlan
+            Pre-built FFT plan (must support fft_oop).
+        acc : cla.Array
+            Slope accumulator (modified in-place unless mode is SPEND).
+        out : cla.Array
+            Where the stage's result goes.
+        A : cla.Array
+            The field the step started from.
+        alpha1, alpha2 : float
+            Half-loss of each component.
+        g11, g12, g21, g22 : float
+            Interactions; g12 and g21 are the cross terms.
+        Isat1, Isat2 : float
+            Saturation of each component.
+        w : float
+            Weight this stage's slope carries into the accumulator.
+        c : float
+            Coefficient of the slope in the stage's output.
+        mode : Rk4StageMode
+            Whether to set the accumulator, add to it or spend it.
+        omega : float or None
+            Half the Rabi coupling, or None to skip it.
+        unnorm_ifft : bool
+            If True, the propagator carries the 1/N.
+
+        Returns
+        -------
+        cla.Array
+            ``out``, the array this stage wrote.
+        """
+        self._linear_into(A_in, k, propagator, plan, unnorm_ifft)
+        kerns = self._get_kernels(A.dtype)
+        N_sq = int(A.size) // 2
+        half_omega = NO_RABI_COUPLING if omega is None else omega
+        params = self._cast_params(
+            A.dtype, alpha1, alpha2, g11, g12, g21, g22, Isat1, Isat2, half_omega, w, c
+        )
+        self._launch_coupled(
+            kerns,
+            "coupled_rk4_stage_c",
+            V1_scaled,
+            V2_scaled,
+            (N_sq,),
+            self._local_size(N_sq),
+            (k.data, A_in.data, acc.data, out.data, A.data),
+            np.int32(N_sq),
+            (*params, np.int32(mode)),
+        )
+        return out

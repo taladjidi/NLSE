@@ -7,6 +7,7 @@ them as proper inputs whose values can change between calls.
 
 import functools
 import math
+from collections.abc import Callable
 
 import mlx.core as mx
 
@@ -1591,7 +1592,7 @@ def _make_split_step_coupled(splitting, has_V, has_omega, axes):
     return mx.compile(_pure)
 
 
-_SPLIT_STEP_COUPLED_CACHE: dict[tuple, object] = {}
+_SPLIT_STEP_COUPLED_CACHE: dict[tuple, Callable] = {}
 
 
 def split_step_coupled_fused(
@@ -1648,7 +1649,9 @@ def split_step_coupled_fused(
     plan : tuple
         FFT axes (MLX has no plan objects).
     omega : float or None
-        Rabi coupling (half). None to skip.
+        Rabi coupling (half). None to skip. Rotates over ``dz`` after the
+        nonlinear step, and for Strang before the first one too, so the step
+        is ``R N L N R``.
     unnorm_ifft : bool
         Accepted for signature compatibility with the other fused
         backends and ignored: MLX always normalizes its inverse FFT.
@@ -1667,83 +1670,22 @@ def split_step_coupled_fused(
             splitting, has_V, has_omega, axes
         )
     fn = _SPLIT_STEP_COUPLED_CACHE[key]
-    dz_mx = _to_mx(dz)
-    a1_mx = _to_mx(alpha1)
-    a2_mx = _to_mx(alpha2)
-    g11_mx = _to_mx(g11)
-    g12_mx = _to_mx(g12)
-    g21_mx = _to_mx(g21)
-    g22_mx = _to_mx(g22)
-    Isat1_mx = _to_mx(Isat1)
-    Isat2_mx = _to_mx(Isat2)
-
-    if has_V and has_omega:
-        cos_val = _to_mx(math.cos(omega * dz))
-        sin_val = _to_mx(math.sin(omega * dz))
-        return fn(
-            A,
-            propagator,
-            V1_scaled,
-            V2_scaled,
-            dz_mx,
-            a1_mx,
-            a2_mx,
-            g11_mx,
-            g12_mx,
-            g21_mx,
-            g22_mx,
-            Isat1_mx,
-            Isat2_mx,
-            cos_val,
-            sin_val,
-        )
-    if has_V:
-        return fn(
-            A,
-            propagator,
-            V1_scaled,
-            V2_scaled,
-            dz_mx,
-            a1_mx,
-            a2_mx,
-            g11_mx,
-            g12_mx,
-            g21_mx,
-            g22_mx,
-            Isat1_mx,
-            Isat2_mx,
-        )
-    if has_omega:
-        cos_val = _to_mx(math.cos(omega * dz))
-        sin_val = _to_mx(math.sin(omega * dz))
-        return fn(
-            A,
-            propagator,
-            dz_mx,
-            a1_mx,
-            a2_mx,
-            g11_mx,
-            g12_mx,
-            g21_mx,
-            g22_mx,
-            Isat1_mx,
-            Isat2_mx,
-            cos_val,
-            sin_val,
-        )
-    return fn(
-        A,
-        propagator,
-        dz_mx,
-        a1_mx,
-        a2_mx,
-        g11_mx,
-        g12_mx,
-        g21_mx,
-        g22_mx,
-        Isat1_mx,
-        Isat2_mx,
+    potentials = (V1_scaled, V2_scaled) if has_V else ()
+    scalars = tuple(
+        _to_mx(value)
+        for value in (dz, alpha1, alpha2, g11, g12, g21, g22, Isat1, Isat2)
     )
+    if omega is None:
+        return fn(A, propagator, *potentials, *scalars)
+    # On the host, as rabi_coupling takes them.
+    cos_val = _to_mx(math.cos(omega * dz))
+    sin_val = _to_mx(math.sin(omega * dz))
+    if has_omega:
+        return fn(A, propagator, *potentials, *scalars, cos_val, sin_val)
+    # Strang: the compiled bodies carry no rotation, so it brackets them.
+    A = mx.stack(list(_c_rabi_coupling(A[0], A[1], cos_val, sin_val)))
+    A = fn(A, propagator, *potentials, *scalars)
+    return mx.stack(list(_c_rabi_coupling(A[0], A[1], cos_val, sin_val)))
 
 
 # ── Fused coupled RK4 RHS (nl_length == 0) ────────────────────────────────

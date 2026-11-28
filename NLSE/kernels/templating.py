@@ -11,6 +11,7 @@ the CUDA variants can be generated and checked on a machine with no CUDA,
 which is otherwise the half of this code that no local test can reach.
 """
 
+import enum
 import re
 import struct
 from pathlib import Path
@@ -50,6 +51,34 @@ PLACEHOLDERS = frozenset(
         "END_VBLOCK",  # substituted
     }
 )
+
+# Rabi coupling a backend passes when a run has none, in rad/m: the coupled
+# kernels then add a zero slope and rotate by a zero angle.
+NO_RABI_COUPLING = 0.0
+
+
+class RabiPlacement(enum.IntEnum):
+    """Where coupled_nl_prop_c rotates the Rabi coupling (kernels.cu)."""
+
+    NONE = 0  # no coupling
+    BEFORE = 1  # rotate, then the nonlinear step: opens a Strang step
+    AFTER = 2  # the nonlinear step, then rotate: closes a Lie or Strang step
+
+
+class Rk4StageMode(enum.IntEnum):
+    """What a whole-stage RK4 kernel does with the slope accumulator."""
+
+    SET = 0  # stage 1: acc = rhs, out = A + c*rhs
+    ADD = 1  # stages 2-3: acc += w*rhs, out = A + c*rhs
+    SPEND = 2  # stage 4: out = A + c*(acc + rhs), acc untouched
+
+
+# Prefix -> the modes a kernel takes as an int, rendered as #defines ahead of
+# the source so the device code names a mode as the Python caller does.
+SOURCE_MODES: dict[str, type[enum.IntEnum]] = {
+    "RABI": RabiPlacement,
+    "RK4": Rk4StageMode,
+}
 
 _V_UNDEF = "#undef V_ARG\n#undef V_PHASE\n#undef V_LOSS\n#undef V_PASS\n"
 
@@ -261,16 +290,33 @@ def fill_cuda_types(source: str, dtype) -> str:
     return source
 
 
+def mode_defines() -> str:
+    """Return a ``#define`` per mode in ``SOURCE_MODES``.
+
+    Returns
+    -------
+    str
+        One line per mode, ``#define RABI_BEFORE 1`` and so on.
+
+    """
+    return "".join(
+        f"#define {prefix}_{mode.name} {int(mode)}\n"
+        for prefix, modes in SOURCE_MODES.items()
+        for mode in modes
+    )
+
+
 def cuda_kernel_template() -> str:
     """Return the CUDA kernel template, with the step it shares prepended.
 
     Returns
     -------
     str
-        nonlinear_step.cuh followed by kernels.cu, placeholders unfilled.
+        The mode #defines, nonlinear_step.cuh, then kernels.cu, placeholders
+        unfilled.
 
     """
-    return NONLINEAR_SOURCE.read_text() + KERNEL_SOURCE.read_text()
+    return mode_defines() + NONLINEAR_SOURCE.read_text() + KERNEL_SOURCE.read_text()
 
 
 def store_callbacks_source(dtype) -> str:

@@ -486,7 +486,9 @@ coupling, and `NLSE_3d` calls its frequency grid `omega`. The coupled solvers
 opt out by their class flag, so the check is gone. Merged against unmerged,
 same process, interleaved, slope between 20 and 60 steps, 5 rounds, complex64,
 lossy saturable medium (`benchmarks/strang_merge_3d.py`; M3 Max, numpy 2.4.6,
-scipy 1.18.0, numba 0.66.0, mlx 0.32.0, pyopencl 2026.1.2):
+scipy 1.18.0, numba 0.66.0, mlx 0.32.0, pyopencl 2026.1.2; CUPY on an RTX
+3050, CuPy 14.2.0, repeated three times at 128³ and twice at 256²×64 with
+ratios within 0.01):
 
 | backend | grid | unmerged | merged | ratio |
 |---|---|---|---|---|
@@ -496,6 +498,8 @@ scipy 1.18.0, numba 0.66.0, mlx 0.32.0, pyopencl 2026.1.2):
 | MLX | 256²×64 | 2.84 ms | 2.71 ms | 0.96 |
 | CL | 128³ | 1.61 ms | 0.91 ms | 0.57 |
 | CL | 256²×64 | 2.06 ms | 1.31 ms | 0.64 |
+| CUPY | 128³ | 1.38 ms | 1.22 ms | 0.88 |
+| CUPY | 256²×64 | 2.78 ms | 2.46 ms | 0.89 |
 
 The two runs differ by 3e-6 to 5e-6 of the peak after 20 steps, the rounding
 of complex64. Not run on CuPy.
@@ -1264,6 +1268,41 @@ tool's spread. Apple's compiler already lowers `exp`/`sincos` under
 entirely gains only ~1.3x on this backend, so the branch the CPU kernels carry
 is not worth adding here.
 
+**Whole-stage RK4 kernels — deployed** (2026-11-28). RTX 3050 8 GB, driver
+620.70.06, pyopencl 2026.1.5. An RK4 stage was a transform pair, then
+`square_mod_rk4_nl_rhs` writing the slope, then `rk4_acc_and_axpy` reading it
+back to update the accumulator and form the next argument. The CUDA backend
+fused the last two (`has_fused_rk4_stage`); OpenCL now has the same kernels,
+`square_mod_rk4_stage` and `coupled_rk4_stage_c`, the slope finished in
+registers and never written. The slope and the stage update are inline
+functions (`rk4_nl_slope`, `rk4_stage_carry`, `rk4_axpy_element`) that the
+per-pass kernels call too, so each sum is written once. The stage's mode is
+an `Rk4StageMode` rendered as `#define RK4_*` ahead of both backends'
+sources.
+
+Per step, complex64, lossless, no potential, `step_for` step. One process,
+before and after side by side, the order alternating over 8 rounds; slope
+between 10 and 60 steps, median, [min, max] of the per-round gain
+(`gpu_p4_r2_ab.py`):
+
+| solver | grid | before | after | gain [range] |
+|---|---|---|---|---|
+| `NLSE` | 1024² | 3.344 ms | 2.895 ms | **1.16x** [1.14, 1.16] |
+| `NLSE` | 2048² | 17.20 ms | 15.42 ms | **1.12x** [1.11, 1.12] |
+| `NLSE` | 4096² | 89.85 ms | 83.03 ms | **1.08x** [1.08, 1.09] |
+| `CNLSE` | 1024² | 6.626 ms | 5.755 ms | **1.15x** [1.15, 1.15] |
+| `CNLSE` | 2048² | 32.70 ms | 29.34 ms | **1.11x** [1.09, 1.12] |
+| `CNLSE` | 4096² | 178.2 ms | 165.4 ms | **1.09x** [1.05, 1.13] |
+| `CNLSE`, `omega` = 1e4 | 1024² | 20.29 ms | 5.755 ms | **3.53x** [3.52, 3.53] |
+| `CNLSE`, `omega` = 1e4 | 2048² | 80.51 ms | 29.24 ms | **2.75x** [2.74, 2.77] |
+
+Without `omega` the results are identical to the bit after 60 steps (these
+runs: complex64, lossless, no potential). With it, RK4 on OpenCL took the
+generic path; it is fused here for the first time, through the coupling's
+slope in `coupled_rk4_stage_c`, and moves by 9e-7 of the peak.
+The gain falls with the grid as the transforms, which this does not touch,
+take more of the step. Not measured: complex128, other OpenCL devices.
+
 ## MLX (Metal)
 
 **A lossless graph for a lossless run — deployed** (2026-08-01). The solved
@@ -1685,6 +1724,111 @@ point, by a pass along rows, 0.077, plus one transposing copy. That copy takes
 0.157 ns per point (`cp.copyto(out, a.T)`, `fft_transpose.py`), more than the
 0.089 it would save. Nothing in cuFFT's interface reaches the column pass
 itself.
+
+**Deployed: the Rabi coupling inside the fused coupled kernels**
+(2026-11-28). RTX 3050 8 GB, driver 620.70.06, CuPy 14.2.0, CUDA runtime
+13.2, cuFFT 12.3.0; pyopencl 2026.1.5 on the same card. With `omega` set, the
+fused coupled split step rotated the components afterwards in a launch of
+its own (`rabi_coupling_interleaved`, Lie) or through `_take_components`
+copies on each side (Strang), and `CNLSE` kept RK4 off the whole-stage
+kernels. `coupled_nl_prop_c` now takes the rotation's cosine and sine and a
+`RabiPlacement` (`kernels/templating.py`, rendered as `#define RABI_*` ahead
+of the source): before the nonlinear step to open a Strang step, after it to
+close a Lie or Strang one. `coupled_rk4_stage_c` adds `-1j * omega/2` times
+the other component to each slope. OpenCL and MLX keep their kernels and
+rotate the interleaved field around a Strang step: OpenCL in place, MLX
+restacking it.
+
+`CNLSE`, complex64, `omega` = 1e4 rad/m, lossless, no potential, the
+benchmark field (`benchmarks/profile_backends.py`, `step_for` step). One
+process, base and patched trees side by side, the order alternating over 8
+rounds; per step from the 10→60 step slope, median of the per-round values,
+[min, max] of the per-round gain (`gpu_p4_r2_ab.py`):
+
+| backend, scheme | grid | before | after | gain [range] |
+|---|---|---|---|---|
+| CUPY, Strang | 1024² | 2.096 ms | 1.114 ms | **1.88x** [1.80, 1.89] |
+| CUPY, Strang | 2048² | 8.611 ms | 4.560 ms | **1.89x** [1.55, 2.02] |
+| CUPY, Strang | 4096² | 41.36 ms | 22.68 ms | **1.85x** [1.74, 2.03] |
+| CUPY, Lie | 1024² | 1.113 ms | 0.950 ms | **1.17x** [1.09, 1.18] |
+| CUPY, Lie | 2048² | 4.550 ms | 3.902 ms | **1.17x** [1.16, 1.17] |
+| CUPY, Lie | 4096² | 24.38 ms | 19.56 ms | 1.21x [0.90, 1.47] |
+| CUPY, RK4 | 1024² | 10.95 ms | 4.888 ms | **2.24x** [2.22, 2.25] |
+| CUPY, RK4 | 2048² | 43.95 ms | 19.93 ms | **2.21x** [2.20, 2.21] |
+| CUPY, RK4 | 4096² | 198.9 ms | 97.14 ms | **2.01x** [1.86, 2.21] |
+| CL, Strang | 1024² | 3.325 ms | 1.666 ms | **2.00x** [1.92, 2.05] |
+| CL, Strang | 2048² | 13.57 ms | 8.187 ms | **1.66x** [1.57, 1.68] |
+| CL, Strang | 4096² | 66.19 ms | 48.48 ms | 1.24x [0.71, 2.54] |
+
+In these runs (complex64, lossless, no potential, 60 steps) the CUPY Lie and
+Strang outputs and the OpenCL Strang output equal the base's to the bit
+(`max_rel_diff` 0 in `gpu_p4_r2_ab.py`). Only these cases were compared, and
+other steps may differ in the last bit: the old CUDA Lie rotation took its
+angle from `params[0]`, the step rounded to float32, where the kernel now
+rotates by the double `dz`. RK4 differs by 9.3e-7 of the peak, the slope's
+sum taken in another order. Lie at 4096² on CUPY and Strang at 4096² on OpenCL vary more
+between rounds than they gain and claim nothing. Closed form: a linear
+`CNLSE` started in one component keeps `cos²(omega z / 2)` of its power
+there; Lie, Strang and RK4 follow it to 1e-5 in complex64 over 200 steps
+(`test_a_linear_rabi_run_follows_its_closed_form`). Not measured:
+MLX, complex128, a batched `omega` (still the generic path).
+
+**Deployed: the energy rates reduced once per `out_field` call**
+(2026-11-28). RTX 3050 8 GB, driver 620.70.06, CuPy 14.2.0, CUDA runtime
+13.2. Not a per-step cost: `out_field` sets the step from the field's energy
+rates, and each limit reduced them again: `_capped_delta_z` and
+`_rk4_max_dz` both for RK4, `_default_delta_z` once more without a given
+step, the Yoshida cap once more. The field does not change before the
+run starts, so `out_field` reduces once and passes the result down; the
+limits still reduce for themselves when called alone.
+
+One reduction, after one warm call, median and [min, max] over 7 rounds of
+20 (`gpu_p4_r2_rates_cost.py`, complex64, the benchmark field):
+
+| solver | 1024² | 2048² | 4096² |
+|---|---|---|---|
+| `NLSE` | 0.922 [0.920, 0.926] ms | 3.169 [3.165, 3.177] ms | 13.30 [13.28, 13.32] ms |
+| `CNLSE` | 9.220 [9.210, 9.269] ms | 42.87 [42.75, 43.13] ms | 172.8 [172.6, 178.1] ms |
+
+A `CNLSE` reduction brings the field back to the host for its per-component
+means, hence the tenfold cost. A 10-step RK4 call with a given step, before
+and after in one process over 8 alternating rounds (`gpu_p4_r2_ab.py`; 2 → 1
+reductions counted in each call):
+
+| solver | grid | before | after | gain [range] |
+|---|---|---|---|---|
+| `NLSE` | 1024² | 34.87 ms | 33.88 ms | 1.03x [1.02, 1.07] |
+| `NLSE` | 2048² | 143.5 ms | 140.1 ms | 1.02x [1.02, 1.03] |
+| `NLSE` | 4096² | 663.1 ms | 650.2 ms | 1.02x [1.02, 1.02] |
+| `CNLSE` | 1024² | 83.38 ms | 74.07 ms | **1.13x** [1.12, 1.18] |
+| `CNLSE` | 2048² | 352.0 ms | 313.6 ms | **1.12x** [1.12, 1.13] |
+
+The saving is the one reduction each time: 1.0, 3.4, 12.8 ms and 9.3, 38.4
+ms. The per-step cost does not move (0.999 to 1.002x) and the results are
+identical. Without a given step or with Yoshida the call saves one reduction
+more each; not timed. The cost of the `CNLSE` reduction itself is open.
+
+**Deployed: the propagator left on the device after a run** (2026-11-28).
+RTX 3050 8 GB, driver 620.70.06, CuPy 14.2.0, CUDA runtime 13.2. After every
+run `_retrieve_arrays_from_gpu` copied `simu.propagator` back to the host, a
+grid-sized transfer nothing in the solver reads: the next run builds its own.
+`propagator` is now a property that copies the device array back the first
+time it is read after a run, once; a solver that is never asked pays nothing.
+
+A 10-step lie call, complex64, `step_for` step, before and after in one
+process over 8 alternating rounds (`gpu_p4_r2_ab.py`):
+
+| solver | grid | before | after | gain [range] |
+|---|---|---|---|---|
+| `NLSE` | 1024² | 10.95 ms | 9.58 ms | **1.14x** [1.14, 1.25] |
+| `NLSE` | 2048² | 49.26 ms | 41.54 ms | **1.19x** [1.18, 1.19] |
+| `NLSE` | 4096² | 212.8 ms | 185.3 ms | **1.15x** [1.14, 1.17] |
+| `CNLSE` | 1024² | 30.53 ms | 27.86 ms | 1.10x [1.02, 1.10] |
+| `CNLSE` | 2048² | 140.9 ms | 126.5 ms | **1.12x** [1.11, 1.12] |
+
+The per-step cost does not move (0.999 to 1.005x) and the results are
+identical. A caller that reads `propagator` after each run pays the transfer
+as before, at the read. OpenCL and MLX take the same path; not timed.
 
 
 ## Open

@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.constants import c, epsilon_0
 
+from ..kernels.templating import Rk4StageMode
 from ..utils import __BACKEND__
 from .nlse import NLSE, show_if_possible
 
@@ -588,24 +589,8 @@ class CNLSE(NLSE):
             self._constant("_g22"),
             self._constant("_Isat_conv"),
             self._constant("_Isat_conv2"),
+            self.omega,
         )
-
-    def _can_fuse_rk4_stage(self, A: np.ndarray) -> bool:
-        """Whether the whole-stage kernels can serve this run.
-
-        Not with a Rabi coupling, which those kernels do not apply.
-
-        Parameters
-        ----------
-        A : np.ndarray
-            The coupled field.
-
-        Returns
-        -------
-        bool
-            True if the fused path applies.
-        """
-        return self.omega is None and super()._can_fuse_rk4_stage(A)
 
     def _RK4_fused_stage(
         self,
@@ -617,7 +602,7 @@ class CNLSE(NLSE):
         A: np.ndarray,
         w: float,
         c: float,
-        mode: int,
+        mode: Rk4StageMode,
     ) -> np.ndarray:
         """Run one whole coupled RK4 stage, both components at once."""
         V_scaled = self._V_scaled
@@ -647,6 +632,7 @@ class CNLSE(NLSE):
             w,
             c,
             mode,
+            omega=None if self.omega is None else self.omega / 2,
             unnorm_ifft=unnorm,
         )
 
@@ -766,58 +752,6 @@ class CNLSE(NLSE):
         np.ndarray
             The propagated field.
         """
-        # Half a Rabi rotation on each side keeps the Strang step symmetric,
-        # hence second order, and Yoshida's sub-steps with it.
-        rabi_halves = splitting == "strang" and self.omega is not None
-        if rabi_halves:
-            A = self._rabi_rotation(A, delta_z / 2)
-        A = self._split_step_body(A, A_sq, V, propagator, plans, delta_z, splitting)
-        if rabi_halves:
-            A = self._rabi_rotation(A, delta_z / 2)
-        return A
-
-    def _rabi_rotation(self, A: np.ndarray, dz: float) -> np.ndarray:
-        """Exchange the two components through the Rabi coupling over dz.
-
-        Parameters
-        ----------
-        A : np.ndarray
-            Coupled field, written back in place.
-        dz : float
-            Step to rotate over.
-
-        Returns
-        -------
-        np.ndarray
-            The field.
-        """
-        A1, A2 = self._take_components(A)
-        A1, A2 = self._backend.kernels.rabi_coupling(A1, A2, dz, self.omega / 2)
-        self._set_components(A, A1, A2)
-        return A
-
-    def _split_step_body(
-        self,
-        A: np.ndarray,
-        A_sq: np.ndarray,
-        V: np.ndarray | None,
-        propagator: np.ndarray,
-        plans: list,
-        delta_z: float,
-        splitting: str,
-    ) -> np.ndarray:
-        """Take the step ``split_step`` describes, a Lie step's Rabi rotation included.
-
-        Parameters
-        ----------
-        A, A_sq, V, propagator, plans, delta_z, splitting
-            As for ``split_step``.
-
-        Returns
-        -------
-        np.ndarray
-            The propagated field.
-        """
         # Use pre-computed constants with fallbacks for direct calls
         alpha_half = self._constant("_alpha_half")
         alpha2_half = self._constant("_alpha2_half")
@@ -853,15 +787,21 @@ class CNLSE(NLSE):
         # exactly the coupled rank and scalar parameters.
         if self._backend.has_fused_coupled_split_step and self._can_fuse_components(
             A,
-            (alpha_half, alpha2_half, g11, g12, g21, g22, Isat_conv, Isat_conv2),
+            (
+                alpha_half,
+                alpha2_half,
+                g11,
+                g12,
+                g21,
+                g22,
+                Isat_conv,
+                Isat_conv2,
+                self.omega,
+            ),
         ):
             dz = delta_z / 2 if splitting == "strang" else delta_z
             prop, unnorm = self._fused_propagator(propagator)
-            omega_half = (
-                self.omega / 2
-                if (splitting == "lie" and self.omega is not None)
-                else None
-            )
+            omega_half = None if self.omega is None else self.omega / 2
             return kernels.split_step_coupled_fused(
                 A,
                 prop,
@@ -882,7 +822,12 @@ class CNLSE(NLSE):
                 unnorm_ifft=unnorm,
             )
 
-        # First half-step (strang only)
+        # Half a Rabi rotation on each side keeps the Strang step symmetric,
+        # hence second order, and Yoshida's sub-steps with it.
+        if splitting == "strang" and self.omega is not None:
+            A = self._rabi_rotation(A, delta_z / 2)
+
+        # First half-step (Strang only)
         if splitting == "strang":
             A1, A2 = self._take_components(A)
             A_sq, A_sq_1, A_sq_2 = self._compute_A_sq_components(A, A_sq)
@@ -900,11 +845,31 @@ class CNLSE(NLSE):
         dz_step = delta_z / 2 if splitting == "strang" else delta_z
         A1, A2 = self._apply_nl_prop_c(A1, A2, A_sq_1, A_sq_2, dz_step, *nl_args)
 
-        if splitting == "lie" and self.omega is not None:
+        if self.omega is not None:
             A1, A2 = self._backend.kernels.rabi_coupling(
-                A1, A2, delta_z, self.omega / 2
+                A1, A2, dz_step, self.omega / 2
             )
 
+        self._set_components(A, A1, A2)
+        return A
+
+    def _rabi_rotation(self, A: np.ndarray, dz: float) -> np.ndarray:
+        """Exchange the two components through the Rabi coupling over dz.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            Coupled field, written back in place.
+        dz : float
+            Step to rotate over.
+
+        Returns
+        -------
+        np.ndarray
+            The field.
+        """
+        A1, A2 = self._take_components(A)
+        A1, A2 = self._backend.kernels.rabi_coupling(A1, A2, dz, self.omega / 2)
         self._set_components(A, A1, A2)
         return A
 

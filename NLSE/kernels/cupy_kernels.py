@@ -11,6 +11,7 @@ import cupy as cp
 import numpy as np
 
 from . import templating
+from .templating import NO_RABI_COUPLING, RabiPlacement
 
 # How CUDA C opens a kernel. The extern "C" that precedes it is not part of the
 # match: it keeps the names unmangled so get_function can find them.
@@ -1281,7 +1282,7 @@ class CUDAKernels:
         plan : _CuFFTPlan
             Pre-built FFT plan.
         acc : cp.ndarray
-            Slope accumulator (modified in-place unless mode is 2).
+            Slope accumulator (modified in-place unless mode is SPEND).
         out : cp.ndarray
             Where the stage's result goes: the next stage's argument, or the
             field itself on the last stage.
@@ -1297,8 +1298,8 @@ class CUDAKernels:
             Weight this stage's slope carries into the accumulator.
         c : float
             Coefficient of the slope in the stage's output.
-        mode : int
-            0 to set the accumulator, 1 to add to it, 2 to spend it.
+        mode : Rk4StageMode
+            Whether to set the accumulator, add to it or spend it.
         unnorm_ifft : bool
             If True, the propagator carries the 1/N.
 
@@ -1347,6 +1348,7 @@ class CUDAKernels:
         w,
         c,
         mode,
+        omega=None,
         unnorm_ifft=False,
     ):
         """Run a whole coupled RK4 stage, both components at once.
@@ -1364,7 +1366,7 @@ class CUDAKernels:
         plan : _CuFFTPlan
             Pre-built FFT plan.
         acc : cp.ndarray
-            Slope accumulator (modified in-place unless mode is 2).
+            Slope accumulator (modified in-place unless mode is SPEND).
         out : cp.ndarray
             Where the stage's result goes.
         A : cp.ndarray
@@ -1382,8 +1384,10 @@ class CUDAKernels:
             Weight this stage's slope carries into the accumulator.
         c : float
             Coefficient of the slope in the stage's output.
-        mode : int
-            0 to set the accumulator, 1 to add to it, 2 to spend it.
+        mode : Rk4StageMode
+            Whether to set the accumulator, add to it or spend it.
+        omega : float or None
+            Half the Rabi coupling, or None to skip it.
         unnorm_ifft : bool
             If True, the propagator carries the 1/N.
 
@@ -1395,8 +1399,9 @@ class CUDAKernels:
         self._linear_into(A_in, k, propagator, plan, unnorm_ifft)
         kernels = self._get_kernels(A.dtype)
         N_sq = int(A.size) // 2
+        half_omega = NO_RABI_COUPLING if omega is None else omega
         params = self._cast(
-            A.dtype, alpha1, alpha2, g11, g12, g21, g22, Isat1, Isat2, w, c
+            A.dtype, alpha1, alpha2, g11, g12, g21, g22, Isat1, Isat2, half_omega, w, c
         )
         args = (k, A_in) + ((V1_scaled, V2_scaled) if V1_scaled is not None else ())
         self._launch(
@@ -1448,7 +1453,7 @@ class CUDAKernels:
         V1_scaled, V2_scaled : cp.ndarray or None
             Pre-scaled potentials, one per component. Both None or neither.
         dz : float
-            Nonlinear step (whole for Lie, half for Strang).
+            Nonlinear step: the whole step for Lie, half of it for Strang.
         alpha1, alpha2 : float
             Half-loss coefficients.
         g11, g22 : float
@@ -1463,7 +1468,9 @@ class CUDAKernels:
         plan : _CuFFTPlan
             Pre-built FFT plan.
         omega : float or None
-            Half the Rabi coupling, or None to skip it.
+            Half the Rabi coupling, or None to skip it. Rotates over ``dz``
+            after the nonlinear step, and for Strang before the first one
+            too, so the step is ``R N L N R``.
         unnorm_ifft : bool
             If True, the propagator carries the 1/N.
 
@@ -1475,28 +1482,18 @@ class CUDAKernels:
         kernels = self._get_kernels(A.dtype)
         # One thread per element of a component, which is half the field.
         N_sq = int(A.size) // 2
-        N_sq_i = np.int32(N_sq)
         params = self._cast(
             A.dtype, dz, alpha1, alpha2, g11, g12, g21, g22, Isat1, Isat2
         )
+        angle = (NO_RABI_COUPLING if omega is None else omega) * dz
+        rotation = self._cast(A.dtype, np.cos(angle), np.sin(angle))
+        opening = RabiPlacement.NONE if omega is None else RabiPlacement.BEFORE
+        closing = RabiPlacement.NONE if omega is None else RabiPlacement.AFTER
 
-        def nonlinear():
-            if V1_scaled is not None:
-                self._launch(
-                    self._v_kernel(kernels, "coupled_nl_prop_c", V1_scaled),
-                    N_sq,
-                    A,
-                    V1_scaled,
-                    V2_scaled,
-                    *params,
-                    N_sq_i,
-                )
-            else:
-                self._launch(kernels["coupled_nl_prop_c"], N_sq, A, *params, N_sq_i)
-
-        # Double precision: a nonlinear half-step before the linear one
         if splitting == "strang":
-            nonlinear()
+            self._coupled_nonlinear(
+                kernels, A, V1_scaled, V2_scaled, params, rotation, opening, N_sq
+            )
 
         self.fft_propagate(plan, A, A, propagator)
         if unnorm_ifft and hasattr(plan, "ifft_unnorm"):
@@ -1504,20 +1501,44 @@ class CUDAKernels:
         else:
             plan.ifft(A, A)
 
-        nonlinear()
-
-        # Rabi coupling (single precision only)
-        if omega is not None:
-            cos_c, sin_c = self._cast(
-                A.dtype,
-                np.cos(omega * float(params[0])),
-                np.sin(omega * float(params[0])),
-            )
-            self._launch(
-                kernels["rabi_coupling_interleaved"], N_sq, A, cos_c, sin_c, N_sq_i
-            )
-
+        self._coupled_nonlinear(
+            kernels, A, V1_scaled, V2_scaled, params, rotation, closing, N_sq
+        )
         return A
+
+    def _coupled_nonlinear(
+        self, kernels, A, V1_scaled, V2_scaled, params, rotation, placement, N_sq
+    ):
+        """Launch the interleaved nonlinear step, with its Rabi rotation.
+
+        Parameters
+        ----------
+        kernels : dict
+            Compiled kernels for the field's dtype.
+        A : cp.ndarray
+            Coupled field of shape (2, ...), modified in-place.
+        V1_scaled, V2_scaled : cp.ndarray or None
+            Pre-scaled potentials, one per component. Both None or neither.
+        params : tuple
+            dz and the eight coupled parameters, cast to the field's precision.
+        rotation : tuple
+            Cosine and sine of the Rabi angle, cast likewise.
+        placement : RabiPlacement
+            Where the rotation goes, if anywhere.
+        N_sq : int
+            Elements in one component.
+        """
+        potentials = (V1_scaled, V2_scaled) if V1_scaled is not None else ()
+        self._launch(
+            self._v_kernel(kernels, "coupled_nl_prop_c", V1_scaled),
+            N_sq,
+            A,
+            *potentials,
+            *params,
+            *rotation,
+            np.int32(placement),
+            np.int32(N_sq),
+        )
 
     def rk4_rhs_coupled_fused(
         self,

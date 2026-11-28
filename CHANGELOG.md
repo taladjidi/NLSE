@@ -269,6 +269,48 @@ come first.
   step). Results move at rounding level: 8e-6 of the peak after 220 complex64
   steps, 1.4e-14 in complex128. `NLSE_FUSE_PROPAGATOR=0` still switches every
   callback off. Figures in `docs/optimization-log.md`.
+- **The Rabi coupling runs inside the fused coupled kernels.** With `omega`
+  set, a `CNLSE` split step took the fused coupled kernel and then rotated the
+  components in a launch of its own (Lie), or through two component copies
+  around it (Strang); RK4 was never fused. CUPY now rotates inside the
+  nonlinear kernel and adds the coupling's slope inside the whole-stage RK4
+  kernel; around a Strang step OpenCL rotates the interleaved field in
+  place, and MLX rotates and restacks it. On an RTX 3050 in complex64 at `omega` = 1e4 rad/m, a CUPY
+  step is 1.85 to 1.89x faster in Strang, 1.17 to 1.21x in Lie and 2.0 to
+  2.2x in RK4 at 1024², 2048² and 4096², and an OpenCL Strang step 2.0x and
+  1.66x at 1024² and 2048². In those runs (lossless, no potential, 60
+  steps) the CUPY Lie and Strang and the OpenCL Strang outputs match the old
+  ones to the bit, which is not promised in general: the old CUDA Lie
+  rotation took its angle from the step rounded to float32. RK4 moves by 9e-7
+  of the peak. A `DDGPE` Strang run no longer copies its components twice a
+  step. Batched `omega` runs as before. Figures in
+  `docs/optimization-log.md`.
+- **`out_field` reduces the field's energy rates once per call.** The step
+  limits each reduced them again: twice for RK4 with a given step, once more
+  with the default step and once more for Yoshida. A reduction transforms
+  the field, and a `CNLSE` one also brings it back to the host: 0.9, 3.2 and
+  13 ms for an `NLSE` and 9, 43 and 173 ms for a `CNLSE` at 1024², 2048²
+  and 4096² on CUPY (RTX 3050, complex64). A 10-step RK4 call with a given
+  step is 1.02x faster for an `NLSE` and 1.12x for a `CNLSE`; the steps and
+  results are unchanged. Figures in `docs/optimization-log.md`.
+- **The propagator stays on the device after a GPU run until it is read.**
+  Every run on CUPY, CL or MLX copied it back to the host at the end, a
+  grid-sized transfer; `simu.propagator` now copies it back the first time it
+  is read, once. A 10-step CUPY lie call is 1.14 to 1.19x faster for an
+  `NLSE` at 1024², 2048² and 4096² and 1.10 to 1.12x for a `CNLSE` at 1024²
+  and 2048² (RTX 3050, complex64); the steps are unchanged. Figures in
+  `docs/optimization-log.md`.
+- **OpenCL runs each RK4 stage in one kernel.** The stage formed its slope in
+  one pass and spent it on the accumulator and the next argument in another;
+  `square_mod_rk4_stage` and `coupled_rk4_stage_c` now do both in registers,
+  as CUPY's whole-stage kernels already did, with the Rabi coupling's slope
+  in the coupled one. On an RTX 3050 in complex64 an OpenCL RK4 step is
+  1.16x, 1.12x and 1.08x faster for an `NLSE` at 1024², 2048² and 4096², and
+  1.15x, 1.11x and 1.09x for a `CNLSE`, identical results; a `CNLSE` with
+  `omega`, fused for the first time, is 3.5x and 2.8x faster at 1024² and
+  2048² and moves by 9e-7 of the peak. The RK4 stage modes are named,
+  `Rk4StageMode` in `kernels/templating.py`, in both backends' kernels.
+  Figures in `docs/optimization-log.md`.
 - One-step `out_field` at 2048² (M3 Max): CPU 73 → 47 ms, MLX 70 → 41 ms; the
   dispersion eigenvalues are kept and the normalization writes in place. The
   per-step time is unchanged.

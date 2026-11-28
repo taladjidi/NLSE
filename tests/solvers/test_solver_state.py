@@ -1218,6 +1218,27 @@ class TestArraysComeBackFromTheDevice:
                 )
 
     @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+    def test_the_propagator_comes_back_only_when_read(self, backend_name):
+        """The one array a run leaves on the device, until it is read.
+
+        Most callers never read it. Read, it is the host array the run used,
+        as it always was, and it is brought back once rather than every read.
+        """
+        simu = self.solver(backend_name)
+        if not simu._backend.is_device_backend:
+            pytest.skip("a host backend never moves the propagator")
+        simu.out_field(gaussian_input(), 2e-3, verbose=False, plot=False, delta_z=1e-4)
+        left = simu._propagator
+        assert not isinstance(left, np.ndarray), "the run brought the propagator back"
+        expected = np.asarray(simu._backend.to_numpy(left))
+        read = simu.propagator
+        assert isinstance(read, np.ndarray), (
+            f"reading the propagator gave a {type(read).__name__}"
+        )
+        np.testing.assert_array_equal(read, expected)
+        assert simu.propagator is read, "a second read brought it back again"
+
+    @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
     def test_the_solver_is_usable_after_a_failed_run(self, backend_name):
         """Which is the point: the failure must not poison the next run."""
         E = gaussian_input()
