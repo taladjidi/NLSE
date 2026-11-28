@@ -395,6 +395,7 @@ class CUPYBackend(Backend):
     supports_unnormalized_ifft = True
     has_linear_nonlinear_step = True
     broadcasts_parameters_natively = True
+    supports_coupled_batch = True
     has_fused_rk4_rhs = True
     has_fused_rk4_stage_update = True
     has_fused_rk4_final_update = True

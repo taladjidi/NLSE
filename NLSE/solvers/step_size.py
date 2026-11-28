@@ -138,13 +138,12 @@ class StepSize:
         """
         if self.plans is None:
             return False
-        batched = (
-            self._V_scaled,
+        scalars = (
             self._constant("_g"),
             self._constant("_Isat_conv"),
             self._constant("_alpha_half"),
         )
-        return not any(getattr(value, "ndim", 0) > 0 for value in batched[1:])
+        return not any(getattr(value, "ndim", 0) > 0 for value in scalars)
 
     def _energy_rates_on_device(self, A: np.ndarray) -> dict[str, float]:
         """Return the rates, reducing where the field already is.

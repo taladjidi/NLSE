@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from helpers import AVAILABLE_BACKENDS
 from NLSE import CNLSE, NLSE, CNLSE_1d
-from NLSE.backends import get_backend
+from NLSE.backends import _backend_builders, get_backend
 from NLSE.kernels import cpu as cpu_kernels
 
 PRECISION_COMPLEX = np.complex64
@@ -478,13 +478,13 @@ COUPLED_BASE = {
     "L": 10e-3,
     "Isat": 10e4,
 }
-# Backends whose coupled kernels take one field of exactly the coupled rank.
-COUPLED_BATCH_BACKENDS = [
-    b for b in AVAILABLE_BACKENDS if b not in CNLSE._no_coupled_batch_backends
-]
-COUPLED_NO_BATCH = [
-    b for b in AVAILABLE_BACKENDS if b in CNLSE._no_coupled_batch_backends
-]
+# Read off the class, not an instance: get_backend would follow NLSE_BACKEND.
+COUPLED_BATCH = {
+    b: _backend_builders()[b][1].supports_coupled_batch for b in AVAILABLE_BACKENDS
+}
+# Backends whose coupled kernels take a batch, and those that take one field.
+COUPLED_BATCH_BACKENDS = [b for b in AVAILABLE_BACKENDS if COUPLED_BATCH[b]]
+COUPLED_NO_BATCH = [b for b in AVAILABLE_BACKENDS if not COUPLED_BATCH[b]]
 
 
 def make_coupled(cls, backend_name, n2):
@@ -615,7 +615,7 @@ def test_backends_without_coupled_batching_fall_back(backend_name, cls, grid):
             batched, np.broadcast_to(field, (COUNT, 2, *grid)).copy(), "split_step"
         )
     assert got.shape == (COUNT, 2, *grid)
-    assert batched._backend.name not in CNLSE._no_coupled_batch_backends
+    assert batched._backend.supports_coupled_batch
 
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from helpers import AVAILABLE_BACKENDS, gaussian as beam, make as build
 from NLSE import CNLSE, NLSE, CNLSE_1d, NLSE_1d
-from NLSE.backends import get_backend
+from NLSE.backends import _backend_builders, get_backend
 
 # Every flag that puts a step on a shorter path than the generic one. A level
 # is defined by which of these are left on, so a new capability has to be
@@ -310,7 +310,7 @@ def test_a_non_local_run_declines_every_fused_path(backend_name, cls):
 @pytest.mark.parametrize("backend_name", FUSED_BACKENDS)
 def test_a_batched_run_still_gives_the_same_answer(backend_name, monkeypatch):
     """Falling back must be a fallback, not a different answer."""
-    if backend_name in CNLSE._no_coupled_batch_backends:
+    if not _backend_builders()[backend_name][1].supports_coupled_batch:
         pytest.skip(f"{backend_name} refuses a batched coupled run outright")
     single = propagate(CNLSE, backend_name, "stage", monkeypatch)
     solver = make(CNLSE, backend_name)

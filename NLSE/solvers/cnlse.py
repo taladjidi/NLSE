@@ -19,6 +19,7 @@ class CNLSE(NLSE):
     _medium_attrs = (*NLSE._medium_attrs, "n12", "n22", "alpha2")
     # The second component's loss bounds the step as the first one's does.
     _loss_constants = (*NLSE._loss_constants, "_alpha2_half")
+    _component_axes = 1
     # A merged Strang run brackets its Lie steps with the scalar
     # `_nonlinear_step`, which has neither the cross coupling nor the second
     # loss, so no coupled run merges.
@@ -346,44 +347,14 @@ class CNLSE(NLSE):
 
         return A1, A2
 
-    def _is_batched(self, A: np.ndarray, params: tuple = ()) -> bool:
-        """Whether this run carries a batch, of fields or of parameters.
-
-        An unbatched coupled field is one component axis plus the grid axes;
-        anything above that is a batch of simulations. A parameter given per
-        simulation is the other kind, and either rules out a kernel that
-        expects scalars and one field.
-
-        Parameters
-        ----------
-        A : np.ndarray
-            The coupled field.
-        params : tuple
-            Parameters a kernel would take as scalars. Pass only those; a
-            grid-shaped argument such as V is array-valued either way.
-
-        Returns
-        -------
-        bool
-            True if a batch is present.
-        """
-        if A.ndim > len(self._last_axes) + 1:
-            return True
-        return any(getattr(p, "ndim", 0) > 0 for p in params)
-
-    # Backends whose coupled kernels take one field of exactly the coupled
-    # rank. The generic path they fall back to is not batched-clean either,
-    # so a batched coupled run is refused rather than quietly reshaped.
-    _no_coupled_batch_backends = ("CL", "MLX")
-
     def _check_batch_support(self, E_in: np.ndarray) -> None:
         """Refuse a batched coupled run where the kernels cannot serve one."""
-        if self._backend.name not in self._no_coupled_batch_backends:
+        if self._backend.supports_coupled_batch:
             return
         params = (self.n2, self.n12, self.n22, self.alpha, self.alpha2)
         if self._is_batched(E_in, params):
             self._require_backend(
-                lambda backend: backend.name not in self._no_coupled_batch_backends,
+                lambda backend: backend.supports_coupled_batch,
                 "broadcasting a coupled solver over a batch",
             )
 

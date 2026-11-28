@@ -116,6 +116,9 @@ class NLSE(StepSize):
     # Distance the run in progress covers, for a callback that needs a length
     # where the solver has no medium (L = 0). Written by the callback loop.
     _run_distance: float = 0.0
+    # Axes of an unbatched field beside the grid's: the coupled solvers' one
+    # component axis.
+    _component_axes = 0
 
     # Set per run rather than derived from the parameters, so they are None
     # until a run sets them up. Declared here so reading one before that is a
@@ -932,24 +935,25 @@ class NLSE(StepSize):
     def _is_batched(self, A: np.ndarray, params: tuple = ()) -> bool:
         """Whether this run carries a batch, of fields or of parameters.
 
-        An unbatched field is the grid axes and nothing else; anything above
-        that is a batch of simulations. A parameter given per simulation is
-        the other kind, and either rules out a kernel taking scalars and one
-        field.
+        An unbatched field is the grid axes, with the component axis of a
+        coupled solver, and nothing else; anything above that is a batch of
+        simulations. A parameter given per simulation is the other kind, and
+        either rules out a kernel taking scalars and one field.
 
         Parameters
         ----------
         A : np.ndarray
             The field.
         params : tuple
-            Parameters a kernel would take as scalars.
+            Parameters a kernel would take as scalars. Pass only those; a
+            grid-shaped argument such as V is array-valued either way.
 
         Returns
         -------
         bool
             True if a batch is present.
         """
-        if A.ndim > len(self._last_axes):
+        if A.ndim > len(self._last_axes) + self._component_axes:
             return True
         return any(getattr(p, "ndim", 0) > 0 for p in params)
 

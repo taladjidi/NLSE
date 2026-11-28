@@ -131,6 +131,11 @@ class Backend(ABC):
     # CL global_offset).
     broadcasts_parameters_natively = False
 
+    # The coupled kernels take a batch, of fields or of parameters. Where False
+    # they take one field of exactly the coupled rank and the generic path is
+    # not batched-clean either, so CNLSE refuses a batched coupled run there.
+    supports_coupled_batch = False
+
     # The field is normalized on the host: the reduction is done in numpy and
     # the result sent back. For backends whose array type cannot do the
     # reduction in place, or does it more slowly than the round trip costs.
