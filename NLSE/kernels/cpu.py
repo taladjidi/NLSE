@@ -11,7 +11,10 @@ from numba.extending import overload
 # Claim the OpenMP runtime first: a vendored copy (pyfftw's wheel) initialized
 # before numba's segfaults at the first prange. If pyfftw is already loaded the
 # window is gone, so use the workqueue pool, which owns no OpenMP runtime.
-if "pyfftw" in sys.modules and not numba.np.ufunc.parallel._is_initialized:
+# _is_initialized is private to numba: without it, take the pool as not started.
+if "pyfftw" in sys.modules and not getattr(
+    numba.np.ufunc.parallel, "_is_initialized", False
+):
     # numba.config builds its attributes at import, so a type checker sees none of them.
     numba.config.THREADING_LAYER = "workqueue"  # type: ignore[attr-defined]
 numba.get_num_threads()
