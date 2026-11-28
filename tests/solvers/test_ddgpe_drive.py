@@ -1,6 +1,7 @@
 """What drives a DDGPE run: its noise, its lasers, and the callbacks it takes."""
 
 import warnings
+from unittest import mock
 
 import numpy as np
 import pytest
@@ -184,6 +185,23 @@ def test_default_step_is_the_drive_step(backend):
     got = run_pump(simu, T, profile, None, [step_up], [(STEP_FACTOR,)])
     exact = -1j * F0 * STEP_FACTOR * default * (2 + 5 + 8)
     assert got == pytest.approx(exact, abs=PUMP_ATOL)
+
+
+@pytest.mark.parametrize("delta_z", [None, PUMP_DT], ids=["default", "given"])
+def test_a_drive_run_reduces_the_rates_once(backend, delta_z):
+    """DDGPE sets its own default step, and takes the call's rates to do it.
+
+    The coupled reduction brings the whole field back to the host, so a run
+    that reduced again for its default step would pay that twice.
+    """
+    simu = pump_solver(backend)
+    with mock.patch.object(
+        DDGPE, "_energy_rates", autospec=True, side_effect=DDGPE._energy_rates
+    ) as rates:
+        run_pump(simu, T, PROFILE, delta_z)
+    assert rates.call_count == 1, (
+        f"a DDGPE run on {backend} reduced the rates {rates.call_count} times"
+    )
 
 
 def test_callback_list_survives_two_runs(backend):

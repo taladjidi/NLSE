@@ -1733,6 +1733,41 @@ there; Lie, Strang and RK4 follow it to 1e-5 in complex64 over 200 steps
 (`test_a_linear_rabi_run_follows_its_closed_form`). Not measured:
 MLX, complex128, a batched `omega` (still the generic path).
 
+**Deployed: the energy rates reduced once per `out_field` call**
+(2026-11-28). RTX 3050 8 GB, driver 620.70.06, CuPy 14.2.0, CUDA runtime
+13.2. Not a per-step cost: `out_field` sets the step from the field's energy
+rates, and each limit reduced them again: `_capped_delta_z` and
+`_rk4_max_dz` both for RK4, `_default_delta_z` once more without a given
+step, the Yoshida cap once more. The field does not change before the
+run starts, so `out_field` reduces once and passes the result down; the
+limits still reduce for themselves when called alone.
+
+One reduction, after one warm call, median and [min, max] over 7 rounds of
+20 (`gpu_p4_r2_rates_cost.py`, complex64, the benchmark field):
+
+| solver | 1024² | 2048² | 4096² |
+|---|---|---|---|
+| `NLSE` | 0.922 [0.920, 0.926] ms | 3.169 [3.165, 3.177] ms | 13.30 [13.28, 13.32] ms |
+| `CNLSE` | 9.220 [9.210, 9.269] ms | 42.87 [42.75, 43.13] ms | 172.8 [172.6, 178.1] ms |
+
+A `CNLSE` reduction brings the field back to the host for its per-component
+means, hence the tenfold cost. A 10-step RK4 call with a given step, before
+and after in one process over 8 alternating rounds (`gpu_p4_r2_ab.py`; 2 → 1
+reductions counted in each call):
+
+| solver | grid | before | after | gain [range] |
+|---|---|---|---|---|
+| `NLSE` | 1024² | 34.87 ms | 33.88 ms | 1.03x [1.02, 1.07] |
+| `NLSE` | 2048² | 143.5 ms | 140.1 ms | 1.02x [1.02, 1.03] |
+| `NLSE` | 4096² | 663.1 ms | 650.2 ms | 1.02x [1.02, 1.02] |
+| `CNLSE` | 1024² | 83.38 ms | 74.07 ms | **1.13x** [1.12, 1.18] |
+| `CNLSE` | 2048² | 352.0 ms | 313.6 ms | **1.12x** [1.12, 1.13] |
+
+The saving is the one reduction each time: 1.0, 3.4, 12.8 ms and 9.3, 38.4
+ms. The per-step cost does not move (0.999 to 1.002x) and the results are
+identical. Without a given step or with Yoshida the call saves one reduction
+more each; not timed. The cost of the `CNLSE` reduction itself is open.
+
 
 ## Open
 

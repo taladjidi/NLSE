@@ -285,6 +285,14 @@ come first.
   of the peak. A `DDGPE` Strang run no longer copies its components twice a
   step. Batched `omega` runs as before. Figures in
   `docs/optimization-log.md`.
+- **`out_field` reduces the field's energy rates once per call.** The step
+  limits each reduced them again: twice for RK4 with a given step, once more
+  with the default step and once more for Yoshida. A reduction transforms
+  the field, and a `CNLSE` one also brings it back to the host: 0.9, 3.2 and
+  13 ms for an `NLSE` and 9, 43 and 173 ms for a `CNLSE` at 1024², 2048²
+  and 4096² on CUPY (RTX 3050, complex64). A 10-step RK4 call with a given
+  step is 1.02x faster for an `NLSE` and 1.12x for a `CNLSE`; the steps and
+  results are unchanged. Figures in `docs/optimization-log.md`.
 - One-step `out_field` at 2048² (M3 Max): CPU 73 → 47 ms, MLX 70 → 41 ms; the
   dispersion eigenvalues are kept and the normalization writes in place. The
   per-step time is unchanged.

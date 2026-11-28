@@ -306,6 +306,7 @@ class StepSize:
         A: np.ndarray,
         method: str = "split_step",
         z: float | None = None,
+        rates: dict[str, float] | None = None,
     ) -> float:
         """Return the step to use when the caller has not chosen one.
 
@@ -325,13 +326,17 @@ class StepSize:
         z : float or None
             Distance about to be propagated, which bounds the step from
             above. Without it the medium length stands in.
+        rates : dict or None
+            ``_energy_rates(A)``, if the caller already has it. Without it
+            the rates are reduced here.
 
         Returns
         -------
         float
             Step size.
         """
-        rates = self._energy_rates(A)
+        if rates is None:
+            rates = self._energy_rates(A)
         if method == "RK4":
             rate = sum(rates.values())
             phase = RK4_PHASE_PER_STEP
@@ -390,7 +395,9 @@ class StepSize:
         Isat = self._as_host_array(self._constant("_Isat_conv"))
         return float(np.max(g * A_sq / (1 + A_sq / Isat)))
 
-    def _rk4_max_dz(self, A: np.ndarray | None = None) -> float:
+    def _rk4_max_dz(
+        self, A: np.ndarray | None = None, rates: dict[str, float] | None = None
+    ) -> float:
         """Compute the maximum stable step size for explicit RK4.
 
         RK4's stability region reaches ~2.83 along the imaginary axis, so the
@@ -416,6 +423,9 @@ class StepSize:
         A : np.ndarray, optional
             Field, for the interaction and the loss. Without it only the
             linear terms count.
+        rates : dict or None
+            ``_energy_rates(A)``, if the caller already has it. Without it
+            the rates are reduced here.
 
         Returns
         -------
@@ -424,13 +434,16 @@ class StepSize:
         """
         rate = self._max_dispersion_rate() + self._max_local_linear_rate()
         if A is not None:
-            rates = self._energy_rates(A)
+            if rates is None:
+                rates = self._energy_rates(A)
             rate += rates["interaction"] + rates["loss"]
         if rate == 0:
             return np.inf
         return RK4_STABILITY_RADIUS / rate
 
-    def _split_step_max_dz(self, A: np.ndarray) -> float:
+    def _split_step_max_dz(
+        self, A: np.ndarray, rates: dict[str, float] | None = None
+    ) -> float:
         """Compute the maximum step size for split-step accuracy.
 
         Keep the phase imprinted in one real-space step below pi. The kernels
@@ -452,6 +465,9 @@ class StepSize:
         ----------
         A : np.ndarray
             Normalized field (possibly on device).
+        rates : dict or None
+            ``_energy_rates(A)``, if the caller already has it. Without it
+            the rates are reduced here.
 
         Returns
         -------
@@ -459,7 +475,8 @@ class StepSize:
             Largest step keeping the real-space phase per step below pi, and
             the linear phase on the shortest resolved wave below a radian.
         """
-        rates = self._energy_rates(A)
+        if rates is None:
+            rates = self._energy_rates(A)
         phase_rate = rates["potential"] + rates["interaction"]
         limit = np.inf if phase_rate == 0 else np.pi / phase_rate
         return min(limit, self._dispersion_max_dz(), self._loss_max_dz())
@@ -541,7 +558,13 @@ class StepSize:
             return np.inf
         return LOSS_PER_STEP_LIMIT / (2 * peak)
 
-    def _capped_delta_z(self, delta_z: float, A: np.ndarray, method: str) -> float:
+    def _capped_delta_z(
+        self,
+        delta_z: float,
+        A: np.ndarray,
+        method: str,
+        rates: dict[str, float] | None = None,
+    ) -> float:
         """Return delta_z, lowered if it leaves the method's convergence region.
 
         Only ever lowers its magnitude, and keeps its sign, which is the
@@ -557,15 +580,19 @@ class StepSize:
             Normalized field (possibly on device).
         method : str
             Integration method ("split_step" or "RK4").
+        rates : dict or None
+            ``_energy_rates(A)``, if the caller already has it. Without it
+            the rates are reduced here, once.
 
         Returns
         -------
         float
             The step to actually take.
         """
-        if method == "RK4":
+        if rates is None:
             rates = self._energy_rates(A)
-            max_dz = self._rk4_max_dz(A)
+        if method == "RK4":
+            max_dz = self._rk4_max_dz(A, rates)
             label = "RK4 stability"
             # Stability is not accuracy: with V scaled by k/2, a stable step can
             # still be a large phase per step. Split-step applies V exactly and has
@@ -578,7 +605,7 @@ class StepSize:
                 else ""
             )
         else:
-            max_dz = self._split_step_max_dz(A)
+            max_dz = self._split_step_max_dz(A, rates)
             label = "split-step accuracy"
             extra = ""
         # By magnitude: a backward step leaves the region of convergence at

@@ -416,13 +416,16 @@ class NLSE(StepSize):
             self._precompute_step_constants(V, field_dtype)
 
             # Settle the step before building anything that depends on it.
+            # The field does not change until the run, so its rates are
+            # reduced once and shared by every limit below.
+            rates = self._energy_rates(A)
             if delta_z is None:
-                delta_z = self._default_delta_z(A, method, z)
-            delta_z = self._capped_delta_z(delta_z, A, method)
+                delta_z = self._default_delta_z(A, method, z, rates)
+            delta_z = self._capped_delta_z(delta_z, A, method, rates)
             if splitting == "yoshida":
                 # The phase limits are written per real-space application, and
                 # Yoshida's longest sub-step is 1.7 times the step itself.
-                yoshida_max = self._split_step_max_dz(A) / YOSHIDA_SPAN
+                yoshida_max = self._split_step_max_dz(A, rates) / YOSHIDA_SPAN
                 delta_z = math.copysign(min(abs(delta_z), yoshida_max), delta_z)
 
             # The propagator depends on delta_z, k, the grid and the precision,
