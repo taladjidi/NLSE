@@ -1223,6 +1223,14 @@ two runs each, alternated:
 | 2048² | 1.7 → 2.4-3.0 | 2.9-3.2 → 4.1-4.2 |
 | 4096² | 6.8-7.9 → 9.1-9.3 | 12.0-13.0 → 17.0-18.1 |
 
+A third run (2026-11-28, same script and machine, 7 rounds, while a macOS
+indexing daemon held one core at 70-99%, which favours 12 threads): 2048²
+complex128 10.70 (64 × 16) and 10.64 (32 × 16) → 9.80 ms, 1.09x; 4096²
+complex64 24.99 → 24.31, 1.03x; 4096² complex128 39.25 (32 × 16) and 40.34
+(16 × 16) → 37.26, 1.05x and 1.08x; 2048² complex64 unblocked on both, 6.45
+and 6.44. The rounds spread 6 to 10%: the complex128 rows are a difference,
+the complex64 one is not.
+
 Scripts: `cpu_pcores_ab.py --side 2048:complex128:64:16
 2048:complex128:32:16 4096:complex64:32:16 4096:complex128:32:16
 4096:complex128:16:16` and `cpu_pcores_tuning_time.py`, in

@@ -41,8 +41,9 @@ do not look for another way.
 | Benchmark waits on what lazy transforms return (MLX was timed doing nothing) | `3dfc28f` |
 | Docs: gallery cached in CI; page review along Diataxis | `18f4cc7`, `3bd8af5` |
 
-Last full suites: Mac (CPU, OpenCL, MLX) 2526 passed, 187 skipped, 85
-deselected at `fix/closing-review` (its box runs are in its entry, under
+Last full suites: Mac (CPU, OpenCL, MLX) 2536 passed, 187 skipped, 85
+deselected at `perf/cpu-pcore-threads` on `70f3c25`; 2526 at
+`fix/closing-review` (its box runs are in its entry, under
 "Resume here"); 2496 at `perf/gpu-p4` (2382 and 221 on `main` before it); box, combined environment
 (CuPy and OpenCL), 2620 passed, 57 skipped, none failed, six times and once
 with `NLSE_FUSE_PROPAGATOR=0`, at `01e15c8` (2026-11-28,
@@ -513,11 +514,8 @@ was decided alone is under "Decided alone" below.
    the closing review pass (entries below); the increment-form linear step
    for complex64 as a recommendation ("Packages not built"). In progress,
    in order:
-   - Thread counts per machine: built on `perf/cpu-pcore-threads` (three
-     commits on `fcfba4a`; spec `NLSE_tangui_fix_specs/cpu_pcores_spec.md`),
-     read by a fresh reviewer (pass, MINOR only), not merged: the gains
-     are the architect's, to be measured again with `cpu_pcores_ab.py`
-     there before the merge.
+   - Thread counts per machine: merged (`perf/cpu-pcore-threads`, the
+     owner's choice on 2026-11-28; entry below).
    - Fewer passes on OpenCL: measured, not built (a separable propagator
      is 1.03 to 1.05 times a step on the box, 0.85 at 1024² on Apple's
      OpenCL); the optimization log does not have the entry yet. On MLX:
@@ -526,6 +524,34 @@ was decided alone is under "Decided alone" below.
    - The Mac profiles: not started. The final report: a first one was
      given to the owner on the morning of 2026-11-28, before these.
    Version 5.0.0 is neither bumped nor published.
+   - **Thread counts** (`perf/cpu-pcore-threads`, 2026-11-28; spec
+     `NLSE_tangui_fix_specs/cpu_pcores_spec.md`). On macOS the tuner
+     measures every block size on the fastest cores' count too
+     (`_performance_threads`, `_thread_counts` in `cpu_tuning.py`; cache
+     version 2, so every machine tunes again once). Measured twice by
+     the architect and once by me (optimization log, CPU section): 1.05
+     to 1.18 times a step at 2048² and 4096² complex128, inside the
+     noise at complex64; my run had one core held by a system daemon.
+     Box (Linux, 8 threads): `tests/backends` and
+     `tests/test_doc_claims.py` 863 passed, the candidates are 8 and 4
+     as before. Fresh review: pass. MINOR, not fixed:
+     - `_fastest` has no margin for the count in use: noise can flip
+       16 and 12 between tunings; 15 candidates instead of 10 (a forced
+       tuning at 4096² complex128 takes 17-18 s, was 12-13 s).
+     - Only macOS gains a candidate (Linux hybrids list their fast
+       cores in `/sys/devices/cpu_core/cpus`, not read).
+     - Two checkouts with different `CACHE_VERSION` on one
+       `NLSE_CACHE_DIR` overwrite each other's file.
+     - `sysctlbyname` is called without `argtypes` (x86-64 macOS not
+       run); the `except (OSError, AttributeError)` branch is untested.
+     - A third thread pool stays alive after a tuning (up to 36 idle
+       threads).
+     - Tests: the two sysctl tests pass trivially off macOS;
+       `test_cpu_blocked_step.py` checks `_thread_counts` against
+       itself in one place; the "run on" half of
+       `test_the_fastest_cores_count_is_measured_and_run_on` passes
+       without the feature; `REAL_POOL` is defined mid-file.
+     - `THREAD_DIVISORS`' comment still says "all, and half" only.
    - **GPU P4** (`perf/gpu-p4`, 2026-11-28). Four commits, one per task of
      `NLSE_tangui_fix_specs/gpu_p4_r2_spec.md` (patches
      `gpu_p4_r2_T1..T4.patch`, rebased on `402601a` by an architect after a
@@ -991,8 +1017,9 @@ and "Still open" list:
 
 ### Packages not built
 
-- Thread counts per machine, not built (in progress, "Resume here" item
-  3): on the M3 Max (12 P and 4 E cores) numba's `prange` kernels
+- Thread counts per machine: built for the blocked step only ("Resume
+  here", item 3). Not built, the unblocked step's count and separate
+  counts for kernels and transforms: on the M3 Max (12 P and 4 E cores) numba's `prange` kernels
   are 21-34% faster on 12 threads than on 16 at 1024², 2048² and 4096² in
   both dtypes, and the whole unblocked step on 12 against 16 threads is
   1.18 against 1.54 ms at 1024² complex64, 2.12 against 2.40 at complex128,
@@ -1001,9 +1028,9 @@ and "Still open" list:
   interleaved rounds). `fft2` alone prefers 12 at 1024² (0.404 against
   0.533 ms complex64) and 16 at 2048² and 4096² complex64 (9.6 against
   11.4 ms). So kernel threads and transform workers want separate counts,
-  measured by the tuner and cached with the block; the blocked step's
-  candidates (`THREAD_DIVISORS`: 16 and 8 here) should include the P-core
-  count too.
+  measured by the tuner and cached with the block. Through the solver
+  the unblocked step gained 1.06x on 12 threads where a tight loop
+  gained 1.37x, cause not established (optimization log).
 - GPU P4 is merged ("Resume here", item 3). Its follow-ups, not built: the
   `CNLSE` energy rates reduced on the device (173 ms a reduction at 4096² on
   CuPy, once per call now); the Rabi rotation fused into OpenCL's
