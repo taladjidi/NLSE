@@ -54,8 +54,9 @@ backend). The benchmark tools ran there on their own (their entry below).
 
 ### Resume here (written 2026-11-28)
 
-`main` is pushed; its last code change and last merge is `fix/open-items`
-(`NLSE_3d` merges its Strang half steps). Last full suite on the Mac there:
+`main` is pushed; its last code change is `fix/open-items` (`NLSE_3d`
+merges its Strang half steps), its last merge `ci/token-permissions` (the
+workflow only). Last full suite on the Mac there:
 2364 passed, 221 skipped, 85 deselected (four tests added; three
 benchmarks fewer since `refactor/bench-tests-debloat`: the DDGPE one, which
 was skipped on every backend). Against the 2355 of
@@ -255,6 +256,48 @@ was decided alone is under "Decided alone" below.
        apart from its printing); that fix was read by me only. Left,
        MINOR: `D0` and `WINDOW_T` are in both the test and the benchmark.
      - Not run: CuPy; the 128³ and 256²×64 timings a second time.
+   - **Packaging and CI** (fresh context, 2026-11-28: `pyproject.toml`, the
+     workflow, the hooks, `tests/test_packaging.py`, the install pages).
+     It built the sdist and the wheel from it (37 files, `NLSE/` and the
+     four kernel sources only) and imported the wheel in an isolated
+     environment. No CRITICAL, two MAJORs:
+     - The workflow set no `permissions:` outside `deploy-docs`, so every
+       other job ran with the repository's default token, which the
+       benchmark action is handed. Fixed (`ci/token-permissions`):
+       `contents: read` at the top. With it, the matrix step no longer
+       pastes `github.ref` into its script. Not done: pinning the actions
+       to commit SHAs (they are on tags: `@v5`, `@v10.4.0`, `@v1`), which
+       wants dependabot for `github-actions` and so pull requests every
+       week; the owner's call.
+     - CuPy and MLX never run in CI: the test job installs `--extra opencl`
+       only, and the tests loop over what is installed. Not fixed. The
+       suites run by hand on the Mac (CPU, OpenCL, MLX) and the box
+       (CuPy). Recommended: try `--extra mlx` on the macOS job on a branch
+       (whether the hosted runner gives MLX a Metal device is not known).
+     - Left, MINOR: every pull request commit runs twice (`push` and
+       `pull_request`), and cancel-in-progress can cancel a `deploy-docs`
+       on `main`; the 85 benchmark tests run only on `main`, after the
+       merge; Python 3.14 is not in the matrix nor the classifiers, and
+       3.10 is at its end of life; the gallery cache key hashes `uv.lock`
+       and `_output.py`, so a change in `NLSE/` that breaks an example
+       shows at the weekly run; `license = {text="GPLv3"}` is not an SPDX
+       id; the classifiers say CUDA 11 where the docs cover 12 and 13; no
+       lower bounds on numpy, scipy, numba, matplotlib, mlx;
+       `kernels/cpu.py:14` reads numba's private `_is_initialized` at
+       import; the version is in `pyproject.toml`, `NLSE/__init__.py` and
+       a regex in `docs/conf.py`, held together by a test;
+       `tests/test_packaging.py` keeps a setuptools-era hint
+       (`STALE_BUILD_DIR`, `_cause_hint`), cites a wheel `exclude` list
+       that does not exist, and does not assert that the wheel holds only
+       `NLSE/`; `ty-baseline.json` matches on file, rule and columns, so
+       a new diagnostic at the same columns is absorbed; intersphinx
+       fetches three inventories under `-W`; the README's relative
+       `docs/...` links break on PyPI; `NLSE.egg-info/` and `.benchmarks/`
+       sit untracked, and `.gitignore` keeps two setuptools lines.
+     - Refuted: the pip fallbacks of `tests/test_packaging.py` are not
+       dead, the box has no `uv` and takes them.
+     - Not checked by it: a full docs build, Windows and Linux runners,
+       the repository's Actions settings.
    - Dead code: `vulture` at 60% on `NLSE/` and `benchmarks/` names seven
      things, none dead (numba overloads, public methods, an availability
      import).
@@ -633,6 +676,9 @@ was decided alone is under "Decided alone" below.
   - Not opened then: `trace_solvers.py`, `nsys_summary.py`,
     `tests/benchmarks/test_benchmark_profile.py` (reviewed since: "Benchmark
     tools" above), the docs pages that quote the examples, any CuPy path.
+- **Decided alone**, CI (2026-11-28): the workflow's token is read-only
+  without the owner being asked; the actions stay on tags; no MLX job
+  tried on the hosted runner.
 - **Decided alone**, open items (2026-11-28): the loss cap keeps its
   value and the comments change, not the other way round; a timing script
   kept as `benchmarks/strang_merge_3d.py` with one test; "Still open" and
