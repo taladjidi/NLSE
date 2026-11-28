@@ -103,19 +103,19 @@ State of the four, in the order they land:
    with `NLSE_FUSE_PROPAGATOR=0`, the 13 `test_packaging.py` errors of that
    env apart. MINOR, not fixed: bare `2`s and an `if warn:` without `else`
    in `step_size.py`.
-2. *Keyword-only constructors, units, dicts: reviewed, not merged.* Five
-   patches on `3e98e28` in `NLSE_tangui_fix_specs/ctor_kwargs/v3/` (44
-   files; new `NLSE/solvers/units.py`, the `units` extra, pint in the dev
+2. *Keyword-only constructors, units, dicts: merged*
+   (`feat/keyword-constructors-v3`: the five patches of
+   `NLSE_tangui_fix_specs/ctor_kwargs/v3/` and a changelog wording fix; 44
+   files, new `NLSE/solvers/units.py`, the `units` extra, pint in the dev
    group). Two fresh reviews of v2 gave two MAJORs (the dict did not restore
    `k` to its last bit; a stale unit in `docs/numerical_methods.md`), both
-   fixed in v3, whose library diff and docs I read. Architect's gates on the
-   Mac: 2964 passed, 217 skipped; plain-number runs byte-identical to
-   `3e98e28` on the seven solvers; a venv without pint passes. Applied,
-   trailers fixed, as `feat/keyword-constructors-v3` (five commits on
-   `3e98e28`). To do: my gates with `uv sync --extra opencl --extra mlx
-   --extra units`, the box suite (six runs and one unfused, results in
-   `~/Documents/nlse_p4r2_scripts/results/suite_ctor_v3_*.txt` there),
-   merge. Mine, for the owner
+   fixed in v3, whose library diff and docs I read. Mac, with `uv sync
+   --extra opencl --extra mlx --extra units`: ruff, format, ty clean, 2964
+   passed, 217 skipped; plain-number runs byte-identical to `3e98e28` on the
+   seven solvers; a venv without pint passes (the architect's run). Box
+   (CuPy + OpenCL, no pint there, so the unit tests skip): 2868 passed, 69
+   skipped, six runs and one with `NLSE_FUSE_PROPAGATOR=0`, the 13
+   `test_packaging.py` errors apart. Mine, for the owner
    to veto: `from_dict` raises `ValueError` when the dict's `wvl` (or
    `GPE`'s `m`) and `k` disagree; the smaller option is that `k` wins
    silently. MINOR, not fixed: arrays are shared between a solver and its
