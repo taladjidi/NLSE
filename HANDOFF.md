@@ -160,11 +160,25 @@ State of the four, in the order they land:
      pad; `cpu_blocked.py`'s module docstring does not name the pad; no test
      of an unblocked entry that carries a pad (`_usable` refuses it, checked
      by hand).
-4. *Release 5.0.0: last.* The migration page (a draft of its constructor
-   section exists only in the session's scratchpad: write it from
-   `CHANGELOG.md`), the bump (`pyproject.toml:7`, `NLSE/__init__.py:8`, `uv
-   lock`), the changelog heading, `docs/index.md:4`, the constants of
-   `tests/test_doc_claims.py`, the tag `5.0.0`, the GitHub release.
+4. *Release 5.0.0: the next session's package, not started.* `main` holds
+   everything it ships. Steps: the migration page (`docs/migration.md` is
+   still the 4.0.0 one; a 143-line draft for 5.0.0 is in
+   `NLSE_tangui_fix_specs/release_5.0.0/migration_draft.md`, its constructor
+   section to recheck against the merged code and `CHANGELOG.md`: `wvl`,
+   `Isat`, a subclass calling `super().__init__` positionally, an attribute
+   assigned after construction is not converted), the bump
+   (`pyproject.toml:7`, `NLSE/__init__.py:8`, `uv lock`), the changelog
+   heading (`## Unreleased`), `docs/index.md:4`, the constants of
+   `tests/test_doc_claims.py`, the tag `5.0.0`, the GitHub release. No
+   upload to PyPI. Settle first, with the owner: `from_dict` raising on a
+   `wvl`/`k` disagreement (item 2).
+
+Left behind: the padding architect's worktree
+`/private/var/folders/s8/1kcsxfs556s4brcnjgnhqpx00000gn/T/main` (detached at
+`7465343`, with files of its own, not removed); on the box the trees
+`~/Documents/nlse_p4r2_still_open_v3` and `~/Documents/nlse_p4r2_ctor_v3`.
+The Mac was loaded for most of the session by a reviewer's orphaned probe
+(killed 13:10); it is quiet now, so the re-runs below can go ahead.
 
 Measured this session and not yet in `docs/optimization-log.md` (its tables
 and the README's "Performance" are to be rewritten once the Mac figures are
