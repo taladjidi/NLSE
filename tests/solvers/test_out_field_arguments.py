@@ -13,6 +13,9 @@ WAIST = 2e-3  # m
 L = 1e-3  # m
 STEP = 2e-4  # m, divides L into 5
 RUNAWAY = 100  # callback calls; the longest run here takes 10
+# Steps at which a plain running sum of the position has drifted past the
+# solver's round-off allowance: 10000 steps of L / 10000 ended 2.3e-16 m short.
+LONG_RUN_STEPS = 10_000
 # (z, delta_z, steps) in m: distances on a step boundary to round-off.
 # 0.3e-3 / 0.1e-3 is 2.9999999999999996, and ten steps of 1e-4 m end 3e-16 m
 # short of the second distance; the last two are less than a step, and none.
@@ -171,6 +174,23 @@ def test_round_off_neither_drops_a_step_nor_adds_a_sliver(
     assert len(seen) == count, f"{len(seen)} steps over {z:g} m at {delta_z:g} m"
     end = seen[-1] if seen else 0.0
     assert end == pytest.approx(direction * z, rel=1e-12), f"ended at {end!r} m"
+
+
+@pytest.mark.parametrize("direction", [1, -1])
+def test_a_long_run_takes_no_sliver_of_a_step(direction):
+    """Ten thousand steps that divide the distance are ten thousand steps."""
+    simu = solver("CPU")
+    seen = []
+    simu.out_field(
+        beam(simu),
+        L,
+        delta_z=direction * L / LONG_RUN_STEPS,
+        verbose=False,
+        callback=record_position,
+        callback_args=(seen,),
+    )
+    assert len(seen) == LONG_RUN_STEPS, f"{len(seen)} steps"
+    assert seen[-1] == pytest.approx(direction * L, rel=1e-12)
 
 
 @pytest.mark.parametrize("callback", [None, fail_if_endless])
