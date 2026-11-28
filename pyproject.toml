@@ -39,6 +39,7 @@ dependencies = [
 opencl = ["pyopencl", "pyvkfft", "mako"]
 gpu = ["cupy"]
 mlx = ["mlx"]
+units = ["pint"]
 
 [project.urls]
 Documentation = "https://taladjidi.github.io/NLSE/"
@@ -62,6 +63,9 @@ dev = [
   # Needed by tests/test_packaging.py, which builds a real wheel to verify
   # what ships. Without it the test fails rather than checking nothing.
   "hatchling",
+  # The `units` extra, so that tests/solvers/test_units.py runs rather than
+  # skips under a plain `uv sync`, the pre-push hook and CI.
+  "pint",
 ]
 # Sphinx, because the maths, the notebook and the API reference all go
 # through one renderer. sphinx-autoapi parses the source rather than

@@ -8,7 +8,7 @@ import warnings
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from functools import partial
-from typing import Any
+from typing import Any, ClassVar
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -29,6 +29,7 @@ from .step_size import (
     RK4_STABILITY_RADIUS as RK4_STABILITY_RADIUS,
     StepSize,
 )
+from .units import Unit, in_units
 
 # How many propagators to keep. Building one costs one exponential on the
 # device, so the cache stays small and bounded: an adaptive step asks for a
@@ -180,12 +181,27 @@ class NLSE(StepSize):
     __PYOPENCL_AVAILABLE__ = __PYOPENCL_AVAILABLE__
     __MLX_AVAILABLE__ = __MLX_AVAILABLE__
 
+    # The unit of each physical constructor argument: a plain number is taken
+    # to be in it, a pint quantity is converted to it (see units.py).
+    UNITS: ClassVar[dict[str, Unit]] = {
+        "alpha": "1/m",
+        "power": "W",
+        "window": "m",
+        "n2": "m**2/W",
+        "V": "dimensionless",
+        "L": "m",
+        "Isat": "W/m**2",
+        "nl_length": "m",
+        "wvl": "m",
+    }
+
+    @in_units
     def __init__(
         self,
         *,
         alpha: float | np.floating,
         power: float | np.floating,
-        window: float | tuple[float, float] | list[float],
+        window: float | tuple[float, float] | list[float] | np.ndarray,
         n2: float | np.floating,
         V: np.typing.NDArray[np.complexfloating | np.floating] | None,
         L: float | np.floating,
@@ -198,6 +214,12 @@ class NLSE(StepSize):
     ) -> None:
         """Instantiate the simulation.
 
+        Each argument `UNITS` names also takes a pint quantity of that
+        unit's dimension (``pip install NLSE[units]``), converted to the
+        unit and stripped by every constructor of the chain, a subclass's
+        first (`units.in_units`). An attribute assigned after construction
+        is not converted: it takes a plain number in that unit.
+
         Solves i d/dz psi = -1/(2 k0) (d2/dx2 + d2/dy2) psi - k0/2 V psi
         - k0/2 n2 c eps0 |psi|^2 psi, here without the loss and the
         saturation: docs/physics_problem.md has the whole equation.
@@ -208,10 +230,10 @@ class NLSE(StepSize):
             Intensity loss in 1/m: I = I0 exp(-alpha z).
         power : float
             Power in W
-        window : float, list or tuple
+        window : float, list, tuple or np.ndarray
             Computational window in the
             transverse plane in m.
-            Can be different in x and y.
+            Can be different in x and y: a list, tuple or 1-d array of two.
         n2 : float
             Non linear coeff in m^2/W
         V : np.ndarray or None
@@ -255,6 +277,9 @@ class NLSE(StepSize):
         # self.window = window
         if isinstance(window, (list, tuple)):
             self.window = window
+        elif np.ndim(window) == 1:
+            # An array, such as [3, 4] * ureg.mm once stripped: as a list.
+            self.window = np.asarray(window).tolist()
         else:
             self.window = [window, window]
         # transverse coordinate

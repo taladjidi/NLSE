@@ -166,6 +166,26 @@ ARGUMENTS = {
 }
 
 
+def assert_same_state(simu, other, rtol=0.0):
+    """Assert two solvers hold the same public attributes.
+
+    Parameters
+    ----------
+    simu, other : NLSE
+        The solvers.
+    rtol : float
+        Relative tolerance; 0 asks for equal values.
+    """
+    mine = {k: v for k, v in vars(simu).items() if not k.startswith("_")}
+    theirs = {k: v for k, v in vars(other).items() if not k.startswith("_")}
+    assert mine.keys() == theirs.keys()
+    for name, value in mine.items():
+        if value is None:
+            assert theirs[name] is None, name
+        else:
+            np.testing.assert_allclose(theirs[name], value, rtol=rtol, err_msg=name)
+
+
 def make(cls, backend="CPU", n=None, symmetric=True, **overrides):
     """Return a solver of this class with the shared optical parameters.
 
