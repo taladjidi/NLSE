@@ -6,6 +6,7 @@ on devices that support double precision.
 """
 
 import math
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -1408,6 +1409,7 @@ class OpenCLKernels:
         splitting: str,
         plan,
         unnorm_ifft: bool = False,
+        factors: Callable | None = None,
     ) -> cla.Array:
         """Fused split step: all GPU operations in one Python call.
 
@@ -1438,6 +1440,9 @@ class OpenCLKernels:
             Pre-built FFT plan.
         unnorm_ifft : bool
             If True, use unnormalized IFFT.
+        factors : callable or None
+            Accepted for signature compatibility and never called: two
+            vectors were measured not to gain here (docs/optimization-log.md).
 
         Returns
         -------

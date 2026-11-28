@@ -77,8 +77,9 @@ class Backend(ABC):
 
     # kernels.split_step_fused(
     #     A, propagator, V_scaled, dz, alpha, g, Isat, splitting, plan,
-    #     unnorm_ifft=False)
+    #     unnorm_ifft=False, factors=None)
     # A whole single-component split step without returning to Python.
+    # factors() returns the propagator as (rows, columns) of one grid, or None.
     has_fused_split_step = False
 
     # kernels.linear_nonlinear_step(A, propagator, plan, V_scaled, dz, alpha, g,

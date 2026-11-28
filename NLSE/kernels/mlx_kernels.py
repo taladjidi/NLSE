@@ -790,6 +790,33 @@ def linear_step(
 # ── Fused split step (nl_length == 0 only) ───────────────────────────────────
 
 
+def _propagate(A, propagator, axes):
+    """Transform, multiply by the propagator, transform back.
+
+    Parameters
+    ----------
+    A : mx.array
+        The field.
+    propagator : mx.array or tuple
+        The propagator over the grid, or ``(rows, columns)``, one factor per
+        axis, whose product it is. Decided while tracing.
+    axes : tuple
+        Axes to transform over.
+
+    Returns
+    -------
+    mx.array
+        The propagated field.
+    """
+    A = mx.fft.fftn(A, axes=axes)
+    if isinstance(propagator, tuple):
+        rows, columns = propagator
+        A = A * rows[:, None] * columns
+    else:
+        A = A * propagator
+    return mx.fft.ifftn(A, axes=axes)
+
+
 def _make_split_step(splitting, has_V, axes, mode="general"):
     # Chosen when the graph is compiled, as alpha and dz are host values: a
     # lossless run never traces the iteration (mx.where evaluates both arms), and
@@ -812,35 +839,27 @@ def _make_split_step(splitting, has_V, axes, mode="general"):
     if splitting == "lie" and not has_V:
 
         def _pure(A, propagator, dz, alpha, g, Isat):
-            A = mx.fft.fftn(A, axes=axes)
-            A = A * propagator
-            A = mx.fft.ifftn(A, axes=axes)
+            A = _propagate(A, propagator, axes)
             return apply_nl(A, dz, alpha, g, Isat)
 
     elif splitting == "lie" and has_V:
 
         def _pure(A, propagator, V_scaled, dz, alpha, g, Isat):
-            A = mx.fft.fftn(A, axes=axes)
-            A = A * propagator
-            A = mx.fft.ifftn(A, axes=axes)
+            A = _propagate(A, propagator, axes)
             return apply_nl(A, dz, alpha, g, Isat, V_scaled)
 
     elif splitting == "strang" and not has_V:
 
         def _pure(A, propagator, dz_half, alpha, g, Isat):
             A = apply_nl(A, dz_half, alpha, g, Isat)
-            A = mx.fft.fftn(A, axes=axes)
-            A = A * propagator
-            A = mx.fft.ifftn(A, axes=axes)
+            A = _propagate(A, propagator, axes)
             return apply_nl(A, dz_half, alpha, g, Isat)
 
     else:  # strang, has_V
 
         def _pure(A, propagator, V_scaled, dz_half, alpha, g, Isat):
             A = apply_nl(A, dz_half, alpha, g, Isat, V_scaled)
-            A = mx.fft.fftn(A, axes=axes)
-            A = A * propagator
-            A = mx.fft.ifftn(A, axes=axes)
+            A = _propagate(A, propagator, axes)
             return apply_nl(A, dz_half, alpha, g, Isat, V_scaled)
 
     return mx.compile(_pure)
@@ -860,6 +879,7 @@ def split_step_fused(
     splitting: str,
     plan: tuple,
     unnorm_ifft: bool = False,
+    factors: Callable | None = None,
 ) -> mx.array:
     """Execute fused split step for MLX (nl_length == 0 only).
 
@@ -886,6 +906,10 @@ def split_step_fused(
     unnorm_ifft : bool
         Accepted for signature compatibility with the other fused
         backends and ignored: MLX always normalizes its inverse FFT.
+    factors : callable or None
+        Returns ``(rows, columns)``, the propagator as one factor per axis of
+        one grid, broadcast over a batch, or None. Read in its place, which
+        spares the step the grid's 8 bytes per element.
 
     Returns
     -------
@@ -893,15 +917,18 @@ def split_step_fused(
         The propagated field.
     """
     axes = plan
-    # Keyed on the mode as well: each of the three compiles to its own graph,
-    # and the step length decides it as much as alpha does.
+    built = None if factors is None else factors()
+    # Keyed on the mode as well, and last: each of the three compiles to its
+    # own graph, and the step length decides it as much as alpha does.
     mode = _loss_mode(alpha, dz, g, Isat, A, V_scaled)
-    key = (splitting, V_scaled is not None, axes, mode)
+    key = (splitting, V_scaled is not None, axes, built is not None, mode)
     if key not in _SPLIT_STEP_CACHE:
         _SPLIT_STEP_CACHE[key] = _make_split_step(
             splitting, V_scaled is not None, axes, mode
         )
     fn = _SPLIT_STEP_CACHE[key]
+    if built is not None:
+        propagator = built
     if V_scaled is not None:
         return fn(
             A,

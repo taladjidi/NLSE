@@ -295,6 +295,16 @@ come first.
   step). Results move at rounding level: 8e-6 of the peak after 220 complex64
   steps, 1.4e-14 in complex128. `NLSE_FUSE_PROPAGATOR=0` still switches every
   callback off. Figures in `docs/optimization-log.md`.
+- **MLX builds the propagator from one factor per axis.** In a 2D `NLSE` or
+  `GPE` split step the fused graph multiplied the transformed field by a
+  grid-sized propagator; it now multiplies a row vector by a column vector,
+  and the grid is not evaluated unless `simu.propagator` is read. A step is
+  1.02 to 1.08x faster at 1024², 2048² and 4096² in complex64 (M3 Max; Lie,
+  Strang and Yoshida, with a potential, with loss, and GPE; 1.00 to 1.01x for
+  a batch of four, 0.93x at 256²), and a run holds 128 MiB less at 4096²,
+  256 MiB less with Yoshida. Results move at rounding level: 2.4e-6 to 4.7e-6
+  of the peak after 60 steps, 9.2e-6 with Yoshida. A dispersion with a cross
+  term keeps the grid. Figures in `docs/optimization-log.md`.
 - **The Rabi coupling runs inside the fused coupled kernels.** With `omega`
   set, a `CNLSE` split step took the fused coupled kernel and then rotated the
   components in a launch of its own (Lie), or through two component copies

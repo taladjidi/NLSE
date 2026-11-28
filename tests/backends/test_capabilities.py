@@ -140,6 +140,7 @@ def test_fused_signatures_accept_the_documented_arguments(backend_name):
             "splitting",
             "plan",
             "unnorm_ifft",
+            "factors",
         ],
         "linear_nonlinear_step": [
             "A",

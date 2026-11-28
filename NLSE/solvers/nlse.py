@@ -67,6 +67,7 @@ STEP_ROUNDOFF = 1e-9
 # Transformed axes the nonlinear step is folded into the linear step at: 2D,
 # the plans cuFFT links store callbacks into here, checked against in
 # tests/backends/test_fft_propagator_fusion.py, and the CPU's blocked step.
+# Also the only transform a propagator is offered as one factor per axis for.
 FUSED_TRANSFORM_AXES = 2
 
 
@@ -535,6 +536,12 @@ class NLSE(StepSize):
         if self._backend.has_fused_split_step and self.nl_length == 0:
             dz = delta_z / 2 if splitting == "strang" else delta_z
             prop, unnorm = self._fused_propagator(propagator)
+            # One grid's rows: the graph broadcasts them over a batch.
+            factors = (
+                partial(self._propagator_factors, prop, unnorm, A.shape[-2])
+                if len(self._last_axes) == FUSED_TRANSFORM_AXES
+                else None
+            )
             return kernels.split_step_fused(
                 A,
                 prop,
@@ -546,6 +553,7 @@ class NLSE(StepSize):
                 splitting,
                 plans[0],
                 unnorm_ifft=unnorm,
+                factors=factors,
             )
 
         # First half-step (only for splitting == "strang")

@@ -10,6 +10,38 @@ from NLSE.utils import __MLX_AVAILABLE__
 pytestmark = pytest.mark.skipif(not __MLX_AVAILABLE__, reason="MLX not available")
 
 
+# The propagator as two vectors. NY != NX, so that rows and columns swapped
+# cannot pass for each other.
+FACTORS_NX, FACTORS_NY = 64, 32
+FACTORS_STEPS = 3  # steps per run, the last a partial one
+# Fraction of a step the run ends on, so the remainder's propagator is read too.
+FACTORS_REMAINDER = 0.5
+FACTORS_BATCH = 3
+# Roundings between one application by the factors and one by the grid: each
+# factor, their product, the grid's exponential. Its float32 argument adds
+# the largest phase, in eps. Measured 0.18 of the bound at most.
+FACTORS_ROUNDINGS = 4
+APPLICATIONS = {"lie": 1, "strang": 1, "yoshida": 3}  # propagators per step
+V_PEAK = 1e-4  # the potential of the lossless-graph test below
+ABSORPTION = 0.1  # imaginary part of a complex potential, per unit of real
+NLSE_DZ = 1e-4  # m
+# Constructor arguments and step of tests/integration/test_zero_potential.py.
+GPE_ARGS = {"gamma": 0.0, "N": 1e6, "window": 100e-6, "g": 1e-11, "m": 87 * 1.66e-27}
+GPE_DZ = 1e-8  # s
+# solver, constructor arguments, splitting, batched, potential. "lossy" keeps
+# helpers.PHYSICS's alpha of 20/m, which takes the solved kernel.
+FACTOR_CASES = {
+    "lie": ("NLSE", {"alpha": 0.0}, "lie", False, None),
+    "lossy": ("NLSE", {}, "lie", False, None),
+    "real V": ("NLSE", {"alpha": 0.0}, "lie", False, "real"),
+    "strang": ("NLSE", {"alpha": 0.0}, "strang", False, None),
+    "strang complex V": ("NLSE", {"alpha": 0.0}, "strang", False, "complex"),
+    "yoshida": ("NLSE", {"alpha": 0.0}, "yoshida", False, None),
+    "batch": ("NLSE", {"alpha": 0.0}, "lie", True, None),
+    "GPE": ("GPE", GPE_ARGS, "lie", False, None),
+}
+
+
 @pytest.fixture
 def backend():
     """Create an MLX backend instance."""
@@ -411,3 +443,98 @@ class TestMLXSolvedStepKernel:
             f"a lossy run came back with a peak of {np.max(np.abs(out)):.4f} "
             f"against the {np.max(np.abs(field)):.4f} it started from"
         )
+
+
+def factors_run(case, grid=False):
+    """Run one FACTOR_CASES case on MLX; return what the step needs checked.
+
+    Parameters
+    ----------
+    case : str
+        Key of FACTOR_CASES.
+    grid : bool
+        Whether to withhold the factors, so the kernel reads the grid.
+
+    Returns
+    -------
+    tuple
+        ``(field out, solver, step, keys of _SPLIT_STEP_CACHE)``.
+    """
+    import NLSE
+    from helpers import WAIST, make
+    from NLSE.kernels import mlx_kernels
+
+    name, physics, splitting, batch, potential = FACTOR_CASES[case]
+    simu = make(getattr(NLSE, name), "MLX", n=FACTORS_NX, NY=FACTORS_NY, **physics)
+    waist, dz = (WAIST, NLSE_DZ) if name == "NLSE" else (simu.window[0] / 8, GPE_DZ)
+    bump = V_PEAK * np.exp(-(simu.XX**2 + simu.YY**2) / (waist / 2) ** 2)
+    if potential == "real":
+        simu.V = bump.astype(np.float32)
+    elif potential == "complex":
+        simu.V = (bump * (1 + 1j * ABSORPTION)).astype(np.complex64)
+    else:
+        assert potential is None, potential
+    if grid:
+        simu._propagator_factors = lambda *args: None
+    field = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(np.complex64)
+    if batch:
+        field = np.stack([(1 + 0.5 * b) * field for b in range(FACTORS_BATCH)])
+    mlx_kernels._SPLIT_STEP_CACHE.clear()
+    out = simu.out_field(
+        field,
+        (FACTORS_STEPS - FACTORS_REMAINDER) * dz,
+        delta_z=dz,
+        splitting=splitting,
+        verbose=False,
+        plot=False,
+    )
+    keys = list(mlx_kernels._SPLIT_STEP_CACHE)
+    mlx_kernels._SPLIT_STEP_CACHE.clear()
+    return np.asarray(out), simu, dz, keys
+
+
+@pytest.mark.filterwarnings("ignore:splitting='yoshida'")
+class TestMLXPropagatorFactors:
+    """The fused step multiplies by one vector per axis, not by the grid."""
+
+    @pytest.mark.parametrize("case", sorted(FACTOR_CASES))
+    def test_the_factors_answer_as_the_grid(self, case):
+        """Every graph the fused step compiles reads the factors, to round-off."""
+        fast, simu, dz, keys = factors_run(case)
+        slow, *_, grid_keys = factors_run(case, grid=True)
+        assert keys and all(key[3] for key in keys), f"the grid was read: {keys}"
+        assert grid_keys and not any(key[3] for key in grid_keys), grid_keys
+        operator = np.asarray(simu._compute_propagator_rk4(), np.complex128)
+        phase = np.abs(operator * dz).max()
+        applications = APPLICATIONS[FACTOR_CASES[case][2]] * FACTORS_STEPS
+        bound = applications * (FACTORS_ROUNDINGS + phase) * np.finfo(np.float32).eps
+        flat = (-1, FACTORS_NY * FACTORS_NX)
+        relative = np.max(
+            np.linalg.norm((fast - slow).reshape(flat), axis=-1)
+            / np.linalg.norm(slow.reshape(flat), axis=-1)
+        )
+        assert relative <= bound, (
+            f"{relative:.3e} off the grid's answer, past {bound:.3e}"
+        )
+
+    def test_without_factors_the_kernel_reads_the_grid(self, monkeypatch):
+        """A dispersion with a cross term runs on the grid, as it did before."""
+        from NLSE import NLSE
+
+        grid, *_ = factors_run("lie", grid=True)
+        monkeypatch.setattr(NLSE, "_dispersion_axes", lambda self: None)
+        declined, *_, keys = factors_run("lie")
+        assert keys and not any(key[3] for key in keys), f"offered factors: {keys}"
+        assert np.array_equal(declined, grid), "the fallback is not the grid's step"
+
+    def test_a_poisoned_grid_is_not_read(self, monkeypatch):
+        """With the grid's exponential zeroed, only the factors give the answer."""
+        import mlx.core as mx
+        from NLSE.backends.mlx_backend import MLXBackend
+
+        reference, *_ = factors_run("lie")
+        monkeypatch.setattr(MLXBackend, "exp", lambda self, array: mx.zeros_like(array))
+        poisoned, *_ = factors_run("lie")
+        read, *_ = factors_run("lie", grid=True)
+        assert not np.array_equal(read, reference), "the poison does not reach the grid"
+        assert np.array_equal(poisoned, reference), "the step read the grid"
