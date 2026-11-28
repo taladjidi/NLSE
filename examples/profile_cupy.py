@@ -75,12 +75,12 @@ N_STEPS = 50  # enough for stable stats without overwhelming ncu
 def make_simu():
     """Create and return a configured NLSE simulation instance."""
     simu = NLSE(
-        alpha,
-        power,
-        window,
-        n2,
-        None,
-        L,
+        alpha=alpha,
+        power=power,
+        window=window,
+        n2=n2,
+        V=None,
+        L=L,
         NX=N,
         NY=N,
         Isat=Isat,

@@ -83,7 +83,18 @@ L = 10e-3 # Length of the medium in m
 alpha = 20 # linear losses coefficient in m^-1
 backend = "auto" # or "CPU", "CUPY" (Nvidia), "CL" (OpenCL), "MLX" (Apple)
 
-simu = NLSE(alpha, power, window, n2, None, L, NX=N, NY=N, Isat=Isat, backend=backend)
+simu = NLSE(
+    alpha=alpha,
+    power=power,
+    window=window,
+    n2=n2,
+    V=None,
+    L=L,
+    NX=N,
+    NY=N,
+    Isat=Isat,
+    backend=backend,
+)
 # The field and the potential live on the solver's grid. The field must be
 # complex: its width is what selects single or double precision.
 E_0 = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(np.complex64)

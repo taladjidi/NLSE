@@ -638,7 +638,16 @@ def test_a_solver_without_a_medium_takes_its_floor_from_the_run(monkeypatch):
     monkeypatch : pytest.MonkeyPatch
         Replaces the trial propagation by one with a large error.
     """
-    simu = GPE(0.0, GPE_ATOMS, GPE_WINDOW, GPE_G, None, NX=N, NY=N, backend="CPU")
+    simu = GPE(
+        gamma=0.0,
+        N=GPE_ATOMS,
+        window=GPE_WINDOW,
+        g=GPE_G,
+        V=None,
+        NX=N,
+        NY=N,
+        backend="CPU",
+    )
     field = np.ones((N, N), dtype=np.complex64)
     simu.out_field(
         field,

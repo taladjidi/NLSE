@@ -124,12 +124,12 @@ pbar = tqdm.tqdm(total=np.prod(times.shape), desc="Benchmarks")
 for i, size in enumerate(sizes):
     for j, backend in enumerate(BACKENDS):
         simu0 = NLSE(
-            alpha,
-            puiss,
-            window,
-            n2,
-            None,
-            L,
+            alpha=alpha,
+            power=puiss,
+            window=window,
+            n2=n2,
+            V=None,
+            L=L,
             NX=size,
             NY=size,
             nl_length=nl_length,

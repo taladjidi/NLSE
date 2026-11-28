@@ -24,7 +24,17 @@ alpha = 20                   # linear losses (m^-1)
 Isat = 10e4                  # saturation intensity (W/m^2)
 
 # Create solver
-simu = NLSE(alpha, power, window, n2, V=None, L=L, NX=N, NY=N, Isat=Isat)
+simu = NLSE(
+    alpha=alpha,
+    power=power,
+    window=window,
+    n2=n2,
+    V=None,
+    L=L,
+    NX=N,
+    NY=N,
+    Isat=Isat,
+)
 
 # Define a Gaussian input field (values between 0 and 1, normalized internally)
 # Complex: the field's width is what selects single or double precision.

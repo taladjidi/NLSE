@@ -107,10 +107,10 @@ def transforms_in_a_run(splitting, method, steps):
         Calls the run made to the backend's forward transform.
     """
     simu = NLSE(
-        0.0,
-        1.0,
-        COUNT_WINDOW,
-        -1e-9,
+        alpha=0.0,
+        power=1.0,
+        window=COUNT_WINDOW,
+        n2=-1e-9,
         V=None,
         L=1.0,
         NX=COUNT_GRID,

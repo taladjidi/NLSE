@@ -435,13 +435,13 @@ def run(beta_target, n12):
         Output fields, vortex positions, impurity trajectory and drag record.
     """
     simu = CNLSE(
-        ALPHA,
-        POWER,
-        WINDOW,
-        N2,
-        n12,
-        None,
-        L_CELL,
+        alpha=ALPHA,
+        power=POWER,
+        window=WINDOW,
+        n2=N2,
+        n12=n12,
+        V=None,
+        L=L_CELL,
         NX=N_PTS,
         NY=N_PTS,
         Isat=I_SAT,

@@ -52,12 +52,12 @@ for i, size in enumerate(sizes):
     E_0 = None
     for j, backend in enumerate(BACKENDS):
         simu = NLSE(
-            alpha,
-            puiss,
-            window,
-            n2,
-            None,
-            L,
+            alpha=alpha,
+            power=puiss,
+            window=window,
+            n2=n2,
+            V=None,
+            L=L,
             NX=size,
             NY=size,
             nl_length=nl_length,

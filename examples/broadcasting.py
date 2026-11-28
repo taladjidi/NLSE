@@ -23,7 +23,17 @@ def main():
     L = 10e-3
     alpha = 20
     E_0 = np.ones((10, N, N), dtype=PRECISION_COMPLEX)
-    simu = NLSE(alpha, puiss, window, n2, V=None, L=L, NX=N, NY=N, Isat=Isat)
+    simu = NLSE(
+        alpha=alpha,
+        power=puiss,
+        window=window,
+        n2=n2,
+        V=None,
+        L=L,
+        NX=N,
+        NY=N,
+        Isat=Isat,
+    )
     E_0 *= np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(PRECISION_COMPLEX)
     E = simu.out_field(E_0, L, verbose=True, plot=False, splitting="lie")
 
