@@ -32,6 +32,7 @@ do not look for another way.
 | Post-merge test fixes; RK4 step bounded by the grid's fastest linear rate | `b76f9e5`, `8bce83b` |
 | CPU complex64 kernels in float32 | `71db255` |
 | CuPy: nonlinear step in the inverse cuFFT store callback; separable propagator in the forward one; the 4096² column pass (closed, log only) | `5113580`, `ce290d8`, `6fbb522` |
+| `roofline.py`: the CPU flops probe reads the FMA peak (it read half on arm64) | `fix/roofline-flops-probe` |
 | uv, ruff and ty | `62bd2e8` |
 | Batches over several parameter axes: CPU, OpenCL, CuPy without callbacks | `496cd96`, `f26b694`, `083a2d9` |
 | Transform wording and the library re-measure | `c04afd7` |
@@ -1146,11 +1147,36 @@ and "Still open" list:
 - The propagator as two vectors: built on MLX ("Start here"), measured and
   rejected on OpenCL (optimization log).
 - The Mac profiles (CPU and MLX): see "Performance profiles".
-- **A CPU performance pass** (owner, 2026-11-28). The step is at 21-32% of
-  the FP32 flops ceiling on the M3 Max and 6-7% on the Ryzen 3 4100 (README,
-  "Performance"); the owner's bar is 80-90%. Not started. First to
-  establish: how the gap splits between the transforms (`scipy.fft`, which
-  `roofline.py` charges 5 N log2 N flops per 1D pass) and the kernels.
+- **A CPU performance pass** (owner, 2026-11-28; the bar is 80-90% of the
+  FP32 flops ceiling). Phase 1 is measured: scripts and raw results in
+  `NLSE_tangui_fix_specs/cpu_perf_pass/`, the Mac's taken under load 4-11
+  and to re-run quiet.
+  - The step reaches 11-13% of the FMA peak on the Mac and 5.5-6.3% on the
+    box (C probe `fma_peak.c`: 1.31-1.36 TFLOP/s on 16 threads, 521 GFLOP/s
+    on 8). The transforms are 65-80% of an unblocked step; in a blocked one
+    the gather and scatter are 33-38% and the transforms 48-59%.
+  - `roofline.py`'s flops probe read about half the peak on arm64 (a `mov`
+    before every `fmla`) and 88% of it on the box (8 chains): fixed,
+    `fix/roofline-flops-probe`. The box now reads within 5% of the C probe;
+    the Mac is not confirmed on a quiet machine. **Every table quoting a CPU
+    flops ceiling or a share of it is stale until re-measured quiet:**
+    `README.md` "Performance" (lines 170-228), `docs/optimization-log.md`
+    (84-89, 122-149, 308-344) and the 21-32% that this file's "Resume here"
+    quotes. Command: `uv run python benchmarks/roofline.py --sizes 1024 2048
+    4096 --backends CPU MLX --cases split_step:lie split_step:strang` (box:
+    `--backends CPU CUPY CL`), median of 5.
+  - Left in the tool: the step is charged one sin+cos+exp per point
+    (`NONLINEAR_TRANSCENDENTALS`) where the lossless kernel computes a
+    sincos only (box: the probe 1.32 G/s, a sincos alone 2.35, the kernel
+    1.56); on 8 to 16 threads the Mac's probe read 0.90-0.94 TFLOP/s under
+    load, short of 12 P cores at its one-thread 104-116 GFLOP/s, cause not
+    isolated.
+  - Started 2026-11-28, nothing merged: tiled gather and scatter in the
+    blocked column pass (`cpu_tiled_gather/`); FFTW built from source, NEON
+    on the Mac and AVX2 with FMA on the box, against `scipy.fft`
+    (`cpu_perf_pass/fftw_source/`); the same pass on the GPU backends
+    (`gpu_perf_pass/`). The box is shared between timing runs: each goes
+    through `flock ~/Documents/nlse_timing.lock`.
 
 ### Left open by merged work
 
