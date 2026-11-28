@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from NLSE.kernels import templating
+from NLSE.kernels import cpu as cpu_kernels, templating
 
 SOURCES = Path(__file__).parent.parent.parent / "NLSE" / "kernels"
 
@@ -44,6 +44,17 @@ STRUCT_CODE = {"float": "f", "double": "d"}
 SCALARS = {"dz": 0.25, "alpha": 0.5, "g": 2.0, "Isat": 8.0}
 # A device address, in bytes, with bits set in both halves of its word.
 POINTER = 0x7F00DEADBEE0
+
+# The lossy step's limit and pass count, which each dialect writes for itself:
+# how a Python module and a C source spell them. kernels/cpu.py is the reference.
+_PY_LOSS = (r"^_LOSS_SOLVED_LIMIT = (\S+)$", r"for _ in range\((\d+)\):")
+_C_LOSS = (r"^#define NLSE_LOSS_SOLVED_LIMIT (\S+)$", r"pass < (\d+); \+\+pass")
+LOSS_MODEL_COPIES = {
+    "cupy.py": _PY_LOSS,
+    "mlx_kernels.py": _PY_LOSS,
+    "cuda_source/nonlinear_step.cuh": _C_LOSS,
+    "cl_source/kernels.cl": _C_LOSS,
+}
 
 
 def expanded(dialect, fp="float", fp2="float2"):
@@ -524,3 +535,29 @@ class _Potential:
 def test_v_suffix_names_the_twin_a_potential_needs(V, suffix):
     """The kernels and the callbacks pick their twin by the same rule."""
     assert templating.v_suffix(V) == suffix
+
+
+@pytest.mark.parametrize("path", LOSS_MODEL_COPIES)
+def test_each_dialect_carries_the_cpu_loss_model(path):
+    """A dialect's limit and pass count are the CPU kernels'.
+
+    Read as text: the CuPy and MLX modules do not import everywhere, and a
+    copy that drifted would otherwise show only on the device it runs on.
+
+    Parameters
+    ----------
+    path : str
+        The source, under NLSE/kernels.
+    """
+    limit_pattern, passes_pattern = LOSS_MODEL_COPIES[path]
+    source = (SOURCES / path).read_text()
+    limits = [float(x) for x in re.findall(limit_pattern, source, re.MULTILINE)]
+    passes = [int(x) for x in re.findall(passes_pattern, source)]
+    assert limits == [cpu_kernels._LOSS_SOLVED_LIMIT], (
+        f"{path} solves the lossy step up to {limits} where kernels/cpu.py "
+        f"stops at {cpu_kernels._LOSS_SOLVED_LIMIT}"
+    )
+    assert passes == [cpu_kernels._LOSS_PASSES], (
+        f"{path} iterates the loss {passes} times where kernels/cpu.py takes "
+        f"{cpu_kernels._LOSS_PASSES} passes"
+    )
