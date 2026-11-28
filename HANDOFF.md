@@ -41,19 +41,23 @@ do not look for another way.
 | Benchmark waits on what lazy transforms return (MLX was timed doing nothing) | `3dfc28f` |
 | Docs: gallery cached in CI; page review along Diataxis | `18f4cc7`, `3bd8af5` |
 
-Last full suites: Mac (CPU, OpenCL, MLX) 2340 passed, 221 skipped at
-`0ba9aaa`; box, combined environment (CuPy and OpenCL), 2327 passed, 104
-skipped, six times and once with `NLSE_FUSE_PROPAGATOR=0`, at `5af91cd`
-(`~/Documents/nlse_main_5af91cd/run*.txt` there). Each box run also reports
-22 errors, all of `tests/test_packaging.py`: `nlse_env_both` has no
-hatchling. At `b6fa684` the box ran only the potential-sign, coupled and
-DDGPE tests (121 passed). Nothing merged since `b6fa684` has run on CuPy.
+Last full suites: Mac (CPU, OpenCL, MLX) 2352 passed, 221 skipped, 88 deselected at
+`fix/callback-step-count`; box, combined environment (CuPy and OpenCL), 2466
+passed, 104 skipped, none failed, six times and once with
+`NLSE_FUSE_PROPAGATOR=0`, at `77edad9` (2026-11-28,
+`~/Documents/nlse_main_77edad9/run*.txt` there). Each box run also reports
+12 errors, all of `tests/test_packaging.py`: `nlse_env_both` has no
+hatchling. Not run on CuPy since `77edad9`: the second docs round (text and
+docstrings) and the step-count fix (the loop is Python, the same on every
+backend).
 
 ### Resume here (written 2026-11-28)
 
-`main` is pushed; its last code change is `fix/arch-review`. Last full suite
-on the Mac there: 2355 passed, 221 skipped, 88 deselected (five tests fewer
-than before it: ten packaging cases removed, five added).
+`main` is pushed; its last code change is `fix/callback-step-count`. Last
+full suite on the Mac there: 2352 passed, 221 skipped, 88 deselected (two tests
+added; and five cases fewer than a tree with a local Sphinx build used to
+run: `tests/test_doc_claims.py` swept `docs/_build` too, which no clean
+checkout has. It no longer does).
 Orders from the owner for the night of
 2026-11-27: "run independently tonight : debloating, docs, and review.
 Iterate over this. Also when reviewing ignore the previous context to be
@@ -66,9 +70,9 @@ was decided alone is under "Decided alone" below.
 1. **Review, then iterate** (debloat, docs, review). Done and merged: the
    solvers (two fix rounds), the backends, the docs pages (round 1), the
    kernels (rounds 1 and 2), the test suite's four MAJOR gaps, `examples/`
-   and `benchmarks/` (round 1), the architecture review and the second
-   docs round below. The examples' debloat candidates are dismissed (see
-   that round's entry).
+   and `benchmarks/` (round 1), the architecture review, the second docs
+   round and the step count of the callback loop below. The examples'
+   debloat candidates are dismissed (see that round's entry).
    - **Docs, round 2** (fresh context, the pages and the public docstrings
      against the code; `docs/review-round-2`, 2026-11-28). Five MAJORs,
      each checked before it was fixed:
@@ -121,6 +125,24 @@ was decided alone is under "Decided alone" below.
        use `simu`, `E_in`, `NY`, `NX` they do not define;
        `backend="auto"` picked CL at 2048² on the Mac, on the transform
        alone (the page now says what it times).
+   - **Step count in the callback loop** (`fix/callback-step-count`,
+     2026-11-28; the docs reviewer's note, reproduced). The loop that
+     serves a callback, a non-local medium or an array `n2` kept the
+     position as a plain running sum. Past about 1e4 steps its round-off
+     passed `STEP_ROUNDOFF` of a step and the run took one more step of
+     about 1e-16 m: 10001 steps for `delta_z = L / 10000` at `L` = 1e-3,
+     2e-3, 3e-3, 1.3e-2 and 0.11 m (five of thirty `(L, n)` pairs), so
+     `sample` overran an array sized for the run. The sum is Neumaier's now
+     (`_add_compensated` in `solvers/nlse.py`); the fast loop counts by
+     division and was sound. Fresh review: MERGE. It counted 10000 steps
+     with RK4, 20000 for twice `L` in both directions and 15000 backward
+     where `main` took one more each time, and 0.2 µs a step for the call.
+     Its MINOR on the changelog (the entry said runs without a callback
+     were unaffected: the non-local and array-`n2` ones were) is fixed.
+     Left, MINOR: the test is split-step inside `L` on CPU (no run past
+     `L`, no RK4, no adaptive callback, no non-local run without a
+     callback: the reviewer ran those by hand); the subclasses share the
+     loop and were not run by hand.
    - Dead code: `vulture` at 60% on `NLSE/` and `benchmarks/` names seven
      things, none dead (numba overloads, public methods, an availability
      import).
