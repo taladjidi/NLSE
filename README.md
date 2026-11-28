@@ -209,8 +209,9 @@ far more than the step asks, so memory bandwidth is the ceiling CUPY, CL and
 MLX meet first. CuPy moves
 only 64 B per point: cuFFT store callbacks carry the propagator in the forward
 transform and the nonlinear step in the inverse one. Only one row is at its
-ceiling: MLX at 1024² (99% of bandwidth), with CL at 87% there. Going faster
-at that size means moving fewer bytes, or launching less, since the fixed cost
+ceiling: MLX at 1024² (99% of bandwidth); CL reaches 87% at that size on the
+RTX 3050. Going faster there means moving fewer bytes, or launching less,
+since the fixed cost
 of a step (the time of one on a 64² grid) is 18% of the CL step at that size,
 and between 24% and 47%
 of the MLX step over the five runs (median 27%). CuPy reaches 83%, 81% and 59%

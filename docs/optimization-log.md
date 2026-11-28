@@ -331,7 +331,7 @@ runs. That is not explained.
 Double precision and RK4 were not re-run; their 2026-07-31 figures are in
 92f9133.
 
-**CuPy is at 83%, 81% and 59% of the bandwidth bound at 1024², 2048² and
+**CuPy is at 83%, 81% and 59% of the bandwidth ceiling at 1024², 2048² and
 4096²**, on the 64 B per point of its callbacks path; the drop at 4096² is not
 explained. Dispatch there costs 0.011 ms per step, forty times less than
 Apple's OpenCL (not re-measured).
