@@ -315,7 +315,7 @@ _LOSS_PASSES = 3
 
 # Largest |u| = |2*alpha*dz| the iteration is used at: it contracts only while
 # a step takes out a small fraction of the intensity. Above it the kernels use
-# the frozen step; a propagation never gets here (LOSS_PER_STEP_LIMIT is half).
+# the frozen step; LOSS_PER_STEP_LIMIT holds a propagation to a quarter of it.
 _LOSS_SOLVED_LIMIT = 0.1
 
 # Elements per call of the serial body in the parallel nonlinear kernels: the

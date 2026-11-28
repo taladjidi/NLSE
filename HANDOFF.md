@@ -41,8 +41,8 @@ do not look for another way.
 | Benchmark waits on what lazy transforms return (MLX was timed doing nothing) | `3dfc28f` |
 | Docs: gallery cached in CI; page review along Diataxis | `18f4cc7`, `3bd8af5` |
 
-Last full suites: Mac (CPU, OpenCL, MLX) 2360 passed, 221 skipped, 85
-deselected at `refactor/bench-tests-debloat`; box, combined environment (CuPy and OpenCL), 2466
+Last full suites: Mac (CPU, OpenCL, MLX) 2364 passed, 221 skipped, 85 deselected at
+`fix/open-items`; box, combined environment (CuPy and OpenCL), 2466
 passed, 104 skipped, none failed, six times and once with
 `NLSE_FUSE_PROPAGATOR=0`, at `77edad9` (2026-11-28,
 `~/Documents/nlse_main_77edad9/run*.txt` there). Each box run also reports
@@ -50,13 +50,14 @@ passed, 104 skipped, none failed, six times and once with
 hatchling. Not run on CuPy since `77edad9`: the second docs round (text and
 docstrings) and the step-count fix (the loop is Python, the same on every
 backend). The benchmark tools ran there on their own (their entry below).
+`NLSE_3d`'s Strang merge (`fix/open-items`) has not run on CuPy at all.
 
 ### Resume here (written 2026-11-28)
 
-`main` is pushed; its last code change is `fix/callback-step-count`, its
-last merge `refactor/bench-tests-debloat` (tools and tests only, like
-`fix/bench-tools` before it). Last full suite on the Mac there: 2360 passed,
-221 skipped, 85 deselected (three benchmarks fewer: the DDGPE one, which
+`main` is pushed; its last code change and last merge is `fix/open-items`
+(`NLSE_3d` merges its Strang half steps). Last full suite on the Mac there:
+2364 passed, 221 skipped, 85 deselected (four tests added; three
+benchmarks fewer since `refactor/bench-tests-debloat`: the DDGPE one, which
 was skipped on every backend). Against the 2355 of
 `fix/arch-review`: ten tests added, and five cases fewer than a tree with a
 local Sphinx build used to run (`tests/test_doc_claims.py` swept
@@ -223,6 +224,37 @@ was decided alone is under "Decided alone" below.
        hand: exit 0 on CPU, CL and MLX). Not run on CUPY, where the patch
        matters.
      - DDGPE has no benchmark now.
+   - **Open items, a sweep of "Still open"** (`fix/open-items`, 2026-11-28).
+     - `NLSE_3d` merges its Strang half steps. `_merges_strang_halves`
+       declined for any solver with an `omega`, meant for a Rabi coupling;
+       only `NLSE_3d` ever hit it (its frequency grid), the coupled solvers
+       opt out by `_lie_step_is_strang_body`. The check is gone. A step
+       takes 0.78 to 0.81 of its time on CPU, 0.91 to 0.96 on MLX, 0.57 to
+       0.64 on OpenCL (128³ and 256²×64, complex64, M3 Max;
+       `benchmarks/strang_merge_3d.py`, merged against unmerged in one
+       process), results 3e-6 to 5e-6 of the peak apart. Changelog,
+       optimization log and the methods page say it.
+     - `LOSS_PER_STEP_LIMIT`: the comments said a step takes out 5% of the
+       intensity and that the limit is half the kernels'. The code holds
+       `2*alpha*dz` under 0.05 in the medium's `alpha`: 2.5% a step, a
+       quarter of the kernels' limit (they take `alpha/2`). Behaviour kept,
+       comments corrected in `step_size.py` and the three kernel sources.
+       Whether the cap was meant twice as loose is the owner's call.
+     - `test_the_cross_interaction_is_mutual` pins the sign of DDGPE's
+       cross phase (`+g12 |psi_C|^2 t`, as `docs/solvers_overview.md`
+       writes the equation); it took the magnitude.
+     - Fresh review: MERGE, no CRITICAL or MAJOR. It mutated the merge
+       three ways (the `omega` check back, a closing bracket that does
+       nothing, a quarter opening step): the 3D test failed each time. It
+       ran `NLSE_3d` merged against unmerged on CPU, CL and MLX past `L`,
+       with a step that does not divide `z`, a batched `alpha`, a real
+       potential and a negative step: 1e-6 to 4e-6 apart, 8e-5 to 2e-4
+       with a real potential in complex64 and 8e-14 in complex128. Its
+       MINORs are fixed (the kernels' comments, the 3D test on every
+       backend and with loss, constants named, the benchmark's `measure`
+       apart from its printing); that fix was read by me only. Left,
+       MINOR: `D0` and `WINDOW_T` are in both the test and the benchmark.
+     - Not run: CuPy; the 128³ and 256²×64 timings a second time.
    - Dead code: `vulture` at 60% on `NLSE/` and `benchmarks/` names seven
      things, none dead (numba overloads, public methods, an availability
      import).
@@ -601,6 +633,10 @@ was decided alone is under "Decided alone" below.
   - Not opened then: `trace_solvers.py`, `nsys_summary.py`,
     `tests/benchmarks/test_benchmark_profile.py` (reviewed since: "Benchmark
     tools" above), the docs pages that quote the examples, any CuPy path.
+- **Decided alone**, open items (2026-11-28): the loss cap keeps its
+  value and the comments change, not the other way round; a timing script
+  kept as `benchmarks/strang_merge_3d.py` with one test; "Still open" and
+  the smaller audit findings pruned of what `main` has already fixed.
 - **Decided alone**, benchmark tools and their debloat (2026-11-28): the
   fusion tool fixed on `fix/bench-tools` though outside that review; the
   tracer refuses a backend it did not get instead of relabelling the row;
@@ -630,7 +666,7 @@ and "Still open" list:
   `examples/` edits covered by ruff and grep only; implementers ran ruff on
   their own files only.
 - Inferred, not measured: the page-colouring mechanism behind the blocked
-  step's scatter; the batched-`n2` Strang merge was not traced.
+  step's scatter.
 - Loose ends: an unreproduced one-off P4 failure; the zero-length-axis MINOR;
   four unsourced numbers in the guide pages; the docs equations are not
   pinned by a test; the pins brief counted 88 against 93; the CI watcher was
@@ -993,15 +1029,11 @@ and "Still open" list:
   OpenMP (Linux without TBB) a forked child that runs the CPU backend is
   killed. Neither comes from the blocked step. For the owner: document it
   (docs pass), or hold a lock around the CPU run on `workqueue`.
-- `NLSE_3d` never merges its Strang half steps: it stores its frequency
-  grid as `self.omega` (`nlse_3d.py:104`), and `_merges_strang_halves`
-  (`nlse.py:2330`) reads any `omega` that is not None as a Rabi coupling. A
-  3D Strang run pays two real-space passes a step where one would do. Found
-  by the docs spec review; not fixed, the docs say it.
-- A run with a callback never merges them either (`_loop_with_callbacks`
-  does not ask): 20 nonlinear calls for 10 Strang steps against 12
-  without, counted on CPU at 64x64. The methods page says so. A batched
-  `n2` counted 20 as well, with `_merges_strang_halves` true; not traced.
+- A run with a callback never merges its Strang half steps
+  (`_loop_with_callbacks` does not ask): 20 nonlinear calls for 10 Strang
+  steps against 12 without, counted on CPU at 64x64. The methods page says
+  so. An array `n2` counts 20 as well: it takes the same loop
+  (`is_scalar_n2` in `_run_propagation`, `nlse.py`), callback or not.
 - The default step exceeds the split-step cap on a default 2D run:
   `_default_delta_z` aims at 0.1 rad of potential and interaction only,
   while the cap also takes the dispersion bound, so the quick start and
@@ -1012,18 +1044,12 @@ and "Still open" list:
   default was inside its limit on the same run (2.28e-5 m, no warning). The
   1D quick-start block takes 157,241 steps (54 s on CPU) without a warning.
   Found by the docs audit; for the owner.
-- Found by the page review, not fixed: `_loss_max_dz` (`step_size.py`)
-  bounds `2*alpha*dz` by `LOSS_PER_STEP_LIMIT`, so 2.5% of the intensity a
-  step where the constant's comment says 5% (the page quotes the code);
-  `ddgpe.py:165-166` passes `n2=-g` but `n12=g12`; `callbacks.py:314`
-  floors the error controller's step at `simu.L / 1e5`, which is 0 for a
-  GPE (`L=0`); `nlse.py:520` names a `_merged_strang_bracket` that does not
-  exist; the solver docstrings offer a backend `"GPU"`;
-  `docs/make_validation_figure.py` prints 12 step-cap warnings and 2
-  Strang-on-complex128 ones a run.
-- `tests/test_doc_claims.py` globs `docs/**/*.md`, build output included
-  (`docs/_build/html/_static/mathjax/VENDORED.md`), so it runs 93 tests
-  with a built site and 88 without.
+- Found by the page review, not fixed: `docs/make_validation_figure.py`
+  prints 12 step-cap warnings and 2 Strang-on-complex128 ones a run. (Its
+  other findings are closed, checked on `main` 2026-11-28: the loss
+  limit's comment and DDGPE's cross sign by `fix/open-items`; the error
+  controller's floor, `_merged_strang_bracket`, the backend `"GPU"` and
+  the doc-claims glob before it.)
 - `evaluate_delta_n` convention: `k/2` or `k`.
 - Setting `simu.wl` does not update `k`.
 - `get_fastest_backend` crashes on a wrong-typed `grid_size`.
@@ -1035,19 +1061,18 @@ and "Still open" list:
 
 ### Smaller audit findings, left out of the report
 
-Status on `main` not re-checked.
+Re-checked on `main` 2026-11-28. Closed since the audit: the real-valued
+input (a `TypeError` now), the export of `adapt_delta_z_to_error`, the
+example baseline's propagator, the Julia comparison's inputs
+(`vortex_precession_benchmark.py` and `vortex_precession.jl` write them),
+the extras in `docs/installation.md`, the Unreleased changelog section, the
+3.13 classifier, `--use_fast_math`, the benchmark cache's atomic write.
+Still there:
 
-- `simu.V` becomes a float32 copy after a device run (`nlse.py:1700-1765`).
-- Real-valued input fails on a bare `assert` (`nlse.py:357-363`).
-- `adapt_delta_z_to_error` is not exported from `NLSE/__init__.py`.
-- *(reviewer, not re-checked)*: `examples/benchmarks.py` numpy baseline
-  exponentiates the propagator twice; `examples/juliaGPE_vs_NLSE.py` loads
-  files nothing writes; README and `docs/numerical_methods.md` disagree on
-  yoshida with loss; `docs/installation.md` omits the extras;
-  `docs/backends.md:55` cache path; no Unreleased changelog section;
-  classifiers stop at 3.12; `--use_fast_math` at
-  `NLSE/kernels/cupy_kernels.py:124`; benchmark cache written non-atomically;
-  7.8 MB `docs/nlse_tutorial.ipynb` and unused images tracked.
+- `simu.V` becomes a float32 copy after a device run (not re-checked).
+- README and `docs/numerical_methods.md` on yoshida with loss (not
+  re-checked).
+- 7.8 MB `docs/nlse_tutorial.ipynb` tracked (the owner's).
 
 ### Decisions of the audit
 

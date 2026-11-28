@@ -22,8 +22,8 @@ __device__ inline {{FP_TYPE}} nlse_loss_factor(
 }
 
 // Largest |u| = |2*alpha*dz| the iteration is used at: past it the iteration
-// stops contracting and the kernels use the frozen step. A propagation never
-// gets here (LOSS_PER_STEP_LIMIT in solvers/step_size.py is half of it).
+// stops contracting and the kernels use the frozen step. A propagation stays
+// under a quarter of it (LOSS_PER_STEP_LIMIT in solvers/step_size.py).
 #define NLSE_LOSS_SOLVED_LIMIT 0.1
 
 // One element of the step. A_sq_val is |A_val|^2, or the non-locally smoothed

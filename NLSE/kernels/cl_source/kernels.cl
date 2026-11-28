@@ -19,8 +19,8 @@ inline {{FP_TYPE}} nlse_loss_factor(const {{FP_TYPE}} sat, const {{FP_TYPE}} u) 
 }
 
 // Largest |u| = |2*alpha*dz| the iteration is used at: past it the iteration
-// stops contracting and the kernels use the frozen step. A propagation never
-// gets here (LOSS_PER_STEP_LIMIT in solvers/step_size.py is half of it).
+// stops contracting and the kernels use the frozen step. A propagation stays
+// under a quarter of it (LOSS_PER_STEP_LIMIT in solvers/step_size.py).
 #define NLSE_LOSS_SOLVED_LIMIT 0.1
 
 // FUSED: square_mod + nl_prop

@@ -493,7 +493,8 @@ def test_the_cross_interaction_is_mutual(backend) -> None:
         f"{per_density[1]:+.6f} rad per unit of the other's density over T. "
         f"(Backend {backend})"
     )
-    assert abs(per_density[0]) == pytest.approx(CROSS_G * UNIFORM_T, rel=UNIFORM_RTOL)
+    # The documented sign: i dt psi_X = -g12 |psi_C|^2 psi_X turns it forward.
+    assert per_density[0] == pytest.approx(CROSS_G * UNIFORM_T, rel=UNIFORM_RTOL)
 
 
 def test_each_component_decays_at_its_own_rate(backend) -> None:

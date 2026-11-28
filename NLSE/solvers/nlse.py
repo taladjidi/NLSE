@@ -2436,10 +2436,6 @@ class NLSE(StepSize):
             return False
         if self.nl_length > 0:
             return False
-        # A Rabi coupling wraps each Strang step in two half rotations, which
-        # a Lie body between two nonlinear half steps does not reproduce.
-        if getattr(self, "omega", None) is not None:
-            return False
         V_scaled = self._as_host_array(self._V_scaled)
         return V_scaled is None or not np.iscomplexobj(V_scaled)
 
