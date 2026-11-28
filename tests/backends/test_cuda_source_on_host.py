@@ -19,6 +19,8 @@ pytestmark = pytest.mark.skipif(
     COMPILER is None or sys.platform == "win32",
     reason="needs a C++ compiler that builds a shared library ctypes can load",
 )
+# A shared library at any standard from C++11 (static_assert, brace returns).
+COMPILE_FLAGS = ("-std=c++17", "-O1", "-shared", "-fPIC")
 
 # What CUDA defines and a host compiler does not. The headers come first:
 # libstdc++ uses __noinline__ as an attribute name.
@@ -70,14 +72,16 @@ CALLBACKS = (
 NY, NX = 12, 20  # points; unequal, so a swapped row and column index shows
 SEED = 0
 
-# (dz, alpha, g, Isat): no loss, loss under and over the limit that picks how
-# it is solved (2 * alpha * dz against _LOSS_SOLVED_LIMIT), gain, a backward
-# step, and each of them with and without saturation.
+# (dz, alpha, g, Isat): no loss, loss far from and on either side of the limit
+# that picks how it is solved (2 * alpha * dz of 0.09 and 0.12 against
+# _LOSS_SOLVED_LIMIT), gain and a backward step, with and without saturation.
 STEPS = [
     (0.3, 0.0, 0.5, np.inf),
     (0.3, 0.05, 0.5, np.inf),
     (0.3, 0.05, 0.5, 2.0),
     (0.3, -0.05, 0.5, 2.0),
+    (0.3, 0.15, 0.5, 2.0),
+    (0.3, 0.2, 0.5, 2.0),
     (0.3, 1.0, 0.5, np.inf),
     (0.3, 1.0, 0.5, 2.0),
     (-0.3, 0.05, 0.5, 2.0),
@@ -86,8 +90,8 @@ STEPS = [
 
 # Relative to the largest output, in units of the width's epsilon. Measured
 # worst over every case here: 1.6 (Apple clang 21, arm64). A pass less in the
-# loss, the smallest error in the step looked for, is 1.0e3 or more in every
-# lossy case at complex128.
+# loss is 8.9e7 or more in every case under the limit at complex128, and a
+# limit of 0.5 for 0.1 is 1.9e12 in the 0.12 case.
 STEP_EPS = 50
 # One or two complex products, against numpy's: measured 0.75.
 PRODUCT_EPS = 8
@@ -107,13 +111,15 @@ def host(request, tmp_path_factory):
         + SIZEOF_NONLINEAR
     )
     library = folder / "callbacks.so"
-    subprocess.run(
-        [COMPILER, "-std=c++17", "-O1", "-shared", "-fPIC", "-o", library, source],
-        check=True,
+    built = subprocess.run(
+        [COMPILER, *COMPILE_FLAGS, "-o", library, source],
         capture_output=True,
         text=True,
     )
-    return ctypes.CDLL(str(library)), dtype
+    if built.returncode != 0:
+        pytest.fail(f"{COMPILER} did not build the CUDA source:\n{built.stderr}")
+    else:
+        return ctypes.CDLL(str(library)), dtype
 
 
 def drive(library, name, info, field):
