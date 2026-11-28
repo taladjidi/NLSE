@@ -174,6 +174,12 @@ come first.
   potential's scale in double precision.** It rounded `k / 2` to float32,
   2.8e-8 relative on the phase the potential gives; a run through `out_field`
   was not affected.
+- **The `ddgpe` example pumps its cavity.** It ran with no pump and no loss
+  since 2024 and plotted zeros; the pump (3) and the decay (0.07 meV) it was
+  written with are back.
+- **`benchmarks/profile_kernels.py` times the coupled fused kernels.** It
+  passed one cross constant where they take two, and reported a `TypeError`
+  for both.
 
 ### Changed
 

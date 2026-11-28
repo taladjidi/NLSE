@@ -61,6 +61,17 @@ UNIFORM_PARAMS = {
 PROBE = 3.0
 PROBE_DT = 1e-3
 
+# Driven steady state: a uniform pump on the cavity and no interaction, so the
+# closed form of two coupled, damped, driven modes applies.
+DRIVEN_GAMMA = 20 * 0.07 / h_bar  # 1/ps; the transient is exp(-10.7) by DRIVEN_T
+DRIVEN_T = 10.0  # ps
+DRIVEN_STEPS = 1600
+DRIVE = 1.0  # field per ps
+# The Lie step with a drive is first order: measured 8.0e-3 at 1600 steps and
+# 4.0e-3 at 3200 (CPU, CL, MLX). Smallest convention error guarded: the
+# detuning's sign, 0.33 on the cavity; gamma for gamma / 2 gives 0.49.
+DRIVEN_RTOL = 1.5e-2
+
 
 def make_solver(backend="CPU", n=N, **overrides):
     """Return a DDGPE with this module's parameters.
@@ -530,3 +541,53 @@ def test_the_probe_reaches_the_cavity(backend) -> None:
     after = np.asarray(as_numpy(simu, field))
     expected = np.stack([zero_r, -1j * PROBE * PROBE_DT * np.ones(shape)])
     np.testing.assert_allclose(after, expected, rtol=UNIFORM_RTOL, atol=0)
+
+
+def test_a_uniform_pump_reaches_the_linear_steady_state(backend) -> None:
+    """Both components settle on the fixed point of the driven linear system.
+
+    ``i dX/dt = (d_x - i gamma / 2) X + (omega / 2) C`` and
+    ``i dC/dt = (d_c - i gamma / 2) C + (omega / 2) X + F``, with ``d`` each
+    component's frequency less the pump's, give
+    ``C = -F / (d_c - i gamma / 2 - (omega / 2)^2 / (d_x - i gamma / 2))`` and
+    ``X = -(omega / 2) C / (d_x - i gamma / 2)``.
+
+    Parameters
+    ----------
+    backend : str
+        Backend to run on.
+    """
+    simu = make_solver(backend, n=UNIFORM_N, gamma=DRIVEN_GAMMA, g=0, T=DRIVEN_T)
+    shape = (UNIFORM_N, UNIFORM_N)
+    pump_r = np.full(shape, DRIVE, dtype=PRECISION_COMPLEX)
+    pump_t = np.ones(DRIVEN_STEPS, dtype=PRECISION_COMPLEX)
+    out = simu.out_field(
+        np.zeros((2, *shape), dtype=PRECISION_COMPLEX),
+        DRIVEN_T,
+        simu.laser_excitation,
+        plot=False,
+        verbose=False,
+        delta_z=DRIVEN_T / DRIVEN_STEPS,
+        callback=[],
+        callback_args=[[pump_r, pump_t, pump_r, 0 * pump_t]],
+    )
+    out = np.asarray(as_numpy(simu, out))
+
+    lower_polariton = (omega_exc + omega_cav) / 2 - 0.5 * np.hypot(
+        omega_exc - omega_cav, omega
+    )
+    pump = lower_polariton + detuning
+    exciton_rate = omega_exc - pump - 0.5j * DRIVEN_GAMMA
+    cavity_rate = omega_cav - pump - 0.5j * DRIVEN_GAMMA
+    cavity = -DRIVE / (cavity_rate - (omega / 2) ** 2 / exciton_rate)
+    exciton = -(omega / 2) * cavity / exciton_rate
+    for got, want, name in zip(
+        out, (exciton, cavity), ("exciton", "cavity"), strict=True
+    ):
+        np.testing.assert_allclose(
+            got,
+            want,
+            rtol=DRIVEN_RTOL,
+            atol=0,
+            err_msg=f"the {name} is off its steady state. (Backend {backend})",
+        )
