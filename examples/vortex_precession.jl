@@ -68,6 +68,9 @@ for (i, n) in enumerate(sizes)
      @unpack_Sim sim;
      sim.N = (n,n)
      @pack_Sim! sim
+     # Not timed, as in vortex_precession_benchmark.py: the first run of a
+     # size compiles and plans the transform.
+     runsim(sim);
      for j = 1:navg
           t0 = @timed runsim(sim);
           ts[i, j] = t0.time

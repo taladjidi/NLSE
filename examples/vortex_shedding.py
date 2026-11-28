@@ -623,7 +623,7 @@ def run(beta_target, n12):
 
 # %%
 # The scan itself: one propagation per flow speed, imaged at z = L, and the
-# same scan again at a tenth of the cross coupling for the comparison.
+# same scan again at a sixth of the cross coupling for the comparison.
 
 runs = [run(b, N12) for b in BETAS]
 weak = [run(b, N12_WEAK) for b in BETAS]
