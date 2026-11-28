@@ -3,8 +3,9 @@ import warnings
 import numpy as np
 import pytest
 from helpers import AVAILABLE_BACKENDS
-from NLSE import NLSE, NLSE_3d
+from NLSE import GPE, NLSE, NLSE_1d, NLSE_3d
 from NLSE.backends import get_backend
+from scipy.constants import atomic_mass
 
 PRECISION_COMPLEX = np.complex64
 
@@ -32,6 +33,20 @@ SHORT_LENGTH = RESPONSE_WINDOW / RESPONSE_N
 LONG_LENGTH = 5 * RESPONSE_WINDOW / RESPONSE_N
 # One backend run twice at one length: measured 0 apart.
 RESPONSE_ATOL_FRACTION = 1e-6
+
+# NLSE_1d and GPE through out_field with a response five cells long. The GPE:
+# rubidium 87, 1e5 atoms in a Gaussian a sixth of the window wide, 2 rad of
+# interaction phase at its centre over the run.
+GPE_WINDOW = 100e-6  # m
+GPE_ATOMS = 1e5
+GPE_G = 1e-11  # rad/s*m^2
+GPE_MASS = 87 * atomic_mass  # kg
+GPE_TIME = 1e-3  # s
+RUN_CELLS = 5
+# Smoothed against local, over the peak: measured 1.97 (NLSE_1d) and 1.10
+# (GPE). The norm of the two: 1.3e-6 apart at most (MLX), no loss in either.
+RUN_APART_FLOOR = 0.5
+RUN_NORM_RTOL = 1e-5
 
 
 def test_a_non_local_run_stays_on_the_backend_asked_for(backend):
@@ -73,6 +88,53 @@ def test_a_length_below_one_cell_is_kept(backend):
             backend=backend,
         )
     assert simu.nl_length == 60e-6, "the sub-cell length was dropped"
+
+
+def run_1d(backend, cells):
+    """Return NLSE_1d's output for a Gaussian, the response ``cells`` cells long."""
+    params = {key: RESPONSE_PARAMS[key] for key in ("alpha", "power", "n2", "V", "L")}
+    simu = NLSE_1d(
+        window=RESPONSE_WINDOW,
+        NX=RESPONSE_N,
+        Isat=RESPONSE_PARAMS["Isat"],
+        nl_length=cells * RESPONSE_WINDOW / RESPONSE_N,
+        backend=backend,
+        **params,
+    )
+    field = np.exp(-(simu.X**2) / RESPONSE_WAIST**2).astype(PRECISION_COMPLEX)
+    out = simu.out_field(field, simu.L, verbose=False, plot=False)
+    return np.asarray(simu._backend.to_numpy(out))
+
+
+def run_gpe(backend, cells):
+    """Return GPE's output for a Gaussian, the response ``cells`` cells long."""
+    simu = GPE(
+        gamma=0,
+        N=GPE_ATOMS,
+        window=GPE_WINDOW,
+        g=GPE_G,
+        V=None,
+        m=GPE_MASS,
+        NX=RESPONSE_N,
+        NY=RESPONSE_N,
+        nl_length=cells * GPE_WINDOW / RESPONSE_N,
+        backend=backend,
+    )
+    waist = GPE_WINDOW / 6
+    field = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(PRECISION_COMPLEX)
+    out = simu.out_field(field, GPE_TIME, verbose=False, plot=False)
+    return np.asarray(simu._backend.to_numpy(out))
+
+
+@pytest.mark.parametrize("run", [run_1d, run_gpe], ids=["NLSE_1d", "GPE"])
+def test_a_non_local_run_moves_the_field_and_keeps_its_norm(backend, run):
+    """The response changes the phase a run puts on, and only the phase."""
+    local, smoothed = run(backend, 0), run(backend, RUN_CELLS)
+    apart = np.max(np.abs(smoothed - local)) / np.max(np.abs(local))
+    assert apart > RUN_APART_FLOOR, f"the non-local run is the local one to {apart:.2e}"
+    assert np.sum(np.abs(smoothed) ** 2) == pytest.approx(
+        np.sum(np.abs(local) ** 2), rel=RUN_NORM_RTOL
+    )
 
 
 def test_a_three_dimensional_run_can_be_non_local(backend):

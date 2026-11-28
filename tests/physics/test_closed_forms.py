@@ -86,8 +86,8 @@ PULSE_ATOL = 1e-4
 
 # The lossy saturable run: its step (m), and what its end intensity
 # (relative) and phase (rad) may be off by. Measured 2.0e-5 and 2.1e-5 (MLX,
-# the worst); 1.1e-4 and 1.1e-3 with the step frozen. At 1e-5 m the two are
-# both inside the float32 round-off of 5000 steps.
+# the worst); 1.1e-4 (MLX) to 1.4e-4 (CPU) and 1.1e-3 with the step frozen.
+# At 1e-5 m the two are both inside the float32 round-off of 5000 steps.
 LOSSY_STEP = 1e-4
 LOSSY_INTENSITY_RTOL = 6e-5
 LOSSY_PHASE_ATOL = 2e-4

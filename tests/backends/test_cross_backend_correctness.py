@@ -41,10 +41,10 @@ DZ_FINE = 1e-5
 # 5% off. At alpha*L = 0.01 half the loss passed a 1% tolerance.
 DECAY_ALPHA = 1e3
 DECAY_RTOL = 1e-4
-# CNLSE against the CPU, as assert_allclose takes them: the backends use 0.40
-# of it at most (CL and MLX), a cross coupling 5% off 2.3 times it.
-CNLSE_VS_CPU_RTOL = 4e-3
-CNLSE_VS_CPU_ATOL = 4e-5  # V/m
+# A backend against the CPU, over the peak amplitude: measured 3.9e-6 at most
+# (NLSE on MLX), and 6.0e-3 for a coupling 5% off. Relative to each point, the
+# wings' float32 noise used 0.40 of a tolerance that coupling used 2.3 times.
+VS_CPU_PEAK_FRACTION = 1e-4
 # Lie against RK4 on NLSE: the two schemes use 0.16 of it, an n2 5% off 7.4.
 SCHEMES_RTOL = 5e-3
 SCHEMES_ATOL = 1e-4  # V/m
@@ -171,8 +171,8 @@ def test_nlse_matches_the_cpu(backend, method, with_V):
     np.testing.assert_allclose(
         E_test,
         E_ref,
-        rtol=1.5e-2,
-        atol=1e-4,
+        rtol=0,
+        atol=VS_CPU_PEAK_FRACTION * np.max(np.abs(E_ref)),
         err_msg=f"{method} {backend} does not match CPU reference (V: {with_V})",
     )
 
@@ -207,8 +207,8 @@ def test_cnlse_matches_the_cpu(backend, case):
     np.testing.assert_allclose(
         E_test,
         E_ref,
-        rtol=CNLSE_VS_CPU_RTOL,
-        atol=CNLSE_VS_CPU_ATOL,
+        rtol=0,
+        atol=VS_CPU_PEAK_FRACTION * np.max(np.abs(E_ref)),
         err_msg=f"CNLSE {backend} does not match CPU reference ({case})",
     )
 
