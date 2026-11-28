@@ -251,6 +251,10 @@ come first.
 - **`benchmarks/profile_kernels.py` times the coupled fused kernels.** It
   passed one cross constant where they take two, and reported a `TypeError`
   for both.
+- **The GPE benchmark times a condensate that interacts.** `test_gpe` passed
+  the NLSE's `n2` as `g`, so it timed a linear run; it now takes `g n` = 1e3
+  rad/s at the mean density, as `examples/gpe.py` does, and checks that the
+  interaction turns the centre's phase.
 
 ### Changed
 

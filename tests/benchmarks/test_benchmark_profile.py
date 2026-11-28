@@ -28,6 +28,13 @@ n12 = 1e-21
 L = 1e-2
 Isat = 1e10
 waist = 1e-3
+# GPE condensate: atoms, and an interaction in rad/s m^2 giving g n = 1e3
+# rad/s at their mean density over the window, as examples/gpe.py does.
+GPE_ATOMS = 1e5
+GPE_G = 1e3 / (GPE_ATOMS / window**2)
+# rad: the interaction turns the centre by 2.16 rad over the run against the
+# linear one on every backend (measured); n2 as g, by under 1e-10.
+GPE_MIN_PHASE = 1.0
 
 # Kernel benchmark parameters
 dz = 1e-5
@@ -253,18 +260,18 @@ class TestSolverBenchmark:
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_gpe(self, benchmark, backend):
         """Benchmark GPE propagation."""
-        simu = GPE(
-            gamma=0.1,
-            N=1e5,
-            window=window,
-            g=n2,
-            V=None,
-            m=87 * atomic_mass,
-            NX=N,
-            NY=N,
-            sat=Isat,
-            backend=backend,
-        )
+        params = {
+            "gamma": 0.1,
+            "N": GPE_ATOMS,
+            "window": window,
+            "V": None,
+            "m": 87 * atomic_mass,
+            "NX": N,
+            "NY": N,
+            "sat": Isat,
+            "backend": backend,
+        }
+        simu = GPE(g=GPE_G, **params)
         E_in = _gaussian_field_2d(waist, simu.X, simu.Y)
 
         def propagate():
@@ -273,6 +280,18 @@ class TestSolverBenchmark:
         result = benchmark.pedantic(propagate, rounds=10, warmup_rounds=2)
         assert result.shape == (N, N)
         assert np.all(np.isfinite(result))
+        linear = GPE(g=0.0, **params)
+        free = _propagate(linear, E_in, 1e-3, splitting="lie")
+        centre = (N // 2, N // 2)
+        ratio = (
+            simu._backend.to_numpy(result)[centre]
+            / linear._backend.to_numpy(free)[centre]
+        )
+        phase = np.angle(ratio)
+        assert abs(phase) > GPE_MIN_PHASE, (
+            f"{backend}: the interaction turned the centre by {phase:.2e} rad, "
+            "so this benchmark times a linear run"
+        )
 
 
 @pytest.mark.benchmark(group="solvers-coupled")
