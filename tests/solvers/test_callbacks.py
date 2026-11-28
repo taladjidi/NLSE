@@ -105,6 +105,14 @@ RK4_LENGTH = 1e-2
 RK4_START = 1e-4
 RK4_N = 64
 SCHEMES = [("split_step", "lie"), ("split_step", "yoshida"), ("RK4", "lie")]
+# A run every scheme's limit binds on: a uniform potential, as an index, that
+# puts RK4's bound under the split-step limit (7.0e-4 against 7.8e-4 m,
+# 4.6e-4 under Yoshida; measured), a field in W/m^2 whose nonlinear length is
+# metres, a length and a first step in m.
+BINDING_V = -1e-3
+BINDING_INTENSITY = 1.0
+BINDING_LENGTH = 1e-2
+BINDING_START = 1e-6
 
 
 def limit_of(simu, field, scheme):
@@ -515,6 +523,40 @@ def test_the_controllers_hold_to_the_limit_of_the_scheme(scheme, monkeypatch):
     by_error = adapt_delta_z_to_error(simu, field, 0.0, 0, TOLERANCE, 1, BOUNDS, SAFETY)
     assert by_error == pytest.approx(cap, rel=STEP_RTOL)
     assert adapt_delta_z(simu, field, 0.0, 0, 1, []) <= cap * (1 + STEP_RTOL)
+
+
+def record_limit(simu, A, z, i, scheme, limits):
+    """Append the limit of a scheme at the field a callback is shown."""
+    limits.append(limit_of(simu, A, scheme))
+
+
+@pytest.mark.parametrize("scheme", SCHEMES, ids="-".join)
+def test_a_run_holds_adapt_delta_z_to_the_limit_of_its_scheme(scheme):
+    """Through out_field, the step adapt_delta_z gets is the scheme's limit.
+
+    Parameters
+    ----------
+    scheme : tuple
+        Method and splitting of the run.
+    """
+    method, splitting = scheme
+    potential = np.full((N, N), BINDING_V, dtype=np.float32)
+    simu = NLSE(backend="CPU", **{**BASE, "V": potential, "L": BINDING_LENGTH})
+    steps, limits = [], []
+    simu.out_field(
+        uniform_field(BINDING_INTENSITY).astype(np.complex128),
+        BINDING_LENGTH,
+        delta_z=BINDING_START,
+        method=method,
+        splitting=splitting,
+        normalize=False,
+        verbose=False,
+        callback=[adapt_delta_z, record_limit],
+        callback_args=[(1, steps), (scheme, limits)],
+    )
+    # Call i is shown step i and sets step i + 1; the last one is cut to land.
+    assert len(steps) > len(SCHEMES), steps
+    assert steps[1:-1] == pytest.approx(limits[:-2], rel=STEP_RTOL)
 
 
 def test_an_rk4_run_under_the_error_controller_stays_finite():
