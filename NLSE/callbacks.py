@@ -234,31 +234,23 @@ def adapt_delta_z_to_error(
 ) -> float | None:
     """Set the step from a measured local error, not from a heuristic.
 
-    ``adapt_delta_z`` reads the step off the peak nonlinear index and divides
-    by twelve. That is a rate, not an error: it says how fast the phase turns,
-    and says nothing about how much of the answer the splitting is losing. The
-    two come apart badly, because **the step that minimizes the error is not
-    the smallest one**. Below the optimum the splitting error is already under
-    the complex64 round-off floor and taking more steps only accumulates more
-    of it -- measured on a lossless beam, dropping from 0.1 to 0.005 rad per
-    step makes the answer nine times *worse* while costing twenty times more.
-
-    So the step is chosen by measuring instead. Every ``update_every`` steps
-    this takes the same distance twice, once whole and once in halves, and
-    compares. For a method of order p the difference between them is the local
-    error to within a constant, and the step that would have hit the tolerance
-    follows from it:
+    ``adapt_delta_z`` reads the step off a phase rate, which says nothing
+    about the error the splitting makes. This measures it: every
+    ``update_every`` steps it takes the same distance twice, once whole
+    and once in halves. For a method of order p their difference is
+    the local error to within a constant, and the step that would have hit
+    the tolerance follows from it:
 
         h_new = h * (tolerance / error) ** (1 / (p + 1))
 
     with p = 2 for the Strang splitting the loop runs.
 
-    It costs three extra steps each time it fires, so ``update_every`` trades
-    the overhead against how quickly the step follows the physics: at the
-    default it is 15%. Being a callback, it also puts the run on the loop that
-    dispatches per step rather than the one that hands the whole propagation
-    to the backend, which on CUPY is the difference between replaying a
-    captured graph and not.
+    It costs three extra steps each time it fires, 15% at the default
+    ``update_every``, and as a callback it puts the run on the loop that
+    dispatches per step. The smallest step is not the most accurate one:
+    on a lossless complex64 beam, going from 0.1 to 0.005 rad per step
+    made the answer nine times worse for twenty times the steps.
+    docs/callbacks.md gives the limits on the tolerance.
 
     Parameters
     ----------

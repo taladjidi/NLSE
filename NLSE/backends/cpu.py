@@ -64,25 +64,18 @@ class CPUPlan:
 class CPUBackend(Backend):
     """CPU backend using NumPy and ``scipy.fft``.
 
-    Provides no fused entry points: the transform is driven from Python and
-    the numba kernels are already single-pass, so there is no launch
-    overhead to amortize.
+    Declares one fused entry point, the blocked 2D split step
+    (``has_linear_nonlinear_step``, taken where ``cpu_tuning`` measured a
+    gain). Otherwise the transform is driven from Python and the numba
+    kernels are already single-pass, so there is no launch overhead to
+    amortize.
 
-    It does skip the inverse transform's normalization, which scipy expresses
-    as ``norm="forward"`` -- the same transform with the 1/N moved to the
-    other direction, where the pre-normalized propagator already carries it.
+    It does skip the inverse transform's normalization, which scipy
+    expresses as ``norm="forward"``: the 1/N moves to the other
+    direction, where the pre-normalized propagator already carries it.
 
-    It used to be pyFFTW, and most of this file was the apparatus that needed:
-    disk wisdom to be loaded, validated by timing against scipy, and written
-    back; a planning pass that overwrote the array it planned with; a detector
-    for FFTW builds without vector codelets; and an import-order guard, because
-    the wheel vendors an OpenMP runtime that segfaults numba's if it
-    initializes first. All of it is gone, and the transform got faster: on an
-    M3 Max, where no prebuilt FFTW has NEON codelets, a 2048x2048 pair went
-    from 37 ms to 6.5. On x86 the FFTW wheels are vectorized, and on a Ryzen 3
-    4100 pyFFTW is still ahead at 512x512 only (docs/optimization-log.md). The
-    transform stays behind the Backend interface, so another library is a
-    class, not a rewrite.
+    ``scipy.fft`` replaced pyFFTW, which is faster only where FFTW is
+    vectorized (docs/optimization-log.md).
     """
 
     supports_unnormalized_ifft = True

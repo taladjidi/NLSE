@@ -57,11 +57,9 @@ class Backend(ABC):
     """Abstract base class for compute backends.
 
     Besides the array/FFT interface, a backend declares which optional
-    kernel entry points its ``kernels`` object provides. The solvers branch
-    on these flags to pick a fused fast path. Declaring them here keeps the
-    solver/kernel contract in one place: previously the solvers probed for
-    the methods with ``hasattr``, so the contract existed only implicitly
-    and differed silently between backends.
+    kernel entry points its ``kernels`` object provides. The solvers
+    branch on these flags to pick a fused fast path, so the solver/kernel
+    contract lives here.
 
     Every flag defaults to False, meaning "take the generic path". A
     backend that sets a flag to True must provide the matching method on

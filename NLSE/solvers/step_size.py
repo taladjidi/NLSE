@@ -401,22 +401,15 @@ class StepSize:
         """Compute the maximum stable step size for explicit RK4.
 
         RK4's stability region reaches ~2.83 along the imaginary axis, so the
-        step is bounded by ``2.83 / |lambda|`` for the right-hand side it
-        integrates. Every term it evaluates explicitly belongs in that
-        eigenvalue — dispersion, potential, coupling, interaction and loss —
-        and they add.
+        step is bounded by ``2.83 / |lambda|``, and every term it evaluates
+        explicitly adds to that eigenvalue: dispersion, potential, coupling,
+        interaction and loss.
 
         The linear terms count by their maximum over the grid, not by the
-        field-weighted rates of ``_energy_rates``. Past the radius RK4
-        amplifies whatever a mode holds, and round-off puts something in every
-        mode: a run stepped by the weighted rates returned NaN wherever the
-        grid's shortest wave, or a potential the field never reaches, was
-        faster than the field itself.
-
-        The absorption of a complex potential counts here, unlike in
-        ``_split_step_max_dz``: split-step applies it exactly through the
-        exponential, whereas RK4 approximates it, so it is as much part of the
-        eigenvalue as the phase is.
+        field-weighted rates of ``_energy_rates``: past the radius RK4
+        amplifies whatever a mode holds, and round-off puts something in
+        every mode. The absorption of a complex potential counts too, unlike
+        in ``_split_step_max_dz``: split-step applies it exactly.
 
         Parameters
         ----------
@@ -446,20 +439,16 @@ class StepSize:
     ) -> float:
         """Compute the maximum step size for split-step accuracy.
 
-        Keep the phase imprinted in one real-space step below pi. The kernels
-        put the potential and the interaction in the same exponent —
-        ``arg_imag = (g |A|^2 sat + V) dz`` — so both contribute, and their
-        energies add.
+        The smallest of three steps: the one at which the potential and the
+        interaction imprint pi of phase, ``_dispersion_max_dz`` and
+        ``_loss_max_dz``. The kernels put the potential and the interaction in
+        one exponent, ``arg_imag = (g |A|^2 sat + V) dz``, so their rates add.
 
-        The potential counts even though the exponential applies it exactly:
-        what limits the step is the phase imprinted, however exactly it was
-        computed. Scaled by k/2 ~ 4e6, it dominates.
-
-        The kinetic term is deliberately absent, and that is the real
-        difference from ``_rk4_max_dz``. Split-step applies the linear part
-        exactly in Fourier space, so a purely linear problem is solved exactly
-        at any step size, and dispersion cannot limit accuracy on its own. RK4 approximates the whole right-hand side, so
-        for it the kinetic term binds like everything else.
+        The potential counts although the exponential applies it exactly:
+        what limits the step is the phase imprinted. Scaled by k/2 ~ 4e6, it
+        dominates. The field-weighted kinetic rate is absent, because the
+        linear part is applied exactly; dispersion enters through its
+        stability bound alone.
 
         Parameters
         ----------
@@ -484,33 +473,17 @@ class StepSize:
     def _dispersion_max_dz(self) -> float:
         """Return the largest step split-step stays stable at.
 
-        This is a stability bound, not an accuracy one, and it is the reason
-        the kinetic term appears here at all. Split-step applies the linear
-        part exactly in Fourier space, so a *linear* problem is solved exactly
-        at any step and dispersion cannot limit accuracy on its own -- that
-        argument is right, and it is why this limit was once left out. It does
-        not survive a nonlinear term. On a finite-amplitude background the
-        real-space step couples modes, and the linear phase carried by the
-        shortest resolved wave resonates with that coupling: past about a
-        radian per step the resonant modes grow exponentially out of
-        round-off.
+        A stability bound, not an accuracy one. Split-step solves a linear
+        problem exactly at any step, but on a finite-amplitude background the
+        real-space step couples modes, and past about a radian of linear
+        phase per step the shortest resolved waves grow out of round-off
+        (Weideman and Herbst 1986; CHANGELOG, 4.1.0). The result reads as
+        turbulence, not as a numerical fault.
 
-        What makes it worth catching automatically is that it does not look
-        numerical. The background fills with density fluctuations of order the
-        density itself and with thousands of phase singularities, which reads
-        as the fluid going turbulent -- a plausible answer to a question
-        nobody asked. It was found by a gallery example destroying its own
-        background twice.
-
-        The rate is the grid's **maximum**, not the field-weighted mean that
-        ``_energy_rates`` reports as "kinetic". A smooth field has almost no
-        weight at the resonant wavenumber and still destabilises, because the
-        nonlinearity seeds it: measured on a single smooth Fourier mode, a 1%
-        perturbation reaches 100% in twenty nonlinear lengths.
-
-        Because the rate goes as ``k_max^2 ~ 1/dx^2``, refining the grid
-        demands a quadratically shorter step. That is a real cost and not an
-        artefact of this bound.
+        The rate is the grid's maximum, not the field-weighted "kinetic" rate
+        of ``_energy_rates``: the nonlinearity seeds modes the field has no
+        weight in (on one smooth Fourier mode, a 1% perturbation reaches 100%
+        in twenty nonlinear lengths).
 
         Returns
         -------
@@ -525,26 +498,17 @@ class StepSize:
     def _loss_max_dz(self) -> float:
         """Return the largest step the lossy real-space step is solved at.
 
-        A second ceiling, and a much looser one in every problem that has been
-        run: it binds only where a single step would take out a large fraction
-        of the intensity.
+        The scalar kernels solve the lossy step by an iteration
+        (``_loss_factor`` in kernels/cpu.py) while its ``u``, ``alpha*dz`` in
+        the medium's ``alpha``, is under their ``_LOSS_SOLVED_LIMIT``; past it
+        they fall back to the frozen step, which is first order.
+        ``LOSS_PER_STEP_LIMIT`` holds ``u`` to a quarter of that. The coupled
+        kernels always freeze the step, so there the limit is an accuracy
+        ceiling.
 
-        The scalar kernels solve the real-space step rather than freezing
-        ``|A|^2`` through it (see ``_loss_factor`` in kernels/cpu.py), and the
-        iteration that does it contracts while its ``u``, ``alpha*dz`` in the
-        medium's ``alpha``, stays well below one. ``LOSS_PER_STEP_LIMIT``,
-        which holds ``u`` to half its own value, is where it is still comfortably
-        converging; past it the iteration walks away and the step returns a
-        field larger than the one it was given, which is a worse failure than
-        a coarse answer because it does not look like one. The coupled kernels
-        freeze the step, so there the same limit is an accuracy ceiling.
-
-        Written against ``alpha`` and not against the loss energy rate, which
-        carries the saturation: the rate is the average over the grid and the
-        iteration has to converge at the point that saturates least, where the
-        saturation is 1 and the rate is ``alpha`` itself. Every component's
-        ``alpha`` counts, as the kernels receive it (``_loss_constants``), and
-        the largest binds.
+        Written against the largest component's ``alpha``
+        (``_loss_constants``), not the loss energy rate: the iteration has to
+        converge where the saturation is 1 and the rate is ``alpha`` itself.
 
         Returns
         -------
@@ -568,9 +532,10 @@ class StepSize:
         """Return delta_z, lowered if it leaves the method's convergence region.
 
         Only ever lowers its magnitude, and keeps its sign, which is the
-        direction of the run. The default step is well inside the split-step
-        limit, so there this binds on a step the caller passed. RK4's limit is
-        set by the grid's shortest wave and can bind on the default step too.
+        direction of the run. The limit of either method can bind on the
+        default step as well as on one the caller passed: both count the
+        grid's shortest wave, which the default weights by the field or
+        leaves out.
 
         Parameters
         ----------

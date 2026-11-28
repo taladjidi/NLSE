@@ -120,18 +120,11 @@ class CUDAKernels:
 
         The raw CUDA kernels take scalar parameters and index every array
         with one flat id, so two situations force the cp.fuse fallback, which
-        broadcasts natively:
-
-        a parameter that is an array — one value per simulation, which cannot
-        be passed as a scalar; and a grid with fewer axes than the field — a
-        potential or propagator shared by a batch, which the flat index would
-        read past the end of.
-
-        These were two predicates called in pairs at six sites, which made it
-        easy to add a call site with only one of them. A batch does not need
-        a batched parameter: several initial conditions under identical
-        physics leave every parameter scalar and put the extra axis on the
-        field alone.
+        broadcasts natively: a parameter that is an array, one value per
+        simulation; and a grid with fewer axes than the field, a potential or
+        propagator shared by a batch, which the flat index would read past
+        the end of. Several initial conditions under identical physics leave
+        every parameter scalar: the extra axis is on the field alone.
 
         Parameters
         ----------

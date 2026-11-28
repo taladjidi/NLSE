@@ -331,37 +331,23 @@ _SPAN = 4096
 def _loss_factor(sat, u):
     """Return the saturation the interaction should see over a lossy step.
 
-    The real-space step is exact only where ``|A|^2`` is constant through it.
-    That is true of a pure rotation and false the moment there is loss: the
-    amplitude decays *inside* the step while the interaction goes on turning
-    the phase at the rate the step began with. Frozen like that, the sub-step
-    carries a local error of O(dz^2), and every composition built on it comes
-    out first order -- Lie, Strang and Yoshida alike, which is measurable and
-    was measured.
+    Freezing ``|A|^2`` through a lossy step makes every splitting first
+    order, so the step is solved instead. With ``y = |A|^2`` and
+    ``u = 2*alpha*dz``, the phase over a step is exactly
+    ``(g/(2*alpha))*(y0 - y_end)``, and ``y_end`` follows from
+    ``ln y + y/Isat`` falling by ``u`` (derivation: "Solving the lossy
+    real-space step" in docs/optimization-log.md).
 
-    Two exact facts say what it should apply instead. With ``y = |A|^2``,
-    ``s(y) = 1/(1 + y/Isat)`` and ``u = 2*alpha*dz``::
-
-        dy/dz = -2*alpha*s*y,  dphi/dz = g*y*s   =>   dphi/dy = -g/(2*alpha)
-
-    so the phase over the step is exactly ``(g/(2*alpha))*(y0 - y_end)``
-    whatever the saturation does in between, and ``y_end`` is fixed by
-    ``ln y + y/Isat = ln y0 + y0/Isat - u``.
-
-    Returned is ``P = (1 - y_end/y0)/u``, which is that phase written as a
-    saturation: the step applies ``g*y0*P*dz`` where it applied
-    ``g*y0*sat*dz``, and scales the amplitude by ``sqrt(1 - P*u)`` where it
-    multiplied by ``exp(-alpha*sat*dz)``.
-
-    P rather than ``y_end`` because P is what makes the lossless case free:
-    at ``u = 0`` the iteration returns ``sat`` untouched and both expressions
-    collapse to the ones they replace, bit for bit.
+    Returned is ``P = (1 - y_end/y0)/u``: the step applies ``g*y0*P*dz``
+    for the phase and ``sqrt(1 - P*u)`` for the amplitude. At ``u = 0``
+    the iteration returns ``sat`` untouched, so a lossless step is
+    unchanged to the bit.
 
     The iteration is the fixed point of
     ``P = sat*(1 - P^2*u*(1/2 + P*u/3 + P^2*u^2/4))``, whose bracket is the
     series of ``(-log1p(-P*u) - P*u)/(P*u)^2``. It contracts while the step
-    loses well under half the intensity, which ``_split_step_max_dz`` is what
-    keeps it to.
+    loses well under half the intensity: ``_LOSS_SOLVED_LIMIT`` guards that
+    here, and ``_loss_max_dz`` in solvers/step_size.py keeps a run inside.
 
     Parameters
     ----------
@@ -1336,17 +1322,13 @@ def _pick_field(value, b, batched_ndim):
 def _require_contiguous(name, arrays):
     """Refuse an array these kernels would write to and then discard.
 
-    Every kernel here starts by flattening its arguments, and ``ravel`` views
-    a contiguous array but *copies* a strided one. The loop then writes into
-    that copy, the kernel returns the argument it was handed, and the work is
-    gone -- no error, and an answer that looks like the physics with a term
-    left out. A batched coupled component is exactly that shape, (B, NX) out
-    of (B, 2, NX), and it cost every batched coupled CPU run its whole
-    real-space step until the solver was made to hand over contiguous
-    components.
+    Every kernel here starts by flattening its arguments, and ``ravel``
+    views a contiguous array but *copies* a strided one: the loop writes
+    into the copy and the work is gone, with no error. A batched coupled
+    component, (B, NX) out of (B, 2, NX), is that shape.
 
-    Only the arrays written through are checked. The read-only ones may be
-    strided freely: ravel copying them changes nothing.
+    Only the arrays written through are checked. The read-only ones may
+    be strided freely.
 
     Parameters
     ----------

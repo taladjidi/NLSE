@@ -38,27 +38,17 @@ _WRITE_INFO = cp.RawKernel(WRITE_INFO_SOURCE, WRITE_INFO_KERNEL)
 class _CuFFTPlan:
     """cuFFT plan wrapper with .fft()/.ifft() API matching VkFFTApp.
 
-    This allows CUDAKernels.linear_step to call plan.fft(A, A) / plan.ifft(A, A)
-    without knowing which FFT library is behind it.
+    Carries one further plan per store callback asked for
+    (fft_callbacks.cu): the propagator on the forward transform
+    (``fft_propagate``) and the nonlinear step on the inverse one
+    (``ifft_nonlinear``). One each, because a callback fires in both
+    directions. Each is built on first use and reports whether it worked:
+    the machinery needs nvrtc, a cuFFT that links LTO-IR, and a
+    multi-dimensional plan.
 
-    Carries further plans, one per store callback it has been asked for: the
-    propagator on the forward transform (see ``fft_propagate``) and the
-    nonlinear step on the inverse one (see ``ifft_nonlinear``), both in
-    fft_callbacks.cu. One per callback, because a callback fires in both
-    directions: a plan that multiplies on the way out would multiply again on
-    the way back.
-
-    Each is built on first use and only if it can be: the callback machinery
-    needs nvrtc and a cuFFT new enough to link LTO-IR, and CuPy reaches it for
-    multi-dimensional plans only. Everything here therefore reports whether it
-    worked rather than assuming it did, and a run that cannot fuse loses the
-    pass and nothing else.
-
-    ``NLSE_FUSE_PROPAGATOR=0`` asks for the unfused path, and is read when the
-    plan is built rather than per step, which is the difference between one
-    dictionary lookup per run and one per transform. Plans are cached on the
-    backend, so a session that changes the variable has to call
-    ``backend.clear_fft_plans()`` for it to mean anything.
+    ``NLSE_FUSE_PROPAGATOR=0`` asks for the unfused path. It is read when
+    the plan is built and plans are cached on the backend, so changing it
+    within a session needs ``backend.clear_fft_plans()``.
     """
 
     __slots__ = (

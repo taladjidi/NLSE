@@ -1529,18 +1529,11 @@ class NLSE(StepSize):
     def _fused_propagator(self, propagator: Any) -> tuple:
         """Return the propagator a kernel should use, and whether it carries 1/N.
 
-        Two answers that have to agree. ``_update_propagator_fft`` builds a
+        The two answers have to agree. ``_update_propagator_fft`` builds a
         pre-normalized twin where the backend can skip the inverse
         transform's 1/N, and a kernel handed that twin must be told to skip
-        it -- handed it and told to normalize anyway, the field is divided by
-        N twice, and told to skip it while handed the plain propagator, not
-        at all. Neither shows up as an error, only as a field of the wrong
-        amplitude.
-
-        Every fused call site chose both by hand, eight of them across this
-        class and CNLSE, each writing ``prop_fft if prop_fft is not None else
-        propagator`` next to ``unnorm_ifft=(prop_fft is not None)``. Deciding
-        it here is one fact rather than eight pairs of facts.
+        it: a mismatch divides the field by N twice or not at all, and shows
+        only as a field of the wrong amplitude.
 
         Parameters
         ----------
@@ -1905,22 +1898,10 @@ class NLSE(StepSize):
     ) -> None:
         """Pre-compute constants that are invariant across propagation steps.
 
-        The width of everything here follows the *field*, which is the rule the
-        whole solver is written to: the GPU kernels pick single or double
-        precision from the field and then index the propagator, the potential
-        and the scratch buffers with it, so anything of the other width is read
-        as the wrong type. ``_field_dtype`` says it of the propagator and
-        test_double_precision.py of the RK4 buffers.
-
-        It used to follow the *splitting* -- float32 for Lie and float64 for
-        everything else -- which is a leftover from when "single" and "double"
-        named the splittings rather than the float width. It was wrong in both
-        directions. A complex64 Strang or Yoshida run scaled the potential by a
-        float64 scalar, and NEP 50 promotion handed a float64 array to a kernel
-        reading it through a ``float*``: NaN from the first step above 128x128,
-        and 30% wrong below it, which is worse for looking like an answer. A
-        complex128 Lie run had the opposite fault and rounded every physical
-        constant to float32.
+        Everything here takes the width of the *field*: the GPU kernels pick
+        single or double precision from the field and index the propagator,
+        the potential and the scratch buffers with it, so an array of the
+        other width is read as the wrong type.
 
         Parameters
         ----------
@@ -2432,28 +2413,11 @@ class NLSE(StepSize):
 
             N(h/2) [L(h) N(h)] ... [L(h) N(h)] N(-h/2)
 
-        and the bracketed body is precisely a Lie step. Merging costs one
-        nonlinear application for the whole run instead of one per step, and
-        the loop body becomes what ``splitting="lie"`` already runs, so
-        there is no third stepper to keep in step with the other two.
-
-        It is exact only where ``N(a) N(b) == N(a + b)``. ``N`` rotates the
-        phase by an amount that depends on ``|A|^2``, so what it needs is for
-        ``N`` to be the exact solution of the real-space equation over its
-        step, and then composing two is solving over the sum.
-
-        **Loss used to break that and no longer does.** The kernels froze
-        ``|A|^2`` across the step, which is the exact solution only while the
-        step preserves it, so a second half step saw an intensity the first
-        had damped and the two were not one whole one. They now solve the step
-        instead (see ``_loss_factor`` in kernels/cpu.py), and both halves of
-        it telescope exactly: the phase over a step is
-        ``(g/(2*alpha))*(y0 - y_end)`` and the amplitude ``sqrt(y_end/y0)``,
-        and a product of two of those is the one over the sum.
-
-        An absorbing potential still breaks it. That decay is a second channel,
-        which the identity behind the solved step does not cover, so it is
-        still applied frozen and two halves of it are still not one whole one.
+        whose bracketed body is a Lie step: one extra nonlinear application
+        for the run instead of one per step. It is exact where
+        ``N(a) N(b) == N(a + b)``. The solved lossy step telescopes like that
+        (``_loss_factor`` in kernels/cpu.py); an absorbing potential, still
+        applied frozen, does not.
 
         Parameters
         ----------
