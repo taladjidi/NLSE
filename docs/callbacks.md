@@ -53,8 +53,14 @@ E_out = simu.out_field(
 Import built-in callbacks from the top-level package:
 
 ```python
-from NLSE import sample, norm, evaluate_delta_n, adapt_delta_z
+from NLSE import sample, norm, evaluate_delta_n, adapt_delta_z, adapt_delta_z_to_error
 ```
+
+The arrays in the examples below are sized for the step that is asked. A
+`delta_z` beyond the split-step limit is shortened, with a warning (see
+[Step Size](solvers_overview.md#step-size)): the run then takes more steps
+than the array has rows, and the callback raises `IndexError`. Pass a shorter
+step until the warning is gone.
 
 ### `sample` -- Save field snapshots
 
@@ -63,7 +69,7 @@ Saves the full field every `save_every` steps into a pre-allocated array.
 ```python
 from NLSE import sample
 
-delta_z = L / 1000          # divides L, so the run is exactly 1000 steps
+delta_z = L / 1000          # 1000 steps, if the solver keeps this step
 n_steps = round(L / delta_z)
 save_every = 100
 n_samples = n_steps // save_every
@@ -85,7 +91,7 @@ Records the total intensity ($\sum |A|^2$) at regular intervals.
 ```python
 from NLSE import norm
 
-delta_z = L / 1000          # divides L, so the run is exactly 1000 steps
+delta_z = L / 1000          # 1000 steps, if the solver keeps this step
 n_steps = round(L / delta_z)
 save_every = 50
 norms = np.zeros(n_steps // save_every)
@@ -105,7 +111,7 @@ Evaluates the nonlinear refractive index change $\delta n = n_2 I / (1 + I/I_\te
 ```python
 from NLSE import evaluate_delta_n
 
-delta_z = L / 1000          # divides L, so the run is exactly 1000 steps
+delta_z = L / 1000          # 1000 steps, if the solver keeps this step
 n_steps = round(L / delta_z)
 save_every = 100
 delta_n = np.zeros((n_steps // save_every,) + (NY, NX))
@@ -133,7 +139,7 @@ leave the propagator built from the previous one, and the linear part would
 quietly advance by the wrong distance.
 
 ```python
-delta_z = L / 1000     # divides L: exactly 1000 steps
+delta_z = L / 1000     # the starting step: the callback changes it
 
 from NLSE import adapt_delta_z
 

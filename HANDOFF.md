@@ -66,12 +66,64 @@ was decided alone is under "Decided alone" below.
 1. **Review, then iterate** (debloat, docs, review). Done and merged: the
    solvers (two fix rounds), the backends, the docs pages (round 1), the
    kernels (rounds 1 and 2), the test suite's four MAJOR gaps, `examples/`
-   and `benchmarks/` (round 1), the architecture review below. Next: the
-   second docs round (reviewed, findings below, fixes not merged), then a
-   review of what round 1 of the examples did not open
-   (`benchmarks/trace_solvers.py`, `nsys_summary.py`,
-   `tests/benchmarks/test_benchmark_profile.py`). The examples' debloat
-   candidates are dismissed (see that round's entry).
+   and `benchmarks/` (round 1), the architecture review and the second
+   docs round below. The examples' debloat candidates are dismissed (see
+   that round's entry).
+   - **Docs, round 2** (fresh context, the pages and the public docstrings
+     against the code; `docs/review-round-2`, 2026-11-28). Five MAJORs,
+     each checked before it was fixed:
+     - `V` was called a change of refractive index. The kernel takes
+       `k0/2 V`, so a uniform index change `dn` is `V = 2 dn`
+       (`tests/physics/test_closed_forms.py` builds `V = 2 phase / (k z)`).
+       The pages and the `NLSE` docstring now say so. **For the owner:** if
+       `V` was meant to be `dn`, the kernel is off by two and the fix is a
+       breaking one; nothing in the code changed.
+     - `docs/callbacks.md` promised "exactly 1000 steps" for
+       `delta_z = L / 1000`. A step beyond the split-step limit is shortened
+       and `sample` then raises `IndexError` (reproduced: 2048², `L / 20`).
+       The page says so; `sample` itself is unchanged (MINOR: it could say
+       which array is too short).
+     - README, "27% of the MLX step and 18% of the CL step": the reviewer
+       set the box's CL against the log's July figure for Apple's OpenCL,
+       which is another machine. But the MLX share is 24, 26, 27, 32, 47%
+       over the five runs: the README now gives the range.
+     - `DDGPE.out_field` was documented as `NLSE`'s (no `method`, no
+       `normalize`, a required `laser_excitation`, one tuple of
+       `callback_args` per callback).
+     - Six constructors offered `"GPU" or "CPU"` and all seven printed
+       "Defaults to __BACKEND__"; `NLSE_1d` had no `window` or `NX` entry.
+   - Docs round 2, the fixes' fresh review: one MAJOR, fixed (the README's
+     MLX range took in the discarded first run: 24 to 47%, not 12 to 47%).
+     Fixed with it: `V` in the other constructors' docstrings (`DDGPE`'s
+     is a rate in rad/s), `CNLSE_1d`'s `power` and `n12`, the order of
+     `DDGPE.out_field`'s entries. Its note that `delta_z = L / 10000` can
+     take 10001 steps is a solver defect, reproduced and fixed on
+     `fix/callback-step-count` (below). Left: `backend="auto"` times a 2D
+     `(NX, 1024)` transform for `NLSE_1d` and ignores `NZ` for `NLSE_3d`;
+     `NLSE_BACKEND` overrides an explicit `backend=` and no docstring says
+     so; `docs/nlse_tutorial.ipynb` cells 3, 5 and 23 still hold the old
+     equation, `"GPU" or "CPU"` and "exactly 1000 steps" (the owner's
+     notebook).
+   - Docs round 2, decided alone, not done:
+     - `docs/migration.md` stops at 4.0.0. The section for the next major
+       is written at the bump, from the changelog's breaking list
+       (`tests/test_doc_claims.py` holds the page to one transition).
+     - Debloat candidates left: the README's Performance tables repeat the
+       log's (the owner asked for them there); its Installation and
+       "Choosing a splitting" repeat two pages (it is the GitHub landing
+       page); `docs/backends.md:80-94` (the `cpu_blocking.json` schema)
+       could be a docstring; `docs/installation.md:73-88` repeats
+       `backends.md`; `docs/literature-examples.md:22-40` is contributor
+       guidance; the CUDA troubleshooting is in the README only.
+     - MINOR, left: the broadcasting snippet at
+       `docs/solvers_overview.md:258` builds a complex128 field, which
+       MLX and CL move to CPU with two warnings; the callbacks snippets
+       use `simu`, `E_in`, `NY`, `NX` they do not define;
+       `backend="auto"` picked CL at 2048² on the Mac, on the transform
+       alone (the page now says what it times).
+   - Dead code: `vulture` at 60% on `NLSE/` and `benchmarks/` names seven
+     things, none dead (numba overloads, public methods, an availability
+     import).
    - **Architecture review** (fresh context, the whole package;
      `fix/arch-review`, 2026-11-28). Six MAJORs. Fixed:
      - `adapt_delta_z_to_error` had no floor on a `GPE` (`L = 0`): the

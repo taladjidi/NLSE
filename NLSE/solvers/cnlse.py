@@ -49,15 +49,17 @@ class CNLSE(NLSE):
         alpha : float
             Alpha through the cell.
         power : float
-            Optical power in W.
+            Optical power of each component in W; `power2` sets the second
+            component's afterwards.
         window : float
             Computational window in m.
         n2 : float
             Non linear index of the 1st component in m^2/W.
         n12 : float
-            Inter component interaction parameter.
+            Cross nonlinear index between the components in m^2/W.
         V : np.ndarray
-            Potential landscape in a.u.
+            Potential, dimensionless as in `NLSE`: twice the local change of
+            the refractive index.
         L : float
             Length of the cell in m.
         NX : int, optional
@@ -76,7 +78,9 @@ class CNLSE(NLSE):
         omega : float, optional
             Rabi coupling. Defaults to None.
         backend : str, optional
-            "GPU" or "CPU". Defaults to __BACKEND__.
+            Backend name: "CPU", "CUPY", "CL", "MLX" or "auto" (the installed
+            one with the fastest transform at this grid size). Defaults to
+            the backend NLSE picked when it was imported.
 
         """
         super().__init__(

@@ -25,21 +25,25 @@ class NLSE_1d(NLSE):
     ) -> None:
         """Instantiate the simulation.
 
-        Solves an equation : d/dz psi = -1/2k0(d2/dx2) psi + k0 dn psi +
-          k0 n2 psi**2 psi
+        Solves the equation of `NLSE` with one transverse dimension.
 
         Parameters
         ----------
         alpha : float
-            Transmission coeff.
+            Intensity loss in 1/m: I = I0 exp(-alpha z).
         power : float
             Power in W.
+        window : float
+            Computational window in m.
         n2 : float
             Non linear coeff in m^2/W.
         V : np.ndarray
-            Potential.
+            Potential, dimensionless as in `NLSE`: twice the local change of
+            the refractive index.
         L : float
-            Length of the medium.
+            Length of the medium in m.
+        NX : int, optional
+            Number of points. Defaults to 1024.
         Isat : float
             Saturation intensity in W/m^2.
         nl_length : float
@@ -49,7 +53,9 @@ class NLSE_1d(NLSE):
         wvl : float, optional
             Wavelength in m. Defaults to 780 nm.
         backend : str, optional
-            "GPU" or "CPU". Defaults to __BACKEND__.
+            Backend name: "CPU", "CUPY", "CL", "MLX" or "auto" (the installed
+            one with the fastest transform at this grid size). Defaults to
+            the backend NLSE picked when it was imported.
         """
         super().__init__(
             alpha=alpha,

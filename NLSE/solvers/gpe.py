@@ -80,7 +80,9 @@ class GPE(NLSE):
             interaction reads the intensity smoothed by
             1 / (1 + nl_length^2 K^2) in Fourier space. 0 is local.
         backend : str, optional
-            "GPU" or "CPU". Defaults to __BACKEND__.
+            Backend name: "CPU", "CUPY", "CL", "MLX" or "auto" (the installed
+            one with the fastest transform at this grid size). Defaults to
+            the backend NLSE picked when it was imported.
         """
         super().__init__(
             alpha=gamma,

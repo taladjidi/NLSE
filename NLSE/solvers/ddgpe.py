@@ -142,7 +142,8 @@ class DDGPE(CNLSE):
         k_z : float
             Longitudinal wavevector in m^-1.
         V : np.ndarray, optional
-            Potential landscape in a.u. Defaults to None.
+            Potential in rad/s: it advances the phase by -V t. Defaults to
+            None.
         g12 : float, optional
             Inter component interaction parameter. Defaults to 0.
         NX : int, optional
@@ -157,7 +158,9 @@ class DDGPE(CNLSE):
             interaction reads the intensity smoothed by
             1 / (1 + nl_length^2 K^2) in Fourier space. Defaults to 0, local.
         backend : str, optional
-            "GPU" or "CPU". Defaults to __BACKEND__.
+            Backend name: "CPU", "CUPY", "CL", "MLX" or "auto" (the installed
+            one with the fastest transform at this grid size). Defaults to
+            the backend NLSE picked when it was imported.
         """
         super().__init__(
             alpha=gamma,
@@ -431,27 +434,25 @@ class DDGPE(CNLSE):
             E_in[1] is the cavity field.
         t : float
             Time to propagate to in s.
+        laser_excitation : callable or None
+            The pump and probe, called as a callback before the others. None
+            uses `DDGPE.laser_excitation`. Either way its arguments are the
+            first tuple of `callback_args`.
         delta_z : float, optional
             Time step. Defaults to None, meaning the solver derives one from
             the field.
-        laser_excitation : callable or None
-            The excitation function.
-            This represents the laser pump and probe. Defaults to None which uses
-            the static method defined in the class. In this case you still need
-            to pass the correct arguments to the callback_args.
         plot : bool, optional
             Whether to plot the results. Defaults to False.
         splitting : str, optional
-            Whether to apply the nonlinear terms in a
-            single or double step. Defaults to "lie".
+            Splitting scheme, as in `NLSE.out_field`. Defaults to "lie".
         verbose : bool, optional
             Whether to print progress. Defaults to True.
         callback : list[callable] or callable, optional
             A list of functions
             to execute at every solver step. Defaults to None.
-        callback_args : list[tuple] or tuple, optional
-            A list of callback
-            arguments passed to the callbacks. Defaults to None.
+        callback_args : list[tuple], optional
+            One tuple of arguments per callback, the excitation's first.
+            Defaults to None.
 
         Returns
         -------
