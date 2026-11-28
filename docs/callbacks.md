@@ -127,7 +127,10 @@ E_out = simu.out_field(
 ### `adapt_delta_z` -- Adaptive step sizing
 
 Sets the step to a twelfth of the distance over which the peak nonlinear phase
-rate turns the phase by one radian, never past the split-step limit. Coupled
+rate turns the phase by one radian, never past the limit of the scheme that
+runs: the split-step limit, divided by 1.7 under Yoshida, whose longest
+sub-step is that much longer than the step, and the RK4 stability limit
+under `method="RK4"`. Coupled
 solvers count the cross coupling. Where nothing turns the phase (no
 interaction, or past the medium) it returns nothing and the step in force
 stands. Updates every `update_every` steps.
@@ -170,7 +173,7 @@ see it: the shorter one when a step was cut to land on `L` or on `z`.
 ### `adapt_delta_z_to_error` -- step sizing from a measured error
 
 `adapt_delta_z` reads the step off the peak nonlinear phase rate, divides by
-twelve and caps it at the split-step limit. That is a *rate*: it says how
+twelve and caps it at the limit of the scheme. That is a *rate*: it says how
 fast the phase turns and nothing about how much of the answer the splitting
 is losing. This one measures instead —
 every `update_every` steps it takes the same distance once whole and once in
@@ -201,9 +204,12 @@ Two limits apply to the tolerance:
 - **The estimate has a floor of its own.** Below that same scale, one step and
   two halves differ by round-off rather than by splitting error, so a tolerance
   under the floor reads as "no error at all" and asks for a *bigger* step. The
-  controller is capped at the split-step limit (see
+  controller is capped at the limit of the scheme that runs (see
   [Step Size](numerical_methods.md#step-size)), so a tolerance it cannot meet
   sits at the cap.
+- **The error it measures is Strang's.** The two trial runs are Strang steps
+  whatever the run takes, so under Yoshida or RK4 the estimate and the
+  exponent of the rule are those of another scheme: only the cap follows.
 
 Pass `min_step` to stop it shrinking past a step you know is enough.
 

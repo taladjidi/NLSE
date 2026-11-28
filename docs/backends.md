@@ -48,7 +48,7 @@ Use `backend="auto"` to benchmark all available backends and select the fastest 
 simu = NLSE(..., backend="auto")
 ```
 
-Benchmark results are cached to disk, in `fft_benchmark.json`, so subsequent runs reuse them. It keeps one record per grid size, so alternating grids do not evict each other; a file of an older version is replaced. The file goes in `NLSE_CACHE_DIR` if it is set, and otherwise in the platform's cache directory: `~/Library/Caches/NLSE` on macOS, `$XDG_CACHE_HOME/NLSE` (by default `~/.cache/NLSE`) on Linux, `%LOCALAPPDATA%\NLSE\Cache` on Windows.
+Benchmark results are cached to disk, in `fft_benchmark.json`, so subsequent runs reuse them. It keeps one record per grid size, so alternating grids do not evict each other; a file of an older version is replaced, and a record that timed other backends than the ones installed is measured again. The file goes in `NLSE_CACHE_DIR` if it is set, and otherwise in the platform's cache directory: `~/Library/Caches/NLSE` on macOS, `$XDG_CACHE_HOME/NLSE` (by default `~/.cache/NLSE`) on Linux, `%LOCALAPPDATA%\NLSE\Cache` on Windows.
 
 ### Switching at runtime
 

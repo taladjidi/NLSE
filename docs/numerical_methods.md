@@ -162,7 +162,9 @@ lowered that way, and says so.
 **Split-step limit**: the smallest of three steps.
 
 - The step at which the potential and the interaction, weighted by the field,
-  imprint $\pi$ of phase.
+  imprint $\pi$ of phase. The potential counts by its magnitude: one of both
+  signs whose mean over the beam vanishes still turns the phase where the
+  beam is.
 - The step at which the shortest wave on the grid turns by
   `SPLIT_STEP_DISPERSION_PHASE_LIMIT` = 1 rad. On a vortex dipole the
   density stops converging between 1.3 and 1.6 rad (4.1.0 in the

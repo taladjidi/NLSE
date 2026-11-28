@@ -66,7 +66,9 @@ come first.
 - **`adapt_delta_z` and `adapt_delta_z_to_error` hold to the limit of the
   scheme that runs.** Both stopped at the Lie and Strang limit whatever the
   run: under Yoshida or RK4 they could ask for a step past the one
-  `out_field` itself would have refused.
+  `out_field` itself would have refused. An RK4 run given
+  `splitting="yoshida"`, which it ignores, is no longer cut to the Yoshida
+  limit as well.
 
 - **A potential of both signs limits the step.** The step limits took the
   potential's mean over the beam, which vanishes for a potential as

@@ -243,7 +243,8 @@ def adapt_delta_z_to_error(
 
         h_new = h * (tolerance / error) ** (1 / (p + 1))
 
-    with p = 2 for the Strang splitting the loop runs.
+    with p = 2: the trial steps are Strang's, whatever scheme the run takes.
+    Only the cap follows the scheme.
 
     It costs three extra steps each time it fires, 15% at the default
     ``update_every``, and as a callback it puts the run on the loop that
