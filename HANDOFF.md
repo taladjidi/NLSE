@@ -128,6 +128,36 @@ conclusions, and do not read this file.
     also ran `NLSE_1d` by hand, nobody ran `NLSE_3d` or `GPE`.
   - `method` is never validated: `"rk4"` runs split-step without a word.
   - Not run: CuPy and OpenCL for this series.
+- **Backend review, round 1** (`fix/backend-review-round1`, seven findings
+  B1-B7 of a fresh-context review; the architect's six verified patches,
+  write-up in `~/Documents/LKB/NLSE_tangui_fix_specs/review_round1/backends.md`;
+  second fresh review: SHIP). Landed: `NLSE_BACKEND` is read once, in
+  `get_backend` (`_installed_backend` builds without override or fallback);
+  the benchmark cache is `{"version": "4", "grids": {...}}`, one record per
+  grid; `_check_precision_support` moves a complex128 run off a backend
+  without float64; the tuning lock holds `host pid thread` and
+  `_release_lock` removes only its own; `MLXBackend.ifft(normalize=False)`
+  raises; `_collapse_singletons` hands a one-value array over as its value.
+  Decided alone: B3 moves the run with a warning, as the batched coupled run
+  already does, where the review suggested `ValueError`.
+  Step time unchanged, scalar `alpha`, complex64, CPU, `NLSE_CPU_BLOCKING=0`,
+  100 steps, three alternated processes: 415-416 against 415-417 ms at
+  1024². At 256² compare in one environment: this worktree's interpreter
+  (3.13.18) is 14% slower than the main tree's (3.13.13) on the same code.
+  Left, all MINOR:
+  - The two "moved to another backend" warnings point inside the library
+    (`stacklevel=3`), not at the caller's `out_field` line.
+  - The move is for the solver's life: a later complex64 run stays on CPU.
+  - `save_benchmark_cache` reads, adds and writes without a lock: two
+    processes benchmarking different grids at once can lose one record.
+  - `_read_cache_file` says "predates a change to what it timed" for a file
+    with no `version` at all; `_backend_builders` builds its dict per call.
+  - `_collapse_singletons` runs per kernel call (2-4% at 64², the reviewer's
+    timing; nothing at 1024²).
+  - `test_a_one_value_array_runs_the_field_in_one_call` counts calls on a
+    stand-in kernel, not the real ones.
+  - Not checked: CuPy, an OpenCL device without fp64, Windows, a cache
+    directory on a shared network home (the lock's host name).
 
 The final report has to say, beyond what "Review findings left as they are"
 and "Still open" list:

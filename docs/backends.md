@@ -48,7 +48,7 @@ Use `backend="auto"` to benchmark all available backends and select the fastest 
 simu = NLSE(..., backend="auto")
 ```
 
-Benchmark results are cached to disk, in `fft_benchmark.json`, so subsequent runs reuse them. The file goes in `NLSE_CACHE_DIR` if it is set, and otherwise in the platform's cache directory: `~/Library/Caches/NLSE` on macOS, `$XDG_CACHE_HOME/NLSE` (by default `~/.cache/NLSE`) on Linux, `%LOCALAPPDATA%\NLSE\Cache` on Windows.
+Benchmark results are cached to disk, in `fft_benchmark.json`, so subsequent runs reuse them. It keeps one record per grid size, so alternating grids do not evict each other; a file of an older version is replaced. The file goes in `NLSE_CACHE_DIR` if it is set, and otherwise in the platform's cache directory: `~/Library/Caches/NLSE` on macOS, `$XDG_CACHE_HOME/NLSE` (by default `~/.cache/NLSE`) on Linux, `%LOCALAPPDATA%\NLSE\Cache` on Windows.
 
 ### Switching at runtime
 
@@ -88,8 +88,10 @@ the process may use and `NUMBA_NUM_THREADS`. An entry is
 mean the usual step. Entries older than 30 days, dated in the future, of
 another version, or not of that form are measured again. The blocked step
 must win by 10% to be chosen. `cpu_blocking.lock` exists while a process
-measures; one older than 5 minutes is taken over. A process that finds the
-lock held runs the usual step and looks again every 3 s.
+measures and names it (host, process, thread); one older than 5 minutes is
+taken over, and the process that made it then leaves it to the new owner. A
+process that finds the lock held runs the usual step and looks again every
+3 s.
 
 Example:
 
@@ -114,7 +116,9 @@ simulation's values per launch and loop, so their gain is in the transforms
 rather than in the kernels. A batched `CNLSE`, `CNLSE_1d` or `DDGPE` run is
 the exception: CL and MLX cannot take one, so the solver moves it to the
 fastest backend that can, with a warning, and raises `NotImplementedError` if
-none is installed.
+none is installed. A `complex128` field on a backend without double precision
+(MLX, an OpenCL device without fp64) moves the same way. Either way the
+solver stays on the backend it moved to for its later runs.
 
 ## Threads and processes on CPU
 

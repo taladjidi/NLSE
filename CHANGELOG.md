@@ -157,9 +157,26 @@ come first.
   wrong dtype;** they were asserts. A callback list without `callback_args`
   gets empty arguments for each. `DDGPE.out_field` no longer changes the
   caller's callback list or, on CPU, the input field.
+- **`NLSE_BACKEND` naming a backend that is not installed falls back once,**
+  with a warning; it raised `RecursionError`. `benchmark_backend` times the
+  backend it is given, not the override.
+- **The benchmark cache keeps one record per grid size,** so two grids used
+  in turn no longer benchmark again at every switch.
+- **A CPU tuning that outlives its lock leaves it to the process that took
+  it over,** instead of removing it, and a forked child no longer inherits
+  its parent's tuning waits. A lock that cannot be read is left alone.
+- **`MLXBackend.ifft(..., normalize=False)` raises `ValueError`,** also
+  under `python -O`; it returned a normalized result.
+- **A one-value array parameter no longer sends the CPU kernels through the
+  field row by row.** `alpha=np.array([0.1])`, 100 steps at 256², complex64,
+  M3 Max: 2.69 s, now 52 ms, the time of the scalar.
 
 ### Changed
 
+- **A `complex128` field on a backend without double precision moves to the
+  fastest backend that has it, with a warning** (MLX, an OpenCL device
+  without fp64). It was computed in `complex64` without a word. The solver
+  stays on the backend it moved to.
 - **`DDGPE.gamma2` and `DDGPE.alpha2` are one value, the cavity loss.**
   `alpha2` was inherited from `CNLSE` and read by nothing; setting it now
   sets the cavity loss, and the cavity noise of `add_noise` stops past `T`
@@ -170,7 +187,8 @@ come first.
   the rates the limit needs, one transform).
 - **Backend benchmark caches are measured again, once.** The CuPy timing now
   waits on the stream instead of copying the result to the host, so a cached
-  timing no longer compares with a new one; `CACHE_VERSION` 3 discards it.
+  timing no longer compares with a new one, and the file holds one record
+  per grid size; `CACHE_VERSION` 4 discards an older one.
 - **The README links to the guide instead of summarising it.** Its copies of
   the physics, the solvers, the callbacks, the step size and the backends had
   drifted from the pages they copied: it said the CUPY backend transforms

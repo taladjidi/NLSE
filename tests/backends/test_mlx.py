@@ -107,6 +107,13 @@ class TestMLXFFT:
             result_np, arr_np, rtol=1e-5, atol=1e-6, err_msg="FFT roundtrip failed"
         )
 
+    def test_an_unnormalized_inverse_is_refused(self, backend):
+        """Catches a request for no 1/N answered with it, as under python -O."""
+        arr_mx = backend.from_numpy(np.ones((8, 8), dtype=np.complex64))
+        plan = backend.build_fft((8, 8), (-2, -1), np.complex64)
+        with pytest.raises(ValueError, match="1/N"):
+            backend.ifft(arr_mx, plan, normalize=False)
+
 
 class TestMLXKernels:
     """Smoke tests for MLX kernels (compare against CPU reference)."""

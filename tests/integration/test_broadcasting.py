@@ -36,6 +36,9 @@ POTENTIAL_SCALES = np.linspace(1.0, 0.25, COUNT)
 # per member cannot meet a parameter per member (_launch_count, kernels/cl.py).
 OWN_V_BACKENDS = [b for b in AVAILABLE_BACKENDS if b != "CL"]
 SHARED_V_ONLY = [b for b in AVAILABLE_BACKENDS if b == "CL"]
+# The factors a stand-in kernel was called with, and the one it is handed.
+KERNEL_CALLS: list = []
+ONE_VALUE = 2.0
 # Backends whose batch loop words the refusal of a shape itself.
 OWN_REFUSAL = {"CPU": "does not broadcast", "CL": "does not broadcast against"}
 
@@ -372,6 +375,23 @@ def test_a_one_value_parameter_reaches_every_member(backend_name, with_potential
             atol=1e-5 * float(np.max(np.abs(expected))),
             err_msg=f"{backend_name}: member {index} was not propagated",
         )
+
+
+def counted_scale(field, factor):
+    """Stand in for an njit kernel: note the factor, scale the field by it."""
+    KERNEL_CALLS.append(factor)
+    field *= factor
+    return field
+
+
+def test_a_one_value_array_runs_the_field_in_one_call():
+    """Catches a size-1 parameter sending an unbatched field row by row."""
+    KERNEL_CALLS.clear()
+    scale = cpu_kernels._broadcast_batch(1)(counted_scale)
+    field = np.ones((N, N), dtype=PRECISION_COMPLEX)
+    scale(field, np.array([ONE_VALUE]))
+    assert len(KERNEL_CALLS) == 1, f"{len(KERNEL_CALLS)} kernel calls for one field"
+    np.testing.assert_array_equal(field, ONE_VALUE)
 
 
 def test_the_cpu_loop_refuses_a_parameter_that_does_not_broadcast():

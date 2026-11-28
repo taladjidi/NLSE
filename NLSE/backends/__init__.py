@@ -91,11 +91,70 @@ def clear_backend_cache() -> None:
     _BACKEND_CACHE.clear()
 
 
+def _backend_builders() -> dict:
+    """Return each backend name with whether it is installed, its class and a hint.
+
+    Read from the availability flags on every call, so that a test can mark a
+    backend missing by setting its flag.
+
+    Returns
+    -------
+    dict
+        Name to ``(installed, class or None, what to install)``.
+    """
+    builders: dict = {"CPU": (True, CPUBackend, "")}
+    if _CUPY_AVAILABLE:
+        builders["CUPY"] = (True, CUPYBackend, "")
+    else:
+        builders["CUPY"] = (False, None, "install cupy")
+    if _OPENCL_AVAILABLE:
+        builders["CL"] = (True, OpenCLBackend, "")
+    else:
+        builders["CL"] = (False, None, "install pyopencl")
+    if _MLX_AVAILABLE:
+        builders["MLX"] = (True, MLXBackend, "")
+    else:
+        builders["MLX"] = (False, None, "install mlx")
+    return builders
+
+
+def _installed_backend(name: str) -> Backend:
+    """Return the shared instance of one installed backend, built on first use.
+
+    Exactly the backend named: no ``NLSE_BACKEND`` override and no fallback.
+    What the benchmark times and what a requirement is checked against must
+    be the backend it is recorded under.
+
+    Parameters
+    ----------
+    name : str
+        Upper-case backend name.
+
+    Returns
+    -------
+    Backend
+        The cached instance.
+
+    Raises
+    ------
+    ValueError
+        If ``name`` is not an installed backend.
+    """
+    installed, build, _ = _backend_builders().get(name, (False, None, ""))
+    if not installed:
+        raise ValueError(f"The {name} backend is not installed here")
+    if name not in _BACKEND_CACHE:
+        _BACKEND_CACHE[name] = build()
+    return _BACKEND_CACHE[name]
+
+
 def get_backend(name: str, grid_size: tuple = (2048, 2048)) -> Backend:
     """Get backend instance by name.
 
     Instances are cached per backend name, so repeated calls hand back the
-    same object rather than opening another device context.
+    same object rather than opening another device context. ``NLSE_BACKEND``
+    replaces ``name`` once, here; the fallback to an installed backend does
+    not read it again.
 
     Parameters
     ----------
@@ -129,24 +188,11 @@ def get_backend(name: str, grid_size: tuple = (2048, 2048)) -> Backend:
     # A backend that is not installed falls back to the fastest one that is: the
     # backend is how a run goes, not what it computes. An unknown name is a typo
     # and still raises.
-    builders: dict = {"CPU": (True, CPUBackend, "")}
-    if _CUPY_AVAILABLE:
-        builders["CUPY"] = (True, CUPYBackend, "")
-    else:
-        builders["CUPY"] = (False, None, "install cupy")
-    if _OPENCL_AVAILABLE:
-        builders["CL"] = (True, OpenCLBackend, "")
-    else:
-        builders["CL"] = (False, None, "install pyopencl")
-    if _MLX_AVAILABLE:
-        builders["MLX"] = (True, MLXBackend, "")
-    else:
-        builders["MLX"] = (False, None, "install mlx")
-
+    builders = _backend_builders()
     if name not in builders:
         raise ValueError(f"Unknown backend: {name}")
-    ok, build, how = builders[name]
-    if not ok:
+    installed, _, how = builders[name]
+    if not installed:
         replacement = backends_by_speed(grid_size)[0]
         warnings.warn(
             f"The {name} backend is not installed here, so {replacement} will "
@@ -154,11 +200,8 @@ def get_backend(name: str, grid_size: tuple = (2048, 2048)) -> Backend:
             f"to use {name}, or pass backend='{replacement}' to silence this.",
             stacklevel=2,
         )
-        return get_backend(replacement, grid_size)
-
-    if name not in _BACKEND_CACHE:
-        _BACKEND_CACHE[name] = build()
-    return _BACKEND_CACHE[name]
+        return _installed_backend(replacement)
+    return _installed_backend(name)
 
 
 def list_available_backends() -> list[str]:
@@ -212,8 +255,8 @@ def backends_by_speed(grid_size: tuple = (2048, 2048)) -> list[str]:
     from .benchmark import load_benchmark_cache
 
     available = list_available_backends()
-    cache = load_benchmark_cache()
-    if cache is None or tuple(cache.get("grid_size", [])) != tuple(grid_size):
+    cache = load_benchmark_cache(grid_size)
+    if cache is None:
         return sorted(available, key=_ASSUMED_SPEED_ORDER.index)
     times = {
         name: entry.get("time_ms")
@@ -240,8 +283,7 @@ def fastest_backend_supporting(
     supports : Callable
         Called with each candidate backend; True if it can serve the run.
     grid_size : tuple
-        Grid size, used to pick the right cached ranking and to build the
-        backend.
+        Grid size, used to pick the right cached ranking.
 
     Returns
     -------
@@ -250,7 +292,7 @@ def fastest_backend_supporting(
     """
     for name in backends_by_speed(grid_size):
         try:
-            candidate = get_backend(name, grid_size=grid_size)
+            candidate = _installed_backend(name)
         except Exception:  # pragma: no cover - a backend that will not build
             continue
         if supports(candidate):
