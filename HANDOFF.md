@@ -55,8 +55,10 @@ merge included (timed there too: optimization log).
 
 ### Resume here (written 2026-11-28)
 
-`main` is pushed; its last code change is `perf/gpu-p4` (the four GPU
-patches, item 3 below), before it `test/review-findings` (tests only) and
+`main` is pushed; its last change is `docs/short-docstrings` (text only,
+item 1 below), its last code change `perf/gpu-p4` (the four GPU
+patches, item 3 below; CI green on its merge `4a2ba41`, run 46115316410,
+every job), before it `test/review-findings` (tests only) and
 `chore/packaging-leftovers` (one `getattr` in `kernels/cpu.py`, and the
 packaging test). Last full suite on the Mac at `perf/gpu-p4`: 2496
 passed, 187 skipped, 85 deselected in 254 s; at
@@ -85,6 +87,23 @@ was decided alone is under "Decided alone" below.
    round, the step count of the callback loop and the benchmark tools
    below. The examples' debloat candidates are dismissed (see that round's
    entry).
+   - **Docstrings, debloat** (`docs/short-docstrings`, 2026-11-28).
+     Eighteen narratives cut to the contract and one reason, 276 lines out
+     and 142 in; the derivations they carried are in the changelog,
+     `docs/numerical_methods.md` and the optimization log. Text only: the
+     29 modules of `NLSE/` have the same AST with docstrings stripped, so
+     the suite was not a variable and no step time moved. Four said
+     something false and are corrected against the code:
+     `_split_step_max_dz` (the dispersion bound is one of its three steps),
+     `_capped_delta_z` (the limit binds on the default step too),
+     `_loss_max_dz` (past `_LOSS_SOLVED_LIMIT` the kernels freeze the step;
+     the field does not grow), `CPUBackend` (it has one fused entry point).
+     A fresh reviewer read the commit (one MAJOR, the `_loss_max_dz`
+     sentence, inherited from the old text; six MINORs, all fixed).
+     `_loss_factor` now states the fixed point and the `log1p` series its
+     bracket truncates, which nothing else in the repo did. Left as they
+     are: the nine narratives of nine lines, `_energy_rates`,
+     `CUPYBackend`.
    - **Docs, round 2** (fresh context, the pages and the public docstrings
      against the code; `docs/review-round-2`, 2026-11-28). Five MAJORs,
      each checked before it was fixed:
@@ -816,6 +835,11 @@ was decided alone is under "Decided alone" below.
   debloat with a timing proof; the review's test and the MLX wording were
   read by me only; the thread-count architect writes its patches itself
   (the tuner is judgment, not a brief for an implementer).
+- **Decided alone**, docstrings (2026-11-28): written by me, no
+  implementer (the new text is the whole job), and read by a fresh
+  reviewer; the public `adapt_delta_z_to_error` shortened too, since
+  `docs/callbacks.md` carries its explanation; no pytest on the branch
+  beyond the pre-push run, the AST being equal.
 - **Decided alone**, test suite (2026-11-28): the fixes were written by
   me on a worktree and read by a fresh reviewer, not sent through architect
   and implementer (nine files, tests only); `test_nonlocality` deleted, not
