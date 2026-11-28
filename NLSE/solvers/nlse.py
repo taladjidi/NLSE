@@ -166,9 +166,8 @@ class NLSE(StepSize):
     # Key, dispersion eigenvalues and their largest magnitude, for the last
     # configuration only: one float64 grid, 33.5 MB at 2048x2048.
     _eigenvalues: tuple[tuple, np.ndarray, float] | None = None
-    # Declared for type checkers: whichever array type the backend allocates and
-    # a list of its plan objects (assigned None in __init__).
-    propagator: Any = None
+    # Declared for type checkers: a list of the backend's plan objects
+    # (assigned None in __init__). The propagator is a property, further down.
     plans: Any = None
 
     # All three, so nothing has to know which backends are worth asking about.
@@ -1995,6 +1994,32 @@ class NLSE(StepSize):
     _gpu_array_attrs = ("V", "propagator")
     _gpu_param_attrs = ("power", "n2", "alpha", "I_sat")
 
+    # The propagator a run left on the device, until something reads it.
+    _propagator: Any = None
+    _propagator_on_device: bool = False
+
+    @property
+    def propagator(self) -> Any:
+        """The propagator of the current or the last run.
+
+        A run builds it on the device and leaves it there. Read after the
+        run, it comes back to the host, once: most callers never read it.
+
+        Returns
+        -------
+        Any
+            The propagator, on the host once a run has finished.
+        """
+        if self._propagator_on_device:
+            self._propagator = self._backend.to_numpy(self._propagator)
+            self._propagator_on_device = False
+        return self._propagator
+
+    @propagator.setter
+    def propagator(self, value: Any) -> None:
+        self._propagator = value
+        self._propagator_on_device = False
+
     def _as_host_array(self, value: Any) -> Any:
         """Return a parameter as a host numpy array, or None if unset.
 
@@ -2159,6 +2184,10 @@ class NLSE(StepSize):
         if not self._backend.is_device_backend:
             return
         for attr in self._gpu_array_attrs:
+            if attr == "propagator":
+                # Left on the device; the property brings it back when read.
+                self._propagator_on_device = self._propagator is not None
+                continue
             val = getattr(self, attr, None)
             if val is None:
                 continue

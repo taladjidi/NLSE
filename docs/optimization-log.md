@@ -1768,6 +1768,28 @@ ms. The per-step cost does not move (0.999 to 1.002x) and the results are
 identical. Without a given step or with Yoshida the call saves one reduction
 more each; not timed. The cost of the `CNLSE` reduction itself is open.
 
+**Deployed: the propagator left on the device after a run** (2026-11-28).
+RTX 3050 8 GB, driver 620.70.06, CuPy 14.2.0, CUDA runtime 13.2. After every
+run `_retrieve_arrays_from_gpu` copied `simu.propagator` back to the host, a
+grid-sized transfer nothing in the solver reads: the next run builds its own.
+`propagator` is now a property that copies the device array back the first
+time it is read after a run, once; a solver that is never asked pays nothing.
+
+A 10-step lie call, complex64, `step_for` step, before and after in one
+process over 8 alternating rounds (`gpu_p4_r2_ab.py`):
+
+| solver | grid | before | after | gain [range] |
+|---|---|---|---|---|
+| `NLSE` | 1024² | 10.95 ms | 9.58 ms | **1.14x** [1.14, 1.25] |
+| `NLSE` | 2048² | 49.26 ms | 41.54 ms | **1.19x** [1.18, 1.19] |
+| `NLSE` | 4096² | 212.8 ms | 185.3 ms | **1.15x** [1.14, 1.17] |
+| `CNLSE` | 1024² | 30.53 ms | 27.86 ms | 1.10x [1.02, 1.10] |
+| `CNLSE` | 2048² | 140.9 ms | 126.5 ms | **1.12x** [1.11, 1.12] |
+
+The per-step cost does not move (0.999 to 1.005x) and the results are
+identical. A caller that reads `propagator` after each run pays the transfer
+as before, at the read. OpenCL and MLX take the same path; not timed.
+
 
 ## Open
 

@@ -293,6 +293,13 @@ come first.
   and 4096² on CUPY (RTX 3050, complex64). A 10-step RK4 call with a given
   step is 1.02x faster for an `NLSE` and 1.12x for a `CNLSE`; the steps and
   results are unchanged. Figures in `docs/optimization-log.md`.
+- **The propagator stays on the device after a GPU run until it is read.**
+  Every run on CUPY, CL or MLX copied it back to the host at the end, a
+  grid-sized transfer; `simu.propagator` now copies it back the first time it
+  is read, once. A 10-step CUPY lie call is 1.14 to 1.19x faster for an
+  `NLSE` at 1024², 2048² and 4096² and 1.10 to 1.12x for a `CNLSE` at 1024²
+  and 2048² (RTX 3050, complex64); the steps are unchanged. Figures in
+  `docs/optimization-log.md`.
 - One-step `out_field` at 2048² (M3 Max): CPU 73 → 47 ms, MLX 70 → 41 ms; the
   dispersion eigenvalues are kept and the normalization writes in place. The
   per-step time is unchanged.
