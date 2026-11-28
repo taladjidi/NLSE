@@ -216,9 +216,9 @@ a property of the algorithm we chose. What a step must move is 104 B/point:
 kernel. The transform is closed, but the other 40 are ours.
 
 **A separable propagator — open, measured, not built.** (2026-11-28: built
-since on the CPU, inside the blocked step, and in CUPY's callbacks; see those
-sections. Measured since on OpenCL, rejected, and on MLX, to be built.) The linear propagator
-is `exp(-i(kx²+ky²)dz/2k)`, which factors into
+since on the CPU, inside the blocked step, in CUPY's callbacks, and in MLX's
+fused graph; see those sections. Measured since on OpenCL, rejected.) The
+linear propagator is `exp(-i(kx²+ky²)dz/2k)`, which factors into
 `exp(-i·kx²dz/2k) · exp(-i·ky²dz/2k)` — verified rank-1 to 6.7e-8, float32 eps.
 So the N² array every step reads could be two N-vectors: **8 MiB → 16 KiB at
 1024², 32 MiB → 32 KiB at 2048²**, and the kernel drops from 24 B/point to 16.
@@ -1523,20 +1523,70 @@ against a double-precision reference has to skip both, or it scores them against
 a reference of another width. `supports_double_precision()` is the question to
 ask, and both answer no.
 
-**The propagator as two vectors — measured, to be built** (2026-11-28). The
-same swap in the fused Lie graph, `A * py[:, None] * px[None, :]` for
-`A * propagator` (`sep_prop_mlx.py`, the protocol of the OpenCL entry; M3 Max,
-macOS 27.2.1, mlx 0.32.0):
+**The propagator as two vectors — deployed** (2026-11-28). The fused MLX step
+multiplies by one vector per axis, `A * rows[:, None] * columns`, wherever the
+dispersion is a sum of one term per axis (`_dispersion_axes`). That covers
+every graph `split_step_fused` compiles: Lie and Strang, each with no
+potential, a real one or a complex one; each loss mode; the remainder's and
+Yoshida's propagators; GPE; and a batch, which broadcasts one grid's rows. The
+vectors come through the CUDA callback's route, `_propagator_factors` and
+`_separable_propagator`, without the 1/N that MLX's inverse transform applies
+itself. `_built_step` vouches for them: a propagator the solver did not build,
+or a dispersion with a cross term, keeps the grid, bit-identical to before.
 
-| grid | grid | two vectors | step gain [range] | multiply alone |
-|---|---|---|---|---|
-| 1024² | 0.288 ms | 0.275 ms | 1.07x [0.83, 1.09] | 1.04x [0.97, 1.11] |
-| 2048² | 1.675 ms | 1.674 ms | 1.00x [0.95, 1.04] | 1.28x [1.28, 1.33] |
-| 4096² | 7.212 ms | 6.726 ms | 1.06x [1.03, 1.10] | 1.35x [1.33, 1.35] |
+The measurement ran through the solver. The base commit's `NLSE.split_step` was
+bound against the new one on the same solver in one process
+(`ab_two_vectors.py`: 8 rounds, the two sides alternating, the per-step cost
+taken as the slope between 10 and 60 steps). Field and step were complex64 and
+the `benchmarks/profile_backends.py` beam and step, on an M3 Max with macOS
+27.2.1 and mlx 0.32.0, with no other process above 20% CPU. Per-step time in
+ms, grid → two vectors, median gain [range]:
 
-The two results differ by 3.6e-6 to 4.5e-6 of the peak after 60 steps. Only
-4096² is a difference. What it also frees is the grid itself, 128 MiB at
-4096² complex64. The owner chose to build it; it is not built yet.
+| case | 1024² | 2048² | 4096² |
+|---|---|---|---|
+| Lie, lossless | 0.294 → 0.284, 1.04x [0.92, 1.21] | 1.743 → 1.659, 1.05x [1.02, 1.11] | 6.969 → 6.641, 1.05x [1.02, 1.12] |
+| Lie, real V | 0.358 → 0.338, 1.07x [0.96, 1.20] | 2.047 → 1.958, 1.05x [1.01, 1.08] | 8.332 → 7.966, 1.05x [1.02, 1.10] |
+| Strang (halves merged) | 0.297 → 0.283, 1.05x [1.01, 1.16] | 1.754 → 1.645, 1.07x [1.04, 1.12] | 7.063 → 6.631, 1.06x [1.00, 1.13] |
+| Strang, complex V | 0.496 → 0.465, 1.06x [1.01, 1.12] | 2.733 → 2.646, 1.03x [1.00, 1.08] | 11.490 → 11.107, 1.04x [1.01, 1.07] |
+| Lie, alpha = 20/m (solved kernel) | 0.305 → 0.294, 1.02x [0.97, 1.24] | 1.775 → 1.704, 1.05x [1.00, 1.08] | 7.053 → 6.687, 1.05x [0.99, 1.09] |
+| Yoshida | 0.987 → 0.931, 1.05x [1.02, 1.12] | 5.381 → 5.093, 1.05x [1.01, 1.08] | 24.085 → 23.100, 1.04x [1.03, 1.06] |
+| GPE | 0.275 → 0.265, 1.05x [0.95, 1.12] | 1.744 → 1.623, 1.08x [0.98, 1.11] | 7.059 → 6.712, 1.07x [1.00, 1.13] |
+| batch of 4 | 1.818 → 1.807, 1.00x [0.96, 1.04] | 7.564 → 7.492, 1.01x [0.97, 1.05] | 30.869 → 30.444, 1.01x [0.88, 1.03] |
+
+Two earlier passes, taken with one or two other processes at 100% CPU, agree:
+every median at 1.00x or above but one batch run at 4096² (0.98x [0.89, 1.07];
+its repeat gave 1.01x). The batch barely gains, since its grid is read once for
+four fields. It is kept for the memory, and so that no shape picks the path.
+Below the range it loses: 0.93x at 256², a few µs of dispatch a step, and
+1.00x at 512². The two answers differ by 2.4e-6 to 4.7e-6 of the peak after
+60 steps, and by 6.8e-6 to 9.2e-6 for Yoshida, which applies three propagators
+a step. The lookup costs 1.5 µs a step. The vectors' host build runs once per
+configuration and takes 6, 30 and 127 ms at 1024², 2048² and 4096².
+
+Device memory at 4096² (`mx.get_active_memory`, after a 10-step run, with the
+result dropped): what a run holds falls from 320 to 192 MiB, the propagator's
+128 MiB, which is never evaluated now. With Yoshida's three it falls from 448
+to 192 MiB. The peak over the run falls from 6208 to 6080 MiB. Reading
+`simu.propagator` still builds the grid, back to 320 MiB. The device dispersion
+operator, the other 128 MiB, stays: that grid is built from it.
+
+Left out:
+- The coupled graphs (CNLSE, DDGPE): the operator is one grid per component,
+  which `_dispersion_axes` declines.
+- RK4: its operator is a sum, not a product.
+- NLSE_1d and NLSE_3d (`FUSED_TRANSFORM_AXES`).
+- The nonlocal path's `linear_step`: not measured, and its signature is shared
+  by all four backends.
+
+`tests/backends/test_mlx.py::TestMLXPropagatorFactors` pins four things: the
+agreement with the grid, on white noise at 0.9 rad a step on the shortest wave
+(0.24 of the round-off bound at most); the fallback; that a zeroed grid is not
+read; and that a propagator the solver did not build is the one applied.
+
+*Challenge this* if the largest grids need the memory more than a read of
+`simu.propagator` needs speed. The device dispersion operator could then be
+dropped once the vectors stand, and the grid built from the host's copy when
+asked for.
 
 ## CUDA (CuPy)
 

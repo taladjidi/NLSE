@@ -41,7 +41,7 @@ COMPLEX_V = (REAL_V * ABSORBING).astype(np.complex64)
 K_HALF = 1e6
 
 
-def no_separable_propagator(dtype, delta_z, rows):
+def no_separable_propagator(dtype, delta_z, rows, unnorm_ifft):
     """Stand-in for ``NLSE._separable_propagator`` that offers no factors."""
     return None
 

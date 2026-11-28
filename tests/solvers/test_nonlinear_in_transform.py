@@ -372,7 +372,7 @@ def test_a_step_on_its_own_propagator_puts_the_origin_back(monkeypatch, detour):
     )
     after = simu._linear_state()
     assert all(a is b for a, b in zip(after, before)), "the run's state is not back"
-    assert simu._propagator_fft_factors(simu._propagator_fft, NY) is not None
+    assert simu._propagator_factors(simu._propagator_fft, True, NY) is not None
 
 
 def build(simu):
@@ -523,7 +523,7 @@ def test_the_factors_multiply_to_the_twin(cls, physics, batch, dtype):
     simu = make(cls, "CPU", n=N, NY=NY, **physics)
     simu.propagator = simu._build_propagator(dtype, DELTA_Z)
     simu._send_propagator_to_gpu()
-    factors = simu._propagator_fft_factors(simu._propagator_fft, batch * NY)
+    factors = simu._propagator_factors(simu._propagator_fft, True, batch * NY)
     assert factors is not None, "no factors for a dispersion of one term per axis"
     assert all(factor.dtype == dtype for factor in factors), "not the field's width"
     got = product(factors, (batch, NY, N))
@@ -537,8 +537,8 @@ def test_one_field_then_a_batch_each_get_their_rows():
     simu = make(NLSE, "CPU", n=N, NY=NY)
     build(simu)
     twin = simu._propagator_fft
-    assert simu._propagator_fft_factors(twin, NY) is not None
-    factors = simu._propagator_fft_factors(twin, BATCH * NY)
+    assert simu._propagator_factors(twin, True, NY) is not None
+    factors = simu._propagator_factors(twin, True, BATCH * NY)
     assert factors[0].size == BATCH * NY, "the rows of one field, for a batch"
     got = product(factors, (BATCH, NY, N))
     assert np.abs(got - twin).max() <= tolerance(simu, np.complex64, DELTA_Z)

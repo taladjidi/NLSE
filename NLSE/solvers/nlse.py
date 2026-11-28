@@ -67,6 +67,7 @@ STEP_ROUNDOFF = 1e-9
 # Transformed axes the nonlinear step is folded into the linear step at: 2D,
 # the plans cuFFT links store callbacks into here, checked against in
 # tests/backends/test_fft_propagator_fusion.py, and the CPU's blocked step.
+# Also the only transform a propagator is offered as one factor per axis for.
 FUSED_TRANSFORM_AXES = 2
 
 
@@ -535,6 +536,12 @@ class NLSE(StepSize):
         if self._backend.has_fused_split_step and self.nl_length == 0:
             dz = delta_z / 2 if splitting == "strang" else delta_z
             prop, unnorm = self._fused_propagator(propagator)
+            # One grid's rows: the graph broadcasts them over a batch.
+            factors = (
+                partial(self._propagator_factors, prop, unnorm, A.shape[-2])
+                if len(self._last_axes) == FUSED_TRANSFORM_AXES
+                else None
+            )
             return kernels.split_step_fused(
                 A,
                 prop,
@@ -546,6 +553,7 @@ class NLSE(StepSize):
                 splitting,
                 plans[0],
                 unnorm_ifft=unnorm,
+                factors=factors,
             )
 
         # First half-step (only for splitting == "strang")
@@ -687,7 +695,9 @@ class NLSE(StepSize):
             self._constant("_alpha_half"),
             self._constant("_g"),
             self._constant("_Isat_conv"),
-            factors=partial(self._propagator_fft_factors, prop, A.size // A.shape[-1]),
+            factors=partial(
+                self._propagator_factors, prop, unnorm, A.size // A.shape[-1]
+            ),
         )
 
     def _require_backend(self, supports: Callable, what: str) -> None:
@@ -1433,13 +1443,13 @@ class NLSE(StepSize):
         return float(np.sqrt(parts[..., 0::2].max()))
 
     def _separable_propagator(
-        self, dtype: np.dtype, delta_z: float, rows: int
+        self, dtype: np.dtype, delta_z: float, rows: int, unnorm_ifft: bool
     ) -> tuple | None:
         """Return the propagator as one factor per axis, on the device.
 
-        The product of the two is the propagator divided by the transform
-        size, as ``_propagator_fft`` is. Each factor is exponentiated in
-        complex128 and rounded once, to the field's width.
+        The product of the two is the propagator, divided by the transform
+        size where it stands for ``_propagator_fft``. Each factor is
+        exponentiated in complex128 and rounded once, to the field's width.
 
         Parameters
         ----------
@@ -1448,7 +1458,11 @@ class NLSE(StepSize):
         delta_z : float
             Step the propagator advances by.
         rows : int
-            Rows of the field, over the whole of a batch.
+            Length of the row factor: the field's rows over the whole of a
+            batch for a kernel indexing them flat, one grid's for one that
+            broadcasts them.
+        unnorm_ifft : bool
+            Whether the rows carry the inverse transform's 1/N.
 
         Returns
         -------
@@ -1459,12 +1473,13 @@ class NLSE(StepSize):
         axes = self._dispersion_axes()
         if axes is None:
             return None
-        cache_key = (*self._propagator_cache_key(dtype, delta_z), rows)
+        cache_key = (*self._propagator_cache_key(dtype, delta_z), rows, unnorm_ifft)
         if cache_key in self._separable_cache:
             self._separable_cache.move_to_end(cache_key)
             return self._separable_cache[cache_key]
         along_y, along_x = axes
-        n_fft = along_y.size * along_x.size
+        # Dividing by 1 is exact, so the plain factors are the bare exponentials.
+        n_fft = along_y.size * along_x.size if unnorm_ifft else 1
         row_factors = np.tile(np.exp(along_y * delta_z) / n_fft, rows // along_y.size)
         factors = (
             self._backend.from_numpy(row_factors.astype(dtype)),
@@ -1563,7 +1578,7 @@ class NLSE(StepSize):
         Must be called whenever ``self.propagator`` changes, otherwise the
         fused kernels keep using a propagator derived from the previous one.
         Records the twin's origin where ``_build_propagator`` built the
-        propagator, which is what ``_propagator_fft_factors`` offers from.
+        propagator, which is what ``_propagator_factors`` offers from.
         """
         if self._backend.supports_unnormalized_ifft and self.propagator is not None:
             N_fft = 1
@@ -1583,20 +1598,25 @@ class NLSE(StepSize):
             self._propagator_fft = None
             self._propagator_fft_origin = None
 
-    def _propagator_fft_factors(self, propagator_fft: Any, rows: int) -> tuple | None:
-        """Return the twin a kernel is handed as one factor per axis, if known.
+    def _propagator_factors(
+        self, propagator: Any, unnorm_ifft: bool, rows: int
+    ) -> tuple | None:
+        """Return the propagator a kernel is handed as one factor per axis, if known.
 
-        Only for the twin ``_update_propagator_fft`` recorded an origin for,
-        only while it is that very array, and only while the solver's cache
+        The twin only while it is the one ``_update_propagator_fft`` recorded
+        an origin for, the plain propagator only while it is an array
+        ``_build_propagator`` built, and either only while the solver's cache
         key for it is unchanged. Anything else gets None and the kernel reads
         the full array.
 
         Parameters
         ----------
-        propagator_fft : Any
-            The pre-normalized propagator the kernel is handed.
+        propagator : Any
+            The propagator the kernel is handed.
+        unnorm_ifft : bool
+            Whether it is the twin carrying 1/N, as ``_fused_propagator`` says.
         rows : int
-            Rows of the field, over the whole of a batch.
+            Length of the row factor, as ``_separable_propagator`` takes it.
 
         Returns
         -------
@@ -1604,14 +1624,20 @@ class NLSE(StepSize):
             ``(rows, columns)`` from ``_separable_propagator``, or None.
         """
         origin = self._propagator_fft_origin
-        if origin is None or origin[0] is not propagator_fft:
+        if not unnorm_ifft:
+            built = self._built_step(propagator)
+        elif origin is not None and origin[0] is propagator:
+            built = origin[1:]
+        else:
+            built = None
+        if built is None:
             return None
-        _, dtype, delta_z, cache_key = origin
+        dtype, delta_z, cache_key = built
         # The factors are computed from the solver as it is now: a k or a grid
         # changed since the build would give those of another propagator.
         if self._propagator_cache_key(dtype, delta_z) != cache_key:
             return None
-        return self._separable_propagator(dtype, delta_z, rows)
+        return self._separable_propagator(dtype, delta_z, rows, unnorm_ifft)
 
     def _linear_state(self) -> tuple:
         """Return what the linear step reads off the solver, to restore later.
@@ -2044,7 +2070,7 @@ class NLSE(StepSize):
         self._propagator_cache: OrderedDict[tuple, tuple] = OrderedDict()
         self._dispersion_cache: dict[tuple, Any] = {}
         # The propagator as one factor per axis, keyed as the propagators are
-        # and by the rows of a batch, bounded the same way.
+        # and by the rows and 1/N the kernel takes, bounded the same way.
         self._separable_cache: OrderedDict[tuple, Any] = OrderedDict()
         # Host array and device copy of each attribute a run sent, by name.
         self._sent_arrays: dict[str, tuple[Any, Any]] = {}
