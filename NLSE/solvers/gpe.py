@@ -96,8 +96,9 @@ class GPE(NLSE):
             wvl=2 * np.pi / m,
             backend=backend,
         )
-        # do some conversion for the units
-        self.I_sat *= epsilon_0 * c / 2
+        # Through the parameter's own conversion: an in-place one rescaled the
+        # caller's array along with the solver's.
+        self.sat = sat
         # |psi|^2 is a density in atoms/m^2, not an optical field, so the
         # norm_constant is 1.0
         self._norm_constant = np.float32(1.0)

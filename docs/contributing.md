@@ -52,16 +52,16 @@ The project uses [ruff](https://docs.astral.sh/ruff/) for linting and formatting
 
 ```bash
 # Lint
-uv run ruff check NLSE/ tests/ examples/
+uv run ruff check NLSE/ tests/ examples/ benchmarks/ docs/
 
 # Format check
-uv run ruff format --check NLSE/ tests/ examples/
+uv run ruff format --check NLSE/ tests/ examples/ benchmarks/ docs/
 
 # Auto-fix lint issues
-uv run ruff check --fix NLSE/ tests/ examples/
+uv run ruff check --fix NLSE/ tests/ examples/ benchmarks/ docs/
 
 # Auto-format
-uv run ruff format NLSE/ tests/ examples/
+uv run ruff format NLSE/ tests/ examples/ benchmarks/ docs/
 
 # Type check
 uv run ty check

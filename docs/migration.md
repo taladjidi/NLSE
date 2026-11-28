@@ -1,7 +1,7 @@
 # Migrating to 4.0.0
 
-Four things changed that a 3.0.0 script will notice. Two of them raise, one is
-silent, and one changes your numbers without changing your code.
+Four things changed that a 3.0.0 script will notice. One of them raises, one
+is silent, and two change your numbers without changing your code.
 
 ## `precision` is now `splitting`
 

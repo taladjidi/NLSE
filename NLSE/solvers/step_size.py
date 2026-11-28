@@ -1,6 +1,6 @@
 """How big a step the solver may take.
 
-Ten methods that answer one question, and answer it in three stages: what the
+Methods that answer one question, and answer it in three stages: what the
 field's energy is in each term of the equation, what step those energies allow,
 and whether the step the caller asked for is inside that. They came out of
 NLSE, where they sat between the propagator and the propagation loop and
@@ -23,7 +23,6 @@ import warnings
 from typing import Any
 
 import numpy as np
-from scipy.constants import c, epsilon_0
 
 # Explicit RK4 is stable for |lambda * dz| up to ~2*sqrt(2) along the
 # imaginary axis. Every solver's step limit is derived from it.
@@ -68,6 +67,26 @@ class StepSize:
     Every method is private and reached through the solver, so this class is
     never instantiated on its own and carries no state of its own.
     """
+
+    # Step constants each holding one component's loss as the kernels take it,
+    # alpha / 2 (NLSE._step_constants). CNLSE adds its second component's.
+    _loss_constants = ("_alpha_half",)
+
+    def _peak_loss_half(self) -> float:
+        """Return the largest ``alpha / 2`` over the components and the batch.
+
+        Returns
+        -------
+        float
+            That rate, in the units of the solver's loss.
+        """
+        # Through the host: a batched run holds its constants on the device.
+        return float(
+            max(
+                np.max(np.abs(self._as_host_array(self._constant(name))))
+                for name in self._loss_constants
+            )
+        )
 
     def _energy_rates(self, A: np.ndarray) -> dict[str, float]:
         """Return the phase rate each term contributes, weighted by the field.
@@ -192,14 +211,11 @@ class StepSize:
         mean_intensity = backend.sum(saturated) / total
         interaction = g * mean_intensity
 
-        alpha_half = float(
-            np.max(np.abs(self._as_host_array(self._constant("_alpha_half"))))
-        )
         return {
             "kinetic": abs(kinetic),
             "potential": abs(potential),
             "interaction": interaction,
-            "loss": alpha_half + absorption,
+            "loss": self._peak_loss_half() + absorption,
         }
 
     def _grid_on_device(self, name: str, values: Any, real_dtype: Any, shape: tuple):
@@ -279,55 +295,16 @@ class StepSize:
         mean_intensity = float(np.sum(weight * weight / (1 + weight / Isat)) / total)
         interaction = float(np.max(np.abs(g) * mean_intensity))
 
-        alpha_half = self._as_host_array(self._constant("_alpha_half"))
-        loss = float(np.max(np.abs(alpha_half))) + absorption
         return {
             "kinetic": abs(kinetic),
             "potential": abs(potential),
             "interaction": interaction,
-            "loss": loss,
-        }
-
-    def _estimated_rates(self) -> dict[str, float]:
-        """Return the phase rates without a field, for use before a run.
-
-        Same quantities as ``_energy_rates``, from the grid rather than from
-        the solution: the largest dispersion eigenvalue, the extremes of V,
-        and the intensity the given power would have spread over the window.
-        Coarser than the field-weighted version, and only used to give
-        ``delta_z`` a value before anything has been propagated.
-
-        Returns
-        -------
-        dict
-            ``kinetic``, ``potential``, ``interaction`` and ``loss`` rates.
-        """
-        kinetic = self._max_dispersion_rate()
-
-        V = self._as_host_array(self._V_scaled)
-        if V is None and self.V is not None:
-            V = self._as_host_array(self.V) * self._constant("_k_half")
-        potential = float(np.max(np.abs(np.real(V)))) if V is not None else 0.0
-        loss = float(np.max(np.abs(np.imag(V)))) if V is not None else 0.0
-
-        area = float(np.prod([float(w) for w in self.window[:2]]))
-        intensity = np.abs(
-            2 * np.asarray(self.power, dtype=float) / (epsilon_0 * c * area)
-        )
-        Isat = np.abs(self._as_host_array(self._constant("_Isat_conv")))
-        g = np.abs(self._as_host_array(self._constant("_g")))
-        interaction = float(np.max(g * intensity / (1 + intensity / Isat)))
-
-        return {
-            "kinetic": kinetic,
-            "potential": potential,
-            "interaction": interaction,
-            "loss": loss,
+            "loss": self._peak_loss_half() + absorption,
         }
 
     def _default_delta_z(
         self,
-        A: np.ndarray | None = None,
+        A: np.ndarray,
         method: str = "split_step",
         z: float | None = None,
     ) -> float:
@@ -342,9 +319,8 @@ class StepSize:
 
         Parameters
         ----------
-        A : np.ndarray or None
-            Normalized field (possibly on device). Without one the rates are
-            estimated from the grid instead.
+        A : np.ndarray
+            Normalized field (possibly on device).
         method : str
             Integration method ("split_step" or "RK4").
         z : float or None
@@ -356,7 +332,7 @@ class StepSize:
         float
             Step size.
         """
-        rates = self._energy_rates(A) if A is not None else self._estimated_rates()
+        rates = self._energy_rates(A)
         if method == "RK4":
             rate = sum(rates.values())
             phase = RK4_PHASE_PER_STEP
@@ -389,6 +365,31 @@ class StepSize:
         if V_scaled is None:
             return 0.0
         return float(np.max(np.abs(V_scaled)))
+
+    def _max_interaction_rate(self, A: np.ndarray) -> float:
+        """Return the fastest interaction rate on the grid, at the field's peak.
+
+        ``|g| |A|^2 / (1 + |A|^2 / Isat)``, maximized over the grid rather than
+        weighted by the field as in ``_energy_rates``. The coupled solvers add
+        the cross coupling.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            Field, possibly on a device.
+
+        Returns
+        -------
+        float
+            The largest rate, in radians per unit of the propagation axis.
+        """
+        # On the host: pyopencl's array has no .max(), and g and Isat are device
+        # arrays once a batched run has been sent.
+        A_host = self._as_host_array(A)
+        A_sq = A_host.real * A_host.real + A_host.imag * A_host.imag
+        g = np.abs(self._as_host_array(self._constant("_g")))
+        Isat = self._as_host_array(self._constant("_Isat_conv"))
+        return float(np.max(g * A_sq / (1 + A_sq / Isat)))
 
     def _rk4_max_dz(self, A: np.ndarray | None = None) -> float:
         """Compute the maximum stable step size for explicit RK4.
@@ -512,18 +513,21 @@ class StepSize:
         run: it binds only where a single step would take out a large fraction
         of the intensity.
 
-        The kernels solve the real-space step rather than freezing ``|A|^2``
-        through it (see ``_loss_factor`` in kernels/cpu.py), and the iteration
-        that does it contracts while ``u = 2*alpha*dz`` stays well below one.
-        ``LOSS_PER_STEP_LIMIT`` is where it is still comfortably converging;
-        past it the iteration walks away and the step returns a field larger
-        than the one it was given, which is a worse failure than a coarse
-        answer because it does not look like one.
+        The scalar kernels solve the real-space step rather than freezing
+        ``|A|^2`` through it (see ``_loss_factor`` in kernels/cpu.py), and the
+        iteration that does it contracts while ``u = 2*alpha*dz`` stays well
+        below one. ``LOSS_PER_STEP_LIMIT`` is where it is still comfortably
+        converging; past it the iteration walks away and the step returns a
+        field larger than the one it was given, which is a worse failure than
+        a coarse answer because it does not look like one. The coupled kernels
+        freeze the step, so there the same limit is an accuracy ceiling.
 
         Written against ``alpha`` and not against the loss energy rate, which
         carries the saturation: the rate is the average over the grid and the
         iteration has to converge at the point that saturates least, where the
-        saturation is 1 and the rate is ``alpha`` itself.
+        saturation is 1 and the rate is ``alpha`` itself. Every component's
+        ``alpha`` counts, as the kernels receive it (``_loss_constants``), and
+        the largest binds.
 
         Returns
         -------
@@ -532,12 +536,7 @@ class StepSize:
             iteration's region, or infinity for a lossless medium.
 
         """
-        # A batched run holds its parameters on the device, so alpha is not
-        # necessarily something numpy will convert.
-        alpha = self.alpha
-        if not isinstance(alpha, (int, float)):
-            alpha = self._backend.to_numpy(alpha)
-        peak = float(np.max(np.abs(np.asarray(alpha, dtype=float))))
+        peak = 2 * self._peak_loss_half()
         if peak == 0:
             return np.inf
         return LOSS_PER_STEP_LIMIT / (2 * peak)
