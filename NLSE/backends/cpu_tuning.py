@@ -15,9 +15,11 @@ process measures at a time, through a lock file beside the cache; the others
 take the unblocked step meanwhile rather than time each other's load.
 """
 
+import ctypes
 import json
 import os
 import socket
+import sys
 import threading
 import time
 import warnings
@@ -44,8 +46,9 @@ from ..utils import (
 # time: NLSE.backends.cpu_tuning.TUNE_ON_FIRST_RUN = False.
 TUNE_ON_FIRST_RUN = True
 
-# Bumped whenever a cached entry stops meaning what it meant.
-CACHE_VERSION = "1"
+# Bumped whenever a cached entry stops meaning what it meant; 2: the fastest
+# cores' count joined the candidates, so entries measured without it go.
+CACHE_VERSION = "2"
 
 # Age past which an entry is measured again, as the backend benchmark's cache.
 CACHE_LIFETIME = timedelta(days=30)
@@ -60,9 +63,13 @@ BLOCK_BYTES = (2**17, 2**18, 2**19, 2**20, 2**21)
 # (same log entry).
 THREAD_DIVISORS = (1, 2)
 
+# Where macOS (12 and later) gives the logical CPUs of its fastest cores, level
+# 0: 12 of 16 on an M3 Max. Measured as one more count; None elsewhere.
+PERFORMANCE_CPUS_SYSCTL = b"hw.perflevel0.logicalcpu"
+
 # Rounds of each candidate, interleaved, and steps per round; the best round
-# counts. Measured: 4096x4096 complex128 tunes in 12.1-12.5 s on an M3 Max,
-# the duel included.
+# counts. Measured: 4096x4096 complex128 tunes in 17.0-18.1 s on an M3 Max,
+# the duel and the fastest cores' count included (12.0-13.0 s without).
 ROUNDS = 3
 STEPS = 4
 
@@ -153,6 +160,51 @@ def available_threads() -> int:
     return min(_usable_cpus(), numba.get_num_threads())
 
 
+@cache
+def _performance_threads() -> int | None:
+    """Return the logical CPUs of the fastest cores, where the OS says.
+
+    Returns
+    -------
+    int or None
+        ``PERFORMANCE_CPUS_SYSCTL`` on macOS; None on other systems, and where
+        the name is missing (macOS 11, one kind of core) or unreadable.
+    """
+    if sys.platform != "darwin":
+        # shortcut: Linux hybrids list theirs in /sys/devices/cpu_core/cpus,
+        # not read; read it once one is measured to gain from it.
+        return None
+    count = ctypes.c_int(0)
+    size = ctypes.c_size_t(ctypes.sizeof(count))
+    try:
+        status = ctypes.CDLL(None).sysctlbyname(
+            PERFORMANCE_CPUS_SYSCTL, ctypes.byref(count), ctypes.byref(size), None, 0
+        )
+    except (OSError, AttributeError):  # no libc to open, or no sysctlbyname in it
+        return None
+    return count.value if status == 0 and count.value > 0 else None
+
+
+def _thread_counts(threads: int) -> list[int]:
+    """Return the blocked step's thread counts measured, ``threads`` first.
+
+    Parameters
+    ----------
+    threads : int
+        From ``available_threads``: no count is more.
+
+    Returns
+    -------
+    list of int
+        Distinct: ``threads`` over each of ``THREAD_DIVISORS``, then the
+        fastest cores' count where the OS gives one, each in 1..threads. A
+        tie goes to the first, so to every thread, as before.
+    """
+    found = [threads // d for d in THREAD_DIVISORS]
+    found.append(_performance_threads() or threads)
+    return [count for count in dict.fromkeys(found) if 0 < count <= threads]
+
+
 def _release(version: str) -> str:
     """Return ``major.minor`` of a version string."""
     return ".".join(version.split(".")[:RELEASE_PARTS])
@@ -222,9 +274,8 @@ def _candidates(shape: tuple, dtype: np.dtype, threads: int) -> list[tuple[int, 
         Distinct candidates, in order of thread count then block size.
     """
     ny, nx = shape
-    counts = dict.fromkeys(threads // d for d in THREAD_DIVISORS if threads // d > 0)
     found = []
-    for count in counts:
+    for count in _thread_counts(threads):
         for size in BLOCK_BYTES:
             rows = max(1, size // (ny * dtype.itemsize))
             if rows * count <= min(ny, nx) and (rows, count) not in found:
