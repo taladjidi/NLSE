@@ -98,12 +98,15 @@ conclusions, and do not read this file.
     the coupled solvers merged.
   - Not run: CuPy and OpenCL (the box was timing); DDGPE read only.
 - **Solver review, round 1** (`fix/solver-review-round1`, eight findings of
-  a fresh-context review, then a fix round on its own review). Landed: every
+  a fresh-context review, then two fix rounds, each on a fresh review).
+  Landed: every
   loss read goes through `_loss_constants` / `_peak_loss_half` (step
   ceiling, RK4 bound, Yoshida warning); `adapt_delta_z` returns `None` at a
   zero rate, is capped by `_split_step_max_dz` and counts `g12`
   (`_max_interaction_rate`); RK4 gets neither splitting advice nor the
-  Strang bracket (in 4.1.0 too, rel. diff 1.8 on a 64² run); GPE keeps the
+  Strang bracket (in 4.1.0 too; rel. diff 1.8 at `n2` = -1e-9 m²/W, 1 W on
+  a 2 mm window, `L` = 5 cm, 64², default step, and 1.6e-6 at the test's
+  parameters, hence its `array_equal`); GPE keeps the
   caller's `sat`; DDGPE's `gamma2` is `Parameter("alpha2")`, so the cavity
   loss ends at `T`; `_estimated_rates` deleted. `ty-baseline.json` 99 -> 87.
   Decided alone: the `gamma2`/`alpha2` alias (public, in the changelog).
@@ -121,6 +124,9 @@ conclusions, and do not read this file.
   - `_loss_max_dz` turns `alpha / 2` back into `alpha` through a bare 2.
   - No test of `adapt_delta_z` on DDGPE; `alpha2` is not in
     `CNLSE._gpu_param_attrs`, so a batched `alpha2` on a device is unverified.
+  - The RK4-ignores-splitting test runs `NLSE` only; the second reviewer
+    also ran `NLSE_1d` by hand, nobody ran `NLSE_3d` or `GPE`.
+  - `method` is never validated: `"rk4"` runs split-step without a word.
   - Not run: CuPy and OpenCL for this series.
 
 The final report has to say, beyond what "Review findings left as they are"

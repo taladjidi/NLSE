@@ -267,12 +267,41 @@ def test_the_second_component_loss_caps_the_step(backend):
     )
 
 
-def second_component_lossy(backend):
-    """Return a CNLSE that loses on its second component only, and its field."""
-    simu = make(CNLSE, backend, n=SECOND_N, alpha=0.0)
-    simu.alpha2 = SECOND_ALPHA
+def one_component_lossy(backend, lossy):
+    """Return a CNLSE that loses on this component (0 or 1) only, and its field."""
+    simu = make(CNLSE, backend, n=SECOND_N, alpha=SECOND_ALPHA * (1 - lossy))
+    simu.alpha2 = SECOND_ALPHA * lossy
     isat = 2 * simu.I_sat / (epsilon_0 * c)
     return simu, np.full((2, SECOND_N, SECOND_N), np.sqrt(isat), dtype=np.complex64)
+
+
+def second_component_lossy(backend):
+    """Return a CNLSE that loses on its second component only, and its field."""
+    return one_component_lossy(backend, 1)
+
+
+def rk4_bound_in_a_run(backend, lossy):
+    """Return the loss rate and the RK4 bound as a run reads them.
+
+    A run has planned its transforms, which puts the rates on the device path.
+
+    Parameters
+    ----------
+    backend : str
+        Backend to run on.
+    lossy : int
+        The component that loses, 0 or 1.
+
+    Returns
+    -------
+    tuple of float
+        The loss rate in 1/m and the largest stable RK4 step in m.
+    """
+    simu, host = one_component_lossy(backend, lossy)
+    field = simu._backend.from_numpy(host)
+    simu.plans = simu._build_fft_plan(field)
+    assert simu._can_rate_on_device(field)
+    return simu._energy_rates(field)["loss"], simu._rk4_max_dz(field)
 
 
 def test_the_second_component_loss_enters_the_loss_rate(backend):
@@ -287,6 +316,21 @@ def test_the_second_component_loss_enters_the_loss_rate(backend):
     """
     simu, field = second_component_lossy(backend)
     assert simu._energy_rates(field)["loss"] == pytest.approx(SECOND_ALPHA / 2)
+
+
+def test_the_second_component_loss_bounds_rk4_in_a_run(backend):
+    """The same loss gives the same RK4 bound on either component.
+
+    9.56e-4 m here; 6.15e-3 m, 6.4 times looser, if only ``alpha`` is read.
+
+    Parameters
+    ----------
+    backend : str
+        Backend to run on.
+    """
+    loss, bound = rk4_bound_in_a_run(backend, 1)
+    assert loss == pytest.approx(SECOND_ALPHA / 2)
+    assert bound == pytest.approx(rk4_bound_in_a_run(backend, 0)[1])
 
 
 def test_yoshida_warns_about_the_second_component_loss(backend):

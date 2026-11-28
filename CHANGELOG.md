@@ -73,8 +73,9 @@ come first.
   ceiling (`alpha2`, DDGPE's `gamma2`), RK4's stability bound and the
   "Yoshida with loss" warning read `alpha` alone. A `CNLSE` lossy on its
   second component stepped past the ceiling (4% off the closed-form decay
-  where the capped run is 0.2% off), and its RK4 bound was about 550 times
-  looser than with the same loss on the first.
+  where the capped run is 0.2% off), and its RK4 bound was 6.4 times
+  looser than with the same loss on the first (`alpha2` = 5e3 /m, 16² grid:
+  6.15e-3 m against 9.56e-4 m).
 - **`adapt_delta_z` returns a step everywhere.** Past the medium, or with no
   interaction, the peak phase rate is zero and the callback divided by it;
   it now keeps the step in force. It also never asks for a step past the

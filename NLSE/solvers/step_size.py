@@ -73,7 +73,13 @@ class StepSize:
     _loss_constants = ("_alpha_half",)
 
     def _peak_loss_half(self) -> float:
-        """Return the largest ``alpha / 2`` over the components and the batch."""
+        """Return the largest ``alpha / 2`` over the components and the batch.
+
+        Returns
+        -------
+        float
+            That rate, in the units of the solver's loss.
+        """
         # Through the host: a batched run holds its constants on the device.
         return float(
             max(

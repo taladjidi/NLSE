@@ -100,7 +100,7 @@ The `DDGPE` class extends CNLSE to solve the driven-dissipative Gross-Pitaevskii
 - Exciton-photon Rabi coupling ($\Omega$)
 - Cavity and exciton dispersion relations ($\omega_\text{cav}(\mathbf{k})$, $\omega_\text{exc}$)
 - Exciton-exciton interactions ($g$) and an exciton-cavity cross term ($g_{12}$)
-- Losses on both fields ($\gamma$): `gamma` on the exciton, `gamma2` on the cavity
+- Losses on both fields: $\gamma_X$ (`gamma`) on the exciton, $\gamma_C$ (`gamma2`) on the cavity
 - External laser driving (pump)
 - Detuning from the lower polariton ($\delta$)
 

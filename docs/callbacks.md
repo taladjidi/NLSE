@@ -164,8 +164,9 @@ see it: the shorter one when a step was cut to land on `L` or on `z`.
 ### `adapt_delta_z_to_error` -- step sizing from a measured error
 
 `adapt_delta_z` reads the step off the peak nonlinear phase rate, divides by
-twelve and caps it at the split-step limit. That is a *rate*: it says how fast the phase turns and nothing about
-how much of the answer the splitting is losing. This one measures instead —
+twelve and caps it at the split-step limit. That is a *rate*: it says how
+fast the phase turns and nothing about how much of the answer the splitting
+is losing. This one measures instead —
 every `update_every` steps it takes the same distance once whole and once in
 two halves and compares, then solves for the step that would have hit the
 tolerance.

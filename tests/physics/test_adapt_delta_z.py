@@ -33,6 +33,7 @@ K2_OVER_K = 1.5
 # (2.28 against 1.84, in k * 1e-9 * INTENSITY * sat), at 0.05 the first
 # (1.64 against 1.38).
 SECOND_INTENSITY_FRACTIONS = (0.3, 0.05)
+I_SAT2 = 4e5  # W/m^2, so the second intensity saturates on its own scale
 
 # Relative; float32 |A|^2 against the float64 closed form. Measured 3.8e-9
 # (GPE) and 8.7e-9 (NLSE) on CPU and MLX.
@@ -129,6 +130,9 @@ def test_the_cnlse_step_counts_the_cross_coupling(backend):
 def test_the_cnlse_step_follows_the_faster_component(backend, fraction):
     """``dz = 1 / (12 max_i k_i (|n_ii| I_i + |n12| I_j) sat)`` m.
 
+    ``sat = 1 / (1 + I1 / Isat + I2 / Isat2)``, and the rate the default step
+    and RK4's bound read is the same one.
+
     Parameters
     ----------
     backend : str
@@ -152,13 +156,15 @@ def test_the_cnlse_step_follows_the_faster_component(backend, fraction):
     )
     simu.n22 = N22
     simu.k2 = K2_OVER_K * simu.k
+    simu.I_sat2 = I_SAT2
     I1, I2 = INTENSITY, fraction * INTENSITY
     A = np.empty((2, N_GRID, N_GRID), dtype=np.complex64)
     A[0] = np.sqrt(2 * I1 / (c * epsilon_0))
     A[1] = np.sqrt(2 * I2 / (c * epsilon_0))
-    got = adapt_delta_z(simu, simu._backend.from_numpy(A), 0.0, 0, 1, [])
+    A = simu._backend.from_numpy(A)
+    got = adapt_delta_z(simu, A, 0.0, 0, 1, [])
     k = 2 * np.pi / WAVELENGTH
-    sat = 1 / (1 + (I1 + I2) / I_SAT)
+    sat = 1 / (1 + I1 / I_SAT + I2 / I_SAT2)
     rate = sat * max(
         k * (abs(N2) * I1 + abs(N12) * I2),
         K2_OVER_K * k * (abs(N22) * I2 + abs(N12) * I1),
@@ -166,3 +172,5 @@ def test_the_cnlse_step_follows_the_faster_component(backend, fraction):
     assert got == pytest.approx(1 / (STEPS_PER_LENGTH * rate), rel=STEP_REL_TOL), (
         f"CNLSE asked for {got} at I2 = {fraction} I1. (Backend {backend})"
     )
+    # On a uniform field the weighted mean the default step reads is the peak.
+    assert simu._energy_rates(A)["interaction"] == pytest.approx(rate, rel=STEP_REL_TOL)

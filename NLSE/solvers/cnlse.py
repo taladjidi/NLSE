@@ -173,6 +173,11 @@ class CNLSE(NLSE):
             First component's ``|A|^2``.
         I2 : float or np.ndarray
             Second component's ``|A|^2``.
+
+        Returns
+        -------
+        float
+            The larger of the two rates, at its peak over the grid and batch.
         """
         g11, g12, g21, g22 = (
             np.abs(self._as_host_array(self._constant(name)))

@@ -56,10 +56,10 @@ $\omega_p$:
 $$
 \begin{split}
 i\partial_t\psi_X &= \left(\omega_X - \omega_p + V + g|\psi_X|^2 s
-  - g_{12}|\psi_C|^2 s - \frac{i\gamma}{2}s\right)\psi_X
+  - g_{12}|\psi_C|^2 s - \frac{i\gamma_X}{2}s\right)\psi_X
   + \frac{\Omega}{2}\psi_C \\
 i\partial_t\psi_C &= \left(\omega_C\sqrt{1 - \nabla^2/k_z^2} - \omega_p + V
-  - g_{12}|\psi_X|^2 s - \frac{i\gamma}{2}s\right)\psi_C
+  - g_{12}|\psi_X|^2 s - \frac{i\gamma_C}{2}s\right)\psi_C
   + \frac{\Omega}{2}\psi_X + F_p
 \end{split}
 $$
@@ -72,8 +72,9 @@ where
   $\omega_{LP} = \frac{\omega_X + \omega_C}{2}
   - \frac{1}{2}\sqrt{(\omega_X - \omega_C)^2 + \Omega^2}$ the lower polariton
 - $\Omega$ is `omega`, the Rabi coupling
-- $g$ and $g_{12}$ are `g` and `g12`; $\gamma$ is the loss: `gamma` the exciton's,
-  `gamma2` the cavity's (an alias of `alpha2`), both starting at the constructor's `gamma`
+- $g$ and $g_{12}$ are `g` and `g12`; $\gamma_X$ and $\gamma_C$ are the losses:
+  `gamma` the exciton's, `gamma2` the cavity's (an alias of `alpha2`), both
+  starting at the constructor's `gamma`
 - $V$ is the potential, on both fields
 - $s = 1/(1 + |\psi_X|^2/I_\text{sat} + |\psi_C|^2/I_\text{sat})$, 1 by default
 - $F_p$ is the pump, applied by the `laser_excitation` argument of `out_field`
