@@ -167,6 +167,16 @@ def test_a_single_precision_run_is_left_alone():
         )
 
 
+def test_an_rk4_run_is_not_advised_on_its_splitting():
+    """RK4 does not split, so a double precision run hears nothing about it."""
+    simu = solver()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        simu.out_field(
+            beam(), L, delta_z=WARNING_STEP, verbose=False, plot=False, method="RK4"
+        )
+
+
 def test_an_unknown_splitting_is_refused():
     """It used to fall through to Lie, silently."""
     simu = solver()

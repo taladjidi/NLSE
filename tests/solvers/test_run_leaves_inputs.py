@@ -9,6 +9,12 @@ WINDOW = 4e-3  # m
 Z = 1e-4  # m, distance each run propagates
 POTENTIAL = 1e-6  # largest value of the potential, small enough to change nothing
 BATCH_N2 = (-1e-9, -2e-9)  # m^2/W, one per simulation of a batch
+# Parameters given as numpy scalars: power in W, n2 in m^2/W, alpha in 1/m.
+SCALAR_PARAMETERS = {
+    "power": np.float32(1.0),
+    "n2": np.float32(-1e-9),
+    "alpha": np.float32(1.0),
+}
 
 
 def solver(backend, **kwargs):
@@ -69,6 +75,18 @@ def test_a_batched_parameter_comes_back_as_the_array_given(backend):
     simu = solver(backend, n2=n2)
     run(simu, np.ones((len(BATCH_N2), N, N), dtype=np.complex64))
     assert simu.n2 is n2, f"{backend}: n2 came back as {simu.n2.dtype}"
+
+
+def test_a_numpy_scalar_parameter_comes_back_as_given(backend):
+    """An ``np.float32`` parameter is the caller's scalar after the run.
+
+    Not a 0-d array: the next run reads one as a batch and leaves the fast loop.
+    """
+    simu = solver(backend, **SCALAR_PARAMETERS)
+    run(simu, np.ones((N, N), dtype=np.complex64))
+    for name, value in SCALAR_PARAMETERS.items():
+        kept = getattr(simu, name)
+        assert kept is value, f"{backend}: {name} came back as {type(kept).__name__}"
 
 
 def test_a_real_field_is_refused_with_a_type_error(backend):

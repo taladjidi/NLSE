@@ -362,7 +362,9 @@ class NLSE(StepSize):
             raise TypeError(f"E_in must be complex64 or complex128, not {E_in.dtype}")
         self._check_batch_support(E_in)
         field_dtype = self._field_dtype(E_in)
-        self._warn_about_splitting(splitting, field_dtype)
+        if method != "RK4":
+            # RK4 does not split, so the advice would be about a scheme not run.
+            self._warn_about_splitting(splitting, field_dtype)
         # Rebuilt below once delta_z is settled; drop the previous run's so
         # the transfer does not carry it.
         self.propagator = None
@@ -724,7 +726,7 @@ class NLSE(StepSize):
 
     def _has_loss(self) -> bool:
         """Whether anything in the run removes norm from the field."""
-        if np.any(np.asarray(self.alpha) != 0):
+        if self._peak_loss_half() != 0:
             return True
         V = self.V
         return V is not None and np.iscomplexobj(V) and np.any(np.imag(V) != 0)
@@ -2100,7 +2102,9 @@ class NLSE(StepSize):
         if self._backend.broadcasts_parameters_natively:
             for attr in self._gpu_param_attrs:
                 val = getattr(self, attr)
-                if not isinstance(val, (int, float)):
+                # Any host scalar, numpy's included: converted, np.float32 came
+                # back a 0-d array, which the next run took for a batch.
+                if not np.isscalar(val):
                     setattr(self, attr, self._host_value(attr, val))
         self._sent_arrays.clear()
 
@@ -2513,7 +2517,8 @@ class NLSE(StepSize):
         V : np.ndarray or None
             Potential, needed to re-derive the constants outside the medium.
         """
-        merged = self._merges_strang_halves(splitting)
+        # RK4 does not split: bracketing its steps would change the run.
+        merged = method != "RK4" and self._merges_strang_halves(splitting)
         step = step_factory(delta_z, "lie" if merged else splitting)
         self._current_delta_z = delta_z
         start = 0.0

@@ -17,6 +17,8 @@ class CNLSE(NLSE):
     _run_state_attrs = (*NLSE._run_state_attrs, "_V2_scaled")
     # Both intra- and inter-component couplings switch off past the medium.
     _medium_attrs = (*NLSE._medium_attrs, "n12", "n22", "alpha2")
+    # The second component's loss bounds the step as the first one's does.
+    _loss_constants = (*NLSE._loss_constants, "_alpha2_half")
     # A merged Strang run brackets its Lie steps with the scalar
     # `_nonlinear_step`, which has neither the cross coupling nor the second
     # loss, so no coupled run merges.
@@ -153,21 +155,40 @@ class CNLSE(NLSE):
                 potential = max(potential, abs(mean(weight, total, np.real(V))))
         rates["potential"] = potential
 
-        g11 = np.abs(self._as_host_array(self._constant("_g11")))
-        g12 = np.abs(self._as_host_array(self._constant("_g12")))
-        g21 = np.abs(self._as_host_array(self._constant("_g21")))
-        g22 = np.abs(self._as_host_array(self._constant("_g22")))
+        rates["interaction"] = self._fastest_interaction_rate(
+            mean(w1, t1, w1), mean(w2, t2, w2)
+        )
+        return rates
+
+    def _fastest_interaction_rate(self, I1: Any, I2: Any) -> float:
+        """Return the fastest interaction rate of either component.
+
+        Component i turns at ``(|g_ii| I_i + |g_ij| I_j) sat``, with one
+        saturation ``1 / (1 + I1/Isat1 + I2/Isat2)`` for both, as the coupled
+        kernels apply it.
+
+        Parameters
+        ----------
+        I1 : float or np.ndarray
+            First component's ``|A|^2``.
+        I2 : float or np.ndarray
+            Second component's ``|A|^2``.
+
+        Returns
+        -------
+        float
+            The larger of the two rates, at its peak over the grid and batch.
+        """
+        g11, g12, g21, g22 = (
+            np.abs(self._as_host_array(self._constant(name)))
+            for name in ("_g11", "_g12", "_g21", "_g22")
+        )
         Isat1 = self._as_host_array(self._constant("_Isat_conv"))
         Isat2 = self._as_host_array(self._constant("_Isat_conv2"))
-
-        I1, I2 = mean(w1, t1, w1), mean(w2, t2, w2)
         sat = 1 / (1 + I1 / Isat1 + I2 / Isat2)
         # Batched runs carry one value per simulation; reduce with max so the
         # step satisfies the fastest component of the fastest simulation.
-        rates["interaction"] = float(
-            np.max(np.maximum((g11 * I1 + g12 * I2) * sat, (g22 * I2 + g21 * I1) * sat))
-        )
-        return rates
+        return float(np.max(np.maximum(g11 * I1 + g12 * I2, g22 * I2 + g21 * I1) * sat))
 
     def _max_local_linear_rate(self) -> float:
         """Return the fastest point-by-point linear rate of the coupled system.
@@ -183,6 +204,14 @@ class CNLSE(NLSE):
         if self.omega is not None:
             rate += float(np.max(np.abs(self._as_host_array(self.omega)))) / 2
         return rate
+
+    def _max_interaction_rate(self, A: np.ndarray) -> float:
+        """Return the fastest interaction rate of either component, at its peak."""
+        A_host = self._as_host_array(A)
+        A_sq = A_host.real * A_host.real + A_host.imag * A_host.imag
+        return self._fastest_interaction_rate(
+            A_sq[self._component(0)], A_sq[self._component(1)]
+        )
 
     def _propagator_rk4_cache_key(self) -> tuple:
         """Return cache key for coupled RK4 dispersion operator."""

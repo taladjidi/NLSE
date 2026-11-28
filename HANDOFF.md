@@ -97,6 +97,37 @@ conclusions, and do not read this file.
   - `docs/optimization-log.md:210-212` ("Already built") still reads as if
     the coupled solvers merged.
   - Not run: CuPy and OpenCL (the box was timing); DDGPE read only.
+- **Solver review, round 1** (`fix/solver-review-round1`, eight findings of
+  a fresh-context review, then two fix rounds, each on a fresh review).
+  Landed: every
+  loss read goes through `_loss_constants` / `_peak_loss_half` (step
+  ceiling, RK4 bound, Yoshida warning); `adapt_delta_z` returns `None` at a
+  zero rate, is capped by `_split_step_max_dz` and counts `g12`
+  (`_max_interaction_rate`); RK4 gets neither splitting advice nor the
+  Strang bracket (in 4.1.0 too; rel. diff 1.8 at `n2` = -1e-9 m²/W, 1 W on
+  a 2 mm window, `L` = 5 cm, 64², default step, and 1.6e-6 at the test's
+  parameters, hence its `array_equal`); GPE keeps the
+  caller's `sat`; DDGPE's `gamma2` is `Parameter("alpha2")`, so the cavity
+  loss ends at `T`; `_estimated_rates` deleted. `ty-baseline.json` 99 -> 87.
+  Decided alone: the `gamma2`/`alpha2` alias (public, in the changelog).
+  Left, all MINOR:
+  - `out_field` still cuts an RK4 run's step by `YOSHIDA_SPAN` when given
+    `splitting="yoshida"`, and `adapt_delta_z` caps an RK4 run by the
+    split-step limit, not `_rk4_max_dz`.
+  - `adapt_delta_z` on a batched `CNLSE` called outside a run takes the max
+    over cross pairs of simulations (11599.7 where 5799.9 is due): the
+    fallback constants have shape (B,1,1,1). Right in a run; safe side.
+  - `adapt_delta_z` costs one transform a call now: 1.84 -> 5.91 ms (NLSE)
+    and 3.86 -> 15.54 ms (CNLSE) at 1024², CPU, the reviewer's timing.
+  - Past the medium the step in force differs from the medium's last by
+    6e-8 relative (a float32 round trip somewhere in the restore), unexplained.
+  - `_loss_max_dz` turns `alpha / 2` back into `alpha` through a bare 2.
+  - No test of `adapt_delta_z` on DDGPE; `alpha2` is not in
+    `CNLSE._gpu_param_attrs`, so a batched `alpha2` on a device is unverified.
+  - The RK4-ignores-splitting test runs `NLSE` only; the second reviewer
+    also ran `NLSE_1d` by hand, nobody ran `NLSE_3d` or `GPE`.
+  - `method` is never validated: `"rk4"` runs split-step without a word.
+  - Not run: CuPy and OpenCL for this series.
 
 The final report has to say, beyond what "Review findings left as they are"
 and "Still open" list:
@@ -327,7 +358,8 @@ and "Still open" list:
     majors, an SBOM artifact and a commit-message hook.
   - Not checked: the CuPy and OpenCL extras were not synced from the lock
     on the box.
-- Defects the audit found, none fixed, the first three for the owner:
+- Defects the audit found, the first two for the owner (a third,
+  `_loss_max_dz` reading `alpha` only, was fixed on 2026-11-28):
   - `_loss_max_dz` (`NLSE/solvers/step_size.py`) divides by `2 * alpha` while
     the kernels receive `alpha / 2`: the kernel's `u` at the cap is 0.025,
     and the comments there and in `NLSE/kernels/cpu.py` say 0.05. Safe side.
@@ -335,9 +367,6 @@ and "Still open" list:
   - `DDGPE` flips the sign of `g` but not of `g12` nor `g2`
     (`NLSE/solvers/ddgpe.py`); `tests/solvers/test_parameter_names.py` pins
     the current sign.
-  - `_loss_max_dz` reads `alpha` only; `CNLSE` and `DDGPE` hand the kernels
-    `alpha2` too, so a larger `alpha2` or `gamma2` can pass the limit the
-    kernel assumes. Read from the code, not run.
   - `benchmarks/nsys_summary.py`: a "Total Time"-only table parses to an
     empty list, and `parse()` reads on into the next table.
   - The comments "Lossless, or too lossy to solve" in `NLSE/kernels/cpu.py`
@@ -407,8 +436,7 @@ and "Still open" list:
   step-changing callback or a batched `omega`; `docs/solvers_overview.md:263`
   says a positive imaginary potential removes power, which is the NLSE
   convention and now the opposite of DDGPE's.
-- p3: `_estimated_rates` uses an optical intensity for GPE when no field is
-  given; the floor of `adapt_delta_z_to_error`, `L/1e5`, is 0 for a GPE; the
+- p3: the floor of `adapt_delta_z_to_error`, `L/1e5`, is 0 for a GPE; the
   default GPE step ignores the kinetic term; no test with `g < 0`, `V < 0` or
   complex128.
 - p4: `nl_length=np.inf` is accepted and gives NaN; the smoothed intensity can
