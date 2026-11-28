@@ -95,26 +95,49 @@ and not a GPU one.
 The bandwidth ceiling itself moves about 15% between runs, so every percentage
 below carries that: nothing under ~15% apart is a difference.
 
-Compulsory traffic per grid point, counting each array a step must read and
-write once: **104 B** for single-precision split-step, **120 B** double,
-**624 B** for RK4. Two thirds of the split-step figure is the transform pair.
+Compulsory traffic per grid point, counted on the path the step took
+(`step_path`): **104 B** for a single-precision split step done as separate
+passes; **64 B** where CuPy's cuFFT store callbacks carry the propagator in
+the forward transform and the nonlinear step in the inverse one; **48 B** for
+the CPU's three-pass blocked step, whose propagator is two vectors, not a
+grid; **624 B** for RK4. Strang is charged as Lie: with no callback and no
+potential or a real one, its half steps merge.
 
-Fraction of the floor reached (complex64, no potential):
+The tool used to charge every backend the separate path. Runs of it from
+d28d9aa (2026-08-04, which limits the split step by dispersion) until 13345a4
+also timed a 1e-5 m step that the solver lowered at 4096² (to 2.8e-6 m
+on the tool's beam), so their 4096² column counted about 3.6 steps per step;
+the tool now steps 1e-6 m and fails a run whose step was lowered. The
+2026-07-31 tables this replaces (eedccbb, 92f9133) predate that limit.
 
-| | 512² | 1024² | 2048² | 4096² |
-|---|---|---|---|---|
-| CPU split_step | 27% | 25% | 27% | 27% |
-| CL split_step | 93% | 70% | 62% | 62% |
-| MLX split_step | 63% | 78% | 53% | 48% |
-| MLX RK4 | 89% | 103% | 72% | 70% |
+Share of each ceiling, complex64, no potential, Lie, median of 5 runs on
+2026-11-28, commit 9b685c3, macOS-27.2.1-arm64-arm-64bit-Mach-O, Python
+3.13.18, 16 CPU threads, numpy 2.4.6, scipy 1.18.0, numba 0.66.0, pyopencl
+2026.1.2, mlx-metal 0.32.0, mlx 0.32.0. The ceilings in these runs: 351–366
+GB/s, 9.48–9.63 TFLOP/s and 74.2–77.7 G/s on the GPU; 243–247 GB/s, 0.62–0.63
+TFLOP/s and 3.0–3.3 G/s on the CPU.
+
+| backend | grid | path | B/pt | step | memory | flops | sin+cos+exp | bound |
+|---|---|---|---|---|---|---|---|---|
+| CPU | 1024² | separate | 104 | 1.714 ms | 26% | 21% | 19% | memory |
+| CPU | 2048² | separate | 104 | 5.774 ms | 31% | 28% | 23% | memory / flops (within noise) |
+| CPU | 4096² | blocked | 48 | 22.034 ms | 15% | 32% | 24% | flops |
+| MLX | 1024² | separate | 104 | 0.301 ms | 99% | 8% | 5% | memory |
+| MLX | 2048² | separate | 104 | 1.821 ms | 67% | 6% | 3% | memory |
+| MLX | 4096² | separate | 104 | 7.049 ms | 69% | 6% | 3% | memory |
+
+Strang was timed in the same runs and equals Lie within 2.5%, except MLX at
+2048², where it is 5% faster (1.723 against 1.821 ms, the two ranges apart).
+That one is not explained.
 
 Three things follow.
 
-**The GPU backends are at 50-80% of a hard bound**, so the remaining headroom
-there is under 2x and mostly in the transform. **The CPU sits at 25-30%**, and
-above 1024² its binding ceiling is not bandwidth but flops and transcendentals
-— which is what the `_sincos` and `_exp` polynomials below were aimed at, and
-where what is left also lies.
+**The GPU backends are at 67-99% of the memory ceiling**, so the remaining
+headroom there is under 1.5x and mostly in the transform, 64 of the 104 B.
+**The CPU sits at 26-32% of its binding ceiling**: memory at 1024², memory and
+flops within noise at 2048², flops at 4096², with sin+cos+exp behind at
+19-24% — the transcendentals are what the `_sincos` and `_exp` polynomials
+below were aimed at.
 
 **Below 1024² nothing is bandwidth-bound; it is all dispatch.** Fixed cost per
 step, measured as a step on a 64² grid: **CL 0.44 ms, MLX 0.05 ms** for
@@ -271,22 +294,40 @@ same numbers is what makes them the hardware rather than the framework.
 | fp32 fused multiply-add | 8.1 TFLOP/s | 0.46 TFLOP/s |
 | sin + cos + exp | 84 G/s | 1.3 G/s |
 
-| of floor | 1024² | 2048² | 4096² |
-|---|---|---|---|
-| CPU split_step | 42% | 37% | 37% |
-| CUPY split_step single | 94% | 91% | 73% |
-| CUPY split_step double | 108% | 106% | 84% |
-| CUPY RK4 | 114% | 113% | 93% |
+Re-run on 2026-11-27 with `CPU CUPY CL`, commit 67d5b6e, median of 5 runs
+(Linux-7.3.4-200.fc44.x86_64-x86_64-with-glibc2.43, Python 3.12.16, 8 CPU
+threads, numpy 2.5.5, scipy 1.18.1, numba 0.68.1, cupy-cuda13x 14.2.0,
+pyopencl 2026.1.5). The ceilings in these runs: 208 GB/s, 8.12–8.22 TFLOP/s
+and 84.7–86.0 G/s on the GPU; 32 GB/s, 0.46 TFLOP/s and 0.7–1.0 G/s on the
+CPU, whose sin+cos+exp probe reads lower than the 1.3 above and moves between
+runs. That is not explained.
 
-**CuPy is at the bandwidth bound and has essentially nothing left**: at or over
-100% up to 2048², and 73–93% at 4096² where the grid no longer fits in cache.
-Dispatch there costs 0.011 ms per step, forty times less than Apple's OpenCL.
+| backend | grid | path | B/pt | step | memory | flops | sin+cos+exp | bound |
+|---|---|---|---|---|---|---|---|---|
+| CUPY | 1024² | callbacks | 64 | 0.390 ms | 83% | 7% | 3% | memory |
+| CUPY | 2048² | callbacks | 64 | 1.598 ms | 81% | 8% | 3% | memory |
+| CUPY | 4096² | callbacks | 64 | 8.832 ms | 59% | 6% | 2% | memory |
+| CL | 1024² | separate | 104 | 0.601 ms | 87% | 5% | 2% | memory |
+| CL | 2048² | separate | 104 | 3.337 ms | 63% | 4% | 1% | memory |
+| CL | 4096² | separate | 104 | 18.736 ms | 45% | 3% | 1% | memory |
+| CPU | 1024² | blocked | 48 | 8.087 ms | 20% | 6% | 17% | memory / sin+cos+exp (within noise) |
+| CPU | 2048² | blocked | 48 | 30.967 ms | 21% | 7% | 17% | memory |
+| CPU | 4096² | blocked | 48 | 139.606 ms | 18% | 7% | 15% | memory |
+
+Double precision and RK4 were not re-run; their 2026-07-31 figures are in
+92f9133.
+
+**CuPy is at 83%, 81% and 59% of the bandwidth bound at 1024², 2048² and
+4096²**, on the 64 B per point of its callbacks path; at 4096² the grid no
+longer fits in cache. Dispatch there costs 0.011 ms per step, forty times less
+than Apple's OpenCL (not re-measured).
 
 The two machines differ in which ceiling binds the CPU, and it is the hardware
 rather than the code. That box streams **32 GB/s against the M3 Max's 240** — a
 desktop's dual-channel DDR against unified memory — so every CPU row there is
-memory-bound, where on the Mac flops and transcendentals bind above 1024². Its
-sin+cos+exp rate is also half the Mac's (1.3 against 2.5 G/s), consistent with
+memory-bound, where on the Mac memory and flops tie at 2048² and flops bind at
+4096². Its sin+cos+exp rate is also a quarter of the Mac's (0.8 against 3.2
+G/s), consistent with
 `USING_SVML` being false on that x86 too while NEON vectorizes the polynomials.
 Conclusions about *which* CPU ceiling to attack do not transfer between them.
 

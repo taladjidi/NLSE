@@ -151,9 +151,79 @@ repository, on every backend installed, and the full suite takes a while.
 [Contributing](docs/contributing.md#development-setup) sets up the environment
 they need and [lists the commands](docs/contributing.md#running-tests).
 
-The benchmarks can be run using [`examples/benchmarks.py`](examples/benchmarks.py) and compare a "naive" numpy implementation of the main solver loop to our solver.
-We also compare for the example of the vortex precession presented in [`FourierGPE.jl`](https://github.com/AshtonSBradley/FourierGPE.jl/blob/master/examples/2dvortexprecession.jl) to our solver.
-On a Nvidia RTX4090 GPU and Ryzen 7950X CPU, we test our solver to the following results:
+## Performance
+
+One split step (complex64, no potential, Lie splitting), timed by
+[`benchmarks/roofline.py`](benchmarks/roofline.py) at the usual grid sizes
+against ceilings the same script measures on the same machine. A percentage is
+the time the hardware would need for the step's compulsory traffic or work at
+that ceiling, over the time the step took: 100% is running at the ceiling, and
+the largest is what limits the step. Bytes per point is the compulsory traffic
+of the path the step took. Each figure is the median of 5 runs, after a first
+one that is discarded.
+
+**Apple M3 Max (40 GPU cores)**, 2026-11-28, commit [9b685c3](https://github.com/taladjidi/NLSE/commit/9b685c3):
+macOS 27.2.1 (arm64), Python 3.13.18, 16 CPU threads; numpy 2.4.6, scipy
+1.18.0, numba 0.66.0, pyopencl 2026.1.2, mlx 0.32.0. Ceilings: memory 351–366
+GB/s (GPU), 243–247 GB/s (CPU); FP32 FMA 9.48–9.63 TFLOP/s (GPU), 0.62–0.63
+TFLOP/s (CPU); sin+cos+exp 74.2–77.7 G/s (GPU), 3.0–3.3 G/s (CPU).
+
+| Backend | Grid | Bytes/point | Step | Memory | FP32 flops | sin+cos+exp | Limited by |
+|---|---|---|---|---|---|---|---|
+| CPU | 1024² | 104 | 1.714 ms | 26% | 21% | 19% | memory bandwidth |
+| CPU | 2048² | 104 | 5.774 ms | 31% | 28% | 23% | memory bandwidth / FP32 flops |
+| CPU | 4096² | 48 | 22.034 ms | 15% | 32% | 24% | FP32 flops |
+| MLX | 1024² | 104 | 0.301 ms | 99% | 8% | 5% | memory bandwidth |
+| MLX | 2048² | 104 | 1.821 ms | 67% | 6% | 3% | memory bandwidth |
+| MLX | 4096² | 104 | 7.049 ms | 69% | 6% | 3% | memory bandwidth |
+
+**NVIDIA GeForce RTX 3050 + AMD Ryzen 3 4100**, 2026-11-27, commit
+[67d5b6e](https://github.com/taladjidi/NLSE/commit/67d5b6e): Linux 7.3.4 (Fedora 44, x86_64), Python 3.12.16, CUDA
+13.2, driver 620.70.06, 8 CPU threads; numpy 2.5.5, scipy 1.18.1, numba
+0.68.1, cupy-cuda13x 14.2.0, pyopencl 2026.1.5. Ceilings: memory 208 GB/s
+(GPU), 32 GB/s (CPU); FP32 FMA 8.12–8.22 TFLOP/s (GPU), 0.46 TFLOP/s (CPU);
+sin+cos+exp 84.7–86.0 G/s (GPU), 0.7–1.0 G/s (CPU).
+
+| Backend | Grid | Bytes/point | Step | Memory | FP32 flops | sin+cos+exp | Limited by |
+|---|---|---|---|---|---|---|---|
+| CUPY | 1024² | 64 | 0.390 ms | 83% | 7% | 3% | memory bandwidth |
+| CUPY | 2048² | 64 | 1.598 ms | 81% | 8% | 3% | memory bandwidth |
+| CUPY | 4096² | 64 | 8.832 ms | 59% | 6% | 2% | memory bandwidth |
+| CL | 1024² | 104 | 0.601 ms | 87% | 5% | 2% | memory bandwidth |
+| CL | 2048² | 104 | 3.337 ms | 63% | 4% | 1% | memory bandwidth |
+| CL | 4096² | 104 | 18.736 ms | 45% | 3% | 1% | memory bandwidth |
+| CPU | 1024² | 48 | 8.087 ms | 20% | 6% | 17% | memory bandwidth / sin+cos+exp |
+| CPU | 2048² | 48 | 30.967 ms | 21% | 7% | 17% | memory bandwidth |
+| CPU | 4096² | 48 | 139.606 ms | 18% | 7% | 15% | memory bandwidth |
+
+Strang splitting was timed in the same runs and takes the same time to within
+6%: its half steps merge.
+
+Why. A split step does 220–260 flops per grid point: two FFTs, the propagator
+and the nonlinear phase. What it must move depends on how it runs:
+104 B per point when each stage is its own pass, about 2.3 flops per byte.
+The GPUs can do 26.6 (M3 Max) and 39.1 (RTX 3050) flops per byte they move,
+far more than the step asks, so CUPY, CL and MLX are memory-bound. CuPy moves
+only 64 B per point: cuFFT store callbacks carry the propagator in the forward
+transform and the nonlinear step in the inverse one. At 1024², MLX and CL run
+within noise of the bandwidth ceiling, so the only way to go faster there is
+to move fewer bytes. CuPy reaches 83%, 81% and 59% of bandwidth at 1024²,
+2048² and 4096², CL 63% and 45% at 2048² and 4096², MLX 67% and 69%: they
+move more than the compulsory bytes or wait on something else. The M3 Max
+CPU's tuning picks its step per grid: the three-pass blocked step (48 B per
+point, about 5 flops per byte) at 4096², the plain one (104 B, about 2.3) at
+1024² and 2048², against a balance of 2.6 flops per byte, and is near none of
+the three ceilings (largest 32%, FP32 flops, at 4096²). The Ryzen 3 4100 CPU
+takes its three-pass blocked step at every size, 48 B per point, 4.6–5.4
+flops per byte, against a balance of 14.4, and is near none of the three
+ceilings (largest 21%, memory bandwidth). The
+[optimization log](docs/optimization-log.md#what-the-machine-allows) has the
+method and its history.
+
+Earlier figure, June 2024 (RTX 4090 and Ryzen 7950X, an older version of the
+solver): [`examples/benchmarks.py`](examples/benchmarks.py) against a plain
+numpy split step, and the vortex precession of
+[`FourierGPE.jl`](https://github.com/AshtonSBradley/FourierGPE.jl/blob/master/examples/2dvortexprecession.jl).
 ![benchmarks](img/benchmarks.png)
 
 ## Choosing a splitting
