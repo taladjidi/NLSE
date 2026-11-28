@@ -17,6 +17,7 @@ from NLSE import (
     norm,
     sample,
 )
+from NLSE.solvers.nlse import YOSHIDA_SPAN
 from NLSE.solvers.step_size import LOSS_PER_STEP_LIMIT
 from scipy.constants import c, epsilon_0
 
@@ -94,6 +95,25 @@ CADENCE_STEPS = 7
 MEASURED_STEPS = [0, 3, 6]
 TRIALS_PER_MEASURE = 2
 ANY_Z = 0.0
+
+
+# An RK4 run a controller used to push past RK4's bound: beam waist and length
+# in m, starting step in m, grid points. From the step doubled once, 2e-4 m,
+# the run returned NaN (bound 1.7e-4 m, measured on CPU).
+RK4_WAIST = 1e-3
+RK4_LENGTH = 1e-2
+RK4_START = 1e-4
+RK4_N = 64
+SCHEMES = [("split_step", "lie"), ("split_step", "yoshida"), ("RK4", "lie")]
+
+
+def limit_of(simu, field, scheme):
+    """Return the step limit of a scheme, from the limits themselves."""
+    method, splitting = scheme
+    if method == "RK4":
+        return simu._rk4_max_dz(field)
+    span = YOSHIDA_SPAN if splitting == "yoshida" else 1.0
+    return simu._split_step_max_dz(field) / span
 
 
 def _buffers():
@@ -471,6 +491,49 @@ def test_adapt_delta_z_to_error_measures_on_its_cadence_only(backend, monkeypatc
     ]
     assert measured == MEASURED_STEPS
     assert trial.call_count == TRIALS_PER_MEASURE * len(MEASURED_STEPS)
+
+
+@pytest.mark.parametrize("scheme", SCHEMES, ids="-".join)
+def test_the_controllers_hold_to_the_limit_of_the_scheme(scheme, monkeypatch):
+    """Both adaptive callbacks stop at the limit of the scheme that runs.
+
+    Parameters
+    ----------
+    scheme : tuple
+        Method and splitting of the run.
+    monkeypatch : pytest.MonkeyPatch
+        Replaces the trial propagation by one with no error.
+    """
+    simu = NLSE(backend="CPU", **{**BASE, "alpha": CAPPING_ALPHA})
+    simu._scheme_in_force = scheme
+    field = simu._backend.from_numpy(uniform_field(INTENSITY))
+    cap = limit_of(simu, field, scheme)
+    simu._current_delta_z = simu._step_in_force = cap
+    monkeypatch.setattr(
+        callbacks, "_trial_propagation", functools.partial(scaled_trial, error=0.0)
+    )
+    by_error = adapt_delta_z_to_error(simu, field, 0.0, 0, TOLERANCE, 1, BOUNDS, SAFETY)
+    assert by_error == pytest.approx(cap, rel=STEP_RTOL)
+    assert adapt_delta_z(simu, field, 0.0, 0, 1, []) <= cap * (1 + STEP_RTOL)
+
+
+def test_an_rk4_run_under_the_error_controller_stays_finite():
+    """The controller does not grow an RK4 step past RK4's bound."""
+    simu = NLSE(
+        backend="CPU",
+        **{**BASE, "L": RK4_LENGTH, "NX": RK4_N, "NY": RK4_N, "Isat": np.inf},
+    )
+    X, Y = np.meshgrid(simu.X, simu.Y)
+    field = np.exp(-(X**2 + Y**2) / RK4_WAIST**2).astype(np.complex64)
+    out = simu.out_field(
+        field,
+        RK4_LENGTH,
+        delta_z=RK4_START,
+        method="RK4",
+        verbose=False,
+        callback=adapt_delta_z_to_error,
+    )
+    assert np.isfinite(out).all(), "the controller drove RK4 out of its bound"
 
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
