@@ -66,27 +66,38 @@ was decided alone is under "Decided alone" below.
    solvers (two fix rounds), the backends, the docs pages (round 1), the
    kernels (rounds 1 and 2), the test suite's four MAJOR gaps, `examples/`
    and `benchmarks/` (round 1). Nothing is in flight. Next rounds, none
-   started: the debloat candidates the reviews named (listed in the night's
-   entries below), a second docs round, a review of what round 1 of the
-   examples did not open.
-2. **README headline performance** (docs). Spec, revision 2:
-   `docs/readme_perf.md` in the specs directory. Branch
-   `docs/readme-performance` (`9b685c3`, worktree `scratchpad/wt-perf`), not
-   merged: the roofline fix and its tests are applied.
-   - Box: done. Use the second set, `box2_run{1..6}.txt` in
-     `docs/readme_perf_runs/` of the specs directory (the first set's CL
-     4096² rows were bad and the runs were repeated); the first run of a set
-     is discarded; `summarize_runs.py` beside them prints the table.
-   - Mac: not measured. Run the spec's loop (CPU, MLX; six runs) on mains,
-     nothing else running, no agent testing, with
-     `UV_PROJECT_ENVIRONMENT=<scratchpad>/perf/venv-perf` so the repo's
-     `.venv` gets no pyopencl.
-   - Then the README section (task C) and the log entry (task D), citing the
-     box tree `67d5b6e` and the Mac tree `9b685c3`; doc tests; reviewer;
-     gate; merge; push.
-   - Decisions taken for the owner, to report: the June 2024 figure moves
-     into the new section, labelled (O1); Lie rows only, Strang measured as a
-     check (O2); measured ceilings only, no rated figures (O3).
+   started: a second docs round, a review of what round 1 of the examples
+   did not open. The examples' debloat candidates are dismissed (see that
+   round's entry).
+2. **README headline performance** (docs): done, branch
+   `docs/readme-performance`. The README has `## Performance` and the
+   optimization log's Mac and box tables are these runs. Spec, revision 2:
+   `docs/readme_perf.md` in the specs directory; the run files are beside it
+   in `docs/readme_perf_runs/` (`box2_run{1..6}.txt` at `67d5b6e`,
+   2026-11-27; `mac_run{1..6}.txt` at `9b685c3`, 2026-11-28; the first run
+   of a set is discarded; `summarize_runs.py <prefix>` prints the medians).
+   - Mac runs: on mains, no agent running; Firefox was using about 19% of a
+     core when they started. The CPU path is mixed there (plain at 1024² and
+     2048², blocked at 4096²), blocked at every size on the box.
+   - Decided alone: the June 2024 figure moves into the new section,
+     labelled (O1); Lie rows only, Strang measured as a check (O2); measured
+     ceilings only, no rated figures (O3); a ceiling whose min and max print
+     the same is written once; the box CPU row at 1024² reads "memory
+     bandwidth / sin+cos+exp" (17% against 20%, exactly the 15% rule).
+   - Fresh review: every number matched the runs; three MAJORs, all text,
+     fixed (the log's July ceilings table and its sentences now carry these
+     runs; the two "open" levers in "Lowering the floor" say they are built;
+     the README no longer says moving fewer bytes is the only way at 1024²).
+     The fixes were read by me, not by a second reviewer.
+   - Left: Strang is 5% faster than Lie on MLX at 2048² (1.723 against
+     1.821 ms, ranges apart), unexplained; the box CPU's sin+cos+exp probe
+     reads 0.7–1.0 G/s where July's read 1.3, unexplained; CuPy's drop to
+     59% of bandwidth at 4096², unexplained; the log's dispatch figures (CL
+     0.44 ms, MLX 0.05 ms, CuPy 0.011 ms) and its "dual-channel DDR" clause
+     are July's, not re-measured; double precision and RK4 were not re-run;
+     the run files record no commit (the trees were clean at the named
+     ones); the two machines ran tool commits 13 lines apart (a refusal of
+     disturbed timings, no change to a measurement).
 3. **Afterwards, the owner's earlier order:** the GPU P4 patches (fix their
    spec first), thread counts per machine in the tuner, the increment-form
    linear step for complex64 (recommend only), the fewer-passes lessons on
@@ -331,9 +342,13 @@ was decided alone is under "Decided alone" below.
   - `jones_roberts_solitons.py`: the docstring's numbers are not verified.
     `tests/test_examples.py` and `tests/test_benchmarks.py` parse, never
     run. Nested functions in examples nobody touched.
-  - Debloat candidates: `fig1_benchmarks.py` into `benchmarks.py`;
-    `vortex_precession_animation.py` into `vortex_precession_benchmark.py`;
-    `vortex_shedding.py` split.
+  - Debloat candidates, looked at and dismissed (decided alone):
+    `fig1_benchmarks.py` into `benchmarks.py` (it is the paper's figure 1,
+    backends by method, and its own gallery page; 125 lines);
+    `vortex_precession_animation.py` into `vortex_precession_benchmark.py`
+    (189 of their 257 lines differ: an animation and a timing, two gallery
+    pages); `vortex_shedding.py` split (moves 810 lines, removes none, and a
+    gallery example is one file).
   - Dismissed: a MAJOR on `rayleigh_taylor.py` (false, V is minus a
     potential energy there); `NOISE = 0.0` is deliberate.
   - Not opened: `trace_solvers.py`, `nsys_summary.py`,

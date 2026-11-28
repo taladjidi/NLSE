@@ -202,6 +202,11 @@ come first.
   waits on the stream instead of copying the result to the host, so a cached
   timing no longer compares with a new one, and the file holds one record
   per grid size; `CACHE_VERSION` 4 discards an older one.
+- **The README has a Performance section.** One split step per backend at
+  1024², 2048² and 4096², as a share of the memory, flops and sin+cos+exp
+  ceilings `benchmarks/roofline.py` measures on the same machine, on an M3
+  Max and on an RTX 3050 with a Ryzen 3 4100. The June 2024 figure moves to
+  the section's end.
 - **The README links to the guide instead of summarising it.** Its copies of
   the physics, the solvers, the callbacks, the step size and the backends had
   drifted from the pages they copied: it said the CUPY backend transforms

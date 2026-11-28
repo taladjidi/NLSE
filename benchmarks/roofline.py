@@ -19,8 +19,8 @@ achievable fraction of a rated figure is what a step actually gets:
 
 Bandwidth is measured in the DRAM regime, on arrays far larger than a grid,
 and one number is used at every size. A grid small enough to sit in cache is
-fed faster than that, so such a step can come out **above 100% of the floor**:
-that is the reading, not an error -- it says the grid fitted in cache and beat
+fed faster than that, so its memory share can come out **above 100%**: that
+is the reading, not an error -- it says the grid fitted in cache and beat
 DRAM, and that bandwidth is no longer what limits it. Making the ceiling
 size-dependent instead was tried and is worse: the probe's working set is a
 third of a step's, so it reports cache rates a step cannot reach, and the
@@ -33,12 +33,14 @@ MLX cannot be driven to its own hardware's peak from Python, which is a fact
 about the probe, not about MLX.
 
 A step is charged for compulsory traffic only: every array it must read and
-write, counted once. Real traffic can only be larger, so the floor is a true
-lower bound and the percentages are upper bounds on how much room is left.
+write, counted once, on the path the step took (`step_path`). Real traffic can
+only be larger, so each floor is a true lower bound. A row gives the measured
+step's share of each ceiling, and the largest share is what bounds it.
 """
 
 import argparse
 import math
+import platform
 import time
 
 import numpy as np
@@ -46,6 +48,37 @@ import numpy as np
 # What a 2D transform costs per grid point: rows then columns, each pass
 # reading and writing the array, and 5 N log2 N flops per 1D transform.
 FFT_PASSES = 4  # array-sized reads and writes per 2D transform
+# Array-sized reads and writes of a whole blocked CPU step: three passes, each
+# reading and writing the field once (NLSE/kernels/cpu_blocked.py).
+BLOCKED_STEP_PASSES = 6
+# What one split step does per grid point besides its transforms: a complex
+# multiply by the propagator, and the nonlinear step's flops and its one
+# sin+cos+exp, as this tool has always charged them (not re-derived here).
+PROPAGATOR_FLOPS = 6
+NONLINEAR_FLOPS = 14.0
+NONLINEAR_TRANSCENDENTALS = 1.0
+GIGA = 1e9  # the ceilings are in G per second
+MS_PER_S = 1e3
+PERCENT = 100
+# The timed beam, SI units: 1.05 W in a defocusing medium saturating at
+# 1e5 W/m^2, in an 8 mm window over a 10 mm cell; a Gaussian of BEAM_WAIST (m).
+BEAM = {
+    "alpha": 0.0,
+    "power": 1.05,
+    "window": 8e-3,
+    "n2": -1.6e-9,
+    "L": 10e-3,
+    "Isat": 1e5,
+}
+BEAM_WAIST = 2e-3
+# Step every timed run takes (m): under the split-step dispersion limit of
+# BEAM's window up to 4096x4096, 3.11e-6 m there (`_dispersion_max_dz`).
+# A grid where the solver lowers it fails its measurement.
+STEP_DZ = 1e-6
+WARMUP_STEPS = 2  # steps run before timing, which build plans and kernels
+TIMING_REPEATS = 3  # a timing is the fastest of this many runs
+# The import names of the packages a timing depends on, named in its header.
+TIMED_PACKAGES = ("numpy", "scipy", "numba", "cupy", "pyopencl", "mlx")
 
 
 def fft_bytes(itemsize):
@@ -58,11 +91,36 @@ def fft_flops(n):
     return 10 * math.log2(n)
 
 
-def step_cost(method, splitting, n, itemsize, has_V):
+def step_cost(method, splitting, n, itemsize, has_V, path):
     """Return (bytes, flops, transcendentals) per grid point for one step.
 
-    Counted from what the solver dispatches: see `split_step_fused` and
-    `rk4_rhs_fused` in the backend kernels.
+    Parameters
+    ----------
+    method : str
+        "split_step" or "RK4".
+    splitting : str
+        "lie" or "strang". Strang is charged as Lie: with no callback and no
+        potential or a real one, the solver merges its half steps
+        (`_merges_strang_halves`); a complex potential would not merge.
+    n : int
+        Points per axis.
+    itemsize : int
+        Bytes of a complex element.
+    has_V : bool
+        Whether the step reads a potential.
+    path : str
+        How the split step ran, as `step_path` names it. RK4 is charged its
+        separate passes whatever this is.
+
+    Returns
+    -------
+    tuple of float
+        Bytes, flops and sin+cos+exp evaluations per grid point.
+
+    Raises
+    ------
+    ValueError
+        For a splitting or a path this has no charge for.
     """
     c = itemsize  # a complex element
     r = itemsize // 2  # a real one
@@ -71,14 +129,21 @@ def step_cost(method, splitting, n, itemsize, has_V):
     ffts = fft_flops(n)
 
     if method == "split_step":
-        # fft, propagator multiply, ifft, nonlinear step.
-        nl_b, nl_f, nl_t = 2 * c + v, 14.0, 1.0
-        nonlinear = 2 if splitting == "strang" else 1
-        return (
-            2 * f + 3 * c + nonlinear * nl_b,
-            2 * ffts + 6 + nonlinear * nl_f,
-            nonlinear * nl_t,
-        )
+        if splitting not in ("lie", "strang"):
+            raise ValueError(f"no charge for splitting {splitting!r}")
+        nl_b = 2 * c + v
+        moved = {
+            # fft, propagator multiply, ifft, nonlinear step: a pass each.
+            "separate": 2 * f + 3 * c + nl_b,
+            # cuFFT store callbacks: the propagator in the forward transform's
+            # store, the nonlinear step in the inverse's.
+            "callbacks": 2 * f + v,
+            "blocked": BLOCKED_STEP_PASSES * c + v,
+        }
+        if path not in moved:
+            raise ValueError(f"path must be one of {sorted(moved)}, got {path!r}")
+        flops = 2 * ffts + PROPAGATOR_FLOPS + NONLINEAR_FLOPS
+        return moved[path], flops, NONLINEAR_TRANSCENDENTALS
 
     # RK4: four right-hand sides, each a transform pair plus an additive
     # nonlinear term, and the stage updates between them.
@@ -420,43 +485,167 @@ def measure_ceilings(device, verbose=False):
 
 
 def time_step(backend_name, n, method, splitting, steps=12):
-    """Seconds per step, measured as a slope so setup cancels."""
+    """Seconds per step, measured as a slope so setup cancels, and its path.
+
+    Returns
+    -------
+    tuple of (float, str)
+        Seconds per step, and the path the step took (`step_path`).
+
+    Raises
+    ------
+    RuntimeError
+        If the solver lowered the step, which the slope cannot divide out, if
+        the path changed while the step was timed, or if twice the steps took
+        no longer, which is a disturbed machine and not a step time.
+    """
+    simu, E = build_solver(backend_name, n)
+    propagate(simu, E, WARMUP_STEPS, method, splitting)
+    # The slope divides by the steps asked for: a lowered step takes more.
+    if simu._current_delta_z != STEP_DZ:
+        raise RuntimeError(
+            f"the solver lowered the step to {simu._current_delta_z:.2e} m "
+            f"from {STEP_DZ:.2e} m at {n}x{n}"
+        )
+    path = step_path(simu, method)
+    longer = fastest_run(simu, E, 2 * steps, method, splitting)
+    shorter = fastest_run(simu, E, steps, method, splitting)
+    if longer <= shorter:
+        raise RuntimeError(
+            f"{2 * steps} steps took {longer:.3g} s and {steps} took {shorter:.3g} s "
+            f"at {n}x{n}: the timing was disturbed"
+        )
+    seconds = (longer - shorter) / steps
+    if step_path(simu, method) != path:
+        raise RuntimeError(f"the step left the {path} path while it was timed")
+    return seconds, path
+
+
+def build_solver(backend_name, n):
+    """Return the timed solver on an n x n grid of ``backend_name``, and its beam."""
     from NLSE import NLSE
 
-    simu = NLSE(
-        alpha=0.0,
-        power=1.05,
-        window=8e-3,
-        n2=-1.6e-9,
-        V=None,
-        L=10e-3,
-        NX=n,
-        NY=n,
-        Isat=1e5,
-        backend=backend_name,
+    simu = NLSE(**BEAM, V=None, NX=n, NY=n, backend=backend_name)
+    E = np.exp(-(simu.XX**2 + simu.YY**2) / BEAM_WAIST**2).astype(np.complex64)
+    return simu, E
+
+
+def propagate(simu, E, steps, method, splitting):
+    """Propagate a copy of E by ``steps`` steps of STEP_DZ, and wait for it."""
+    out = simu.out_field(
+        E.copy(),
+        steps * STEP_DZ,
+        verbose=False,
+        plot=False,
+        normalize=False,
+        delta_z=STEP_DZ,
+        method=method,
+        splitting=splitting,
     )
-    E = np.exp(-(simu.XX**2 + simu.YY**2) / 2e-3**2).astype(np.complex64)
-    dz = 1e-5
+    simu._backend.synchronize(out)
 
-    def run(k):
-        out = simu.out_field(
-            E.copy(),
-            k * dz,
-            verbose=False,
-            plot=False,
-            normalize=False,
-            delta_z=dz,
-            method=method,
-            splitting=splitting,
-        )
-        simu._backend.synchronize(out)
 
-    run(2)
+def fastest_run(simu, E, steps, method, splitting):
+    """Seconds of the fastest of TIMING_REPEATS propagations of ``steps`` steps."""
+    return min(
+        _wall(lambda: propagate(simu, E, steps, method, splitting))
+        for _ in range(TIMING_REPEATS)
+    )
 
-    def once(k):
-        return min(_wall(lambda: run(k)) for _ in range(3))
 
-    return (once(2 * steps) - once(steps)) / steps
+def step_path(simu, method):
+    """Name the passes the solver's split step takes, for `step_cost`.
+
+    Parameters
+    ----------
+    simu : NLSE
+        A solver that has propagated.
+    method : str
+        "split_step" or "RK4".
+
+    Returns
+    -------
+    str
+        "blocked" where the CPU takes its three-pass step, "callbacks" where
+        CUPY's cuFFT store callbacks carry the propagator (forward transform)
+        and the nonlinear step (inverse transform), "separate" everywhere else.
+
+    Raises
+    ------
+    RuntimeError
+        If CUPY built one of those two callbacks and not the other.
+    """
+    from NLSE.kernels.templating import NONLINEAR_CALLBACK, SEPARABLE_CALLBACK
+
+    # RK4 is charged its separate passes on every backend: the callbacks in
+    # CUPY's slopes are not counted.
+    if method != "split_step":
+        return "separate"
+    name = simu._backend.name
+    if name == "CPU":
+        return "blocked" if simu.plans[0].blocked_step() is not None else "separate"
+    if name != "CUPY":
+        return "separate"
+    # Plans are cached per shape, so `_fused` also holds what an RK4 case built.
+    ours = {SEPARABLE_CALLBACK, NONLINEAR_CALLBACK} & set(simu.plans[0]._fused)
+    if len(ours) == 2:
+        return "callbacks"
+    if ours:
+        raise RuntimeError(f"CUPY fused only {sorted(ours)}: no charge for that step")
+    return "separate"
+
+
+def ceiling_shares(cost, points, ceiling, fixed, measured):
+    """Return the time each ceiling allows a step, over the time it took.
+
+    Parameters
+    ----------
+    cost : tuple of float
+        Bytes, flops and sin+cos+exp per grid point, from `step_cost`.
+    points : int
+        Grid points.
+    ceiling : dict
+        ``stream`` in GB/s, ``fma`` in GFLOP/s, ``trans`` in G/s.
+    fixed : float
+        Seconds a step costs before it touches data (`overhead`).
+    measured : float
+        Seconds the step took (`time_step`).
+
+    Returns
+    -------
+    dict
+        ``memory``, ``flops``, ``sincos`` and ``dispatch``: 1.0 is a step
+        running at that ceiling.
+    """
+    nbytes, flops, trans = cost
+    floors = {
+        "memory": nbytes * points / (ceiling["stream"] * GIGA),
+        "flops": flops * points / (ceiling["fma"] * GIGA),
+        "sincos": trans * points / (ceiling["trans"] * GIGA),
+        "dispatch": fixed,
+    }
+    return {name: floor / measured for name, floor in floors.items()}
+
+
+def configuration():
+    """Return one line naming what every timing ran on, the commit excepted.
+
+    Returns
+    -------
+    str
+        Platform, Python, the CPU threads the blocked step may use, and the
+        version of each of TIMED_PACKAGES that is installed.
+    """
+    from importlib.metadata import packages_distributions, version
+
+    from NLSE.backends.cpu_tuning import available_threads
+
+    dists = packages_distributions()
+    installed = [f"{d} {version(d)}" for m in TIMED_PACKAGES for d in dists.get(m, ())]
+    return (
+        f"{platform.platform()}, Python {platform.python_version()}, "
+        f"{available_threads()} CPU threads, " + ", ".join(installed)
+    )
 
 
 _OVERHEAD: dict = {}
@@ -472,7 +661,7 @@ def overhead(backend_name, method, splitting):
     """
     key = (backend_name, method, splitting)
     if key not in _OVERHEAD:
-        _OVERHEAD[key] = time_step(backend_name, 64, method, splitting)
+        _OVERHEAD[key] = time_step(backend_name, 64, method, splitting)[0]
     return _OVERHEAD[key]
 
 
@@ -495,6 +684,7 @@ def main(argv=None):
 
     backends = args.backends or list_available_backends()
     itemsize = 8  # complex64
+    print(configuration())
 
     for n in args.sizes:
         working = n * n * itemsize
@@ -512,40 +702,38 @@ def main(argv=None):
                 )
 
         print(
-            f"\n  {'backend':<7} {'case':<20} {'work':>8} {'+fixed':>8}"
-            f" {'= floor':>8} {'limit':>7} {'measured':>9} {'of floor':>9}"
+            f"\n  {'backend':<7} {'case':<20} {'path':<9} {'B/pt':>5}"
+            f" {'measured':>9} {'memory':>7} {'flops':>7} {'sincos':>7}"
+            f" {'dispatch':>8}  bound"
         )
         for backend_name in backends:
             device = DEVICE_OF[backend_name]
             if device not in ceilings:
+                print(f"  {backend_name:<7} no {device} ceiling: no probe ran")
                 continue
             ceiling = ceilings[device]
             for case in args.cases:
                 method, splitting = case.split(":")
-                b, f, t = step_cost(method, splitting, n, itemsize, has_V=False)
-                pts = n * n
-                floors = {
-                    "memory": b * pts / (ceiling["stream"] * 1e9),
-                    "flops": f * pts / (ceiling["fma"] * 1e9),
-                    "sincos": t * pts / (ceiling["trans"] * 1e9),
-                }
-                which = max(floors, key=floors.get)
-                work = floors[which]
                 try:
                     fixed = overhead(backend_name, method, splitting)
-                    got = time_step(backend_name, n, method, splitting)
+                    got, path = time_step(backend_name, n, method, splitting)
+                    cost = step_cost(
+                        method, splitting, n, itemsize, has_V=False, path=path
+                    )
                 except Exception as exc:
                     print(f"  {backend_name:<7} {case:<20} {type(exc).__name__}: {exc}")
                     continue
-                # The larger of the two, not their sum: a GPU overlaps
-                # dispatch with the traffic of the kernel before it, so
-                # adding them is not a bound the hardware has to respect.
-                floor = max(work, fixed)
-                limit = which if work >= fixed else "dispatch"
+                shares = ceiling_shares(cost, n * n, ceiling, fixed, got)
+                # The largest share, not their sum: a GPU overlaps dispatch
+                # with the traffic of the kernel before it, so adding them is
+                # not a bound the hardware has to respect.
+                bound = max(shares, key=shares.get)
                 print(
-                    f"  {backend_name:<7} {case:<20} {work * 1e3:7.3f}m"
-                    f" {fixed * 1e3:7.3f}m {floor * 1e3:7.3f}m {limit:>7}"
-                    f" {got * 1e3:8.3f}m {100 * floor / got:7.0f} %"
+                    f"  {backend_name:<7} {case:<20} {path:<9} {cost[0]:5.0f}"
+                    f" {got * MS_PER_S:8.3f}m {PERCENT * shares['memory']:6.0f}%"
+                    f" {PERCENT * shares['flops']:6.0f}%"
+                    f" {PERCENT * shares['sincos']:6.0f}%"
+                    f" {PERCENT * shares['dispatch']:7.0f}%  {bound}"
                 )
     return 0
 
