@@ -285,9 +285,7 @@ extern "C" __global__ void rk4_nl_rhs_c(
 // {{END_VBLOCK}}
 
 // Whole-stage RK4, the slope kept in registers. A_orig may alias out (per index).
-//   mode 0 (stage 1)    acc = rhs;         out = A + c*rhs
-//   mode 1 (stages 2-3) acc = acc + w*rhs; out = A + c*rhs
-//   mode 2 (stage 4)    acc untouched;     out = A + c*(acc + rhs)
+// mode is an Rk4StageMode (templating.py): RK4_SET, RK4_ADD or RK4_SPEND.
 
 // {{VBLOCK}}
 extern "C" __global__ void square_mod_rk4_stage(
@@ -320,9 +318,9 @@ extern "C" __global__ void square_mod_rk4_stage(
     {{FP2_TYPE}} rhs = make_{{FP2_TYPE}}(lin_val.x + contrib_r, lin_val.y + contrib_i);
 
     {{FP2_TYPE}} carried = rhs;
-    if (mode != 0) {
+    if (mode != RK4_SET) {
         {{FP2_TYPE}} acc_val = acc[idx];
-        if (mode == 1) {
+        if (mode == RK4_ADD) {
             acc[idx] = make_{{FP2_TYPE}}(acc_val.x + w * rhs.x, acc_val.y + w * rhs.y);
         } else {
             carried = make_{{FP2_TYPE}}(acc_val.x + rhs.x, acc_val.y + rhs.y);
@@ -394,10 +392,10 @@ extern "C" __global__ void coupled_rk4_stage_c(
 
     {{FP2_TYPE}} carried1 = rhs1;
     {{FP2_TYPE}} carried2 = rhs2;
-    if (mode != 0) {
+    if (mode != RK4_SET) {
         {{FP2_TYPE}} acc1 = acc[idx];
         {{FP2_TYPE}} acc2 = acc[idx + N_sq];
-        if (mode == 1) {
+        if (mode == RK4_ADD) {
             acc[idx] = make_{{FP2_TYPE}}(acc1.x + w * rhs1.x, acc1.y + w * rhs1.y);
             acc[idx + N_sq] = make_{{FP2_TYPE}}(
                 acc2.x + w * rhs2.x, acc2.y + w * rhs2.y);

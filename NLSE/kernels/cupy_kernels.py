@@ -1282,7 +1282,7 @@ class CUDAKernels:
         plan : _CuFFTPlan
             Pre-built FFT plan.
         acc : cp.ndarray
-            Slope accumulator (modified in-place unless mode is 2).
+            Slope accumulator (modified in-place unless mode is SPEND).
         out : cp.ndarray
             Where the stage's result goes: the next stage's argument, or the
             field itself on the last stage.
@@ -1298,8 +1298,8 @@ class CUDAKernels:
             Weight this stage's slope carries into the accumulator.
         c : float
             Coefficient of the slope in the stage's output.
-        mode : int
-            0 to set the accumulator, 1 to add to it, 2 to spend it.
+        mode : Rk4StageMode
+            Whether to set the accumulator, add to it or spend it.
         unnorm_ifft : bool
             If True, the propagator carries the 1/N.
 
@@ -1366,7 +1366,7 @@ class CUDAKernels:
         plan : _CuFFTPlan
             Pre-built FFT plan.
         acc : cp.ndarray
-            Slope accumulator (modified in-place unless mode is 2).
+            Slope accumulator (modified in-place unless mode is SPEND).
         out : cp.ndarray
             Where the stage's result goes.
         A : cp.ndarray
@@ -1384,8 +1384,8 @@ class CUDAKernels:
             Weight this stage's slope carries into the accumulator.
         c : float
             Coefficient of the slope in the stage's output.
-        mode : int
-            0 to set the accumulator, 1 to add to it, 2 to spend it.
+        mode : Rk4StageMode
+            Whether to set the accumulator, add to it or spend it.
         omega : float or None
             Half the Rabi coupling, or None to skip it.
         unnorm_ifft : bool

@@ -65,9 +65,20 @@ class RabiPlacement(enum.IntEnum):
     AFTER = 2  # the nonlinear step, then rotate: closes a Lie or Strang step
 
 
+class Rk4StageMode(enum.IntEnum):
+    """What a whole-stage RK4 kernel does with the slope accumulator."""
+
+    SET = 0  # stage 1: acc = rhs, out = A + c*rhs
+    ADD = 1  # stages 2-3: acc += w*rhs, out = A + c*rhs
+    SPEND = 2  # stage 4: out = A + c*(acc + rhs), acc untouched
+
+
 # Prefix -> the modes a kernel takes as an int, rendered as #defines ahead of
 # the source so the device code names a mode as the Python caller does.
-SOURCE_MODES: dict[str, type[enum.IntEnum]] = {"RABI": RabiPlacement}
+SOURCE_MODES: dict[str, type[enum.IntEnum]] = {
+    "RABI": RabiPlacement,
+    "RK4": Rk4StageMode,
+}
 
 _V_UNDEF = "#undef V_ARG\n#undef V_PHASE\n#undef V_LOSS\n#undef V_PASS\n"
 

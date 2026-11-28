@@ -300,6 +300,17 @@ come first.
   `NLSE` at 1024², 2048² and 4096² and 1.10 to 1.12x for a `CNLSE` at 1024²
   and 2048² (RTX 3050, complex64); the steps are unchanged. Figures in
   `docs/optimization-log.md`.
+- **OpenCL runs each RK4 stage in one kernel.** The stage formed its slope in
+  one pass and spent it on the accumulator and the next argument in another;
+  `square_mod_rk4_stage` and `coupled_rk4_stage_c` now do both in registers,
+  as CUPY's whole-stage kernels already did, with the Rabi coupling's slope
+  in the coupled one. On an RTX 3050 in complex64 an OpenCL RK4 step is
+  1.16x, 1.12x and 1.08x faster for an `NLSE` at 1024², 2048² and 4096², and
+  1.15x, 1.11x and 1.09x for a `CNLSE`, identical results; a `CNLSE` with
+  `omega`, fused for the first time, is 3.5x and 2.8x faster at 1024² and
+  2048² and moves by 9e-7 of the peak. The RK4 stage modes are named,
+  `Rk4StageMode` in `kernels/templating.py`, in both backends' kernels.
+  Figures in `docs/optimization-log.md`.
 - One-step `out_field` at 2048² (M3 Max): CPU 73 → 47 ms, MLX 70 → 41 ms; the
   dispersion eigenvalues are kept and the normalization writes in place. The
   per-step time is unchanged.

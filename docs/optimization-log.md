@@ -1264,6 +1264,41 @@ tool's spread. Apple's compiler already lowers `exp`/`sincos` under
 entirely gains only ~1.3x on this backend, so the branch the CPU kernels carry
 is not worth adding here.
 
+**Whole-stage RK4 kernels — deployed** (2026-11-28). RTX 3050 8 GB, driver
+620.70.06, pyopencl 2026.1.5. An RK4 stage was a transform pair, then
+`square_mod_rk4_nl_rhs` writing the slope, then `rk4_acc_and_axpy` reading it
+back to update the accumulator and form the next argument. The CUDA backend
+fused the last two (`has_fused_rk4_stage`); OpenCL now has the same kernels,
+`square_mod_rk4_stage` and `coupled_rk4_stage_c`, the slope finished in
+registers and never written. The slope and the stage update are inline
+functions (`rk4_nl_slope`, `rk4_stage_carry`, `rk4_axpy_element`) that the
+per-pass kernels call too, so each sum is written once. The stage's mode is
+an `Rk4StageMode` rendered as `#define RK4_*` ahead of both backends'
+sources.
+
+Per step, complex64, lossless, no potential, `step_for` step. One process,
+before and after side by side, the order alternating over 8 rounds; slope
+between 10 and 60 steps, median, [min, max] of the per-round gain
+(`gpu_p4_r2_ab.py`):
+
+| solver | grid | before | after | gain [range] |
+|---|---|---|---|---|
+| `NLSE` | 1024² | 3.344 ms | 2.895 ms | **1.16x** [1.14, 1.16] |
+| `NLSE` | 2048² | 17.20 ms | 15.42 ms | **1.12x** [1.11, 1.12] |
+| `NLSE` | 4096² | 89.85 ms | 83.03 ms | **1.08x** [1.08, 1.09] |
+| `CNLSE` | 1024² | 6.626 ms | 5.755 ms | **1.15x** [1.15, 1.15] |
+| `CNLSE` | 2048² | 32.70 ms | 29.34 ms | **1.11x** [1.09, 1.12] |
+| `CNLSE` | 4096² | 178.2 ms | 165.4 ms | **1.09x** [1.05, 1.13] |
+| `CNLSE`, `omega` = 1e4 | 1024² | 20.29 ms | 5.755 ms | **3.53x** [3.52, 3.53] |
+| `CNLSE`, `omega` = 1e4 | 2048² | 80.51 ms | 29.24 ms | **2.75x** [2.74, 2.77] |
+
+Without `omega` the results are identical to the bit after 60 steps (these
+runs: complex64, lossless, no potential). With it, RK4 on OpenCL took the
+generic path; it is fused here for the first time, through the coupling's
+slope in `coupled_rk4_stage_c`, and moves by 9e-7 of the peak.
+The gain falls with the grid as the transforms, which this does not touch,
+take more of the step. Not measured: complex128, other OpenCL devices.
+
 ## MLX (Metal)
 
 **A lossless graph for a lossless run — deployed** (2026-08-01). The solved

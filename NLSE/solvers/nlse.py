@@ -16,6 +16,7 @@ import tqdm
 from scipy.constants import c, epsilon_0
 
 from ..backends import Backend, fastest_backend_supporting, get_backend
+from ..kernels.templating import Rk4StageMode
 from ..utils import (
     __BACKEND__,
     __CUPY_AVAILABLE__,
@@ -1028,7 +1029,7 @@ class NLSE(StepSize):
         A: np.ndarray,
         w: float,
         c: float,
-        mode: int,
+        mode: Rk4StageMode,
     ) -> np.ndarray:
         """Run one whole RK4 stage through the backend's fused kernel.
 
@@ -1051,8 +1052,8 @@ class NLSE(StepSize):
             The field the step started from.
         w, c : float
             Weights of this stage's slope in the accumulator and the output.
-        mode : int
-            0 to set the accumulator, 1 to add to it, 2 to spend it.
+        mode : Rk4StageMode
+            Whether to set the accumulator, add to it or spend it.
 
         Returns
         -------
@@ -1120,10 +1121,10 @@ class NLSE(StepSize):
         h = delta_z
         stage = self._RK4_fused_stage
         #        argument  out     w    c      mode
-        stage(A, V, propagator, plans, A_tmp, A, 1.0, h / 2, 0)
-        stage(A_tmp, V, propagator, plans, A_tmp, A, 2.0, h / 2, 1)
-        stage(A_tmp, V, propagator, plans, A_tmp, A, 2.0, h, 1)
-        stage(A_tmp, V, propagator, plans, A, A, 1.0, h / 6, 2)
+        stage(A, V, propagator, plans, A_tmp, A, 1.0, h / 2, Rk4StageMode.SET)
+        stage(A_tmp, V, propagator, plans, A_tmp, A, 2.0, h / 2, Rk4StageMode.ADD)
+        stage(A_tmp, V, propagator, plans, A_tmp, A, 2.0, h, Rk4StageMode.ADD)
+        stage(A_tmp, V, propagator, plans, A, A, 1.0, h / 6, Rk4StageMode.SPEND)
         return A
 
     def plot_field(self, A_plot: np.ndarray, z: float) -> None:

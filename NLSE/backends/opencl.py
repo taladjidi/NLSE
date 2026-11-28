@@ -87,6 +87,7 @@ class OpenCLBackend(Backend):
     supports_unnormalized_ifft = True
     has_fused_split_step = True
     has_fused_rk4_rhs = True
+    has_fused_rk4_stage = True
     has_fused_rk4_stage_update = True
     has_fused_coupled_split_step = True
     has_fused_coupled_rk4_rhs = True

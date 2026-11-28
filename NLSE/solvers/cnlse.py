@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.constants import c, epsilon_0
 
+from ..kernels.templating import Rk4StageMode
 from ..utils import __BACKEND__
 from .nlse import NLSE, show_if_possible
 
@@ -601,7 +602,7 @@ class CNLSE(NLSE):
         A: np.ndarray,
         w: float,
         c: float,
-        mode: int,
+        mode: Rk4StageMode,
     ) -> np.ndarray:
         """Run one whole coupled RK4 stage, both components at once."""
         V_scaled = self._V_scaled

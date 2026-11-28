@@ -72,6 +72,20 @@ def test_declared_capabilities_are_backed_by_kernels(backend_name):
 
 
 @pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
+def test_kernels_a_backend_has_are_declared(backend_name):
+    """Kernels no flag reaches are dead code, and the solver pays the slower path."""
+    backend = get_backend(backend_name)
+    kernels = backend.kernels
+    for flag, methods in CAPABILITY_METHODS.items():
+        if not all(hasattr(kernels, method) for method in methods):
+            continue
+        assert getattr(backend, flag), (
+            f"{backend_name} kernels have {methods} but the backend does not "
+            f"declare {flag}, so no solver path reaches them."
+        )
+
+
+@pytest.mark.parametrize("backend_name", AVAILABLE_BACKENDS)
 def test_required_kernels_are_present(backend_name):
     """The non-optional part of the kernel interface must be complete."""
     kernels = get_backend(backend_name).kernels
