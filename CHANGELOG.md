@@ -57,7 +57,7 @@ come first.
   saturation and the step limits. `power` is now `c ε0/2 Σ|E|² delta_X`, the
   intensity integrated across x: a Gaussian of waist `w` peaks at
   `√(2/π) power / w` on any grid. To keep the field an old run had, divide
-  its `power` by its `delta_X`, `window / NX`.
+  its `power` (and a `CNLSE_1d`'s `power2`) by its `delta_X`, `window / NX`.
 
 - **`backends.clear_backend_cache` is removed.** Nothing called it.
 
