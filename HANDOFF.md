@@ -57,7 +57,42 @@ merge included (timed there too: optimization log).
 
 ### Resume here (written 2026-11-28)
 
-`main` is pushed; its last change is `fix/closing-review` (item 3
+**Start here: the owner's answers of 2026-11-28** (eight questions, asked that
+morning). Two builds follow from them, neither started, each through the
+pipeline (architect, spec review, implementer, fresh reviewer):
+
+- *The 1D solvers take `power` in W/m* (breaking, for 5.0.0). `NLSE_1d` and
+  `CNLSE_1d` set `_norm_grid_factor = delta_X**2` (`nlse_1d.py:78`,
+  `cnlse_1d.py:87`); the cell becomes `delta_X`, so that
+  `c eps0 / 2 * sum(|E|^2) * delta_X` is the power per unit length and the
+  intensity at a given `power` no longer moves with `NX`. It reaches the two
+  docstrings (written for the old convention in `fix/closing-review`), the
+  changelog (Unreleased, breaking), the 1D tests, examples and docs that give
+  a power, and it needs a test that the peak intensity does not move with
+  `NX`.
+- *The MLX propagator as two vectors.* Measured (optimization log, MLX
+  section): 1.06x [1.03, 1.10] a step at 4096², nothing at 2048², noise at
+  1024², and the grid-sized propagator freed. The solver already builds the
+  factors for the CPU and CUPY (`_separable_propagator` in
+  `solvers/nlse.py`, handed over only where the operator is a sum per axis);
+  MLX's fused graphs take `propagator` in `_make_split_step`,
+  `_make_split_step_rk4` and `_make_split_step_coupled`
+  (`kernels/mlx_kernels.py`). The measurement covers the lossless Lie step
+  of `NLSE` only: the spec decides which graphs, and every one changed is
+  timed before and after at 1024², 2048² and 4096²
+  (`NLSE_tangui_fix_specs/sep_prop_mlx.py` is the prototype's A/B).
+
+The other answers: `V = 2 dn` stays, nothing to change; the increment-form
+linear step for complex64 is not built; 5.0.0 is held until the two builds
+land, then ask again; the thread counts are merged (item 3 below); numba's
+threading limits were already in `docs/backends.md` ("Threads and processes on
+CPU", `2b450b5`), so that question was stale, as was the entry under "Still
+open"; `CLAUDE.md` is corrected, by me with the owner's leave (seven
+statements; it is untracked, `.git/info/exclude`, so no commit shows it).
+
+`main` is pushed; its last changes are `docs/owner-decisions` (this section
+and two entries of the optimization log) and `perf/cpu-pcore-threads` (item 3
+below), before them `fix/closing-review` (item 3
 below), before it `docs/short-docstrings` (text only,
 item 1 below) and `perf/gpu-p4` (the four GPU
 patches, item 3 below; CI green on its merge `4a2ba41`, run 46115316410,
@@ -454,7 +489,7 @@ was decided alone is under "Decided alone" below.
        network).
      - Not verified: `ddgpe.py` binds `_random` once in `__init__`, so it
        would stay numpy's after `simu.backend = "CUPY"`.
-   - `CLAUDE.md` (the owner's file, not edited): line 77 still names
+   - `CLAUDE.md` (corrected since, 2026-11-28): line 77 still named
      `_no_coupled_batch_backends in solvers/cnlse.py`, now
      `Backend.supports_coupled_batch`; `NLSE_FUSE_PROPAGATOR` is missing
      from its list of variables.
@@ -516,11 +551,9 @@ was decided alone is under "Decided alone" below.
    in order:
    - Thread counts per machine: merged (`perf/cpu-pcore-threads`, the
      owner's choice on 2026-11-28; entry below).
-   - Fewer passes on OpenCL: measured, not built (a separable propagator
-     is 1.03 to 1.05 times a step on the box, 0.85 at 1024² on Apple's
-     OpenCL); the optimization log does not have the entry yet. On MLX:
-     not measured, `NLSE_tangui_fix_specs/sep_prop_mlx.py <tree> 1024
-     2048 4096` on an idle Mac (`sep_prop_cl.py` is the OpenCL one).
+   - Fewer passes: the propagator as two vectors is measured on OpenCL
+     (rejected) and on MLX (to be built, "Start here"); both entries are
+     in the optimization log.
    - The Mac profiles: not started. The final report: a first one was
      given to the owner on the morning of 2026-11-28, before these.
    Version 5.0.0 is neither bumped nor published.
@@ -796,7 +829,7 @@ was decided alone is under "Decided alone" below.
   `benchmarks/` and `docs/`; the formatter skips `*.md`. Left:
   - `docs/nlse_tutorial.ipynb` cell 23 sizes its samples `N_samples + 1`:
     the notebook stores its outputs, so it is the owner's to re-run.
-  - `CLAUDE.md` is the owner's to edit. Stale there: line 7 (CuPy transforms
+  - `CLAUDE.md` (corrected since, 2026-11-28). Stale there: line 7 (CuPy transforms
     with cuFFT, not VkFFT), 34-35 (lint paths), 57 (Strang is "still 1
     pair/step" for the scalar solvers only; a complex128 field moves off
     MLX), 87 (`D101` is not ignored), and `CACHE_VERSION` is 4.
@@ -946,7 +979,8 @@ was decided alone is under "Decided alone" below.
   `delta_X` thick and its peak intensity at a given power doubles with
   `NX` (the owner's commit `e8893da`, 2024-03-29); documented, numerics
   untouched. For the owner: (a) the cell `delta_X`, power in W/m,
-  breaking; (b) `delta_X * window`, breaking; (c) keep. The fixes were
+  breaking; (b) `delta_X * window`, breaking; (c) keep: the owner chose
+  (a) on 2026-11-28 ("Start here"). The fixes were
   written by me on a worktree, eighteen files, with no architect or
   implementer, then read fresh; one commit message was corrected before
   the push (a tuple of callbacks raised, it was not ignored).
@@ -1007,11 +1041,11 @@ and "Still open" list:
   architect's 64² smoke run may have left an entry in the default NLSE cache;
   an architect deleted a scratch directory named `r2` by mistake (only its
   own transcript names it).
-- The owner's to edit: `CLAUDE.md` lines 86-87 (stale ruff ignores), line
-  7 (CuPy uses cuFFT, not VkFFT), lines 34-35 (ruff now also takes
-  `benchmarks/ docs/`) and line 57 (Strang is one pair per step with or
-  without the merge, and only the scalar solvers merge); the debloat and
-  docs decisions left open.
+- Corrected on 2026-11-28 with the owner's leave: `CLAUDE.md` lines 86-87
+  (stale ruff ignores), line 7 (CuPy uses cuFFT, not VkFFT), lines 34-35
+  (ruff now also takes `benchmarks/ docs/`) and line 57 (Strang is one
+  pair per step with or without the merge, and only the scalar solvers
+  merge). Still the owner's: the debloat and docs decisions left open.
 
 ## Open work
 
@@ -1054,7 +1088,8 @@ and "Still open" list:
 - Per-call costs from the CUDA-box profile, below: P4 removed the
   propagator download and the repeated `_energy_rates`; the potential
   grids are still rebuilt.
-- MLX and OpenCL: the fewer-passes lessons are not ported.
+- The propagator as two vectors on MLX: to be built ("Start here"). On
+  OpenCL it is measured and rejected (optimization log).
 - The Mac profiles (CPU and MLX): see "Performance profiles".
 
 ### Left open by merged work
@@ -1350,12 +1385,6 @@ and "Still open" list:
 
 ### Still open, not fixed
 
-- Numba's threading layer limits the CPU backend, and nothing in the library
-  or the docs says so: on `workqueue` (no TBB, no OpenMP: the macOS CI
-  runner) two `out_field` calls in two threads abort the process, and on GNU
-  OpenMP (Linux without TBB) a forked child that runs the CPU backend is
-  killed. Neither comes from the blocked step. For the owner: document it
-  (docs pass), or hold a lock around the CPU run on `workqueue`.
 - A run with a callback never merges its Strang half steps
   (`_loop_with_callbacks` does not ask): 20 nonlinear calls for 10 Strang
   steps against 12 without, counted on CPU at 64x64. The methods page says
