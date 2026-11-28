@@ -242,8 +242,7 @@ class NLSE(StepSize):
         self._backend: Backend = get_backend(backend, grid_size=(NX, NY))
         self.n2 = n2
         self.V = V
-        self.wl = wvl
-        self.k = 2 * np.pi / self.wl
+        self.k = 2 * np.pi / wvl
         self.L = L  # length of the non linear medium
         self.alpha = alpha
         self.power = power
@@ -302,6 +301,19 @@ class NLSE(StepSize):
         """Set the backend, dropping the arrays the previous one built."""
         self._backend = get_backend(value, grid_size=(self.NX, self.NY))
         self._forget_device_state()
+
+    @property
+    def wl(self) -> float:
+        """Return the wavelength in m, ``2 pi / k``."""
+        return 2 * np.pi / self.k
+
+    @wl.setter
+    def wl(self, value: float) -> None:
+        """Set the wavelength in m, through ``k``, which every run reads.
+
+        On the coupled solvers it moves ``k2`` too, unless ``k2`` was set.
+        """
+        self.k = 2 * np.pi / value
 
     def out_field(
         self,

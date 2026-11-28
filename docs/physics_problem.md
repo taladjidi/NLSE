@@ -63,8 +63,8 @@ two frequencies, or a fluid and a defect beam -- with:
   ($n_2^{12}$) terms. The constructor takes `n2` and `n12`; `n22` is an
   attribute that starts equal to `n2`
 - Loss coefficients $\alpha_1$, $\alpha_2$: the constructor takes `alpha`, and
-  `alpha2` starts equal to it. `k2` and `I_sat2` likewise start at the first
-  component's values
+  `alpha2` starts equal to it. `I_sat2` likewise starts at the first
+  component's value, and `k2` follows `k` until it is set
 - One saturation for both, $s = 1/(1 + I_1/I_\text{sat} + I_2/I_\text{sat2})$
 - Rabi coupling ($\Omega$), `omega`; the default `None` leaves it out
 

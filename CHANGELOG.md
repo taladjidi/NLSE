@@ -63,6 +63,11 @@ come first.
 
 ### Fixed
 
+- **Setting `wl` sets `k`.** `simu.wl = ...` stored a wavelength nothing
+  read: runs went on at the old `k`. `wl` is now `2 pi / k`, read and
+  written through it. On `CNLSE` and `CNLSE_1d`, `k2` follows `k` until it
+  is assigned, so `wl` moves both components unless `k2` was set.
+
 - **The RK4 step limit holds on the nonlinear term.** `method="RK4"` counted
   the interaction weighted by the field and against the linear stability
   radius, 2.83. RK4 diverges on the cubic term from 1.547 rad per step at

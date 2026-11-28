@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
-from helpers import as_numpy, assert_c_contiguous, gaussian_beam, make
-from NLSE import CNLSE
+from helpers import WAVELENGTH2, as_numpy, assert_c_contiguous, gaussian_beam, make
+from NLSE import CNLSE, CNLSE_1d
 from scipy.constants import c, epsilon_0
 
 if CNLSE.__CUPY_AVAILABLE__:
@@ -237,6 +237,29 @@ def test_each_component_propagates_at_its_own_wavenumber(backend) -> None:
     assert np.allclose(rk4[1], -1j * 0.5 * (simu.Kxx**2 + simu.Kyy**2) / simu.k2), (
         f"the RK4 dispersion operator ignores k2. (Backend {backend})"
     )
+
+
+@pytest.mark.parametrize("cls", [CNLSE, CNLSE_1d])
+@pytest.mark.parametrize("assigned", [False, True], ids=["k2 unset", "k2 set"])
+def test_a_new_wavelength_moves_k2_until_k2_is_set(backend, cls, assigned) -> None:
+    """``wl`` moves both components' diffraction, only the first once k2 is set."""
+    simu = make(cls, backend, n=UNIFORM_N)
+    if assigned:
+        simu.k2 = 2 * np.pi / WAVELENGTH2
+    k2 = 2 * np.pi / (WAVELENGTH2 if assigned else SHORT_WAVELENGTH)
+    simu.wl = SHORT_WAVELENGTH
+    k_sq = simu._transverse_k_squared()
+    split = as_numpy(simu, simu._build_propagator(PRECISION_COMPLEX, DZ_TEST))
+    rk4 = as_numpy(simu, simu._build_propagator_rk4(PRECISION_COMPLEX))
+    for i, k in enumerate((2 * np.pi / SHORT_WAVELENGTH, k2)):
+        assert np.allclose(split[i], np.exp(-1j * 0.5 * k_sq / k * DZ_TEST)), (
+            f"{cls.__name__}, {backend}: component {i + 1}'s split-step "
+            f"propagator is not at k = {k:.6e} rad/m"
+        )
+        assert np.allclose(rk4[i], -1j * 0.5 * k_sq / k), (
+            f"{cls.__name__}, {backend}: component {i + 1}'s RK4 operator "
+            f"is not at k = {k:.6e} rad/m"
+        )
 
 
 @pytest.mark.parametrize("method", ["split_step", "RK4"])

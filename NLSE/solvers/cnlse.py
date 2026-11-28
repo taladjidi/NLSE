@@ -108,10 +108,20 @@ class CNLSE(NLSE):
         # same for the losses, this is to leave separate attributes so
         # the the user can chose whether or not to unbalence the rates
         self.alpha2 = self.alpha
-        # wavenumbers
-        self.k2 = self.k
+        # Second wavenumber: None follows k until k2 is assigned.
+        self._k2: float | None = None
         # powers
         self.power2 = self.power
+
+    @property
+    def k2(self) -> float:
+        """Return the second component's wavenumber in rad/m, ``k`` until set."""
+        return self.k if self._k2 is None else self._k2
+
+    @k2.setter
+    def k2(self, value: float) -> None:
+        """Set the second component's wavenumber in rad/m, apart from ``k``."""
+        self._k2 = value
 
     @property
     def _norm_target(self) -> np.ndarray:
