@@ -176,9 +176,25 @@ class TracingKernels:
 STEP_KEY = "__step__"
 
 
+def python_loop(self, step_fn, n_iters):
+    """Run the steps from Python, in place of a backend's `execute_loop`.
+
+    CUPY captures one iteration into a CUDA graph and replays it: a wrapper
+    or a profiler then sees the warmup and the capture, and nothing of the
+    steps (the first traced run reported 0.01 calls per step).
+    """
+    for _ in range(n_iters):
+        step_fn()
+
+
 @contextlib.contextmanager
 def tracing(simu, nvtx=False):
-    """Route a solver's kernels, transforms and steps through a recorder."""
+    """Route a solver's kernels, transforms and steps through a recorder.
+
+    The steps run from Python (`python_loop`), which is not the path a CUPY
+    run takes: the untraced total is timed apart, with the graph in use, and
+    the gap between the two is what graph replay is worth.
+    """
     backend = simu._backend
     recorder = Recorder(backend, nvtx=nvtx)
     cls = type(backend)
@@ -186,20 +202,6 @@ def tracing(simu, nvtx=False):
     traced = TracingKernels(backend.kernels, recorder)
 
     real_fft, real_ifft = cls.fft, cls.ifft
-
-    def plain_loop(self, step_fn, n_iters):
-        """Run the steps from Python so each one's kernels are visible.
-
-        CUPY captures one iteration into a CUDA graph and replays it, so the
-        wrappers below would see the warmup and the capture and nothing else:
-        the first run of this reported 0.01 calls per step and put the whole
-        step in "not in a kernel". Bypassing the graph makes the phases
-        visible, at the cost of measuring the unreplayed path -- which is why
-        the untraced total is taken separately, with the graph in use. The gap
-        between the two is what graph replay is worth.
-        """
-        for _ in range(n_iters):
-            step_fn()
 
     def timed_fft(self, array, plan, **kwargs):
         return recorder.measure("fft", real_fft, self, array, plan, **kwargs)
@@ -220,7 +222,7 @@ def tracing(simu, nvtx=False):
         mock.patch.object(cls, "kernels", property(lambda self: traced)),
         mock.patch.object(cls, "fft", timed_fft),
         mock.patch.object(cls, "ifft", timed_ifft),
-        mock.patch.object(cls, "execute_loop", plain_loop),
+        mock.patch.object(cls, "execute_loop", python_loop),
         mock.patch.object(solver_cls, "split_step", timed_step),
         mock.patch.object(solver_cls, "split_step_RK4", timed_rk4),
     ):
@@ -372,12 +374,7 @@ def without_cuda_graph(backend):
     itemises only the captured launches, so a 1440-step run reported 90
     apply_propagator launches and a kernel table that described the warmup.
     """
-
-    def plain(self, step_fn, n_iters):
-        for _ in range(n_iters):
-            step_fn()
-
-    with mock.patch.object(type(backend), "execute_loop", plain):
+    with mock.patch.object(type(backend), "execute_loop", python_loop):
         yield
 
 
