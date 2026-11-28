@@ -34,10 +34,19 @@ print(simu.backend)  # e.g., "CUPY"
 Specify a backend at creation:
 
 ```python
-simu = NLSE(..., backend="CPU")
-simu = NLSE(..., backend="CUPY")
-simu = NLSE(..., backend="CL")
-simu = NLSE(..., backend="MLX")
+# The medium of the example above, as keywords.
+medium = {
+    "alpha": 20,
+    "power": 1.0,
+    "window": 8e-3,
+    "n2": -1.6e-9,
+    "V": None,
+    "L": 10e-3,
+}
+simu = NLSE(**medium, backend="CPU")
+simu = NLSE(**medium, backend="CUPY")
+simu = NLSE(**medium, backend="CL")
+simu = NLSE(**medium, backend="MLX")
 ```
 
 ### Auto-benchmarking
@@ -45,7 +54,7 @@ simu = NLSE(..., backend="MLX")
 Use `backend="auto"` to benchmark all available backends and select the fastest for your grid size. It times a pair of transforms, not a whole step:
 
 ```python
-simu = NLSE(..., backend="auto")
+simu = NLSE(**medium, backend="auto")
 ```
 
 Benchmark results are cached to disk, in `fft_benchmark.json`, so subsequent runs reuse them. It keeps one record per grid size, so alternating grids do not evict each other; a file of an older version is replaced, and a record that timed other backends than the ones installed is measured again. The file goes in `NLSE_CACHE_DIR` if it is set, and otherwise in the platform's cache directory: `~/Library/Caches/NLSE` on macOS, `$XDG_CACHE_HOME/NLSE` (by default `~/.cache/NLSE`) on Linux, `%LOCALAPPDATA%\NLSE\Cache` on Windows.

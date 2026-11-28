@@ -51,12 +51,13 @@ or `.venv\Scripts\activate` on Windows.
 
 `pip install .` works just as well if you prefer it.
 
-Optional extras pull in the accelerated backends:
+Optional extras pull in the accelerated backends, and pint for units:
 
 ```bash
 uv pip install ".[gpu]"      # CuPy built from source, for Nvidia GPUs
 uv pip install ".[opencl]"   # PyOpenCL + pyvkfft, for OpenCL devices
 uv pip install ".[mlx]"      # MLX, for Apple silicon
+uv pip install ".[units]"    # pint, to give the arguments with their units
 ```
 
 For CuPy, the prebuilt wheel for your CUDA version (`cupy-cuda13x` or
@@ -100,6 +101,28 @@ simu = NLSE(
 E_0 = np.exp(-(simu.XX**2 + simu.YY**2) / waist**2).astype(np.complex64)
 simu.V = -1e-4 * np.exp(-(simu.XX**2 + simu.YY**2) / waist2**2)
 E = simu.out_field(E_0, L, verbose=True, plot=True, splitting="lie")
+```
+
+Every argument is given by keyword. With the `units` extra, every argument
+with a unit (those the solver's `UNITS` names) also takes a pint quantity;
+`NX`, `NY`, `backend` and `DDGPE`'s `power` take plain values and raise
+`TypeError` on a quantity. See [Units](docs/solvers_overview.md#units):
+
+```python
+import pint
+from NLSE import NLSE
+
+ureg = pint.UnitRegistry()
+simu = NLSE(
+    alpha=0.2 / ureg.cm,
+    power=1.05 * ureg.W,
+    window=8.92 * ureg.mm,
+    n2=-1.6e-5 * ureg.cm**2 / ureg.W,
+    V=None,
+    L=1 * ureg.cm,
+    NX=256,
+    NY=256,
+)
 ```
 
 Left to choose the step, the solver aims at a fixed phase per step from the

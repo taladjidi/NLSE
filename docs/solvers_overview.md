@@ -51,8 +51,22 @@ The DDGPE class allows to solve the temporal evolution of two coupled fields in 
 
 It was designed to study problems like the evolution of exciton polaritons in microcavities.
 
-It works in rates (rad/s), in the frame turning at the pump frequency
-$\omega_p$:
+Its equations are Eq. (1.87)-(1.88) of K. Guerrero-Feuillet's thesis,
+[*Rotational superradiance in a polariton quantum fluid*](https://theses.hal.science/tel-05677012)
+(Sorbonne Université, 2026, [p. 42](https://theses.hal.science/tel-05677012/file/158335_GUERRERO_FEUILLET_2026_archivage.pdf#page=42)), with a cross term `g12`
+and a saturation added. Its arguments are in the thesis's units:
+
+- from [Table 2.1](https://theses.hal.science/tel-05677012/file/158335_GUERRERO_FEUILLET_2026_archivage.pdf#page=78): `T` in ps, `window` and `nl_length` in
+  µm, `gamma` in 1/ps (ħγ = 0.07 meV) and `g` in rad·µm²/ps (ħg = 0.01
+  meV·µm²);
+- from [Table 3.1](https://theses.hal.science/tel-05677012/file/158335_GUERRERO_FEUILLET_2026_archivage.pdf#page=120): `omega`, `omega_exc`, `omega_cav` and
+  `detuning` in rad/ps, the energies it gives in meV over ħ;
+- from [Eq. (1.10)-(1.11)](https://theses.hal.science/tel-05677012/file/158335_GUERRERO_FEUILLET_2026_archivage.pdf#page=15): `k_z` in 1/µm;
+- derived, as the thesis does not state them: `V` in rad/ps, a rate like the
+  ω's; `g12`, not in the thesis, in the unit of `g`; and `Isat` in 1/µm²,
+  since $g|\psi|^2$ is a rate and so $|\psi|^2$ a density in 1/µm².
+
+It works in the frame turning at the pump frequency $\omega_p$:
 
 $$
 \begin{split}
@@ -90,7 +104,8 @@ from NLSE import NLSE, NLSE_1d, NLSE_3d, CNLSE, CNLSE_1d, GPE, DDGPE
 
 ### Creating a Solver
 
-Each solver takes physical parameters at initialization:
+Each solver takes physical parameters at initialization, by keyword only: a
+positional argument raises `TypeError`.
 
 ```python
 simu = NLSE(
@@ -108,6 +123,82 @@ simu = NLSE(
     backend="CPU",      # backend name
 )
 ```
+
+### Units
+
+A plain number is in the unit the solver's `UNITS` table gives the argument:
+SI for the optical solvers, SI with rates in rad/s for `GPE`, and ps and µm,
+with rates in rad/ps, for `DDGPE` (see [The `DDGPE` class](#the-ddgpe-class);
+its `power` is never read and has no unit). With the `units` extra (`pip
+install "NLSE[units]"`), every argument in `UNITS` also takes a
+[pint](https://pint.readthedocs.io) quantity of that unit's dimension:
+
+```python
+import pint
+from NLSE import NLSE
+
+ureg = pint.UnitRegistry()
+simu = NLSE(
+    alpha=0.2 / ureg.cm,
+    power=1.05 * ureg.W,
+    window=8 * ureg.mm,
+    n2=-1.6e-5 * ureg.cm**2 / ureg.W,
+    V=None,
+    L=1 * ureg.cm,
+    Isat=10 * ureg.W / ureg.cm**2,
+    wvl=780 * ureg.nm,
+)
+assert simu.alpha == 20.0  # in 1/m, as NLSE.UNITS["alpha"] says
+```
+
+Each constructor of the chain converts each quantity to its unit and strips
+it before its body runs, a subclass's first, so the base class gets plain
+numbers and every attribute holds one. A quantity of the wrong dimension
+raises `pint.DimensionalityError` naming the argument and its unit, and one
+for an argument without a unit (`NX`, `NY`, `NZ`, `backend`, `DDGPE`'s
+`power`) raises `TypeError`. An attribute assigned after construction,
+`simu.alpha = 30`, is not converted: it takes a plain number in that unit.
+
+Hz is not refused. pint counts a radian as 1, so `5 * ureg.Hz` has the
+dimension of rad/s and becomes 5 rad/s, not 10π rad/s: where `UNITS` says
+rad/s or rad/ps, pass the angular frequency, `2 * np.pi * f`. Without the
+extra nothing imports pint, and plain numbers work as before.
+
+### Saving and Rebuilding
+
+`simu.to_dict()` returns the constructor arguments as the solver now runs,
+read back from its attributes (`Isat` from `I_sat`, `wvl` from `wl`), with
+the attributes no argument sets (the second component's `n22`, `alpha2`,
+`power2` and `I_sat2`, and `k2` once it was assigned; `DDGPE`'s `g2` and
+`omega_pump`) and `k`, the wavenumber in force. `NLSE.from_dict(params)`
+builds a solver that propagates identically, whose `k2` follows `k` exactly
+when the original's did:
+
+```python
+params = simu.to_dict()
+same = NLSE.from_dict(params)
+```
+
+The values are plain numbers in the units of `UNITS`, and arrays such as `V`
+are the solver's own, not copies; the `window` list is a copy. The keys no
+argument has are not in `UNITS`: each holds the attribute as the run reads
+it, in the unit of the first component's attribute it mirrors (`n22` as
+`n2`, `alpha2` as `alpha`, `power2` as `power`, `I_sat2` as `I_sat`, `k2` as
+`k`), `g2` in that of `g` and `omega_pump` in rad/ps; `k` is in rad/m, and
+in kg for `GPE`, where it holds `m`.
+
+`wvl` is `2 pi / k`, and the constructor's `k = 2 pi / wvl` can miss `k`'s
+last bit (`GPE`'s `m` likewise), so `from_dict` puts the saved `k` back when
+it agrees with the rebuilt one to that round-off. When it does not, as after
+editing `wvl` or `m` in the dict, it raises `ValueError`: remove the `k` key
+to build from the edited argument alone.
+`json.dumps(params)` works when no value is an array or a float32; an infinite
+`Isat` is written `Infinity`, which Python's `json` reads back but a strict
+JSON parser does not. A subclass's own constructor arguments come back if it
+stores each as an attribute of the same name; its `*args` and `**kwargs` are
+left out, so one that hands its base's arguments on through `**kwargs`
+cannot be rebuilt from its dict: `from_dict` raises `TypeError` for the
+missing ones.
 
 ### Propagation
 
@@ -168,7 +259,7 @@ The potential can be set at initialization or later:
 
 ```python
 # At initialization
-simu = NLSE(..., V=my_potential)
+simu = NLSE(alpha=20, power=1.05, window=8e-3, n2=-1.6e-9, V=my_potential, L=10e-3)
 
 # After initialization
 simu.V = my_potential
