@@ -102,13 +102,13 @@ MS_PER_S = 1e3
 RELEASE_PARTS = 2
 
 # The lock one tuning process holds, beside the cache, and its age in s past
-# which it was left by a process that died: 24 times the longest tuning
-# measured (4096x4096 complex128, 12.5 s on an M3 Max).
+# which it was left by a process that died: 7 times the longest tuning
+# measured (4096x4096: 18 s on an M3 Max, 40 s on a Ryzen 3 4100).
 LOCK_NAME = "cpu_blocking.lock"
 LOCK_STALE_AFTER = 300.0
 
 # Seconds before a grid another process was tuning is asked for again: the
-# tuning of a 2048x2048 grid, 1.7-3.1 s on an M3 Max. Asking reads the cache
+# tuning of a 2048x2048 grid, 2.4-4.2 s on an M3 Max. Asking reads the cache
 # and the lock, 33 us there.
 BUSY_RETRY = 3.0
 
@@ -197,8 +197,7 @@ def _thread_counts(threads: int) -> list[int]:
     -------
     list of int
         Distinct: ``threads`` over each of ``THREAD_DIVISORS``, then the
-        fastest cores' count where the OS gives one, each in 1..threads. A
-        tie goes to the first, so to every thread, as before.
+        fastest cores' count where the OS gives one, each in 1..threads.
     """
     found = [threads // d for d in THREAD_DIVISORS]
     found.append(_performance_threads() or threads)

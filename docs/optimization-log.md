@@ -1198,7 +1198,7 @@ scripts and the box log are in
 **The blocked candidates add the fastest cores' count — deployed.** On macOS
 `sysctlbyname("hw.perflevel0.logicalcpu")` gives the logical CPUs of the
 fastest cores, 12 of 16 on the M3 Max, and every block size is measured on
-that count too, after all and half the threads, so a tie keeps the old count
+that count too, after all and half the threads
 (`_thread_counts` in `cpu_tuning.py`; cache version 2). Per step through the
 solver, ms, best of 7 rounds interleaved in one process, two runs (M3 Max, 16
 threads, numpy 2.4.6, scipy 1.18.0, numba 0.66.0):

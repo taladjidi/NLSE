@@ -365,7 +365,7 @@ come first.
   coupled solvers and RK4 run as before. Figures in `docs/optimization-log.md`.
 - **On macOS the CPU tuner also measures the blocked step on the fastest
   cores' threads** (`hw.perflevel0.logicalcpu`, 12 of 16 on an M3 Max), after
-  all and half the threads, so a tie keeps the count chosen before. Entries in
+  all and half the threads. Entries in
   `cpu_blocking.json` from before are measured again (cache version 2). On an
   M3 Max, through the solver, two interleaved runs: 2048² complex128 now
   blocks 32 rows on 12 threads, 1.17-1.18x faster than the unblocked step it
