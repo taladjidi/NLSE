@@ -1250,6 +1250,98 @@ through the solver it is 1.06x (1.82 against 1.71 ms, on the arrays the
 solver hands it, `cpu_pcores_probe_arrays.py`), and the cause is not
 established.
 
+**Padded column-pass scratch rows — tuned per machine; tiled gather and
+scatter — rejected in numba, measured in C** (2026-11-28).
+The column pass moves 32 B per point at complex64 (gather, then scatter with
+the factor). It ran at 37-42% of the Ryzen 3 4100's measured copy bandwidth
+(32 GB/s) and at 29% of the M3 Max's (53 of 181 GB/s at 4096², loaded). Move
+only, best of 9 rounds interleaved in one process, ms (`colmove.py`; Ryzen: 8
+threads, numpy 2.5.5, scipy 1.18.1, numba 0.68.1, load 1.1-2.2; M3 Max: 16
+threads, numpy 2.4.6, scipy 1.18.0, numba 0.66.0, load 10.4, to re-run quiet):
+
+| machine, grid, layout | today | pad 128 B | numba tiles of 16 | C, today's order | C, tiles of 16 |
+|---|---|---|---|---|---|
+| Ryzen 1024², 32 × 8 | 2.83 | 2.12 | 1.94 (bits differ) | 2.27 | 1.96 |
+| Ryzen 2048², 16 × 8 | 10.29 | 10.60 | 8.60 (bits differ) | 9.08 | 8.51 |
+| Ryzen 4096², 16 × 8 | 40.47 | 40.99 | 33.76 (bits differ) | 36.18 | 33.59 |
+| M3 Max 2048², 32 × 12 | 3.12 | 2.31 | 2.80 (bits differ) | 3.04 | 2.54 |
+| M3 Max 4096², 32 × 12 | 10.10 | 6.42 | 8.66 (bits differ) | 9.61 | 8.22 |
+
+*Pad sweep*, move only, best of 9 rounds, ms by pad in B (`colmove.py`;
+Ryzen load 4.8-5.6; M3 Max load 10.8-11.0, to re-run quiet):
+
+| machine | grid | layout | 0 | 64 | 128 | 256 | 384 | 512 | load |
+|---|---|---|---|---|---|---|---|---|---|
+| Ryzen | 1024² complex64 | 32x8 | 2.71 | 2.02 | 2.05 | 2.06 | 2.06 | 2.03 | 4.83-4.83 |
+| Ryzen | 1024² complex64 | 16x4 | 2.88 | 2.79 | 2.83 | 2.82 | 2.81 | 2.83 | 4.83-4.83 |
+| Ryzen | 2048² complex64 | 32x8 | 11.71 | 8.53 | 8.39 | 8.59 | 8.47 | 8.63 | 4.83-5.08 |
+| Ryzen | 2048² complex64 | 16x4 | 11.09 | 10.82 | 10.88 | 10.80 | 10.87 | 10.90 | 4.83-5.08 |
+| Ryzen | 4096² complex64 | 32x8 | 52.99 | 42.33 | 42.10 | 42.31 | 40.78 | 44.11 | 5.08-5.48 |
+| Ryzen | 4096² complex64 | 16x4 | 43.93 | 43.70 | 43.29 | 43.38 | 42.84 | 43.34 | 5.08-5.48 |
+| Ryzen | 1024² complex128 | 32x8 | 4.66 | 4.55 | 4.55 | 4.63 | 4.59 | 4.68 | 5.50-5.50 |
+| Ryzen | 1024² complex128 | 16x4 | 3.90 | 3.90 | 3.98 | 4.00 | 3.96 | 3.94 | 5.50-5.50 |
+| Ryzen | 2048² complex128 | 32x8 | 20.67 | 19.70 | 19.72 | 19.97 | 19.73 | 20.64 | 5.14-5.50 |
+| Ryzen | 2048² complex128 | 16x4 | 15.07 | 15.29 | 15.14 | 15.47 | 15.25 | 15.30 | 5.14-5.50 |
+| Ryzen | 4096² complex128 | 32x8 | 84.17 | 79.76 | 79.81 | 80.54 | 79.95 | 83.89 | 4.81-5.59 |
+| Ryzen | 4096² complex128 | 16x4 | 62.60 | 63.37 | 62.77 | 62.27 | 61.18 | 61.64 | 4.81-5.59 |
+| M3 Max | 1024² complex64 | 32x12 | 1.10 | 1.42 | 1.52 | 1.49 | 1.48 | 1.43 | 10.95-10.95 |
+| M3 Max | 2048² complex64 | 32x12 | 2.97 | 2.18 | 2.08 | 2.18 | 1.98 | 2.23 | 10.95-10.95 |
+| M3 Max | 4096² complex64 | 32x12 | 9.16 | 5.64 | 5.77 | 5.99 | 5.83 | 5.70 | 10.95-10.95 |
+| M3 Max | 1024² complex128 | 32x12 | 1.09 | 0.94 | 0.86 | 0.74 | 0.84 | 0.76 | 10.84-10.84 |
+| M3 Max | 2048² complex128 | 32x12 | 3.07 | 2.28 | 2.36 | 2.45 | 2.38 | 2.42 | 10.84-10.84 |
+| M3 Max | 4096² complex128 | 32x12 | 9.97 | 8.83 | 8.78 | 8.49 | 8.98 | 9.01 | 10.84-10.84 |
+
+Any pad of 64-384 B moved the pass alike, so the pad is one constant,
+`PAD_BYTES = 128`. Whether to pad is not: on the Ryzen it helps the
+8-thread layouts (32 × 8) more than the 4-thread ones its tuner takes.
+
+*Hypotheses, not verified* (no hardware counters read): on the M3 Max, at a
+power-of-two NY, every row of a band starts on the same cache sets, which the
+pad breaks; on the Ryzen the cost is the field side, 128 B read per field row
+at a stride of NX. A band-major field layout reached 23.6 GB/s there (74%),
+but its two extra traversals made the whole step 11-30% slower on both
+machines.
+
+*Bits.* In today's loop shape numba's scatter rounds the complex product as
+`fma(a, c, -(b d))`, `fma(a, d, b c)` (arm64 asm); tiled over rows, its bits
+move. C with explicit `fmaf` is bit-identical in both orders. The padded and
+unpadded steps are main's (97ee1c7) to the bit: 288 cases each on each machine
+(square, non-square and non-power-of-two grids, both widths, 9 forced
+layouts; `vs_main.py`).
+
+*The tuner's choice.* The tuner times its best block with and without the
+pad, side by side (`DUEL_ROUNDS`), keeps the pad if it wins by `MARGIN`, then
+blocks only if that step beats the unblocked one by `MARGIN`. Kept per entry
+(`pad_bytes`). After one forced tuning, one in-process A/B of the three steps,
+best of 15 interleaved rounds, ms a step (`pad_ab.py`, same tool on both
+machines; where the tuner ran unblocked, the block its ranking takes first in
+that process; M3 Max load 14.2-15.7 from another job, to re-run quiet; Ryzen
+load 5.6-5.9, its own tuning's threads):
+
+| machine | grid | block | tuner kept | unblocked | blocked | blocked padded |
+|---|---|---|---|---|---|---|
+| M3 Max | 1024² complex64 | 128 × 8 | unblocked | 1.91 | 2.31 | 1.85 |
+| M3 Max | 2048² complex64 | 64 × 16 | unblocked | 6.47 | 6.79 | 6.18 |
+| M3 Max | 4096² complex64 | 32 × 12 | unblocked | 25.46 | 24.17 | 21.65 |
+| M3 Max | 2048² complex128 | 64 × 12 | unblocked | 10.46 | 9.93 | 9.51 |
+| M3 Max | 4096² complex128 | 32 × 12 | blocked | 46.17 | 37.69 | 36.18 |
+| Ryzen | 1024² complex64 | 64 × 4 | blocked | 8.11 | 6.66 | 6.17 |
+| Ryzen | 2048² complex64 | 32 × 4 | blocked | 34.42 | 25.50 | 24.21 |
+| Ryzen | 4096² complex64 | 16 × 4 | blocked | 144.97 | 97.62 | 97.92 |
+| Ryzen | 2048² complex128 | 16 × 4 | blocked | 58.73 | 41.14 | 41.19 |
+| Ryzen | 4096² complex128 | 8 × 4 | blocked | 278.26 | 178.40 | 178.98 |
+
+At this load the M3 Max's tuning and the A/B after it disagree at 4096²
+complex64: the tuning read the blocked side 2% faster than unblocked, the A/B
+18% (an earlier run at load 9 blocked it padded, 20.69 ms). Forced tuning,
+main (97ee1c7) and this tree alternated twice: 4096² complex128, 24.1-25.4 s
+and 25.9-26.0 s (M3 Max), 40.4-43.0 s and 47.7-47.9 s (Ryzen); 2048²
+complex64 on the M3 Max, which both left unblocked, 3.4-4.7 s and 3.7-3.8 s,
+the pad's duel there being 41 steps of 6-7 ms. Cache version 3. *Open:* gathering in tiles of 16
+field rows is bit-safe (no arithmetic) and took the M3 Max's 4096² step a
+further 1 ms; unmeasured on the Ryzen. Scripts and results:
+`~/Documents/LKB/NLSE_tangui_fix_specs/cpu_tiled_gather/`.
+
 ## OpenCL (PyOpenCL + VkFFT)
 
 **Native OpenCL C kernels instead of PyOpenCL array expressions — deployed.**
