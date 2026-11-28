@@ -132,6 +132,13 @@ come first.
   a fraction of the medium's length, which `GPE` does not have: the floor was
   zero and a run whose error never met the tolerance shrank its step without
   end. There it is now the same fraction of the run.
+- **A long run takes the steps it was asked for.** With a callback, a
+  non-local medium or an array `n2`, the position was a plain running sum,
+  which drifts with the number of steps: 10000 steps of `L / 10000` could end
+  2e-16 m short and take a 10001st step of that length, one row more than an
+  array sized for the run has (`sample` raised `IndexError`). The sum is
+  compensated now. A local run with a scalar `n2` and no callback counts its
+  steps by division and was not affected.
 - **RK4 bounds its step by the grid's fastest linear rate.** The limit
   averaged the dispersion and the potential over the beam, and RK4 amplifies
   round-off in any mode it is unstable for: a run left to choose its step on

@@ -77,6 +77,34 @@ _NON_INTERACTIVE_BACKENDS = frozenset(
 )
 
 
+def _add_compensated(total: float, lost: float, term: float) -> tuple[float, float]:
+    """Add a term to a running sum, keeping the round-off the sum drops.
+
+    Neumaier's sum: ``total + lost`` stays within an ulp of the exact sum
+    however many terms went in, where a plain sum drifts with their number.
+
+    Parameters
+    ----------
+    total : float
+        The plain running sum.
+    lost : float
+        The round-off it has dropped so far.
+    term : float
+        The term to add.
+
+    Returns
+    -------
+    tuple of (float, float)
+        The new running sum and the new round-off.
+    """
+    new = total + term
+    if abs(total) >= abs(term):
+        lost += (total - new) + term
+    else:
+        lost += (term - new) + total
+    return new, lost
+
+
 def show_if_possible() -> bool:
     """Show the current figure, where the backend can show anything.
 
@@ -2623,7 +2651,9 @@ class NLSE(StepSize):
         self._current_delta_z = delta_z
         self._step_in_force = delta_z
         self._run_distance = z
-        z_prop = 0.0
+        # The position is a compensated sum: a plain one drifts past
+        # STEP_ROUNDOFF within 1e4 steps and the run then takes a sliver more.
+        z_prop = z_sum = z_lost = 0.0
         i = 0
         for n, end in enumerate(self._medium_ends(z)):
             if n > 0:
@@ -2634,7 +2664,8 @@ class NLSE(StepSize):
                 taken = self._advance(
                     step_fn, step_factory, delta_z, end - abs(z_prop), method, dtype
                 )
-                z_prop += taken
+                z_sum, z_lost = _add_compensated(z_sum, z_lost, taken)
+                z_prop = z_sum + z_lost
                 if callback is not None:
                     # The callbacks see the step just taken, cut or whole:
                     # DDGPE's pump and noise integrate over it.
