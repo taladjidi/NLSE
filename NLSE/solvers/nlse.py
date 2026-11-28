@@ -2783,9 +2783,9 @@ class NLSE(StepSize):
             except the adaptive ones.
         """
         requested = None
-        if isinstance(callback, Callable):
+        if callable(callback):
             requested = callback(self, A, z, i, *callback_args)
-        elif isinstance(callback, list) and isinstance(callback[0], Callable):
+        elif isinstance(callback, (list, tuple)) and all(map(callable, callback)):
             # Left at its default, the arguments are none for every callback,
             # as for a single one; a list given must match in length.
             per_callback = callback_args if callback_args else [()] * len(callback)

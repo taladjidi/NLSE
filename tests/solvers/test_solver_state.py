@@ -330,6 +330,29 @@ class TestCallbackArguments:
             f"callbacks saw {seen}, not the position after each step"
         )
 
+    @pytest.mark.parametrize("none", [[], ()], ids=["list", "tuple"])
+    def test_no_callbacks_is_a_run_without_one(self, none):
+        """An empty list or tuple of callbacks runs as no callback does."""
+        runs = [
+            make_solver().out_field(
+                gaussian_input(), 1e-3, delta_z=2e-4, verbose=False, callback=given
+            )
+            for given in (none, None)
+        ]
+        np.testing.assert_allclose(runs[0], runs[1], rtol=NORM_GROWTH_RTOL)
+
+    def test_a_tuple_of_callbacks_is_called(self):
+        """A tuple of callables is taken as a list of them is."""
+        seen = []
+        make_solver().out_field(
+            gaussian_input(),
+            1e-3,
+            delta_z=2e-4,
+            verbose=False,
+            callback=(lambda s, A, z_, i: seen.append(z_),),
+        )
+        assert len(seen) == 5, f"the callback ran {len(seen)} times over 5 steps"
+
     def test_z_is_not_constant(self):
         """The specific failure: the same number every step."""
         simu = make_solver()
