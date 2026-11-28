@@ -274,8 +274,8 @@ come first.
   components in a launch of its own (Lie), or through two component copies
   around it (Strang); RK4 was never fused. CUPY now rotates inside the
   nonlinear kernel and adds the coupling's slope inside the whole-stage RK4
-  kernel; OpenCL and MLX rotate the interleaved field in place around a
-  Strang step. On an RTX 3050 in complex64 at `omega` = 1e4 rad/m, a CUPY
+  kernel; around a Strang step OpenCL rotates the interleaved field in
+  place, and MLX rotates and restacks it. On an RTX 3050 in complex64 at `omega` = 1e4 rad/m, a CUPY
   step is 1.85 to 1.89x faster in Strang, 1.17 to 1.21x in Lie and 2.0 to
   2.2x in RK4 at 1024², 2048² and 4096², and an OpenCL Strang step 2.0x and
   1.66x at 1024² and 2048². In those runs (lossless, no potential, 60

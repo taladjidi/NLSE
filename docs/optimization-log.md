@@ -1732,7 +1732,8 @@ kernels. `coupled_nl_prop_c` now takes the rotation's cosine and sine and a
 of the source): before the nonlinear step to open a Strang step, after it to
 close a Lie or Strang one. `coupled_rk4_stage_c` adds `-1j * omega/2` times
 the other component to each slope. OpenCL and MLX keep their kernels and
-rotate the interleaved field in place around a Strang step.
+rotate the interleaved field around a Strang step: OpenCL in place, MLX
+restacking it.
 
 `CNLSE`, complex64, `omega` = 1e4 rad/m, lossless, no potential, the
 benchmark field (`benchmarks/profile_backends.py`, `step_for` step). One

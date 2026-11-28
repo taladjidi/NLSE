@@ -388,6 +388,15 @@ def test_a_batched_parameter_declines_too(backend_name, cls):
 
 
 @pytest.mark.parametrize("backend_name", FUSED_BACKENDS)
+@pytest.mark.parametrize("cls", COUPLED, ids=lambda c: c.__name__)
+def test_a_batched_coupling_declines_the_fused_stage(backend_name, cls):
+    """The stage kernel takes the Rabi coupling as a scalar, like the rest."""
+    solver = make(cls, backend_name)
+    solver.omega = np.array([1.0, 2.0, 3.0])
+    assert not solver._can_fuse_rk4_stage(gaussian(cls))
+
+
+@pytest.mark.parametrize("backend_name", FUSED_BACKENDS)
 @pytest.mark.parametrize("cls", SOLVERS, ids=lambda c: c.__name__)
 def test_a_non_local_run_declines_every_fused_path(backend_name, cls):
     """Non-locality smooths the intensity, which the fused kernels skip."""
