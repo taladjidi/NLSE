@@ -91,10 +91,10 @@ simu.V = -1e-4 * np.exp(-(simu.XX**2 + simu.YY**2) / waist2**2)
 E = simu.out_field(E_0, L, verbose=True, plot=True, splitting="lie")
 ```
 
-The run warns that `delta_z` exceeds the split-step accuracy limit, which is
-expected: the default step is chosen from the potential and the interaction,
-while the limit also bounds the phase diffraction adds to the finest wave the
-grid resolves, so the solver takes the shorter step.
+Left to choose the step, the solver aims at a fixed phase per step from the
+potential and the interaction, and takes a shorter one where the limit on the
+phase diffraction adds to the finest wave the grid resolves binds, as it does
+here.
 
 ## Requirements
 

@@ -242,8 +242,7 @@ class NLSE(StepSize):
         self._backend: Backend = get_backend(backend, grid_size=(NX, NY))
         self.n2 = n2
         self.V = V
-        self.wl = wvl
-        self.k = 2 * np.pi / self.wl
+        self.k = 2 * np.pi / wvl
         self.L = L  # length of the non linear medium
         self.alpha = alpha
         self.power = power
@@ -285,9 +284,9 @@ class NLSE(StepSize):
         self._forget_device_state()
         self.nl_length = nl_length
 
-        # Pre-compute normalization factors to avoid runtime upcasting
-        self._norm_grid_factor = np.float32(self.delta_X * self.delta_Y)
-        self._norm_constant = np.float32(c * epsilon_0 / 2)
+        # Python floats, which take the field's precision in a product.
+        self._norm_grid_factor = float(self.delta_X * self.delta_Y)
+        self._norm_constant = c * epsilon_0 / 2
 
     # The public surface: a solver is built, asked to propagate, and plotted.
     # split_step and split_step_RK4 are the single-step primitives out_field
@@ -302,6 +301,19 @@ class NLSE(StepSize):
         """Set the backend, dropping the arrays the previous one built."""
         self._backend = get_backend(value, grid_size=(self.NX, self.NY))
         self._forget_device_state()
+
+    @property
+    def wl(self) -> float:
+        """Return the wavelength in m, ``2 pi / k``."""
+        return 2 * np.pi / self.k
+
+    @wl.setter
+    def wl(self, value: float) -> None:
+        """Set the wavelength in m, through ``k``, which every run reads.
+
+        On the coupled solvers it moves ``k2`` too, unless ``k2`` was set.
+        """
+        self.k = 2 * np.pi / value
 
     def out_field(
         self,
@@ -331,9 +343,9 @@ class NLSE(StepSize):
             Step to propagate with. Defaults to None, meaning the solver
             derives one from the field: a step that imprints a fixed phase
             per step, against the same energy rates the stability and
-            accuracy limits are built from. A step given here is used as
-            given, capped only where it would leave the method's region of
-            convergence. A negative step propagates backwards over z.
+            accuracy limits are built from. Either is capped where it would
+            leave the method's region of convergence, with a warning only for
+            a step given here. A negative step propagates backwards over z.
         plot : bool, optional
             Plots the results. Defaults to False.
         splitting : str, optional
@@ -423,10 +435,11 @@ class NLSE(StepSize):
             # The field does not change until the run, so its rates are
             # reduced once and shared by every limit below.
             rates = self._energy_rates(A)
+            passed = delta_z is not None
             if delta_z is None:
                 delta_z = self._default_delta_z(A, method, z, rates)
             self._scheme_in_force = (method, splitting)
-            delta_z = self._capped_delta_z(delta_z, A, method, rates)
+            delta_z = self._capped_delta_z(delta_z, A, method, rates, warn=passed)
             if splitting == "yoshida":
                 yoshida_max = self._max_dz_in_force(A, rates)
                 delta_z = math.copysign(min(abs(delta_z), yoshida_max), delta_z)
@@ -1789,7 +1802,6 @@ class NLSE(StepSize):
         if normalize:
             # normalization of the field (use contiguous formula)
             arr = (E_in * E_in.conj()).real
-            # Use pre-computed grid factor to avoid runtime upcasting
             arr = arr * self._norm_grid_factor
             if self._backend.normalizes_on_host:
                 arr_np = self._backend.to_numpy(arr)

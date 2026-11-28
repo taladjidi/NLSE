@@ -1913,7 +1913,7 @@ requires-dist = [
     { name = "matplotlib" },
     { name = "mlx", marker = "extra == 'mlx'" },
     { name = "numba" },
-    { name = "numpy" },
+    { name = "numpy", specifier = ">=2" },
     { name = "pyopencl", marker = "extra == 'opencl'" },
     { name = "pyvkfft", marker = "extra == 'opencl'" },
     { name = "scipy" },

@@ -1,5 +1,6 @@
 """Tests for solver state that must stay consistent across out_field calls."""
 
+import warnings
 from unittest.mock import Mock
 
 import numpy as np
@@ -65,6 +66,10 @@ BATCH_RATE_RTOL = 1e-6
 RATE_RTOL = 1e-6
 # A step far past every limit of this module's grid, in m.
 FAR_PAST_LIMIT = 1.0
+# Window in m on which the grid's shortest wave sets both limits under the
+# default step of a linear run, Z / DEFAULT_MIN_STEPS = 2e-4 m: 5.0e-5 m for
+# split-step, 1.4e-4 m for RK4 (measured, CPU). The beam is a quarter of it.
+FINE_WINDOW = 5e-4
 # RK4 on the cubic term alone, psi' = -i |psi|^2 psi from |psi| = 1, as a map
 # of the phase per step: where its iteration first diverges (scanned in
 # steps of 1e-3), how many steps are iterated and the modulus that counts as
@@ -542,6 +547,45 @@ class TestDefaultStep:
         assert self.propagate(simu) != 1e-6, (
             "the step from the previous call carried over into the next one, "
             "so it is still state on the solver rather than an argument"
+        )
+
+    @pytest.mark.parametrize(
+        "cls, method, splitting, limit",
+        [
+            (NLSE, "split_step", "lie", "_split_step_max_dz"),
+            (NLSE, "split_step", "strang", "_split_step_max_dz"),
+            (NLSE, "RK4", "lie", "_rk4_max_dz"),
+            (CNLSE, "split_step", "strang", "_split_step_max_dz"),
+            (CNLSE, "RK4", "lie", "_rk4_max_dz"),
+        ],
+    )
+    def test_a_default_past_the_limit_takes_the_cap_silently(
+        self, cls, method, splitting, limit
+    ):
+        """A default past the limit runs at the capped step, without a warning."""
+        linear = {"n12": 0.0} if cls is CNLSE else {}
+        simu = make(cls, n=N, L=L, alpha=alpha, n2=0.0, window=FINE_WINDOW, **linear)
+        E = np.exp(-(simu.XX**2 + simu.YY**2) / (FINE_WINDOW / 4) ** 2)
+        E = np.broadcast_to(E, (2, N, N)) if cls is CNLSE else E
+        E = E.astype(PRECISION_COMPLEX)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            simu.out_field(
+                E,
+                self.Z,
+                verbose=False,
+                plot=False,
+                method=method,
+                splitting=splitting,
+            )
+        capped = [str(w.message) for w in caught if "exceeds" in str(w.message)]
+        assert not capped, f"{method}: a step nobody passed was reported: {capped}"
+        A = simu._prepare_output_array(E, True)[0]
+        expected = CAPPED_STEP_FRACTION * getattr(simu, limit)(A)
+        assert simu._current_delta_z == pytest.approx(expected, rel=1e-6), (
+            f"{cls.__name__}, {method}, {splitting}: the default ran at "
+            f"{simu._current_delta_z:.4e} m, not at {expected:.4e} m, "
+            f"{CAPPED_STEP_FRACTION} of the limit"
         )
 
     def test_a_step_the_caller_passed_is_still_capped(self):

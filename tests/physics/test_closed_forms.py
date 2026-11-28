@@ -1,5 +1,7 @@
 """The answers, against solutions that are known rather than computed here."""
 
+import warnings
+
 import numpy as np
 import pytest
 from helpers import gaussian_beam
@@ -433,19 +435,53 @@ def test_a_new_wavenumber_diffracts_at_its_own_rate(backend, method):
         )
 
 
+@pytest.mark.parametrize("method", ["split_step", "RK4"])
+def test_a_new_wavelength_diffracts_at_its_own_rate(backend, method):
+    """Setting ``wl`` sets the ``k`` a run reads."""
+    simu = solver(backend, NX=CACHE_TEST_N, NY=CACHE_TEST_N)
+    field = np.exp(-(simu.XX**2 + simu.YY**2) / WAIST**2).astype(np.complex64)
+    z = CACHE_TEST_DISTANCE * simu.k * WAIST**2 / 2
+    for wl in (simu.wl, simu.wl / WAVENUMBER_CHANGE):
+        simu.wl = wl
+        out = to_host(
+            simu,
+            simu.out_field(
+                field.copy(),
+                z,
+                delta_z=z / CACHE_TEST_STEPS,
+                method=method,
+                verbose=False,
+                plot=False,
+                normalize=False,
+            ),
+        )
+        got = waist_of(np.abs(out) ** 2, simu.XX, simu.YY)
+        rayleigh = np.pi * WAIST**2 / wl
+        expected = WAIST * np.sqrt(1 + (z / rayleigh) ** 2)
+        assert got == pytest.approx(expected, rel=WAIST_RTOL), (
+            f"{backend}, {method}: at wl = {wl * 1e9:.1f} nm the waist is "
+            f"{got * 1e6:.2f} um against the {expected * 1e6:.2f} um that wl gives"
+        )
+
+
 def test_rk4_left_to_choose_its_step_diffracts_at_the_closed_form_rate(backend):
     """RK4 bounds its step by the grid's fastest mode, not by the beam's."""
     simu = solver(backend)
     field = np.exp(-(simu.XX**2 + simu.YY**2) / WAIST**2).astype(np.complex64)
     z = RK4_DEFAULT_STEP_DISTANCE * simu.k * WAIST**2 / 2
-    # The run lowers the default step and says so.
-    with pytest.warns(UserWarning, match="RK4 stability"):
+    # The run lowers the default step under the bound, silently: nobody
+    # passed it.
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
         out = to_host(
             simu,
             simu.out_field(
                 field, z, method="RK4", verbose=False, plot=False, normalize=False
             ),
         )
+    assert not [w for w in caught if "exceeds" in str(w.message)], (
+        f"{backend}: the run warned about a step nobody passed"
+    )
     got = waist_of(np.abs(out) ** 2, simu.XX, simu.YY)
     expected = WAIST * np.sqrt(1 + RK4_DEFAULT_STEP_DISTANCE**2)
     assert got == pytest.approx(expected, rel=WAIST_RTOL), (

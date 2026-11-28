@@ -76,7 +76,7 @@ class NLSE_1d(NLSE):
         self._last_axes = (-1,)
 
         # A line: the intensity is integrated over x alone, so power is in W/m.
-        self._norm_grid_factor = np.float32(self.delta_X)
+        self._norm_grid_factor = float(self.delta_X)
 
     def _propagator_cache_key(self, dtype: np.dtype, delta_z: float) -> tuple:
         """Return cache key for 1D propagator."""

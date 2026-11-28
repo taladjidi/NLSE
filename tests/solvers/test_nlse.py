@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 from helpers import as_numpy, assert_c_contiguous, gaussian_beam, make, random_field
-from NLSE import NLSE
+from NLSE import CNLSE, DDGPE, GPE, NLSE, CNLSE_1d, NLSE_1d, NLSE_3d
 from scipy.constants import c, epsilon_0
 
 if NLSE.__CUPY_AVAILABLE__:
@@ -34,6 +34,36 @@ SAME = 1.0  # factor that leaves the step or k as it is
 STEP_CHANGE = 2.0
 WAVENUMBER_CHANGE = 1.5
 OTHER_DTYPE = np.complex128
+# Round-off allowed the normalized power, in units of the field's epsilon: over
+# the seven solvers, batched or not, it lands within 1.7 (complex64, every
+# backend) and 2.0 (complex128, CPU) of them (measured); float32 constants left
+# complex128 up to 2.5e8 off.
+NORM_EPS = 10
+# What the shared physics in helpers.make leaves out of the three solvers with
+# parameters of their own; any values normalize. NLSE_3d's window is
+# (space in m, time in s), its pulse energy in J; GPE's N is atoms.
+NORM_PARAMETERS = {
+    NLSE_3d: {
+        "energy": 1e-6,
+        "D0": 0.0,
+        "vg": 1e8,
+        "window": [window, 1e-12],
+        "NZ": CACHE_N,
+    },
+    GPE: {"gamma": 0.0, "N": 1e5, "g": 1e-3},
+    DDGPE: {
+        "gamma": 0.0,
+        "g": 0.0,
+        "omega": 1.0,
+        "T": 1.0,
+        "omega_exc": 1.0,
+        "omega_cav": 1.0,
+        "detuning": 0.0,
+        "k_z": 1.0,
+    },
+}
+NORM_SOLVERS = [NLSE, NLSE_1d, NLSE_3d, CNLSE, CNLSE_1d, GPE, DDGPE]
+NORM_BATCH = 3  # fields side by side in a batched run
 CACHE_CHANGES = [
     (SAME, WAVENUMBER_CHANGE, PRECISION_COMPLEX),
     (STEP_CHANGE, SAME, PRECISION_COMPLEX),
@@ -312,3 +342,92 @@ def test_a_field_with_no_power_survives_normalization(backend) -> None:
         f"an empty field came back with non-finite values. (Backend {backend})"
     )
     assert np.all(out == 0), f"an empty field should stay empty. (Backend {backend})"
+
+
+def normalized_field(simu, batched, dtype):
+    """Return a random field for ``simu``, normalized, on the host.
+
+    Parameters
+    ----------
+    simu : NLSE
+        Solver of any of the seven classes.
+    batched : bool
+        Whether the field has a leading batch axis of ``NORM_BATCH``.
+    dtype : np.dtype
+        Complex dtype of the field.
+
+    Returns
+    -------
+    np.ndarray
+        The field ``normalize=True`` returns.
+    """
+    grid = (simu.NX,) if len(simu._last_axes) == 1 else simu.XX.shape
+    leading = (NORM_BATCH,) * batched + (2,) * simu._component_axes
+    field = random_field(leading + grid, dtype)
+    return as_numpy(simu, simu._prepare_output_array(field, True)[0])
+
+
+def exact_power(simu, A):
+    """Return each field's power, from the grid cell and float64 sums.
+
+    Parameters
+    ----------
+    simu : NLSE
+        Solver of any of the seven classes.
+    A : np.ndarray
+        Field on the host.
+
+    Returns
+    -------
+    np.ndarray
+        Power, or energy or atoms, of each field in ``A``.
+    """
+    steps = (simu.delta_X, getattr(simu, "delta_Y", 1.0), getattr(simu, "delta_T", 1.0))
+    cell = np.prod(steps[: len(simu._last_axes)])
+    # A condensate's integral counts atoms; a beam's is a power, c eps_0 |E|^2 / 2.
+    scale = 1.0 if isinstance(simu, GPE) else c * epsilon_0 / 2
+    intensity = np.abs(A.astype(np.complex128)) ** 2
+    return scale * cell * np.sum(intensity, axis=simu._last_axes)
+
+
+@pytest.mark.parametrize("batched", [False, True], ids=["one", "batched"])
+@pytest.mark.parametrize("dtype", [np.complex64, np.complex128])
+@pytest.mark.parametrize("cls", NORM_SOLVERS, ids=lambda cls: cls.__name__)
+def test_normalization_holds_the_power_to_the_field_precision(
+    backend, cls, dtype, batched
+):
+    """``normalize=True`` sets the power to the precision of the field's dtype."""
+    simu = make(cls, backend, n=CACHE_N, **NORM_PARAMETERS.get(cls, {}))
+    if dtype == np.complex128 and not simu._backend.supports_double_precision():
+        pytest.skip(f"{backend} has no fp64")
+    power = exact_power(simu, normalized_field(simu, batched, dtype))
+    target = np.broadcast_to(simu._norm_target, power.shape)
+    rtol = float(NORM_EPS * np.finfo(dtype).eps)
+    assert power == pytest.approx(target, rel=rtol), (
+        f"{backend}, {cls.__name__}, {np.dtype(dtype).name}: normalized to "
+        f"{power} against the {simu._norm_target} asked, off by more than "
+        f"{rtol:.1e}"
+    )
+
+
+@pytest.mark.parametrize("power_type", [float, np.float64])
+def test_a_complex64_field_is_normalized_in_float32_as_written(power_type):
+    """The bits: float32 sums, the factor at the target's precision, one product.
+
+    NEP 50: a Python float target takes the float32 integral's precision, a
+    numpy.float64 one keeps float64. The product is taken in complex128 and
+    rounded to complex64 once.
+    """
+    simu = make(NLSE, "CPU", n=CACHE_N)
+    simu.power = power_type(simu.power)
+    E = random_field(simu.XX.shape, np.complex64)
+    cell = np.float32(simu.delta_X * simu.delta_Y)
+    integral = np.sum((E * E.conj()).real * cell) * np.float32(c * epsilon_0 / 2)
+    factor = np.float64((simu.power / integral) ** 0.5)
+    expected = (factor * E.astype(np.complex128)).astype(np.complex64)
+    A = simu._backend.to_numpy(simu._prepare_output_array(E, True)[0])
+    assert np.array_equal(A, expected), (
+        f"{power_type.__name__} power: the normalized field differs from the "
+        f"written-out expression in {np.count_nonzero(A != expected)} of "
+        f"{A.size} points"
+    )

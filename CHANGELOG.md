@@ -8,6 +8,10 @@ come first.
 
 ### Changed (breaking)
 
+- **NumPy 2 is required** (`numpy>=2`). The normalization keeps a
+  `complex64` field's bits through NumPy 2's promotion rules (NEP 50): on
+  NumPy 1.x a float32 scalar times a Python float is float64.
+
 - **`GPE` takes `V` and `g` as rates, in rad/s.** They went through the
   optical conversion, with a wavenumber `GPE` only passes to satisfy the base
   constructor: `g` reached the kernels 2e-28 times too small and with the
@@ -62,6 +66,24 @@ come first.
 - **`backends.clear_backend_cache` is removed.** Nothing called it.
 
 ### Fixed
+
+- **`normalize=True` sets the power to the field's precision.** The grid
+  and `c epsilon_0 / 2` factors were float32, so a `complex128` field was
+  normalized only to 2.5e-9 to 8.0e-8 of its power; it now lands within 2
+  float64 epsilons (4.4e-16, the worst over the seven solvers, batched or
+  not). A `complex64` field is normalized bit for bit as before.
+
+- **`get_backend` and `get_fastest_backend` refuse a grid size that is not
+  two integers.** `get_backend("CPU", grid_size=256)`, `"256"`, `(256, 256.0)`
+  or `None` returned a backend; a backend that is not installed crashed on
+  `256` in its fallback, and `get_fastest_backend` crashed on `256` or
+  `(256,)` or returned a backend for `"256"` without benchmarking anything.
+  Each now raises a `TypeError` that names the argument.
+
+- **Setting `wl` sets `k`.** `simu.wl = ...` stored a wavelength nothing
+  read: runs went on at the old `k`. `wl` is now `2 pi / k`, read and
+  written through it. On `CNLSE` and `CNLSE_1d`, `k2` follows `k` until it
+  is assigned, so `wl` moves both components unless `k2` was set.
 
 - **The RK4 step limit holds on the nonlinear term.** `method="RK4"` counted
   the interaction weighted by the field and against the linear stability
@@ -229,8 +251,27 @@ come first.
 - **`benchmarks/profile_kernels.py` times the coupled fused kernels.** It
   passed one cross constant where they take two, and reported a `TypeError`
   for both.
+- **The GPE benchmark times a condensate that interacts.** `test_gpe` passed
+  the NLSE's `n2` as `g`, so it timed a linear run; it now takes `g n` = 1e3
+  rad/s at the mean density, as `examples/gpe.py` does, and checks that the
+  interaction turns the centre's phase.
 
 ### Changed
+
+- **A step the solver chose is held under the method's limit without a
+  warning.** The default aims at 0.1 rad of potential and interaction phase
+  per step, and where the limit binds, the dispersion bound of a fine grid
+  for one, the run warned about a `delta_z` nobody passed (at 2048², the
+  README run's 2.11e-4 m and the quick-start's 2.12e-4 m, both lowered to
+  1.39e-5 m). It is still lowered, now silently; a `delta_z` passed in
+  still warns. The steps run are the same, and `DDGPE` still samples its
+  drive at the default before the cap.
+
+- **`omega=0` costs the coupled solvers nothing.** A scalar zero Rabi
+  coupling went through two identity rotations per Strang step (one per Lie
+  step), fused or not; it is now skipped as `None` is, which saves 13 to 22%
+  of a Strang step at 512² on an Apple M3 Max (CPU, CL on its GPU, MLX). An
+  array `omega` rotates as before.
 
 - **`NLSE_BACKEND` and `NLSE_FORCE_BENCHMARK` are read when a backend is asked
   for**, not once when NLSE is imported, like the other `NLSE_*` variables: one

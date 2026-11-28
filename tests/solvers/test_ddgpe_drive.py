@@ -158,6 +158,37 @@ def test_capped_step_samples_by_time(backend):
     assert got == pytest.approx(PUMP_EXACT, abs=F0 * step / 2 + PUMP_ATOL)
 
 
+def record_drive_step(simu, A, t, i, seen):
+    """Append the step the drive is sampled at."""
+    seen.append(simu._drive_step)
+
+
+def test_a_capped_default_samples_the_drive_at_the_default(backend):
+    """A default past the cap runs silently, its drive sampled at the default."""
+    simu = pump_solver(backend, omega_cav=CAPPED_W)
+    default = T / DEFAULT_MIN_STEPS
+    profile = np.ones(DEFAULT_MIN_STEPS)
+    steps, drive_steps = [], []
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        out = simu.out_field(
+            np.zeros((2, simu.NY, simu.NX), np.complex64),
+            T,
+            None,
+            verbose=False,
+            callback=[record_step, record_drive_step],
+            callback_args=[*pump_args(simu, profile), (steps,), (drive_steps,)],
+        )
+    capped = [str(w.message) for w in caught if "exceeds" in str(w.message)]
+    assert not capped, f"{backend}: a step nobody passed was reported: {capped}"
+    assert steps[0] < default, "the default was not capped"
+    assert set(drive_steps) == {default}, (
+        f"{backend}: the drive was sampled at {drive_steps[0]:.4g}, not at the "
+        f"default {default:.4g} its {DEFAULT_MIN_STEPS} samples are for"
+    )
+    assert cavity(simu, out) == pytest.approx(-1j * F0 * T, abs=PUMP_ATOL)
+
+
 @pytest.mark.parametrize("t, integral", CUT_RUNS)
 def test_cut_last_step_is_driven_for_its_own_length(backend, t, integral):
     """A last step cut to the end of the run takes its own sample and length."""
