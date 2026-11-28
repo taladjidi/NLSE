@@ -174,7 +174,10 @@ lowered that way, and says so.
 imaginary axis, for $\lambda$ the sum of every rate RK4 integrates. Dispersion
 and the potential count at their largest on the grid, because past the radius
 RK4 amplifies whatever a mode holds and round-off puts something in every
-mode; the interaction and the loss count weighted by the field.
+mode. The interaction counts at its peak as well, and against
+`RK4_CUBIC_RADIUS` = 1.5 rather than the linear radius: on the cubic term
+alone, $\psi' = -i|\psi|^2\psi$, RK4 diverges from a phase of 1.547 rad per
+step. The loss counts weighted by the field.
 
 ## Propagator Caching
 

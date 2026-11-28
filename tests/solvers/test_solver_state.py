@@ -8,6 +8,8 @@ from NLSE.backends import get_backend, list_available_backends
 from NLSE.callbacks import adapt_delta_z
 from NLSE.solvers.nlse import DEFAULT_MIN_STEPS, DEFAULT_PHASE_PER_STEP
 from NLSE.solvers.step_size import (
+    CAPPED_STEP_FRACTION,
+    RK4_CUBIC_RADIUS,
     RK4_PHASE_PER_STEP,
     RK4_STABILITY_RADIUS,
     SPLIT_STEP_DISPERSION_PHASE_LIMIT,
@@ -61,6 +63,19 @@ BATCH_RATE_RTOL = 1e-6
 RATE_RTOL = 1e-6
 # A step far past every limit of this module's grid, in m.
 FAR_PAST_LIMIT = 1.0
+# RK4 on the cubic term alone, psi' = -i |psi|^2 psi from |psi| = 1, as a map
+# of the phase per step: where its iteration first diverges (scanned in
+# steps of 1e-3), how many steps are iterated and the modulus that counts as
+# diverged. Bounded steps stay under 2 (scanned), and 1.547 passes 1e6 in
+# under 100 steps.
+CUBIC_DIVERGES_FROM = 1.547
+CUBIC_MAP_STEPS = 500
+CUBIC_MAP_CEILING = 1e6
+CUBIC_SCAN = np.arange(0.1, RK4_CUBIC_RADIUS + 0.05, 0.1)
+# An RK4 run the cubic term limits: a Kerr medium with no saturation, long
+# enough for this many steps at the capped step (L in m).
+RK4_CUBIC_STEPS = 200
+RK4_CUBIC_L = 1.0
 # Coupled RK4 runs, all linear. Uniform potential as an index change, the
 # ratio k2 / k that makes the second component's potential the faster one
 # (1.6e5 rad/m), and a Rabi coupling in rad/m whose half is 5e4 rad/m.
@@ -80,6 +95,30 @@ NORM_GROWTH_RTOL = 1e-4
 def make_solver(backend="CPU", **kwargs):
     """Build a small NLSE solver with the module defaults."""
     return make(NLSE, backend, n=N, **{"L": L, "alpha": alpha, **kwargs})
+
+
+def rk4_cubic_rate(psi):
+    """Return the right-hand side of psi' = -i |psi|^2 psi."""
+    return -1j * abs(psi) ** 2 * psi
+
+
+def rk4_cubic_step(psi, x):
+    """Take one classic RK4 step of size x on psi' = -i |psi|^2 psi."""
+    k1 = rk4_cubic_rate(psi)
+    k2 = rk4_cubic_rate(psi + x / 2 * k1)
+    k3 = rk4_cubic_rate(psi + x / 2 * k2)
+    k4 = rk4_cubic_rate(psi + x * k3)
+    return psi + x / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
+
+
+def rk4_cubic_stays_bounded(x):
+    """Whether iterating that step from |psi| = 1 stays under the ceiling."""
+    psi = 1 + 0j
+    for _ in range(CUBIC_MAP_STEPS):
+        psi = rk4_cubic_step(psi, x)
+        if not abs(psi) < CUBIC_MAP_CEILING:
+            return False
+    return True
 
 
 def gaussian_input():
@@ -955,8 +994,9 @@ class TestStepLimitEnergies:
         peak = float(np.max(np.abs(as_numpy(simu, simu._V_scaled))))
         assert rates["potential"] < 0.1 * peak, "precondition: V is off the beam"
 
+        cubic = RK4_STABILITY_RADIUS / RK4_CUBIC_RADIUS
         fastest = simu._max_dispersion_rate() + peak
-        fastest += rates["interaction"] + rates["loss"]
+        fastest += cubic * simu._max_interaction_rate(A) + rates["loss"]
         assert simu._rk4_max_dz(A) == pytest.approx(RK4_STABILITY_RADIUS / fastest), (
             "the RK4 bound does not take the potential at its grid maximum"
         )
@@ -970,8 +1010,40 @@ class TestStepLimitEnergies:
 
         linear = RK4_STABILITY_RADIUS / simu._rk4_max_dz()
         full = RK4_STABILITY_RADIUS / simu._rk4_max_dz(A)
-        assert full - linear == pytest.approx(rates["interaction"] + rates["loss"]), (
-            "the RK4 bound does not add the interaction and the loss"
+        cubic = RK4_STABILITY_RADIUS / RK4_CUBIC_RADIUS
+        added = cubic * simu._max_interaction_rate(A) + rates["loss"]
+        assert full - linear == pytest.approx(added), (
+            "the RK4 bound does not add the peak interaction and the loss"
+        )
+
+    def test_the_cubic_radius_is_inside_where_rk4_diverges(self):
+        """RK4 on the cubic term alone is bounded up to the radius, not past."""
+        assert all(rk4_cubic_stays_bounded(x) for x in CUBIC_SCAN), (
+            "RK4 diverges on the cubic term at a step inside RK4_CUBIC_RADIUS"
+        )
+        assert not rk4_cubic_stays_bounded(CUBIC_DIVERGES_FROM), (
+            "precondition: the map diverges where the constant says it does"
+        )
+        assert RK4_CUBIC_RADIUS < CUBIC_DIVERGES_FROM < RK4_STABILITY_RADIUS
+
+    def test_an_rk4_run_capped_at_its_bound_stays_finite(self):
+        """A Kerr run asked for a step far past the bound comes back finite."""
+        simu, A = self.prepared(None, n2=PHASE_LIMIT_N2, Isat=np.inf, L=RK4_CUBIC_L)
+        bound = simu._rk4_max_dz(A)
+        peak = simu._max_interaction_rate(A)
+        assert peak > 10 * simu._max_dispersion_rate(), (
+            "precondition: the interaction is what limits this run"
+        )
+        assert RK4_STABILITY_RADIUS / simu._energy_rates(A)["interaction"] > (
+            CUBIC_DIVERGES_FROM / peak
+        ), "precondition: the field-weighted rate allows a diverging step"
+        z = RK4_CUBIC_STEPS * CAPPED_STEP_FRACTION * bound
+        with pytest.warns(UserWarning, match="RK4 stability"):
+            out = simu.out_field(
+                gaussian_input(), z, delta_z=FAR_PAST_LIMIT, method="RK4", verbose=False
+            )
+        assert np.isfinite(as_numpy(simu, out)).all(), (
+            "an RK4 run capped at its own bound diverged"
         )
 
     @staticmethod
