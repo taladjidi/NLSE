@@ -34,6 +34,10 @@ from .cpu import _square_mod_nl_prop_span, _square_mod_nl_prop_v_span
 # The fileno mmap takes for memory backed by no file:
 # https://docs.python.org/3/library/mmap.html#mmap.mmap
 ANONYMOUS = -1
+# B the tuner may let each scratch row run past NY (cpu_tuning keeps it where
+# it wins). Pads of 64-384 B timed alike on an M3 Max and a Ryzen 3 4100
+# (``docs/optimization-log.md``); why the M3 gains is not verified.
+PAD_BYTES = 128
 
 
 @numba.njit(nogil=True, cache=True, boundscheck=False)
@@ -47,7 +51,8 @@ def _gather_columns(field: np.ndarray, start: int, block: np.ndarray) -> None:
     start : int
         First column to copy.
     block : np.ndarray
-        ``(columns, NY)``, overwritten: ``block[j, i] = field[i, start + j]``.
+        ``(columns, NY + pad)``, overwritten up to NY:
+        ``block[j, i] = field[i, start + j]``.
     """
     for i in range(field.shape[0]):
         for j in range(block.shape[0]):
@@ -63,12 +68,12 @@ def _multiply_rows(block: np.ndarray, factor: np.ndarray) -> None:
     Parameters
     ----------
     block : np.ndarray
-        ``(columns, NY)``, modified in place.
+        ``(columns, NY + pad)``, modified in place up to NY.
     factor : np.ndarray
         ``(NY,)``: the propagator's factor along y, which carries 1/N.
     """
     for j in range(block.shape[0]):
-        for i in range(block.shape[1]):
+        for i in range(factor.shape[0]):
             block[j, i] *= factor[i]
 
 
@@ -83,7 +88,7 @@ def _scatter_columns(
     Parameters
     ----------
     block : np.ndarray
-        ``(columns, NY)``, as ``_gather_columns`` filled it.
+        ``(columns, NY + pad)``, as ``_gather_columns`` filled it.
     field : np.ndarray
         The field, ``(NY, NX)``, overwritten on those columns.
     start : int
@@ -105,7 +110,7 @@ def _transform_rows(part: np.ndarray, forward: bool) -> None:
     Parameters
     ----------
     part : np.ndarray
-        C-contiguous rows, overwritten with their transform.
+        Rows, each contiguous, overwritten with their transform.
     forward : bool
         True for the forward transform, False for the inverse.
     """
@@ -257,18 +262,19 @@ def _column_blocks(
     stop : int
         One past the last column.
     block : np.ndarray
-        This thread's scratch, ``(columns per band, NY)``.
+        This thread's scratch, ``(columns per band, NY + pad)``.
     row_factor : np.ndarray
         ``(NY,)``, the propagator's factor along y, carrying 1/N.
     column_factor : np.ndarray
         ``(NX,)``, the propagator's factor along x.
     """
+    ny = field.shape[0]
     for first in range(start, stop, block.shape[0]):
         band = block[: min(block.shape[0], stop - first)]
         _gather_columns(field, first, band)
-        _transform_rows(band, True)
+        _transform_rows(band[:, :ny], True)
         _multiply_rows(band, row_factor)
-        _transform_rows(band, False)
+        _transform_rows(band[:, :ny], False)
         _scatter_columns(band, field, first, column_factor)
 
 
@@ -343,15 +349,22 @@ class BlockedStep:
         pass.
     threads : int
         Python threads the passes are shared over.
+    pad_bytes : int, optional
+        Bytes each column-pass scratch row runs past NY, a multiple of the
+        dtype's size: 0 or ``PAD_BYTES``. The step is the same to the bit.
     """
 
-    def __init__(self, shape: tuple, dtype: np.dtype, rows: int, threads: int) -> None:
+    def __init__(
+        self, shape: tuple, dtype: np.dtype, rows: int, threads: int, pad_bytes: int = 0
+    ) -> None:
         ny, nx = shape
         self.rows = rows
         self.threads = threads
+        self.pad_bytes = pad_bytes
         self._row_shares = _shares(ny, threads, rows)
         self._column_shares = _shares(nx, threads, rows)
-        self._blocks = list(_scratch(len(self._column_shares), (rows, ny), dtype))
+        width = ny + pad_bytes // np.dtype(dtype).itemsize
+        self._blocks = list(_scratch(len(self._column_shares), (rows, width), dtype))
         self._lock = threading.Lock()
 
     def __call__(

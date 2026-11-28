@@ -51,6 +51,22 @@ SOLVERS = {
     "NLSE": (NLSE, {}, 1e-4),
     "GPE": (GPE, {"gamma": 0, "N": 1e6, "g": 1e3 / (1e6 / 1e-3**2)}, 1e-8),
 }
+# Grids the column pass's padded scratch is checked on: no axis a power of two,
+# then powers of two, which the pad is for; with the splits the tuner chose on
+# a Ryzen 3 4100 (16x8, 32x8, 64x8) and an M3 Max (32x12, 32x16).
+PADDED_GRIDS = [(NY, NX), (33, 17), (250, 300), (300, 250), (512, 256)]
+PADDED_SPLITS = [*SPLITS, (16, 8), (32, 8), (64, 8), (32, 12), (32, 16)]
+PAD_MARK = 3 + 4j  # what the pad holds before a step: any write moves it
+TUNED_GRID = (512, 512)  # candidates at both widths on TEST_THREADS
+# s a step takes in the scripted tuning, 1 s unblocked: (unpadded, padded) and
+# the pad then kept. The pad wins by more than MARGIN (1.25x), by less (1.087x),
+# and makes the block win where unpadded it loses (1 / 0.95 = 1.05x).
+UNBLOCKED_S = 1.0
+PAD_TIMES = {
+    "pad kept": (0.5, 0.4, True),
+    "pad refused": (0.5, 0.46, False),
+    "blocked only padded": (0.95, 0.8, True),
+}
 # Differences between the blocked and unblocked solver runs, in eps of the
 # width times max|A|: measured 6.5 (complex64) and 6.6 (complex128).
 SOLVER_EPS_BOUND = 50
@@ -158,6 +174,38 @@ def test_the_blocked_step_is_the_unblocked_step(dtype, split, case):
     )
     error = np.abs(field - expected).max() / np.abs(expected).max()
     assert error <= EPS_BOUND * np.finfo(dtype).eps, f"{error:.2e} from complex128"
+
+
+@pytest.mark.parametrize("dtype", [np.complex64, np.complex128])
+@pytest.mark.parametrize(
+    "shape", PADDED_GRIDS, ids=[f"{y}x{x}" for y, x in PADDED_GRIDS]
+)
+@pytest.mark.parametrize(
+    "split", PADDED_SPLITS, ids=[f"{r}x{t}" for r, t in PADDED_SPLITS]
+)
+def test_the_padded_scratch_changes_no_bit(dtype, shape, split):
+    """The step on padded scratch rows is the step on rows of NY, to the bit.
+
+    Catches a transform or a multiply reaching into the pad (it would move
+    PAD_MARK), or the padded pass rounding otherwise.
+    """
+    rng = np.random.default_rng(3)
+    field = (rng.normal(size=shape) + 1j * rng.normal(size=shape)).astype(dtype)
+    rows = (unit_phases(rng, shape[0]) / field.size).astype(dtype)
+    columns = unit_phases(rng, shape[1]).astype(dtype)
+    nonlinear = NONLINEAR["saturable, lossy"][1]
+    padded = BlockedStep(
+        shape, np.dtype(dtype), *split, pad_bytes=cpu_blocked.PAD_BYTES
+    )
+    unpadded = BlockedStep(shape, np.dtype(dtype), *split)
+    pads = [block[:, shape[0] :] for block in padded._blocks]
+    assert all(pad.size for pad in pads), "no pad to check"
+    for pad in pads:
+        pad[...] = PAD_MARK
+    expected = unpadded(field.copy(), rows, columns, None, nonlinear)
+    got = padded(field, rows, columns, None, nonlinear)
+    assert np.array_equal(got.view(np.uint8), expected.view(np.uint8)), "bits moved"
+    assert all((pad == PAD_MARK).all() for pad in pads), "the pad was written"
 
 
 def test_a_plane_wave_turns_by_its_factors_and_its_intensity():
@@ -384,6 +432,7 @@ def entry_with(**changes):
     entry = {
         "rows": ROWS,
         "threads": THREADS,
+        "pad_bytes": 0,
         "unblocked_ms": 2.0,
         "blocked_ms": 1.0,
         "timestamp": datetime.now().isoformat(),
@@ -511,9 +560,12 @@ CORRUPT = {
     "a list": [],
     "another version": "version",
     "a version 1 cache, before the fastest cores' count": "version 1",
+    "a version 2 cache, before the pad": "version 2",
     "entries not a mapping": {"version": cpu_tuning.CACHE_VERSION, "entries": []},
     "rows a string": "rows",
     "rows zero": "zero",
+    "pad missing": "pad missing",
+    "pad not the one measured": "pad",
     "threads missing": "threads",
     "no timestamp": "timestamp",
     "stale": "stale",
@@ -530,6 +582,8 @@ def corrupt(name):
     entries = {
         "rows": entry_with(rows="8"),
         "zero": entry_with(rows=0),
+        "pad missing": entry_with(pad_bytes=None),
+        "pad": entry_with(pad_bytes=cpu_blocked.PAD_BYTES // 2),
         "threads": entry_with(threads=None),
         "timestamp": entry_with(timestamp=None),
         "stale": entry_with(timestamp=(datetime.now() - STALE).isoformat()),
@@ -541,8 +595,8 @@ def corrupt(name):
     }
     if content == "version":
         return {**cached(entry_with()), "version": "0"}
-    if content == "version 1":
-        return {**cached(entry_with()), "version": "1"}
+    if content in ("version 1", "version 2"):
+        return {**cached(entry_with()), "version": content.split()[1]}
     if isinstance(content, str) and content in entries:
         return cached(entries[content])
     return content
@@ -731,6 +785,49 @@ def test_the_blocked_step_is_chosen_only_by_the_margin(monkeypatch, blocked, cho
     entry = cpu_tuning._measure(CPUBackend(), shape, dtype, TEST_THREADS)
     assert (entry["rows"] is not None) is chosen
     assert entry["blocked_ms"] == pytest.approx(blocked * 1e3)
+
+
+def scripted_pad_time(unpadded, padded, run, arguments):
+    """Stand in for ``_time_per_step``: s by unblocked, unpadded or padded."""
+    if run is cpu_tuning._unblocked_steps:
+        return UNBLOCKED_S
+    return padded if arguments[0].pad_bytes else unpadded
+
+
+@pytest.mark.parametrize("dtype", [np.complex64, np.complex128])
+@pytest.mark.parametrize("case", sorted(PAD_TIMES))
+def test_a_forced_tuning_stores_its_pad_and_keeps_the_bits(monkeypatch, dtype, case):
+    """The pad is kept only by MARGIN, before blocking is decided, and cached.
+
+    Catches the pad's duel turned round, its margin dropped, or held after
+    the blocked step lost unpadded; a choice not cached or not read back; and
+    a padded step that rounds otherwise.
+    """
+    unpadded_s, padded_s, kept = PAD_TIMES[case]
+    monkeypatch.setenv("NLSE_CPU_BLOCKING", "1")
+    monkeypatch.setenv("NLSE_QUIET", "1")
+    monkeypatch.setattr(cpu_tuning, "available_threads", lambda: TEST_THREADS)
+    timing = partial(scripted_pad_time, unpadded_s, padded_s)
+    monkeypatch.setattr(cpu_tuning, "_time_per_step", timing)
+    pad = cpu_blocked.PAD_BYTES if kept else 0
+    entry = tune_cpu_step(TUNED_GRID, dtype, force=True)
+    assert entry["rows"] is not None and entry["pad_bytes"] == pad
+    assert entry["blocked_ms"] == pytest.approx(
+        (padded_s if kept else unpadded_s) * 1e3
+    )
+    assert read_cache()["entries"][key_of(TUNED_GRID, dtype)]["pad_bytes"] == pad
+    step = settle(TUNED_GRID, dtype)
+    assert step.pad_bytes == pad
+    rng = np.random.default_rng(4)
+    field = rng.normal(size=TUNED_GRID) + 1j * rng.normal(size=TUNED_GRID)
+    field = field.astype(dtype)
+    rows = (unit_phases(rng, TUNED_GRID[0]) / field.size).astype(dtype)
+    columns = unit_phases(rng, TUNED_GRID[1]).astype(dtype)
+    nonlinear = NONLINEAR["saturable, lossy"][1]
+    unpadded = BlockedStep(TUNED_GRID, np.dtype(dtype), step.rows, step.threads)
+    expected = unpadded(field.copy(), rows, columns, None, nonlinear)
+    got = step(field, rows, columns, None, nonlinear)
+    assert np.array_equal(got.view(np.uint8), expected.view(np.uint8)), "bits moved"
 
 
 def named_time(run, arguments):

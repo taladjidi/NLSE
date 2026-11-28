@@ -78,16 +78,19 @@ in kernels of their own. It is read when an FFT plan is built, so a session
 that changes it also has to call `simu._backend.clear_fft_plans()`.
 
 `cpu_blocking.json`, beside `fft_benchmark.json`, is
-`{"version": "2", "entries": {key: entry}}`. The key is
+`{"version": "3", "entries": {key: entry}}`. The key is
 `system/machine/cpu/NYxNX/dtype/threads/scipy-x.y/numba-x.y`, for example
 `Darwin/arm64/apple-m3/4096x4096/complex64/16/scipy-1.18/numba-0.66`, where
 `cpu` is LLVM's name for the processor and `threads` the fewer of the CPUs
 the process may use and `NUMBA_NUM_THREADS`. An entry is
-`{"rows": int | null, "threads": int | null, "unblocked_ms": float,
-"blocked_ms": float | null, "timestamp": ISO 8601}`; null rows and threads
-mean the usual step. Entries older than 30 days, dated in the future, of
-another version, or not of that form are measured again. The blocked step
-must win by 10% to be chosen. `cpu_blocking.lock` exists while a process
+`{"rows": int | null, "threads": int | null, "pad_bytes": int | null,
+"unblocked_ms": float, "blocked_ms": float | null, "timestamp": ISO 8601}`;
+null rows, threads and pad mean the usual step. Entries older than 30 days,
+dated in the future, of another version, or not of that form are measured
+again. The best block is timed with its scratch rows padded by 128 B
+(`pad_bytes`, else 0) and without, side by side; the padded one must win by
+10% to be kept. Then the blocked step must win by 10% to be chosen;
+`blocked_ms` is its time. `cpu_blocking.lock` exists while a process
 measures and names it (host, process, thread); one older than 5 minutes is
 taken over, and the process that made it then leaves it to the new owner. A
 process that finds the lock held runs the usual step and looks again every
