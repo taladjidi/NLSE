@@ -45,10 +45,10 @@ RK4_PHASE_PER_STEP = 0.02
 # is something a callback can sample and a plot can show rather than one jump.
 DEFAULT_MIN_STEPS = 10
 
-# Largest fraction of the intensity one real-space step may take out,
-# u = 2*alpha*dz: half the kernels' LOSS_SOLVED_LIMIT (0.1), past which their
-# solved step falls back to the frozen one. A kernel called directly does not
-# come through here, which is why they carry their own limit.
+# Bound on 2*alpha*dz, alpha the medium's loss: a real-space step takes out
+# at most 2.5% of the intensity, a quarter of the kernels' _LOSS_SOLVED_LIMIT
+# (0.1, on alpha*dz), past which their solved step falls back to the frozen
+# one. A kernel called directly carries its own limit.
 LOSS_PER_STEP_LIMIT = 0.05
 
 # Names _grid_on_device keeps the potential's real part and absorption under.
