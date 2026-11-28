@@ -64,7 +64,131 @@ merge included (timed there too: optimization log).
 
 ### Resume here (written 2026-11-28)
 
-**Start here: the owner's answers of 2026-11-28** (eight questions, asked that
+**Start here: the second session of 2026-11-28.** The owner asked for four
+packages in parallel: the 5.0.0 release, a performance pass (CPU, then "Don't
+forget GPU paths as well", then FFTW built from source), the constructor
+interface, and the small open fixes. Their decisions:
+
+- Constructors: keyword-only, `to_dict`/`from_dict`, pint quantities.
+- Release: bump, tag, GitHub release. No upload to PyPI.
+- Default step: a step the solver chose takes the dispersion cap silently; a
+  `delta_z` the caller passed still warns.
+- "Numpy has moved to 2.0 and it was breaking for a reason, let's bump":
+  `numpy>=2` is a requirement of 5.0.0.
+- `DDGPE` is in ps and µm, from K. Guerrero-Feuillet's thesis
+  (`NLSE_tangui_fix_specs/ctor_kwargs/ddgpe_units.md` has the pages); the
+  class cites it (`docs/ddgpe-thesis-reference`, merged).
+- Native core, for the next major, in its own session: "let's switch all the
+  performance critical code to C (or cpp whatever is fastest and most
+  convenient)/ CUDA / Metal, and only keep python as the wrapper for
+  physicists". Mine, not contradicted: C++ behind a plain C ABI loaded with
+  `ctypes`; one backend at a time behind `Backend`, CPU first, then Metal in
+  place of MLX, then CUDA; numba deleted at parity; 5.0.0 ships first on the
+  current core. The box may build the x86-64 images. Still the owner's: what
+  becomes of OpenCL, whether CuPy stays as the host of the CUDA kernels,
+  Windows wheels. Facts gathered: `NLSE_tangui_fix_specs/native_core/research.md`.
+
+State of the four, in the order they land:
+
+1. *Small open fixes: merged* (`fix/still-open-v3`, six commits; patches and
+   spec in `NLSE_tangui_fix_specs/still_open/v3/`). The default step takes
+   the cap silently (`_capped_delta_z(..., warn=)`); setting `wl` sets `k`;
+   `get_backend` and `get_fastest_backend` refuse a `grid_size` that is not
+   two integers (`check_grid_size`); normalisation runs at the field's
+   precision (NEP 50, hence `numpy>=2`); the GPE benchmark uses a
+   condensate's interaction; a scalar zero `omega` skips the Rabi rotations.
+   Three fresh reviews over two rounds, one MAJOR (the grid-size check ran
+   on `"auto"` only), fixed in round three, whose interdiff I read. Mac: ruff, format, ty clean, 2677 passed, 217
+   skipped. Box (CuPy + OpenCL): 2824 passed, 68 skipped, six runs and one
+   with `NLSE_FUSE_PROPAGATOR=0`, the 13 `test_packaging.py` errors of that
+   env apart. MINOR, not fixed: bare `2`s and an `if warn:` without `else`
+   in `step_size.py`.
+2. *Keyword-only constructors, units, dicts: reviewed, not merged.* Five
+   patches on `3e98e28` in `NLSE_tangui_fix_specs/ctor_kwargs/v3/` (44
+   files; new `NLSE/solvers/units.py`, the `units` extra, pint in the dev
+   group). Two fresh reviews of v2 gave two MAJORs (the dict did not restore
+   `k` to its last bit; a stale unit in `docs/numerical_methods.md`), both
+   fixed in v3, whose library diff and docs I read. Architect's gates on the
+   Mac: 2964 passed, 217 skipped; plain-number runs byte-identical to
+   `3e98e28` on the seven solvers; a venv without pint passes. Applied,
+   trailers fixed, as `feat/keyword-constructors-v3` (five commits on
+   `3e98e28`). To do: my gates with `uv sync --extra opencl --extra mlx
+   --extra units`, the box suite (six runs and one unfused, results in
+   `~/Documents/nlse_p4r2_scripts/results/suite_ctor_v3_*.txt` there),
+   merge. Mine, for the owner
+   to veto: `from_dict` raises `ValueError` when the dict's `wvl` (or
+   `GPE`'s `m`) and `k` disagree; the smaller option is that `k` wins
+   silently. MINOR, not fixed: arrays are shared between a solver and its
+   dict; `NLSE_3d` returns a list `window` as a tuple; no batched round trip
+   in the tests (one with a batched `n2` is bit-equal by hand); a batched
+   `wvl` raises `TypeError` in the constructor, as it did before the series.
+   Not run: the Sphinx build, the full suite on Python 3.10.
+3. *The column pass's scratch pad as a tuner decision: v3, on
+   `perf/cpu-tuned-scratch-pad`.* The tuner duels its best block with each
+   scratch row 128 B longer (`PAD_BYTES`) against the same block unpadded,
+   keeps the pad only where it wins by `MARGIN`, then duels that side against
+   the unblocked step; `cpu_blocking.json` stores `pad_bytes` (version 3).
+   Patches and results: `NLSE_tangui_fix_specs/cpu_tiled_gather/v3/`; they
+   apply cleanly on `7465343` and touch no file of the small fixes. Mac, 15
+   interleaved rounds, no other process above 12% of a core
+   (`results/mac_pad_ab_v3_quiet.txt`), ms unblocked, blocked, blocked and
+   padded: 1024² complex64 1.44, 1.96, 1.52 (stays unblocked); 2048² 6.24,
+   6.12, 5.16 (blocked and padded, where `main` stays unblocked); 4096²
+   26.59, 21.72, 18.95 (padded); 2048² complex128 10.58, 8.65, 8.00 (blocked,
+   the pad's 8% is under the margin); 4096² complex128 46.03, 32.58, 32.87
+   (unpadded). Ryzen: the pad is refused on every grid, all within 5%
+   (`results/box_pad_ab_v3.txt`). Tuning 4096² complex128 takes 18.5 to
+   19.0 s on the Mac (17.3 to 17.8 on `main`) and 47.7 to 47.9 s on the
+   Ryzen (40.4 to 43.0). Bits: 288 cases, none differ, on both machines.
+   Why the M3 gains is not verified. The tiled moves lost and are logged as
+   rejected by the series' second commit.
+4. *Release 5.0.0: last.* The migration page (a draft of its constructor
+   section exists only in the session's scratchpad: write it from
+   `CHANGELOG.md`), the bump (`pyproject.toml:7`, `NLSE/__init__.py:8`, `uv
+   lock`), the changelog heading, `docs/index.md:4`, the constants of
+   `tests/test_doc_claims.py`, the tag `5.0.0`, the GitHub release.
+
+Measured this session and not yet in `docs/optimization-log.md` (its tables
+and the README's "Performance" are to be rewritten once the Mac figures are
+re-run quiet: every Mac figure below ran at load 3 to 15):
+
+- *FFTW 3.3.11 from source* (`cpu_perf_pass/fftw_source/`): 1.6 to 2x scipy
+  in cache; a C step on it is 1.77, 1.24 and 1.08x the package's at 1024²,
+  2048² and 4096² on the Mac and 1.01 to 1.06x on the box, since the strided
+  gather and scatter between the passes cost about 40% of a step (the box's
+  C kernel did not vectorize under gcc). The package's blocked step with
+  FFTW row transforms: 87.1 against 114.7 ms at 4096² on the box. PATIENT
+  planning lost. FFTW is GPLv2+. Left to run: `box_suite.sh` there (PATIENT
+  and complex128), with `flock` outside `timeout`.
+- *GPU ceilings* (`gpu_perf_pass/`; ceiling = measured copy bandwidth, 207
+  GB/s on the box): CuPy at 85, 83 and 65% at 1024², 2048², 4096²; OpenCL
+  at 89, 63 and 45%; MLX at 76 to 78% at the large grids.
+- *The box queue* (`gpu_perf_pass/results/box_queue_rest.log`): VkFFT's
+  `coalescedMemory` at 64 or 128 B takes the OpenCL step from 18.60 to
+  11.00 ms at 4096² and from 3.33 to 2.75 ms at 2048² (128 B), and loses at
+  1024² (0.596 to 0.647 or 0.698 ms); `aimThreads` and `warpSize` change
+  nothing. pyvkfft ships the tuner (`pyvkfft.tune.tune_vkfft`), so this is
+  a per-machine, per-grid choice to cache like the CPU blocks: not built,
+  and it waits on what becomes of OpenCL. In the nsys trace two kernels are
+  all of a fused CuPy step: `regular_fft` and an `entrypoint_...` one that,
+  from its name and launch count, is the transform carrying the callbacks. Fixed cost of an `out_field` call at
+  4096²: CuPy 99 ms (187 with `V`, 354 for `CNLSE`), OpenCL 216 (316, 737).
+  OpenCL RK4 holds the host 28.8 of its 82.7 ms per step at 4096² (5.3 of
+  15.4 at 2048², 0.9 of 2.9 at 1024²): a call in it blocks, not looked for. The CuPy `CNLSE` slopes at
+  4096² are unusable (negative minima).
+- *An all-Metal step* (`native_core/metal_proto/`, VkFFT on Metal): 1.2 to
+  2.4x the MLX step, mostly from the nonlinear kernel with `V` (0.89
+  against 2.0 ms at 4096²); the transform wins only at 1024². It needs a
+  four-site patch to VkFFT (double free, upstream issue 226). The smaller
+  option, a custom MLX kernel (`mx.fast.metal_kernel`), is not tried. To
+  re-run quiet (`bench.py`) before the native core's design relies on it.
+
+Asked of the owner, not answered, none blocking: ħ is 0.654 meV·ps in
+`examples/ddgpe.py` and the thesis, 0.6582 by CODATA; the example's energies
+and `k_z = 27` are in neither thesis; RK4 keeps a zero Rabi term with
+`omega=0`; `DDGPE`'s `power` is never read and `omega_pump` goes stale.
+
+**Earlier that day: the owner's answers of 2026-11-28** (eight questions, asked that
 morning). Two builds follow from them, each through the pipeline (architect,
 spec review, fresh reviewer; the architects delivered verified patch series
 in place of implementer briefs):
