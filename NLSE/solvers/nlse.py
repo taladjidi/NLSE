@@ -113,6 +113,9 @@ class NLSE(StepSize):
     # Step the loop takes next. It is not the one just taken when that one was
     # cut to land on L or z, and it is the one a controller has to scale.
     _step_in_force: float | None = None
+    # Distance the run in progress covers, for a callback that needs a length
+    # where the solver has no medium (L = 0). Written by the callback loop.
+    _run_distance: float = 0.0
 
     # Set per run rather than derived from the parameters, so they are None
     # until a run sets them up. Declared here so reading one before that is a
@@ -2612,6 +2615,7 @@ class NLSE(StepSize):
         step_fn = step_factory(delta_z)
         self._current_delta_z = delta_z
         self._step_in_force = delta_z
+        self._run_distance = z
         z_prop = 0.0
         i = 0
         for n, end in enumerate(self._medium_ends(z)):

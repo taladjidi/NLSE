@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from helpers import AVAILABLE_BACKENDS
 from NLSE import (
+    GPE,
     NLSE,
     adapt_delta_z,
     adapt_delta_z_to_error,
@@ -73,6 +74,13 @@ QUADRATURES = 1 + 2j
 # adapt_delta_z_to_error's default floor, as a fraction of L (callbacks.py
 # docstring: "a hundred thousandth of the medium length").
 DEFAULT_FLOOR_FRACTION = 1e-5
+# A condensate for the solver without a medium length: atoms, window in m,
+# interaction in J m^2, run in s. Any that leaves the floor under the cap.
+GPE_ATOMS = 1e4
+GPE_WINDOW = 1e-4
+GPE_G = 1e-16
+GPE_RUN = 1e-2
+GPE_STEPS = 4
 # The step in force, in units of that floor: its BOUNDS[0] shrink lands below
 # the floor, so the floor is what comes back.
 ABOVE_FLOOR = 1.5
@@ -514,4 +522,36 @@ def test_the_default_floor_is_a_hundred_thousandth_of_l(backend_name, monkeypatc
     got = adapt_delta_z_to_error(simu, field, 0.0, 0, TOLERANCE, 1, BOUNDS, SAFETY)
     assert got == pytest.approx(floor, rel=STEP_RTOL), (
         f"the default floor is {got / L:.1e} L, not {DEFAULT_FLOOR_FRACTION:.0e} L"
+    )
+
+
+def test_a_solver_without_a_medium_takes_its_floor_from_the_run(monkeypatch):
+    """GPE has ``L = 0``: the floor is a hundred thousandth of the run instead.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        Replaces the trial propagation by one with a large error.
+    """
+    simu = GPE(0.0, GPE_ATOMS, GPE_WINDOW, GPE_G, None, NX=N, NY=N, backend="CPU")
+    field = np.ones((N, N), dtype=np.complex64)
+    simu.out_field(
+        field,
+        GPE_RUN,
+        delta_z=GPE_RUN / GPE_STEPS,
+        verbose=False,
+        callback=lambda *_: None,
+    )
+    floor = DEFAULT_FLOOR_FRACTION * GPE_RUN
+    simu._step_in_force = ABOVE_FLOOR * floor
+    monkeypatch.setattr(
+        callbacks,
+        "_trial_propagation",
+        functools.partial(scaled_trial, error=LARGE_ERROR),
+    )
+    got = adapt_delta_z_to_error(simu, field, 0.0, 0, TOLERANCE, 1, BOUNDS, SAFETY)
+    assert simu.L == 0
+    assert got == pytest.approx(floor, rel=STEP_RTOL), (
+        f"the floor without a medium is {got / GPE_RUN:.1e} of the run, not "
+        f"{DEFAULT_FLOOR_FRACTION:.0e}"
     )

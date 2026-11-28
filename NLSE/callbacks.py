@@ -4,8 +4,13 @@ from scipy.constants import c, epsilon_0
 from .solvers.nlse import NLSE
 
 # Steps per nonlinear length that adapt_delta_z aims at, dimensionless. A
-# heuristic, not a derived value: the rule's since commit bc56be6.
+# heuristic, not a derived value: the rule's value since commit bc56be6.
 STEPS_PER_NONLINEAR_LENGTH = 12
+# Default floor of adapt_delta_z_to_error, as a fraction of the medium length,
+# or of the run for a solver that has none. Dimensionless; a choice.
+MIN_STEP_FRACTION = 1e-5
+# Order of the Strang splitting adapt_delta_z_to_error's trial steps run.
+STRANG_ORDER = 2
 
 
 def sample(
@@ -277,7 +282,8 @@ def adapt_delta_z_to_error(
         does not repeatedly overshoot it.
     min_step : float, optional
         Smallest step to shrink to, in metres. Defaults to a hundred
-        thousandth of the medium length. **A tolerance below the arithmetic floor
+        thousandth of the medium length, or of the run for a solver without
+        one (GPE). **A tolerance below the arithmetic floor
         cannot be met at any step**, and without this the controller answers
         one it cannot reach by halving for ever: the run does not diverge, it
         simply never ends.
@@ -315,12 +321,12 @@ def adapt_delta_z_to_error(
     # Absolute, not relative to the step in force: a relative floor shrinks with
     # the step and never binds. Not the round-off optimum either, which is far too
     # coarse on a field with spectral content (see DEFAULT_PHASE_PER_STEP).
-    floor = min(min_step if min_step is not None else float(simu.L) / 1e5, cap)
+    length = float(simu.L) or abs(simu._run_distance)
+    floor = min(min_step if min_step is not None else length * MIN_STEP_FRACTION, cap)
     if error == 0:
         return float(min(abs(step) * bounds[1], cap))
 
-    order = 2
-    factor = safety * (tolerance / error) ** (1.0 / (order + 1))
+    factor = safety * (tolerance / error) ** (1.0 / (STRANG_ORDER + 1))
     # A size: the floor and the cap are sizes, and a backward step is negative.
     proposed = abs(step) * float(np.clip(factor, *bounds))
     return float(min(max(proposed, floor), cap))
