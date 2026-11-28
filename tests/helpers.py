@@ -1,8 +1,9 @@
 """Backend-agnostic helpers for the solver tests."""
 
 import numpy as np
-from NLSE import CNLSE_1d, NLSE_1d
+from NLSE import CNLSE, DDGPE, GPE, NLSE, CNLSE_1d, NLSE_1d, NLSE_3d
 from NLSE.backends import list_available_backends
+from scipy.constants import atomic_mass
 
 PRECISION_COMPLEX = np.complex64
 AVAILABLE_BACKENDS = list_available_backends()
@@ -95,6 +96,74 @@ LINE_SOLVERS = (NLSE_1d, CNLSE_1d)
 # W/m, 375.7: a Gaussian of WAIST on a line peaks at sqrt(2/pi) P / w, so this
 # gives it the peak intensity of the 2D beam, 2 P / (pi w^2), at PHYSICS power.
 LINE_POWER = PHYSICS["power"] * np.sqrt(2 / np.pi) / WAIST
+
+
+# Every constructor argument of every solver, each nonzero so that one taken
+# in the wrong unit changes the solver. A grid of SMALL points keeps a run
+# short. GPE's are SI; DDGPE's are its tests' ps and um (hbar 0.654 meV ps).
+SMALL = 16
+_OPTICS = {
+    **{k: v for k, v in PHYSICS.items() if k != "n12"},
+    "V": np.full((SMALL, SMALL), 1e-6, dtype=np.float32),
+    "NX": SMALL,
+    "NY": SMALL,
+    "nl_length": 1e-5,
+    "wvl": WAVELENGTH2,
+    "backend": "CPU",
+}
+_LINE = {
+    **{k: v for k, v in _OPTICS.items() if k != "NY"},
+    "power": LINE_POWER,
+    "V": _OPTICS["V"][0],
+}
+_RABI = {"n12": PHYSICS["n12"], "omega": 1e3}
+ARGUMENTS = {
+    NLSE: _OPTICS,
+    NLSE_1d: _LINE,
+    NLSE_3d: {
+        **{k: v for k, v in _OPTICS.items() if k != "power"},
+        "energy": 1e-6,
+        "window": (WINDOW, WINDOW, 1e-12),
+        "D0": 1e-26,
+        "vg": 2e8,
+        "V": np.full((SMALL, SMALL, SMALL), 1e-6, dtype=np.float32),
+        "NZ": SMALL,
+    },
+    CNLSE: {**_OPTICS, **_RABI},
+    CNLSE_1d: {**_LINE, **_RABI},
+    GPE: {
+        "gamma": 0.1,
+        "N": 1e5,
+        "window": 100e-6,
+        "g": 1e-12,
+        "V": np.full((SMALL, SMALL), 1e2, dtype=np.float32),
+        "m": 87 * atomic_mass,
+        "NX": SMALL,
+        "NY": SMALL,
+        "sat": 1e15,
+        "nl_length": 1e-6,
+        "backend": "CPU",
+    },
+    DDGPE: {
+        "gamma": 0.07 / 0.654,
+        "power": 1.0,
+        "window": 256.0,
+        "g": 1e-2 / 0.654,
+        "omega": 5.07 / 0.654,
+        "T": 1.0,
+        "omega_exc": 1484.44 / 0.654,
+        "omega_cav": 1482.76 / 0.654,
+        "detuning": 0.17 / 0.654,
+        "k_z": 27.0,
+        "V": np.full((SMALL, SMALL), 1e-2, dtype=np.float32),
+        "g12": 1e-3,
+        "NX": SMALL,
+        "NY": SMALL,
+        "Isat": 1e3,
+        "nl_length": 1.0,
+        "backend": "CPU",
+    },
+}
 
 
 def make(cls, backend="CPU", n=None, symmetric=True, **overrides):

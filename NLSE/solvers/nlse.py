@@ -182,6 +182,7 @@ class NLSE(StepSize):
 
     def __init__(
         self,
+        *,
         alpha: float | np.floating,
         power: float | np.floating,
         window: float | tuple[float, float] | list[float],

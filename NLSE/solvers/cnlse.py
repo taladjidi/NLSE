@@ -28,6 +28,7 @@ class CNLSE(NLSE):
 
     def __init__(
         self,
+        *,
         alpha: float,
         power: float,
         window: float,

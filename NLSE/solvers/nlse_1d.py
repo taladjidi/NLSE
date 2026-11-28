@@ -11,6 +11,7 @@ class NLSE_1d(NLSE):
 
     def __init__(
         self,
+        *,
         alpha: float,
         power: float,
         window: float,

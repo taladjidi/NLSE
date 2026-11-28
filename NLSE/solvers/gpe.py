@@ -32,6 +32,7 @@ class GPE(NLSE):
 
     def __init__(
         self,
+        *,
         gamma: float,
         N: float,
         window: float,

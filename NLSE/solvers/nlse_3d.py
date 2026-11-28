@@ -14,6 +14,7 @@ class NLSE_3d(NLSE):
 
     def __init__(
         self,
+        *,
         alpha: float,
         energy: float,
         window: list | tuple,

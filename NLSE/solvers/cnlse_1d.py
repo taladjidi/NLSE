@@ -12,6 +12,7 @@ class CNLSE_1d(CNLSE):
 
     def __init__(
         self,
+        *,
         alpha: float,
         power: float,
         window: float,

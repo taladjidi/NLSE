@@ -110,6 +110,7 @@ class DDGPE(CNLSE):
 
     def __init__(
         self,
+        *,
         gamma: float,
         power: float,
         window: float,
